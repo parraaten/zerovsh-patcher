@@ -62,8 +62,7 @@ modules g_modules_mod[] = {
 
 const char *exts[] = { ".rco", ".pmf", ".bmp", ".pgf", ".prx", ".dat" };
 
-int k1, model;
-SceUID path_id, cfg_id;
+int model;
 
 PspIoDrv *lflash;
 PspIoDrv *fatms;
@@ -105,19 +104,24 @@ int slideState;
 int cpuOld = -1, busOld = -1;
 
 //OK
-void *zeroCtrlAllocUserBuffer(SceUID uid, int size) {
+void *zeroCtrlAllocUserBuffer(SceUID *uid, int size) {
     void *addr;
-    k1 = pspSdkSetK1(0);
-    uid = sceKernelAllocPartitionMemory(PSP_MEMORY_PARTITION_USER, "pathBuf",
+    int k1 = pspSdkSetK1(0);
+
+    *uid = sceKernelAllocPartitionMemory(PSP_MEMORY_PARTITION_USER, "zeroCtrlUserBuffer",
             PSP_SMEM_High, size, NULL);
-    addr = (uid >= 0) ? sceKernelGetBlockHeadAddr(uid) : NULL;
+    addr = (*uid >= 0) ? sceKernelGetBlockHeadAddr(*uid) : NULL;
+    if (!addr && *uid >= 0) {
+        sceKernelFreePartitionMemory(*uid);
+        *uid = -1;
+    }
     pspSdkSetK1(k1);
     return addr;
 }
 //OK
 void zeroCtrlFreeUserBuffer(SceUID uid) {
     if (uid >= 0) {
-        k1 = pspSdkSetK1(0);
+        int k1 = pspSdkSetK1(0);
         sceKernelFreePartitionMemory(uid);
         pspSdkSetK1(k1);
     }
@@ -155,7 +159,7 @@ int zeroCtrlIsValidFileType(const char *file) {
     }
 
     //zeroCtrlWriteDebug("file: %s\n", file);
-    k1 = pspSdkSetK1(0);
+    int k1 = pspSdkSetK1(0);
     ext = strrchr(file, '.');
     if (!ext) {
         //zeroCtrlWriteDebug("--> No Extension\n");
@@ -181,7 +185,7 @@ const char *zeroCtrlGetFileName(const char *file) {
     }
 
     //zeroCtrlWriteDebug("file: %s\n", file);
-    k1 = pspSdkSetK1(0);
+    int k1 = pspSdkSetK1(0);
     ret = strrchr(file, '/');
     pspSdkSetK1(k1);
 
@@ -198,22 +202,24 @@ const char *zeroCtrlGetFileName(const char *file) {
     return ret;
 }
 //OK
-char *zeroCtrlSwapFile(const char *file) {
+char *zeroCtrlSwapFile(const char *file, SceUID *block_id) {
     const char *oldfile;
-    char *newfile = zeroCtrlAllocUserBuffer(path_id, 256);
+    char *newfile = zeroCtrlAllocUserBuffer(block_id, 256);
 
     if (!newfile) {
         //zeroCtrlWriteDebug("Cannot allocate 256 bytes of memory, abort\n");
         return NULL;
     }
 
-    k1 = pspSdkSetK1(0);
+    int k1 = pspSdkSetK1(0);
 
     *newfile = '\0';
     oldfile = zeroCtrlGetFileName(file);
     if (!oldfile) {
         //zeroCtrlWriteDebug("-> File not found, abort\n\n");
         pspSdkSetK1(k1);
+        zeroCtrlFreeUserBuffer(*block_id);
+        *block_id = -1;
         return NULL;
     }
 
@@ -221,6 +227,8 @@ char *zeroCtrlSwapFile(const char *file) {
         if (strcmp(oldfile, "/ltn0.pgf") == 0) {
             //zeroCtrlWriteDebug("-> File is blacklisted, abort\n\n");
             pspSdkSetK1(k1);
+            zeroCtrlFreeUserBuffer(*block_id);
+            *block_id = -1;
             return NULL;
         }
     }
@@ -236,8 +244,9 @@ int zeroCtrlIoGetstatEX(PspIoDrvFileArg *arg, const char *file, SceIoStat *stat)
     int ret;
     char *new_path;
     PspIoDrvArg *drv;
+    SceUID path_id = -1;
 
-    new_path = zeroCtrlSwapFile(file);
+    new_path = zeroCtrlSwapFile(file, &path_id);
     if (!new_path) {
         return IoGetstat(arg, file, stat);
     }
@@ -262,8 +271,9 @@ int zeroCtrlIoOpenEX(PspIoDrvFileArg *arg, char *file, int flags, SceMode mode) 
     int ret;
     char *new_path;
     PspIoDrvArg *drv;
+    SceUID path_id = -1;
 
-    if ((new_path = zeroCtrlSwapFile(file)) == NULL) {
+    if ((new_path = zeroCtrlSwapFile(file, &path_id)) == NULL) {
         return IoOpen(arg, file, flags, mode);
     }
 
@@ -404,7 +414,7 @@ void zeroCtrlSetSlideState(int state) {
 }
 //OK
 int zeroCtrlDummyFunc(void) {
-        k1 = pspSdkSetK1(0);               
+        int k1 = pspSdkSetK1(0);               
 	
 	if(zeroCtrlGetSlideState() == ZERO_SLIDE_STOPPING) {
 		//zeroCtrlWriteDebug("Unloading slide 1\n");
@@ -425,7 +435,7 @@ int zeroCtrlDummyFunc(void) {
 }
 //OK
 int zeroCtrlGetParam(u32 value) {
-        k1 = pspSdkSetK1(0);
+        int k1 = pspSdkSetK1(0);
         
         if(value == 0x8000000D) {	
 		if(zeroCtrlGetSlideState() == ZERO_SLIDE_STARTING) {			
@@ -498,7 +508,9 @@ int zeroCtrlLoadStartModule(SceSize args UNUSED, void *argp UNUSED) {
 	modid = sceKernelLoadModuleBuffer(size_zerovsh_user_module, zerovsh_user_module, 0, NULL);
 	
 	if(modid >= 0) {
-		sceKernelStartModule(modid, 0, NULL, 0, NULL);		
+		if (sceKernelStartModule(modid, 0, NULL, 0, NULL) < 0) {
+			sceKernelUnloadModule(modid);
+		}
 	} else {
 		//zeroCtrlWriteDebug("Module ID: 0x%08X\n", modid);
 	}
@@ -513,15 +525,18 @@ void zeroCtrlCreatePatchThread(void) {
 	thid = sceKernelCreateThread("zeroctrl_umod", zeroCtrlLoadStartModule, 0x10, 0x10000, 0, NULL);
 	
 	if(thid >= 0) {
-		sceKernelStartThread(thid, 0, NULL);		
+		if (sceKernelStartThread(thid, 0, NULL) < 0) {
+			sceKernelDeleteThread(thid);
+		}
 	} else {
 		//zeroCtrlWriteDebug("Thread ID: 0x%08X\n", thid);	
 	}	
 }
 //OK
 int zeroCtrlGetSlideConfig(const char *item, char *value) {
-	k1 = pspSdkSetK1(0);
-	char *usermem = zeroCtrlAllocUserBuffer(cfg_id, 256);
+	int k1 = pspSdkSetK1(0);
+	SceUID cfg_id = -1;
+	char *usermem = zeroCtrlAllocUserBuffer(&cfg_id, 256);
 	
 	if(!usermem) {
 		pspSdkSetK1(k1);
@@ -538,14 +553,14 @@ int zeroCtrlGetSlideConfig(const char *item, char *value) {
 }
 //OK
 void zeroCtrlSetSlideConfig(const char *item, const char *value) {
-	k1 = pspSdkSetK1(0);
+	int k1 = pspSdkSetK1(0);
 	ini_puts("SlidePlugin", item,  value, "ms0:/seplugins/zerovsh.ini");
 	pspSdkSetK1(k1);
 }
 //OK
 int zeroCtrlGetModel(void) {
 	int ret;
-	k1 = pspSdkSetK1(0);
+	int k1 = pspSdkSetK1(0);
 	
 	ret = sceKernelGetModel();
 	
@@ -596,7 +611,7 @@ void GetSpeed(int *cpufreq, int *busfreq) {
 }
 //OK
 void zeroCtrlSetLEDState(void) {
-	k1 = pspSdkSetK1(0);
+	int k1 = pspSdkSetK1(0);
 	
 	if(strcmp(ledDisable, "Enabled") == 0) {
 		sceSysconCtrlLED(0, 0);
@@ -620,7 +635,7 @@ void zeroCtrlRestoreLEDState(void) {
 }
 //OK
 void zeroCtrlSetBrightness(void) {
-	k1 = pspSdkSetK1(0);
+	int k1 = pspSdkSetK1(0);
 	
 	if(b_level != -1) {
 		sceDisplayGetBrightness(&brightness, NULL);
@@ -631,7 +646,7 @@ void zeroCtrlSetBrightness(void) {
 }
 //OK
 void zeroCtrlSetClockSpeed(void) {
-	k1 = pspSdkSetK1(0);
+	int k1 = pspSdkSetK1(0);
 	
 	GetSpeed(&cpuOld, &busOld);				
 	sctrlHENSetSpeed(333, 166);	
@@ -691,7 +706,9 @@ void zeroCtrlCreateBtnThread(void) {
 	thid = sceKernelCreateThread("zeroctrl_btn", (void *)zeroCtrlReadButtons, 0x10, 0x10000, 0, NULL);
 	
 	if(thid >= 0) {
-		sceKernelStartThread(thid, 0, NULL);		
+		if (sceKernelStartThread(thid, 0, NULL) < 0) {
+			sceKernelDeleteThread(thid);
+		}
 	} else {
 		//zeroCtrlWriteDebug("Thread ID: 0x%08X\n", thid);	
 	}	
