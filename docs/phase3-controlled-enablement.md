@@ -349,3 +349,19 @@ register terminate the bounded backward search. Detailed direct windows are
 limited to the three already-known `+0x6F84` references to reduce log noise;
 all predicate matrix counts remain enabled. VSH code and shared state remain
 strictly read-only.
+
+### Phase 3.1e read-only state-generator trace
+
+The corrected hardware run found 15 relocation-aware references with no
+overflow and one store to `vsh_shared_state` at `+0x671C`. Its delay-slot store
+writes the return from a direct call to `+0x3F970`. The setter is conditional:
+the available prefix reduces its inputs to `(incoming_a0 == 0) && ((incoming_a1 & 1) != 0)`,
+but the exact earlier boundary is not yet captured.
+
+The next build captures only initializer context `+0x6680..+0x673F`, generator
+context `+0x3F8F0..+0x3FAEF`, and direct J/JAL caller windows for candidate
+`+0x66EC` and generator `+0x3F970`. It validates the derived global's complete
+four-byte range against trusted kernel `SceModule2` segment metadata and reads
+its delayed current value only after successful revalidation. Predicate matrix
+counts remain, but repeated detailed global output is limited to stores. All
+VSH code/state remains untouched and the Sony path remains disabled.

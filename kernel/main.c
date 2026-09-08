@@ -97,6 +97,13 @@ static long b_level;
 #define VSH_REFERENCE_WINDOW_WORDS  \
     ((VSH_REFERENCE_WINDOW_BEFORE + VSH_REFERENCE_WINDOW_AFTER) / 4)
 #define VSH_PREDICATE_COUNT 8
+#define VSH_STATE_INITIALIZER_CANDIDATE 0x66EC
+#define VSH_STATE_GENERATOR_OFFSET 0x3F970
+#define VSH_STATE_TRACE_LIMIT 16
+#define VSH_INITIALIZER_CAPTURE_START 0x6680
+#define VSH_INITIALIZER_CAPTURE_SIZE 0xC0
+#define VSH_GENERATOR_CAPTURE_START 0x3F8F0
+#define VSH_GENERATOR_CAPTURE_SIZE 0x200
 
 static const unsigned int vsh_predicate_offsets[VSH_PREDICATE_COUNT] = {
     0x6F04, 0x6F44, 0x6F84, 0x6FC4,
@@ -126,6 +133,16 @@ typedef struct {
     unsigned char base_register;
     unsigned char value_register;
 } ZeroCtrlVshGlobalReference;
+
+typedef struct {
+    unsigned int source_addr;
+    unsigned int source_offset;
+    unsigned int instruction;
+    unsigned int window_start_offset;
+    unsigned int window_size;
+    unsigned int window[VSH_REFERENCE_WINDOW_WORDS];
+    unsigned char kind;
+} ZeroCtrlVshStateReference;
 
 typedef struct {
     int armed;
@@ -172,7 +189,22 @@ typedef struct {
     unsigned int vsh_shared_global_addr;
     unsigned int vsh_shared_global_offset;
     int vsh_shared_global_decode_valid;
+    int vsh_shared_global_segment_valid;
+    unsigned int vsh_shared_global_value;
+    int vsh_shared_global_value_captured;
     ZeroCtrlVshGlobalReference vsh_global_references[VSH_REFERENCE_LIMIT];
+    unsigned int vsh_initializer_capture_size;
+    unsigned int vsh_initializer_code[VSH_INITIALIZER_CAPTURE_SIZE / 4];
+    unsigned int vsh_generator_capture_size;
+    unsigned int vsh_generator_code[VSH_GENERATOR_CAPTURE_SIZE / 4];
+    unsigned int vsh_initializer_reference_total;
+    unsigned int vsh_initializer_reference_count;
+    unsigned int vsh_initializer_reference_overflow;
+    ZeroCtrlVshStateReference vsh_initializer_references[VSH_STATE_TRACE_LIMIT];
+    unsigned int vsh_generator_reference_total;
+    unsigned int vsh_generator_reference_count;
+    unsigned int vsh_generator_reference_overflow;
+    ZeroCtrlVshStateReference vsh_generator_references[VSH_STATE_TRACE_LIMIT];
     unsigned int module_start_addr;
     unsigned int elf_entry_addr;
     unsigned int module_start_original[2];
@@ -259,6 +291,53 @@ static int zeroCtrlVshGlobalAccessKind(unsigned int instruction) {
     return 0;
 }
 
+static void zeroCtrlCaptureVshFixedWindow(unsigned int text_addr,
+        unsigned int text_size, unsigned int start, unsigned int requested_size,
+        unsigned int *captured_size, unsigned int *code) {
+    unsigned int size;
+    unsigned int i;
+
+    *captured_size = 0;
+    if (start >= text_size) return;
+    size = text_size - start < requested_size ? text_size - start : requested_size;
+    size &= ~3U;
+    for (i = 0; i < size / 4; i++) code[i] = _lw(text_addr + start + i * 4);
+    *captured_size = size;
+}
+
+static void zeroCtrlScanVshStateTarget(unsigned int text_addr,
+        unsigned int text_size, unsigned int target_offset,
+        unsigned int *total, unsigned int *stored, unsigned int *overflow,
+        ZeroCtrlVshStateReference *references) {
+    unsigned int pass;
+    unsigned int offset;
+
+    for (pass = 0; pass < 2; pass++) {
+        unsigned int wanted_opcode = pass == 0 ? 3 : 2;
+        for (offset = 0; offset + 4 <= text_size; offset += 4) {
+            unsigned int pc = text_addr + offset;
+            unsigned int instruction = _lw(pc);
+            ZeroCtrlVshStateReference *ref;
+            if (instruction >> 26 != wanted_opcode ||
+                    zeroCtrlMipsJumpTarget(pc, instruction) !=
+                    text_addr + target_offset)
+                continue;
+            (*total)++;
+            if (*stored >= VSH_STATE_TRACE_LIMIT) {
+                (*overflow)++;
+                continue;
+            }
+            ref = &references[(*stored)++];
+            ref->source_addr = pc;
+            ref->source_offset = offset;
+            ref->instruction = instruction;
+            ref->kind = wanted_opcode;
+            zeroCtrlCaptureVshReferenceWindow(text_addr, text_size, offset,
+                    &ref->window_start_offset, &ref->window_size, ref->window);
+        }
+    }
+}
+
 static int zeroCtrlInstructionWritesRegister(unsigned int instruction,
         unsigned int reg) {
     unsigned int opcode = instruction >> 26;
@@ -297,6 +376,27 @@ static void zeroCtrlDeriveVshSharedGlobal(unsigned int text_addr,
     slide_diag.vsh_shared_global_offset =
             slide_diag.vsh_shared_global_addr - text_addr;
     slide_diag.vsh_shared_global_decode_valid = 1;
+}
+
+static void zeroCtrlValidateVshSharedGlobalSegment(int modid,
+        unsigned int text_addr) {
+    SceModule2 *mod = sceKernelFindModuleByName("vsh_module");
+    unsigned int i;
+
+    slide_diag.vsh_shared_global_segment_valid = 0;
+    if (!slide_diag.vsh_shared_global_decode_valid || !mod ||
+            mod->modid != modid || mod->text_addr != text_addr ||
+            mod->nsegment > 4)
+        return;
+    for (i = 0; i < mod->nsegment; i++) {
+        unsigned int start = mod->segmentaddr[i];
+        unsigned int size = mod->segmentsize[i];
+        unsigned int addr = slide_diag.vsh_shared_global_addr;
+        if (size >= 4 && addr >= start && addr - start <= size - 4) {
+            slide_diag.vsh_shared_global_segment_valid = 1;
+            return;
+        }
+    }
 }
 
 static int zeroCtrlVshGlobalReferenceStored(unsigned int source_offset) {
@@ -406,8 +506,30 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                         _lw(text_addr + start_offset + i * 4);
             }
             zeroCtrlDeriveVshSharedGlobal(text_addr, text_size, target_offset);
+            zeroCtrlValidateVshSharedGlobalSegment(modid, text_addr);
             zeroCtrlScanVshDirectReferences(text_addr, text_size);
             zeroCtrlScanVshGlobalReferences(text_addr, text_size);
+            zeroCtrlCaptureVshFixedWindow(text_addr, text_size,
+                    VSH_INITIALIZER_CAPTURE_START,
+                    VSH_INITIALIZER_CAPTURE_SIZE,
+                    &slide_diag.vsh_initializer_capture_size,
+                    slide_diag.vsh_initializer_code);
+            zeroCtrlCaptureVshFixedWindow(text_addr, text_size,
+                    VSH_GENERATOR_CAPTURE_START, VSH_GENERATOR_CAPTURE_SIZE,
+                    &slide_diag.vsh_generator_capture_size,
+                    slide_diag.vsh_generator_code);
+            zeroCtrlScanVshStateTarget(text_addr, text_size,
+                    VSH_STATE_INITIALIZER_CANDIDATE,
+                    &slide_diag.vsh_initializer_reference_total,
+                    &slide_diag.vsh_initializer_reference_count,
+                    &slide_diag.vsh_initializer_reference_overflow,
+                    slide_diag.vsh_initializer_references);
+            zeroCtrlScanVshStateTarget(text_addr, text_size,
+                    VSH_STATE_GENERATOR_OFFSET,
+                    &slide_diag.vsh_generator_reference_total,
+                    &slide_diag.vsh_generator_reference_count,
+                    &slide_diag.vsh_generator_reference_overflow,
+                    slide_diag.vsh_generator_references);
             slide_diag.vsh_code_capture_result = 0;
         }
     }
@@ -920,12 +1042,66 @@ static void zeroCtrlWriteSlideCheckpoints(unsigned int *written) {
 #undef WRITE_CHECKPOINT
 }
 
+static void zeroCtrlCaptureVshSharedGlobalValue(void) {
+    zeroCtrlValidateVshSharedGlobalSegment(slide_diag.vsh_modid,
+            slide_diag.vsh_text_addr);
+    if (!slide_diag.vsh_shared_global_segment_valid) return;
+    slide_diag.vsh_shared_global_value = _lw(slide_diag.vsh_shared_global_addr);
+    slide_diag.vsh_shared_global_value_captured = 1;
+}
+
+static void zeroCtrlWriteVshStateReferences(const char *name,
+        unsigned int target_offset, unsigned int total, unsigned int stored,
+        unsigned int overflow, ZeroCtrlVshStateReference *references) {
+    char line[160];
+    unsigned int i;
+    unsigned int j;
+
+    snprintf(line, sizeof(line),
+            "[vshstate_target] name=%s offset=0x%05X refs=%u stored=%u overflow=%u\n",
+            name, target_offset, total, stored, overflow);
+    zeroCtrlDiagnosticsText(line);
+    for (i = 0; i < stored; i++) {
+        ZeroCtrlVshStateReference *ref = &references[i];
+        snprintf(line, sizeof(line),
+                "[vshstate_ref] name=%s index=%u source=0x%08X offset=0x%05X word=0x%08X kind=%s\n",
+                name, i, ref->source_addr, ref->source_offset,
+                ref->instruction, ref->kind == 3 ? "JAL" : "J");
+        zeroCtrlDiagnosticsText(line);
+        for (j = 0; j < ref->window_size / 4; j++) {
+            snprintf(line, sizeof(line),
+                    "[vshstate_refcode] name=%s index=%u addr=0x%08X word=0x%08X\n",
+                    name, i, slide_diag.vsh_text_addr +
+                    ref->window_start_offset + j * 4, ref->window[j]);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+}
+
+static void zeroCtrlWriteVshFixedCode(const char *name, unsigned int start,
+        unsigned int size, unsigned int *code) {
+    char line[128];
+    unsigned int i;
+
+    snprintf(line, sizeof(line),
+            "[vshstate_window] name=%s start=0x%05X size=0x%03X\n",
+            name, start, size);
+    zeroCtrlDiagnosticsText(line);
+    for (i = 0; i < size / 4; i++) {
+        snprintf(line, sizeof(line),
+                "[vshstate_code] name=%s addr=0x%08X word=0x%08X\n",
+                name, slide_diag.vsh_text_addr + start + i * 4, code[i]);
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
 static void zeroCtrlWriteVshSlideEvidence(void) {
     unsigned int i;
     unsigned int j;
     char line[160];
 
     if (!slide_diag.vsh_module_seen) return;
+    zeroCtrlCaptureVshSharedGlobalValue();
     zeroCtrlDiagnosticsEvent("vsh_modid", slide_diag.vsh_modid);
     zeroCtrlDiagnosticsEvent("vsh_text_addr", slide_diag.vsh_text_addr);
     zeroCtrlDiagnosticsEvent("vsh_text_size", slide_diag.vsh_text_size);
@@ -991,6 +1167,11 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
             slide_diag.vsh_shared_global_offset);
     zeroCtrlDiagnosticsEvent("vsh_shared_global_decode_valid",
             slide_diag.vsh_shared_global_decode_valid);
+    zeroCtrlDiagnosticsEvent("vsh_shared_global_segment_valid",
+            slide_diag.vsh_shared_global_segment_valid);
+    if (slide_diag.vsh_shared_global_value_captured)
+        zeroCtrlDiagnosticsEvent("vsh_shared_global_value",
+                slide_diag.vsh_shared_global_value);
     zeroCtrlDiagnosticsEvent("vsh_global_reference_total",
             slide_diag.vsh_global_reference_total);
     zeroCtrlDiagnosticsEvent("vsh_global_reference_stored",
@@ -999,6 +1180,7 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
             slide_diag.vsh_global_reference_overflow);
     for (i = 0; i < slide_diag.vsh_global_reference_count; i++) {
         ZeroCtrlVshGlobalReference *ref = &slide_diag.vsh_global_references[i];
+        if (ref->kind != 2) continue;
         snprintf(line, sizeof(line),
                 "[vshglobal] source=0x%08X offset=0x%05X word=0x%08X kind=%s base=%u value=%u lui=0x%05X\n",
                 ref->source_addr, ref->source_offset, ref->instruction,
@@ -1017,6 +1199,32 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
             zeroCtrlDiagnosticsText(line);
         }
     }
+    zeroCtrlDiagnosticsEvent("vsh_state_initializer_offset",
+            VSH_STATE_INITIALIZER_CANDIDATE);
+    zeroCtrlDiagnosticsEvent("vsh_state_initializer_refs",
+            slide_diag.vsh_initializer_reference_total);
+    zeroCtrlDiagnosticsEvent("vsh_state_generator_offset",
+            VSH_STATE_GENERATOR_OFFSET);
+    zeroCtrlDiagnosticsEvent("vsh_state_generator_refs",
+            slide_diag.vsh_generator_reference_total);
+    zeroCtrlWriteVshFixedCode("initializer_context",
+            VSH_INITIALIZER_CAPTURE_START,
+            slide_diag.vsh_initializer_capture_size,
+            slide_diag.vsh_initializer_code);
+    zeroCtrlWriteVshFixedCode("generator", VSH_GENERATOR_CAPTURE_START,
+            slide_diag.vsh_generator_capture_size,
+            slide_diag.vsh_generator_code);
+    zeroCtrlWriteVshStateReferences("initializer_candidate",
+            VSH_STATE_INITIALIZER_CANDIDATE,
+            slide_diag.vsh_initializer_reference_total,
+            slide_diag.vsh_initializer_reference_count,
+            slide_diag.vsh_initializer_reference_overflow,
+            slide_diag.vsh_initializer_references);
+    zeroCtrlWriteVshStateReferences("generator", VSH_STATE_GENERATOR_OFFSET,
+            slide_diag.vsh_generator_reference_total,
+            slide_diag.vsh_generator_reference_count,
+            slide_diag.vsh_generator_reference_overflow,
+            slide_diag.vsh_generator_references);
 }
 
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {

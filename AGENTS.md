@@ -310,6 +310,15 @@ loaded predicate's validated LUI/load pair, compares reconstructed effective
 addresses, and rejects obvious intervening base-register definitions. The
 global's semantic identity remains unknown. The exact PSP-1000 6.61
 `vsh_module` binary is not present in the repository.
+The corrected hardware run derived the shared state at text offset `0x56CE0`,
+found 15 references without overflow, and found exactly one store at `+0x671C`.
+That store is the delay slot of a jump back to the setter's return block and
+writes the result of `vsh_module + 0x3F970`. Phase 3.1e keeps everything
+read-only, captures wider setter/generator windows and their direct callers,
+and reads the current shared-state word only after its complete four-byte range
+is revalidated against trusted, module-ID-checked `SceModule2` segment metadata. The setter's
+exact entry, the generator's semantics, and whether the state represents model
+or hardware classification remain unproven.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
 

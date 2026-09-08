@@ -253,3 +253,82 @@ no return-value experiment should occur before that evidence is reviewed.
 - **Unresolved questions:** listed above.
 - **Recommended next phase:** offline caller-consumer and state-writer analysis,
   without a behavioral patch.
+
+## Phase 3.1e: tracing the state generator
+
+### New hardware evidence
+
+The relocation-aware run derived `vsh_shared_state` at `0x09C7D7E0`, offset
+`+0x56CE0` from VSH text `0x09C26B00`, with decode validation successful. The
+address is `0x1620` bytes beyond executable text and is therefore consistent
+with module data/BSS state, although its semantic identity remains unknown.
+The scan found 15 references with no overflow and exactly one direct store, at
+`+0x0671C`:
+
+```text
++0x670C  jal   +0x3F970
++0x6710  nop
++0x6714  lui   v1, runtime-upper
++0x6718  j     +0x6700
++0x671C  sw    v0, vsh_shared_state (delay slot)
+```
+
+The hardware words around `+0x66EC` independently decode as `sltiu a0,a0,1`,
+followed by a `-0x10` stack allocation, `and a1,a1,a0`, conditional branch,
+return block, and the generator call/store block. Thus generation occurs only
+when the incoming `a0` is zero and bit 0 of incoming `a1` is set. The function must
+begin at or before `+0x66EC`; the exact entry cannot be proven from the returned
+window because the preceding function boundary was not captured. The neutral
+names are `vsh_shared_state_initializer` (candidate entry `+0x66EC`) and
+`vsh_state_generator_3f970`.
+
+### Read-only capture design
+
+The next build captures `+0x6680..+0x673F` to establish the initializer's exact
+boundary and `+0x3F8F0..+0x3FAEF` to cover the generator and its surrounding
+boundaries. It scans all VSH text for correctly reconstructed direct J/JAL
+references to initializer candidate `+0x66EC` and generator `+0x3F970`.
+Each target retains at most 16 references, JAL before J, with separate total,
+stored, and overflow counts and the existing clamped `-0x30/+0x50` caller
+window. If the wider initializer context proves a different entry, another
+read-only scan—not a behavioral patch—will be required for that corrected
+entry.
+
+The global address is validated against trusted `SceModule2.nsegment`,
+`segmentaddr[]`, and `segmentsize[]` metadata obtained in kernel mode by module
+name and checked against the captured module UID. The complete four-byte range must fit in one of at most four reported
+segments. Only after revalidating immediately in the delayed writer thread is
+its current word read. Failed validation records `segment_valid=0` and performs
+no read. The delayed current value is the preferred non-invasive observation of
+`vsh_state_generator_3f970`'s stored result; no hook or trampoline is installed.
+
+To reduce repetition, all predicate matrix counts remain available, detailed
+caller windows remain limited to the three `+0x6F84` calls, and only the sole
+STORE global window is repeated. The new output is:
+
+```text
+[event] vsh_shared_global_segment_valid result=0x........
+[event] vsh_shared_global_value result=0x........  # only when segment-valid
+[event] vsh_state_initializer_offset result=0x000066EC
+[event] vsh_state_initializer_refs result=0x........
+[event] vsh_state_generator_offset result=0x0003F970
+[event] vsh_state_generator_refs result=0x........
+[vshstate_window] name=initializer_context ...
+[vshstate_window] name=generator ...
+[vshstate_ref] / [vshstate_refcode] ...
+```
+
+There are zero writes to VSH, zero writes to `vsh_shared_state`, no Sony request,
+and no USER allocation. The scanner cannot yet determine whether the generator
+uses model, syscon, motherboard, configuration, or device-presence inputs;
+unknown call targets and imports must be reported by raw address/NID rather than
+named speculatively.
+
+### One next controlled experiment
+
+Run this read-only build once with `PSP1000SlidePlugin=Enabled`,
+`ClockAndCalendar=Disabled`, and `vsh_slide_patch=disabled`. Return the complete
+unedited state-window/reference records, segment-validation/value events, and
+XMB stability result. Offline analysis must establish the initializer boundary,
+its callers, the generator's complete return paths and calls, and evidence for
+or against hardware/model classification before any behavioral experiment.
