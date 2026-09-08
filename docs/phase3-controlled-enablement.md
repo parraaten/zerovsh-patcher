@@ -294,3 +294,73 @@ start result and normal USER allocation access to PID 5 also remain unknown.
 Return the breadcrumb sequence, both logged addresses, validation/patch
 markers, available snapshots, and stability result before choosing the next
 single-variable experiment.
+
+### Phase 3.1b read-only VSH code capture
+
+The trigger-disabled control booted normally on real PSP-1000 hardware while
+the corresponding trigger-enabled build froze before icons. The next build
+therefore retains the disabled `vsh_module + 0x6F84` patch and expands only the
+read-only evidence capture. For firmware 6.61, fixed kernel state holds the
+clamped, word-aligned range from candidate minus `0x80` through candidate plus
+`0xFF` (up to `0x180` bytes). No USER memory is allocated, and only the writer
+thread emits the capture range events and addressed `[vshcode]` records.
+
+The current six-word evidence does not establish a function entry or semantic
+equivalence. In particular, the signed `lw` displacement resolves to
+`0x09C682E0`, not `0x09C782E0`. Full analysis, explicit unknowns, and the one
+next controlled hardware procedure are maintained in
+`docs/phase3-vsh-trigger-analysis.md`.
+
+### Phase 3.1c read-only predicate-reference scan
+
+Real hardware returned the complete 96-word window and remained fully usable.
+With that run's relocated base, `+0x6F84` is the exact start of a leaf predicate
+that reads `0x09C7DAE0`, returns strict 0/1, and is true for `{4,5,7,9}`.
+Adjacent leaf predicates classify the same apparent enumeration. This disproves
+the earlier “unknown boundary” assessment but does not identify slide semantics
+or establish whether historical `-1` is unsafe.
+
+The next build still leaves every VSH instruction and global untouched. It
+scans loaded VSH text in memory for correctly resolved direct J/JAL references
+to all eight captured predicates and for compatible LUI/load/store references
+to `0x09C7DAE0`. Fixed arrays retain at most 32 caller and 32 global-reference
+windows, prioritize JAL over J and stores over loads, and report totals and
+overflow. Only the existing writer thread serializes the compact matches and
+their bounds-clamped `-0x30/+0x50` windows. See
+`docs/phase3-vsh-trigger-analysis.md` for formats and the hardware procedure.
+
+### Phase 3.1d relocation-aware shared-global scan
+
+Hardware found three direct JAL callers of `+0x6F84`: `+0x058D4` and
+`+0x13F6C` branch on zero/nonzero, while `+0x14020` uses a nonzero `movn` path
+to contribute capability bit `0x40`. None of these direct callers distinguishes
+1 from -1. Indirect references remain unknown, so this weakens rather than
+absolutely disproves the strict-boolean hypothesis.
+
+The same run exposed that the original global scan compared raw immediates.
+VSH relocated from `0x09C26E00` to `0x09C26D00`, changing the predicate load
+displacement from `0xDAE0` to `0xD9E0` while preserving global text-relative
+offset `0x56CE0`; the scanner therefore incorrectly reported zero references.
+The corrected build derives the global from the loaded predicate's validated
+LUI/load pair, sign-extends its displacement, and compares fully reconstructed
+effective addresses. It does not fall back to the observed offset. Stores are
+still retained before loads, and obvious intervening definitions of the base
+register terminate the bounded backward search. Detailed direct windows are
+limited to the three already-known `+0x6F84` references to reduce log noise;
+all predicate matrix counts remain enabled. VSH code and shared state remain
+strictly read-only.
+
+### Phase 3.1f read-only state-source import resolution
+
+Hardware validated `vsh_shared_state` inside a VSH segment and read value 0 on
+PSP-1000. It also proved `+0x3F970` is a two-word `jr ra; syscall 0x2617` import
+stub, not an internal generator. The widened initializer sequence proves the
+assignment condition is original `a0 == 1 && a1 == 0xFFFF`; `+0x66E0`, after an
+unconditional jump/delay slot, is now the entry candidate.
+
+The next build removes the large import-stub-table window and its 29 caller
+windows. It traverses only validated `SceLibraryStubTable` descriptors within
+trusted VSH segments, validates NID and function-stub arrays, and structurally
+matches runtime stub `+0x3F970` to its library and NID. It scans callers of
+`+0x66E0` with the existing relocation-safe algorithm so their `a0/a1` setup can
+be analyzed. No import is called and VSH code/state remains untouched.

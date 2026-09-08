@@ -287,6 +287,39 @@ PSP-1000 `vsh_module + 0x6F84` redirection. It captures a bounds-checked,
 read-only six-word fingerprint around that address through a fixed-scalar
 kernel handoff; historical model behavior is unchanged. This control tests
 host-VSH stability and does not establish that the offset is incorrect.
+Real hardware subsequently booted normally with that patch suppressed, proving
+the forced modification was necessary for the observed freeze but not whether
+the offset or forced `-1` result is semantically wrong. Phase 3.1b leaves the
+patch suppressed and captures a clamped, read-only `0x180`-byte instruction
+window into fixed kernel state for writer-thread serialization. The available
+hardware window proves `+0x6F84` is the start of a leaf predicate that reads
+`0x09C7DAE0`, returns strict 0/1, and is true for `{4,5,7,9}`. It belongs to a
+cluster of eight nearby predicates over that shared apparent enumeration.
+Phase 3.1c keeps the patch suppressed and scans loaded VSH text read-only for
+properly resolved direct J/JAL callers of the cluster and compatible
+load/store references to the global. Fixed kernel arrays prioritize JAL and
+stores, retain bounded caller windows, and report overflow for offline return-
+value and state-writer analysis. Hardware found exactly three direct JAL calls
+to `+0x6F84` at `+0x058D4`, `+0x13F6C`, and `+0x14020`; all consume the result
+as zero/nonzero, and the last contributes capability-mask bit `0x40`. This
+weakens the `-1` versus 1 hypothesis for known direct callers and strengthens
+the forced-host-state hypothesis. The first global scanner incorrectly matched
+relocation-dependent raw immediates and consequently found zero references on
+a run relocated by `0x100`. The corrected scanner derives the address from the
+loaded predicate's validated LUI/load pair, compares reconstructed effective
+addresses, and rejects obvious intervening base-register definitions. The
+global's semantic identity remains unknown. The exact PSP-1000 6.61
+`vsh_module` binary is not present in the repository.
+The corrected hardware run derived the shared state at text offset `0x56CE0`,
+found 15 references without overflow, found exactly one store at `+0x671C`, and
+validated a current PSP-1000 value of 0 inside a VSH segment. `+0x3F970` is now
+proven to be a `jr ra; syscall 0x2617` import stub, not an internal generator.
+The wider initializer sequence proves the update condition is original
+`a0 == 1 && a1 == 0xFFFF`; `+0x66E0` is the new entry candidate. Phase 3.1f
+keeps everything read-only, scans callers of that candidate, and traverses only
+validated loaded-module import descriptors and arrays to resolve the import's
+raw library/NID. The `sceKernelGetModel` interpretation remains a strong but
+unproven hypothesis pending that structural result.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
 
