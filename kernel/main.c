@@ -528,6 +528,9 @@ int zeroCtrlLoadStartModule(SceSize args UNUSED, void *argp UNUSED) {
 	zeroCtrlDiagnosticsLoaderControl(wait_iterations);
 	if (modid >= 0) {
 		zeroCtrlDiagnosticsStartControl();
+#ifdef ZEROCTRL_PSP1000_NOOP_USER_START_CONTROL
+		zeroCtrlDiagnosticsUserStartControl();
+#endif
 	}
 	zeroCtrlDiagnosticsEvent("user_module_load", modid);
 	if (model == 0) {

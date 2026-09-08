@@ -173,11 +173,15 @@ int OnModuleStart(SceModule2 *mod) {
 }
 //OK
 int module_start(SceSize args UNUSED, void *argp UNUSED) {  	
+#ifdef ZEROCTRL_PSP1000_NOOP_USER_START_CONTROL
+	return 0;
+#else
 	model = zeroCtrlGetModel();
 	devkit = sceKernelDevkitVersion();	
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        
 	return 0;
+#endif
 }
 //OK
 int module_stop(SceSize args UNUSED, void *argp UNUSED) {

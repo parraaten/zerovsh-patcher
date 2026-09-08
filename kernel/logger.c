@@ -106,6 +106,11 @@ void zeroCtrlDiagnosticsStartControl(void)
     zeroCtrlDiagnosticsWrite("[experiment] start_control=deferred_logging\n");
 }
 
+void zeroCtrlDiagnosticsUserStartControl(void)
+{
+    zeroCtrlDiagnosticsWrite("[experiment] user_start_control=noop\n");
+}
+
 void zeroCtrlDiagnosticsMemory(const char *event)
 {
     char line[160];

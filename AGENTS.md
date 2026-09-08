@@ -188,16 +188,45 @@ work.
   4 MiB region, so no USER resize was visible. The older interval contained
   diagnostic serialization and module lookup, so it does not prove that
   `sceKernelStartModule()` caused the transition.
-- The current start-control experiment captures `after_load`, immediately
-  calls `sceKernelStartModule()`, and captures `after_start` before performing
-  any diagnostic write or module lookup. Only then are the control markers,
-  results, snapshots, and module metadata serialized. Hardware evidence is
-  required to localize the large transition to synchronous start/module-start
-  work versus asynchronous VSH startup.
+- The isolated start-control captures `after_load`, immediately calls
+  `sceKernelStartModule()`, and captures `after_start` before performing any
+  diagnostic write or module lookup. Only then are control markers, results,
+  snapshots, and module metadata serialized.
+- Real PSP-1000 start-control evidence localized the transition to the isolated
+  synchronous start interval: USER free memory fell from 23,124,992 bytes
+  after load to 4,119,552 bytes after start, exactly `0x01220000` (19,005,440
+  bytes, 18.125 MiB). No diagnostic serialization or module lookup occurred
+  between those captures, so asynchronous diagnostic I/O is no longer a
+  supported explanation for this interval.
+- PID 2 remained the 25,165,824-byte USER partition and PID 5 remained a fully
+  free 4 MiB partition. PIDs 1/3/4/5 showed no large transition. Within PID 2,
+  `total_free == largest_block == 4,119,552` after start, so the evidence shows
+  occupation/reservation inside USER without a visible resize and does not
+  support severe fragmentation.
+- The aligned helper again reported attribute 0x0007, text/data partition 2,
+  text=2,360, data=0, BSS=20, and one 2,756-byte segment. This footprint cannot
+  explain the 18.125 MiB start-interval reservation.
+- `ZEROCTRL_PSP1000_NOOP_USER_START_CONTROL` is temporarily enabled in both
+  module builds. Under this compile-time control, the embedded user's
+  `module_start()` performs no model/devkit query, handler installation,
+  logging, memory query, or delay; it only returns success. The original body
+  remains under `#else`. Kernel diagnostics emit
+  `[experiment] user_start_control=noop` only after both start snapshots exist.
+- If the no-op start still reserves about 18.125 MiB, the three original
+  ZeroVSH startup operations are excluded and ModuleMgr/CFW module start or
+  classification semantics become the leading explanation. If it does not,
+  restore `zeroCtrlGetModel()`, `sceKernelDevkitVersion()`, and
+  `sctrlHENSetStartModuleHandler()` one at a time in later controls.
+- As supporting context only, modern ARK-style implementations of
+  `sctrlHENSetStartModuleHandler()` replace a stored handler pointer and return
+  the previous pointer, making a direct 18 MiB allocation there appear
+  unlikely. This is not proof for the tested CFW; hardware A/B results remain
+  authoritative.
 
 ## Current experimental state
 
-Phase 2 adds baseline diagnostics and one bounded configuration-buffer fix.
+Phase 2 adds diagnostics and a temporary compile-time no-op user-start control,
+plus one bounded configuration-buffer fix.
 PSP-1000 remains excluded by the existing kernel and user model checks; its
 SlidePlugin is intentionally locked. No PSP-1000 SlidePlugin support or
 firmware patch is enabled, and diagnostic usefulness/stability still requires
