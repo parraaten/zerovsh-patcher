@@ -299,9 +299,17 @@ Phase 3.1c keeps the patch suppressed and scans loaded VSH text read-only for
 properly resolved direct J/JAL callers of the cluster and compatible
 load/store references to the global. Fixed kernel arrays prioritize JAL and
 stores, retain bounded caller windows, and report overflow for offline return-
-value and state-writer analysis. Caller semantics and the global's identity
-remain unknown. The exact PSP-1000 6.61 `vsh_module` binary is not present in
-the repository.
+value and state-writer analysis. Hardware found exactly three direct JAL calls
+to `+0x6F84` at `+0x058D4`, `+0x13F6C`, and `+0x14020`; all consume the result
+as zero/nonzero, and the last contributes capability-mask bit `0x40`. This
+weakens the `-1` versus 1 hypothesis for known direct callers and strengthens
+the forced-host-state hypothesis. The first global scanner incorrectly matched
+relocation-dependent raw immediates and consequently found zero references on
+a run relocated by `0x100`. The corrected scanner derives the address from the
+loaded predicate's validated LUI/load pair, compares reconstructed effective
+addresses, and rejects obvious intervening base-register definitions. The
+global's semantic identity remains unknown. The exact PSP-1000 6.61
+`vsh_module` binary is not present in the repository.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
 

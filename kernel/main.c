@@ -169,6 +169,9 @@ typedef struct {
     unsigned int vsh_global_reference_count;
     unsigned int vsh_global_reference_total;
     unsigned int vsh_global_reference_overflow;
+    unsigned int vsh_shared_global_addr;
+    unsigned int vsh_shared_global_offset;
+    int vsh_shared_global_decode_valid;
     ZeroCtrlVshGlobalReference vsh_global_references[VSH_REFERENCE_LIMIT];
     unsigned int module_start_addr;
     unsigned int elf_entry_addr;
@@ -256,6 +259,46 @@ static int zeroCtrlVshGlobalAccessKind(unsigned int instruction) {
     return 0;
 }
 
+static int zeroCtrlInstructionWritesRegister(unsigned int instruction,
+        unsigned int reg) {
+    unsigned int opcode = instruction >> 26;
+    unsigned int function = instruction & 0x3F;
+
+    if (reg == 0) return 0;
+    if ((opcode == 0x0F || opcode == 0x0D || opcode == 0x09 ||
+            zeroCtrlVshGlobalAccessKind(instruction) == 1) &&
+            ((instruction >> 16) & 0x1F) == reg)
+        return 1;
+    if (opcode == 0 && (function == 0x21 || function == 0x25) &&
+            ((instruction >> 11) & 0x1F) == reg)
+        return 1;
+    return 0;
+}
+
+static void zeroCtrlDeriveVshSharedGlobal(unsigned int text_addr,
+        unsigned int text_size, unsigned int target_offset) {
+    unsigned int lui;
+    unsigned int access;
+    unsigned int base;
+    int displacement;
+
+    slide_diag.vsh_shared_global_decode_valid = 0;
+    if (target_offset > text_size || text_size - target_offset < 8) return;
+    lui = _lw(text_addr + target_offset);
+    access = _lw(text_addr + target_offset + 4);
+    base = (lui >> 16) & 0x1F;
+    if ((lui >> 26) != 0x0F || zeroCtrlVshGlobalAccessKind(access) != 1 ||
+            ((access >> 21) & 0x1F) != base)
+        return;
+
+    displacement = (short)(access & 0xFFFF);
+    slide_diag.vsh_shared_global_addr =
+            ((lui & 0xFFFF) << 16) + (unsigned int)displacement;
+    slide_diag.vsh_shared_global_offset =
+            slide_diag.vsh_shared_global_addr - text_addr;
+    slide_diag.vsh_shared_global_decode_valid = 1;
+}
+
 static int zeroCtrlVshGlobalReferenceStored(unsigned int source_offset) {
     unsigned int i;
     for (i = 0; i < slide_diag.vsh_global_reference_count; i++) {
@@ -270,6 +313,8 @@ static void zeroCtrlScanVshGlobalReferences(unsigned int text_addr,
     int pass;
     unsigned int offset;
 
+    if (!slide_diag.vsh_shared_global_decode_valid) return;
+
     /* Store candidates are retained before reads if the fixed array fills. */
     for (pass = 2; pass >= 1; pass--) {
         for (offset = 4; offset + 4 <= text_size; offset += 4) {
@@ -278,20 +323,25 @@ static void zeroCtrlScanVshGlobalReferences(unsigned int text_addr,
             unsigned int distance;
             unsigned int lui_offset = 0;
             int found = 0;
-            if ((instruction & 0xFFFF) != 0xDAE0 ||
-                    zeroCtrlVshGlobalAccessKind(instruction) != pass)
+            if (zeroCtrlVshGlobalAccessKind(instruction) != pass)
                 continue;
             for (distance = 1; distance <= 4 && distance * 4 <= offset;
                     distance++) {
                 unsigned int candidate_offset = offset - distance * 4;
                 unsigned int candidate = _lw(text_addr + candidate_offset);
                 if ((candidate >> 26) == 0x0F &&
-                        ((candidate >> 16) & 0x1F) == base &&
-                        (candidate & 0xFFFF) == 0x09C8) {
-                    lui_offset = candidate_offset;
-                    found = 1;
+                        ((candidate >> 16) & 0x1F) == base) {
+                    int displacement = (short)(instruction & 0xFFFF);
+                    unsigned int candidate_addr =
+                            ((candidate & 0xFFFF) << 16) +
+                            (unsigned int)displacement;
+                    if (candidate_addr == slide_diag.vsh_shared_global_addr) {
+                        lui_offset = candidate_offset;
+                        found = 1;
+                    }
                     break;
                 }
+                if (zeroCtrlInstructionWritesRegister(candidate, base)) break;
             }
             if (!found) continue;
             slide_diag.vsh_global_reference_total++;
@@ -355,6 +405,7 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                 slide_diag.vsh_code_words[i] =
                         _lw(text_addr + start_offset + i * 4);
             }
+            zeroCtrlDeriveVshSharedGlobal(text_addr, text_size, target_offset);
             zeroCtrlScanVshDirectReferences(text_addr, text_size);
             zeroCtrlScanVshGlobalReferences(text_addr, text_size);
             slide_diag.vsh_code_capture_result = 0;
@@ -915,6 +966,7 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
     }
     for (i = 0; i < slide_diag.vsh_direct_reference_count; i++) {
         ZeroCtrlVshDirectReference *ref = &slide_diag.vsh_direct_references[i];
+        if (ref->predicate_index != 2) continue;
         snprintf(line, sizeof(line),
                 "[vshref] source=0x%08X offset=0x%05X word=0x%08X kind=%s predicate=0x%04X\n",
                 ref->source_addr, ref->source_offset, ref->instruction,
@@ -933,6 +985,12 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
             zeroCtrlDiagnosticsText(line);
         }
     }
+    zeroCtrlDiagnosticsEvent("vsh_shared_global_addr",
+            slide_diag.vsh_shared_global_addr);
+    zeroCtrlDiagnosticsEvent("vsh_shared_global_offset",
+            slide_diag.vsh_shared_global_offset);
+    zeroCtrlDiagnosticsEvent("vsh_shared_global_decode_valid",
+            slide_diag.vsh_shared_global_decode_valid);
     zeroCtrlDiagnosticsEvent("vsh_global_reference_total",
             slide_diag.vsh_global_reference_total);
     zeroCtrlDiagnosticsEvent("vsh_global_reference_stored",
@@ -1431,6 +1489,7 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 				"[experiment] psp1000_vsh_slide_trigger=disabled_control\n"
 				"[experiment] vsh_slide_patch=disabled\n"
 				"[experiment] vsh_reference_scan=read_only\n"
+				"[experiment] vsh_direct_windows=predicate_6f84_only\n"
 				"[experiment] button_thread=disabled\n");
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");

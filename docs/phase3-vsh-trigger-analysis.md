@@ -95,20 +95,64 @@ Offline analysis must classify every caller independently as nonzero boolean,
 exact comparison, signed test, arithmetic, store, argument propagation, or
 unknown. No assumption that `-1` equals 1 is made across callers.
 
-## Shared-global reference scan
+## Verified direct callers and result consumers
 
-The global scan looks for byte/halfword/word loads and stores whose signed
-16-bit displacement is `0xDAE0` (`-0x2520`) and whose base register was loaded
-with `lui base, 0x09C8` in one of the preceding four instructions. It does not
-require fixed base or value registers. This is intentionally reported as a
-compatible static reference: offline review of the captured window must reject
-a candidate if intervening code overwrites the base.
+The latest hardware scan found exactly three direct references to
+`vsh_predicate_6f84`, all `JAL` instructions:
+
+- `+0x058D4` consumes the result with `bne v0, zero`; 1 and -1 are equivalent
+  for this control-flow decision.
+- `+0x13F6C` also uses `bne v0, zero`, selecting approximately argument `0x828`
+  when true and `0x028` when false. Again, 1 and -1 are equivalent.
+- `+0x14020` is part of a capability/state mask pipeline. Its result controls a
+  `movn` that contributes bit `0x40`; `movn` tests nonzero, so 1 and -1 are
+  equivalent here too.
+
+Thus every known direct caller uses nonzero semantics. This substantially
+weakens the strict-boolean form of H1, although it does not prove that indirect
+`JALR`/function-pointer consumers are absent. For the corrected-global run, the
+writer retains all matrix counts but serializes detailed direct-reference
+windows only for predicate `+0x6F84`, avoiding repetition of the already
+captured windows for the other predicates.
+
+## Runtime global derivation and reference scan
+
+The scanner derives the shared-global address from the first two loaded
+instructions at `vsh_predicate_6f84`; it does not hardcode an address or either
+observed relocation-dependent displacement. It validates a `LUI`, validates a
+compatible load immediately after it, and requires the load base register to
+match the LUI destination. It then computes using explicit 32-bit arithmetic:
+
+```text
+upper        = lui_immediate << 16
+displacement = sign_extend_16(load_immediate)
+global_addr  = upper + displacement
+global_offset = global_addr - vsh_text_addr
+```
+
+For the latest run, `0x09C80000 + sign_extend(0xD9E0)` produces
+`0x09C7D9E0`, and the expected diagnostic offset is `0x56CE0`. The offset is a
+consistency observation only, never the resolver. Decode failure is recorded
+and disables the global scan rather than falling back to a guess.
+
+The full-text scan then considers byte/halfword/word loads and stores. For each
+access it searches backward at most four instructions for a LUI defining the
+same base register and reconstructs the candidate effective address using that
+LUI's upper immediate and the access's signed immediate. Only a reconstructed
+address equal to the runtime-derived global is retained; raw immediates are
+never compared.
+
+To reduce false pairs, the backward walk stops if an intervening instruction
+definitely overwrites the base through common `LUI`, `ORI`, `ADDIU`, load, or
+R-type `ADDU`/`OR` (including their usual move forms). This is conservative,
+not complete MIPS data-flow analysis; offline inspection of each retained
+window remains authoritative.
 
 Two passes retain stores (`SB`, `SH`, `SW`) before loads (`LB`, `LH`, `LW`,
 `LBU`, `LHU`). Each retained record includes access address/offset, raw word,
 load/store kind, base/value register numbers, matching LUI offset, and the same
-clamped `-0x30/+0x50` window. Storage is fixed at 32 records; total, stored, and
-overflow counters are separate. Output is:
+clamped `-0x30/+0x50` window. Storage remains fixed at 32 records; total,
+stored, and overflow counters are separate. Output is:
 
 ```text
 [vshglobal] source=0x........ offset=0x..... word=0x........ kind=STORE base=N value=N lui=0x.....
@@ -146,11 +190,15 @@ by:
 
 ```text
 [experiment] vsh_reference_scan=read_only
+[experiment] vsh_direct_windows=predicate_6f84_only
 [event] vsh_direct_reference_total result=0x........
 [event] vsh_direct_reference_stored result=0x........
 [event] vsh_direct_reference_overflow result=0x........
 [vshmatrix] ... (eight records)
 [vshref] / [vshref_window] / [vshrefcode] ...
+[event] vsh_shared_global_addr result=0x........
+[event] vsh_shared_global_offset result=0x00056CE0
+[event] vsh_shared_global_decode_valid result=0x00000001
 [event] vsh_global_reference_total result=0x........
 [event] vsh_global_reference_stored result=0x........
 [event] vsh_global_reference_overflow result=0x........
@@ -163,13 +211,13 @@ writes to VSH text, zero writes to `0x09C7DAE0`, and zero new USER allocations.
 
 ## Hypotheses and unknowns
 
-- **H1 — strict boolean incompatibility:** now plausible because the real
-  predicate returns 0/1 while historical ZeroVSH forces `-1`. It becomes strong
-  only if an important caller distinguishes 1 from `-1`, checks sign, or uses
-  the value arithmetically.
-- **H2 — incompatible forced host state:** also plausible if callers treat any
-  nonzero as true but PSP-1000 cannot complete the state transition represented
-  by the shared enumeration.
+- **H1 — strict boolean incompatibility:** substantially weakened because all
+  three known direct callers treat 1 and -1 identically as nonzero. It is not
+  absolutely disproven because indirect `JALR`/function-pointer references have
+  not been proven absent.
+- **H2 — incompatible forced host state:** strengthened by the nonzero consumers
+  and especially the `+0x14020` capability-mask path contributing bit `0x40`.
+  PSP-1000 may be unable to complete the transition enabled by that capability.
 
 Not proven: the global's semantic identity; its initializer or writer; which
 caller requests SlidePlugin; whether any caller distinguishes 1 and `-1`;
@@ -191,7 +239,7 @@ no return-value experiment should occur before that evidence is reviewed.
   `AGENTS.md`.
 - **Technical findings:** hardware establishes a strict 0/1 leaf predicate at
   `+0x6F84`, true for `{4,5,7,9}`, inside a classifier cluster over
-  `0x09C7DAE0`; caller semantics remain unknown.
+  `0x09C7DAE0`; the three direct `+0x6F84` callers all use nonzero semantics.
 - **Assumptions:** the returned real-hardware 96-word capture and stability
   report are authoritative; compatible global references require offline
   confirmation for intervening register writes.

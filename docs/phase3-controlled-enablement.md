@@ -328,3 +328,24 @@ windows, prioritize JAL over J and stores over loads, and report totals and
 overflow. Only the existing writer thread serializes the compact matches and
 their bounds-clamped `-0x30/+0x50` windows. See
 `docs/phase3-vsh-trigger-analysis.md` for formats and the hardware procedure.
+
+### Phase 3.1d relocation-aware shared-global scan
+
+Hardware found three direct JAL callers of `+0x6F84`: `+0x058D4` and
+`+0x13F6C` branch on zero/nonzero, while `+0x14020` uses a nonzero `movn` path
+to contribute capability bit `0x40`. None of these direct callers distinguishes
+1 from -1. Indirect references remain unknown, so this weakens rather than
+absolutely disproves the strict-boolean hypothesis.
+
+The same run exposed that the original global scan compared raw immediates.
+VSH relocated from `0x09C26E00` to `0x09C26D00`, changing the predicate load
+displacement from `0xDAE0` to `0xD9E0` while preserving global text-relative
+offset `0x56CE0`; the scanner therefore incorrectly reported zero references.
+The corrected build derives the global from the loaded predicate's validated
+LUI/load pair, sign-extends its displacement, and compares fully reconstructed
+effective addresses. It does not fall back to the observed offset. Stores are
+still retained before loads, and obvious intervening definitions of the base
+register terminate the bounded backward search. Detailed direct windows are
+limited to the three already-known `+0x6F84` references to reduce log noise;
+all predicate matrix counts remain enabled. VSH code and shared state remain
+strictly read-only.
