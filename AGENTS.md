@@ -280,6 +280,13 @@ there is no evidence that the no-op was applied. The active instrumentation-only
 build adds a three-second pre-probe timeout and writer-thread-only, once-per-stage
 breadcrumbs polled every 10 ms. These asynchronous writes are solely for freeze
 localization and must not be used for precise memory-cost measurements.
+That breadcrumb run subsequently ended with
+`request=0 rco_request=0 probe=0 start=0` while the XMB still froze. Phase 3.1a
+therefore keeps all instrumentation armed but suppresses only the experimental
+PSP-1000 `vsh_module + 0x6F84` redirection. It captures a bounds-checked,
+read-only six-word fingerprint around that address through a fixed-scalar
+kernel handoff; historical model behavior is unchanged. This control tests
+host-VSH stability and does not establish that the offset is incorrect.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
 

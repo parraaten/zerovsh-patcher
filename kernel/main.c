@@ -108,6 +108,15 @@ typedef struct {
     volatile int start_callback_returning;
     int probe_result;
     int previous_handler_result;
+    volatile int vsh_module_seen;
+    int vsh_target_in_text;
+    int vsh_modid;
+    unsigned int vsh_text_addr;
+    unsigned int vsh_text_size;
+    unsigned int vsh_module_start_addr;
+    unsigned int vsh_elf_entry_addr;
+    unsigned int vsh_slide_target;
+    unsigned int vsh_slide_words[6];
     unsigned int module_start_addr;
     unsigned int elf_entry_addr;
     unsigned int module_start_original[2];
@@ -124,6 +133,28 @@ static int zeroCtrlCreateSlideDiagnosticsThread(void);
 
 int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
     return slide_diag.armed;
+}
+
+void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
+        unsigned int text_size, unsigned int module_start_addr,
+        unsigned int elf_entry_addr, unsigned int target, int target_in_text,
+        unsigned int word_m8, unsigned int word_m4, unsigned int word_0,
+        unsigned int word_p4, unsigned int word_p8, unsigned int word_p12) {
+    if (!slide_diag.armed || slide_diag.vsh_module_seen) return;
+    slide_diag.vsh_modid = modid;
+    slide_diag.vsh_text_addr = text_addr;
+    slide_diag.vsh_text_size = text_size;
+    slide_diag.vsh_module_start_addr = module_start_addr;
+    slide_diag.vsh_elf_entry_addr = elf_entry_addr;
+    slide_diag.vsh_slide_target = target;
+    slide_diag.vsh_target_in_text = target_in_text;
+    slide_diag.vsh_slide_words[0] = word_m8;
+    slide_diag.vsh_slide_words[1] = word_m4;
+    slide_diag.vsh_slide_words[2] = word_0;
+    slide_diag.vsh_slide_words[3] = word_p4;
+    slide_diag.vsh_slide_words[4] = word_p8;
+    slide_diag.vsh_slide_words[5] = word_p12;
+    slide_diag.vsh_module_seen = 1;
 }
 
 int (*msIoOpen)(PspIoDrvFileArg *arg, char *file, int flags, SceMode mode);
@@ -568,6 +599,7 @@ int set_registry_value(const char *dir, const char *name, unsigned int val)
 #define SLIDE_CHECKPOINT_WORDS_WRITTEN       (1 << 9)
 #define SLIDE_CHECKPOINT_CACHE_SYNC          (1 << 10)
 #define SLIDE_CHECKPOINT_START_RETURNING     (1 << 11)
+#define SLIDE_CHECKPOINT_VSH_SEEN            (1 << 12)
 
 static void zeroCtrlWriteSlideCheckpoints(unsigned int *written) {
     char line[128];
@@ -576,6 +608,8 @@ static void zeroCtrlWriteSlideCheckpoints(unsigned int *written) {
         zeroCtrlDiagnosticsText("[checkpoint] " text "\n"); \
         *written |= (bit); \
     }
+    WRITE_CHECKPOINT(slide_diag.vsh_module_seen, SLIDE_CHECKPOINT_VSH_SEEN,
+            "vsh_module_seen");
     WRITE_CHECKPOINT(slide_diag.saw_request, SLIDE_CHECKPOINT_REQUEST,
             "slide_request_observed");
     WRITE_CHECKPOINT(slide_diag.saw_rco_request, SLIDE_CHECKPOINT_RCO,
@@ -629,6 +663,29 @@ static void zeroCtrlWriteSlideCheckpoints(unsigned int *written) {
 #undef WRITE_CHECKPOINT
 }
 
+static void zeroCtrlWriteVshSlideEvidence(void) {
+    static const char *events[6] = {
+        "vsh_slide_word_m8", "vsh_slide_word_m4", "vsh_slide_word_0",
+        "vsh_slide_word_p4", "vsh_slide_word_p8", "vsh_slide_word_p12"
+    };
+    int i;
+
+    if (!slide_diag.vsh_module_seen) return;
+    zeroCtrlDiagnosticsEvent("vsh_modid", slide_diag.vsh_modid);
+    zeroCtrlDiagnosticsEvent("vsh_text_addr", slide_diag.vsh_text_addr);
+    zeroCtrlDiagnosticsEvent("vsh_text_size", slide_diag.vsh_text_size);
+    zeroCtrlDiagnosticsEvent("vsh_module_start_func_addr",
+            slide_diag.vsh_module_start_addr);
+    zeroCtrlDiagnosticsEvent("vsh_elf_entry_addr", slide_diag.vsh_elf_entry_addr);
+    zeroCtrlDiagnosticsEvent("vsh_slide_target", slide_diag.vsh_slide_target);
+    zeroCtrlDiagnosticsEvent("vsh_slide_target_in_text",
+            slide_diag.vsh_target_in_text);
+    if (!slide_diag.vsh_target_in_text) return;
+    for (i = 0; i < 6; i++) {
+        zeroCtrlDiagnosticsEvent(events[i], slide_diag.vsh_slide_words[i]);
+    }
+}
+
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
     int waited = 0;
     unsigned int written = 0;
@@ -648,6 +705,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 slide_diag.saw_request, slide_diag.saw_rco_request,
                 slide_diag.saw_probe, slide_diag.saw_start);
         zeroCtrlDiagnosticsText(line);
+        zeroCtrlWriteVshSlideEvidence();
         zeroCtrlDiagnosticsText("[event] slide_probe_not_seen timeout_us=3000000\n");
         slide_diag.deferred_thread_started = 0;
         sceKernelExitDeleteThread(0);
@@ -669,6 +727,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
     }
 
+    zeroCtrlWriteVshSlideEvidence();
     if (slide_diag.saw_request) zeroCtrlDiagnosticsText("[event] slide_request_seen\n");
     if (slide_diag.saw_rco_request) zeroCtrlDiagnosticsText("[event] slide_rco_request_seen\n");
     zeroCtrlDiagnosticsText("[event] slide_probe_seen\n");
@@ -1094,7 +1153,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		zeroCtrlDiagnosticsText("[phase] psp1000_slide_phase3\n"
 				"[experiment] psp1000_slide_optin=enabled\n"
 				"[experiment] clock_and_calendar=disabled\n"
-				"[experiment] slide_hooks=minimal\n"
+				"[experiment] psp1000_vsh_slide_trigger=disabled_control\n"
+				"[experiment] vsh_slide_patch=disabled\n"
 				"[experiment] button_thread=disabled\n");
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");

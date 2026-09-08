@@ -247,6 +247,42 @@ line localizes the boundary. In particular, cache-sync and callback-returning
 markers prove the corrected no-op was installed; only then can a later freeze
 support the host VSH-state hypothesis.
 
+### Phase 3.1a host-VSH trigger-disabled control
+
+The breadcrumb hardware run reached the writer and completed the ordinary
+ZeroVSH helper load/start, but its three-second terminal state was
+`request=0 rco_request=0 probe=0 start=0`. The XMB nevertheless froze before
+icons appeared. This proves that the freeze can occur before the Sony pipeline;
+the corrected Sony no-op was not involved and must not be classified from this
+run.
+
+The next build keeps the PSP-1000 experiment armed and changes only the host
+VSH behavior variable. When the experimental helper observes `vsh_module`, it
+does **not** call `zeroCtrlRedir2Stub()` for `text_addr + 0x6F84`. Historical
+non-1000/non-Go branches and offsets are unchanged. The explicit markers are
+`psp1000_vsh_slide_trigger=disabled_control` and
+`vsh_slide_patch=disabled`; `slide_hooks=minimal` is intentionally omitted.
+The Sony `module_start_func` no-op remains dormant in source if an unexpected
+request occurs.
+
+For PSP-1000 devkit `0x06060110`, the helper bounds-checks a read-only window
+from target minus 8 through target plus 15 against `vsh_module` text. It never
+writes VSH code. A new fixed-scalar handoff (NID `0x1337357A`) copies module ID,
+text address/size, module-start and ELF-entry addresses, target, validation,
+and six surrounding words into fixed kernel state, publishing
+`vsh_module_seen` last. The writer alone persists the checkpoint and
+`vsh_modid`, `vsh_text_addr`, `vsh_text_size`,
+`vsh_module_start_func_addr`, `vsh_elf_entry_addr`, `vsh_slide_target`,
+`vsh_slide_target_in_text`, and word `m8` through `p12` events. An invalid
+window records metadata and validation but performs no reads.
+
+If the XMB completes boot with icons and working controls, this is strong
+evidence that applying the forced PSP-1000 `+0x6F84` modification is necessary
+for the freeze; it does not yet prove the offset itself is wrong. The next step
+is to identify that real PSP-1000 instruction window and find a safe host
+trigger. If the XMB still freezes, isolate the writer and experiment callback
+scaffolding before returning to VSH offsets or Sony startup.
+
 Files changed are the kernel/user handlers and export bridge, diagnostic writer,
 sample INI, this report, and `AGENTS.md`. `readme.txt`, Sony PRX/RCO files,
 loader attributes/APIs, stack sizes, and firmware data are untouched.
