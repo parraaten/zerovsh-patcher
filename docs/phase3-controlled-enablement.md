@@ -350,18 +350,17 @@ limited to the three already-known `+0x6F84` references to reduce log noise;
 all predicate matrix counts remain enabled. VSH code and shared state remain
 strictly read-only.
 
-### Phase 3.1e read-only state-generator trace
+### Phase 3.1f read-only state-source import resolution
 
-The corrected hardware run found 15 relocation-aware references with no
-overflow and one store to `vsh_shared_state` at `+0x671C`. Its delay-slot store
-writes the return from a direct call to `+0x3F970`. The setter is conditional:
-the available prefix reduces its inputs to `(incoming_a0 == 0) && ((incoming_a1 & 1) != 0)`,
-but the exact earlier boundary is not yet captured.
+Hardware validated `vsh_shared_state` inside a VSH segment and read value 0 on
+PSP-1000. It also proved `+0x3F970` is a two-word `jr ra; syscall 0x2617` import
+stub, not an internal generator. The widened initializer sequence proves the
+assignment condition is original `a0 == 1 && a1 == 0xFFFF`; `+0x66E0`, after an
+unconditional jump/delay slot, is now the entry candidate.
 
-The next build captures only initializer context `+0x6680..+0x673F`, generator
-context `+0x3F8F0..+0x3FAEF`, and direct J/JAL caller windows for candidate
-`+0x66EC` and generator `+0x3F970`. It validates the derived global's complete
-four-byte range against trusted kernel `SceModule2` segment metadata and reads
-its delayed current value only after successful revalidation. Predicate matrix
-counts remain, but repeated detailed global output is limited to stores. All
-VSH code/state remains untouched and the Sony path remains disabled.
+The next build removes the large import-stub-table window and its 29 caller
+windows. It traverses only validated `SceLibraryStubTable` descriptors within
+trusted VSH segments, validates NID and function-stub arrays, and structurally
+matches runtime stub `+0x3F970` to its library and NID. It scans callers of
+`+0x66E0` with the existing relocation-safe algorithm so their `a0/a1` setup can
+be analyzed. No import is called and VSH code/state remains untouched.

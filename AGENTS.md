@@ -311,14 +311,15 @@ addresses, and rejects obvious intervening base-register definitions. The
 global's semantic identity remains unknown. The exact PSP-1000 6.61
 `vsh_module` binary is not present in the repository.
 The corrected hardware run derived the shared state at text offset `0x56CE0`,
-found 15 references without overflow, and found exactly one store at `+0x671C`.
-That store is the delay slot of a jump back to the setter's return block and
-writes the result of `vsh_module + 0x3F970`. Phase 3.1e keeps everything
-read-only, captures wider setter/generator windows and their direct callers,
-and reads the current shared-state word only after its complete four-byte range
-is revalidated against trusted, module-ID-checked `SceModule2` segment metadata. The setter's
-exact entry, the generator's semantics, and whether the state represents model
-or hardware classification remain unproven.
+found 15 references without overflow, found exactly one store at `+0x671C`, and
+validated a current PSP-1000 value of 0 inside a VSH segment. `+0x3F970` is now
+proven to be a `jr ra; syscall 0x2617` import stub, not an internal generator.
+The wider initializer sequence proves the update condition is original
+`a0 == 1 && a1 == 0xFFFF`; `+0x66E0` is the new entry candidate. Phase 3.1f
+keeps everything read-only, scans callers of that candidate, and traverses only
+validated loaded-module import descriptors and arrays to resolve the import's
+raw library/NID. The `sceKernelGetModel` interpretation remains a strong but
+unproven hypothesis pending that structural result.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
 

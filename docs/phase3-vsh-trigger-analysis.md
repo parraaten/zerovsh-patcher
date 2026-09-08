@@ -254,81 +254,129 @@ no return-value experiment should occur before that evidence is reviewed.
 - **Recommended next phase:** offline caller-consumer and state-writer analysis,
   without a behavioral patch.
 
-## Phase 3.1e: tracing the state generator
+## Phase 3.1f: resolving the state-source import
 
-### New hardware evidence
+### Corrected hardware findings
 
-The relocation-aware run derived `vsh_shared_state` at `0x09C7D7E0`, offset
-`+0x56CE0` from VSH text `0x09C26B00`, with decode validation successful. The
-address is `0x1620` bytes beyond executable text and is therefore consistent
-with module data/BSS state, although its semantic identity remains unknown.
-The scan found 15 references with no overflow and exactly one direct store, at
-`+0x0671C`:
+The delayed, segment-validated read proved that `vsh_shared_state` is `0` on
+the tested PSP-1000. The sole store remains at `+0x671C`, but the call producing
+that value targets `+0x3F970`, whose two hardware words decode as:
 
 ```text
-+0x670C  jal   +0x3F970
-+0x6710  nop
-+0x6714  lui   v1, runtime-upper
-+0x6718  j     +0x6700
-+0x671C  sw    v0, vsh_shared_state (delay slot)
+03E00008  jr      $ra
+000985CC  syscall 0x2617
 ```
 
-The hardware words around `+0x66EC` independently decode as `sltiu a0,a0,1`,
-followed by a `-0x10` stack allocation, `and a1,a1,a0`, conditional branch,
-return block, and the generator call/store block. Thus generation occurs only
-when the incoming `a0` is zero and bit 0 of incoming `a1` is set. The function must
-begin at or before `+0x66EC`; the exact entry cannot be proven from the returned
-window because the preceding function boundary was not captured. The neutral
-names are `vsh_shared_state_initializer` (candidate entry `+0x66EC`) and
-`vsh_state_generator_3f970`.
+Consequently `+0x3F970` is a resolved import/syscall stub, not an internal
+generator. Its 29 direct references are consistent with a shared import. The
+neutral name is `vsh_state_source_import`; the runtime syscall number is not an
+import NID and is not used to identify it. The earlier
+`vsh_state_generator_3f970` label and generator-disassembly interpretation are
+withdrawn.
 
-### Read-only capture design
-
-The next build captures `+0x6680..+0x673F` to establish the initializer's exact
-boundary and `+0x3F8F0..+0x3FAEF` to cover the generator and its surrounding
-boundaries. It scans all VSH text for correctly reconstructed direct J/JAL
-references to initializer candidate `+0x66EC` and generator `+0x3F970`.
-Each target retains at most 16 references, JAL before J, with separate total,
-stored, and overflow counts and the existing clamped `-0x30/+0x50` caller
-window. If the wider initializer context proves a different entry, another
-read-only scan—not a behavioral patch—will be required for that corrected
-entry.
-
-The global address is validated against trusted `SceModule2.nsegment`,
-`segmentaddr[]`, and `segmentsize[]` metadata obtained in kernel mode by module
-name and checked against the captured module UID. The complete four-byte range must fit in one of at most four reported
-segments. Only after revalidating immediately in the delayed writer thread is
-its current word read. Failed validation records `segment_valid=0` and performs
-no read. The delayed current value is the preferred non-invasive observation of
-`vsh_state_generator_3f970`'s stored result; no hook or trampoline is installed.
-
-To reduce repetition, all predicate matrix counts remain available, detailed
-caller windows remain limited to the three `+0x6F84` calls, and only the sole
-STORE global window is repeated. The new output is:
+The wider initializer context also corrects its condition:
 
 ```text
-[event] vsh_shared_global_segment_valid result=0x........
-[event] vsh_shared_global_value result=0x........  # only when segment-valid
-[event] vsh_state_initializer_offset result=0x000066EC
++66E0  xori   a1, a1, 0xFFFF
++66E4  xori   a0, a0, 1
++66E8  sltiu  a1, a1, 1
++66EC  sltiu  a0, a0, 1
++66F0  addiu  sp, sp, -0x10
++66F4  and    a1, a1, a0
++66F8  bnez   a1, +670C
++66FC  sw     ra, 0(sp)
+```
+
+The state assignment therefore occurs only when original `a0 == 1` and
+original `a1 == 0x0000FFFF`. The previous `(a0 == 0) && (a1 & 1)` interpretation
+is removed. Because `+0x66D8` is an unconditional backward jump and `+0x66DC`
+is its delay slot, `+0x66E0` is the new strong entry candidate. It is not called
+proven until the full-text scan finds and contextualizes direct callers.
+
+### Validated import-table traversal
+
+The kernel obtains the loaded `vsh_module` by name and checks its module ID and
+text address against the captured values. It accepts `stub_top/stub_size` only
+when the complete range lies in one of the module's at most four trusted
+segments. Each `SceLibraryStubTable` descriptor is first validated far enough
+to read `len`; zero length is rejected. The traversal advances only by
+`len * 4`, requires the descriptor to fit both the declared stub range and a
+trusted segment, and requires enough descriptor bytes to contain `stubtable`.
+
+For each descriptor, the complete `stubcount * 4` NID array and `stubcount * 8`
+function-stub array must fit trusted segments before either is indexed. The
+resolver compares `stubtable + index * 8` with runtime text `+0x3F970`. Only a
+matched entry's library string is read, one validated byte at a time, into a
+fixed 32-byte kernel buffer; absence of a terminator or leaving a segment marks
+the name invalid. No arbitrary-memory structure scan is performed.
+
+A match records raw library, index, NID, stub/NID table addresses, and both stub
+words. It separately reports whether the validated tuple is exactly
+`SysMemForKernel` plus known historical/resolved `sceKernelGetModel` NID
+`0x6373995D` or `0x07C586A1`. Until hardware returns that structural match, the
+model interpretation remains a strong hypothesis rather than proof. The import
+stub is never called or modified.
+
+### Initializer caller scan and concise output
+
+The relocation-safe direct-reference scanner now targets `+0x66E0`, not the
+interior `+0x66EC`. It retains JAL before J, at most 16 records, with explicit
+total/stored/overflow and clamped caller windows for offline `a0/a1` preparation
+analysis. The obsolete 0x200-byte import-stub-table dump and its 29 caller
+windows are removed. Existing predicate matrix counts and the three known
+`+0x6F84` callers remain preserved.
+
+Expected new records are:
+
+```text
+[event] vsh_state_initializer_offset result=0x000066E0
 [event] vsh_state_initializer_refs result=0x........
-[event] vsh_state_generator_offset result=0x0003F970
-[event] vsh_state_generator_refs result=0x........
-[vshstate_window] name=initializer_context ...
-[vshstate_window] name=generator ...
-[vshstate_ref] / [vshstate_refcode] ...
+[event] vsh_state_import_offset result=0x0003F970
+[event] vsh_state_import_match result=0x........
+[event] vsh_state_import_get_model_match result=0x........
+[event] vsh_state_import_library_valid result=0x........
+[event] vsh_state_import_word0 result=0x03E00008
+[event] vsh_state_import_word1 result=0x000985CC
+[vshimport] stub=... offset=0x3F970 library=... index=... nid=... stubtable=... nidtable=...
 ```
 
-There are zero writes to VSH, zero writes to `vsh_shared_state`, no Sony request,
-and no USER allocation. The scanner cannot yet determine whether the generator
-uses model, syscon, motherboard, configuration, or device-presence inputs;
-unknown call targets and imports must be reported by raw address/NID rather than
-named speculatively.
+### Current hypothesis, unknowns, and safety
+
+If structural traversal returns `SysMemForKernel` and `0x07C586A1`, then the
+source is proven to be the firmware-resolved `sceKernelGetModel`, and the
+observed PSP-1000 value 0 plus predicate true set `{4,5,7,9}` strongly supports
+a Go/platform capability classifier. It is not yet proven: the import tuple has
+not been returned, `+0x66E0` callers and their exact arguments are unknown,
+indirect references have not been excluded, and supported-model semantics have
+not been compared.
+
+This change performs zero VSH writes, zero shared-state writes, zero import-stub
+calls, and no Sony request. `vsh_slide_patch=disabled` and
+`vsh_reference_scan=read_only` remain active.
 
 ### One next controlled experiment
 
-Run this read-only build once with `PSP1000SlidePlugin=Enabled`,
-`ClockAndCalendar=Disabled`, and `vsh_slide_patch=disabled`. Return the complete
-unedited state-window/reference records, segment-validation/value events, and
-XMB stability result. Offline analysis must establish the initializer boundary,
-its callers, the generator's complete return paths and calls, and evidence for
-or against hardware/model classification before any behavioral experiment.
+Run once with `PSP1000SlidePlugin=Enabled`, `ClockAndCalendar=Disabled`, and the
+VSH patch disabled. Return the complete unedited `[vshimport]`, import events,
+`+0x66E0` caller windows, and stability result. Resolve the returned raw NID and
+caller argument preparation offline before proposing any behavioral experiment.
+
+### Phase report
+
+- **Files changed:** `kernel/main.c`, this report, the Phase 3 procedure, and
+  `AGENTS.md`.
+- **Technical findings:** hardware proves shared state 0, corrects the
+  initializer condition and candidate entry, and reclassifies `+0x3F970` as an
+  import stub; its library/NID await the new structural capture.
+- **Assumptions:** loaded `SceModule2` segment/import metadata is authoritative
+  only after the implemented module identity and range checks.
+- **Build status:** `./build_linux.sh` was attempted, but this container lacks
+  PSPDEV (`psp-config` and `/lib/build.mak`).
+- **Hardware test required:** the single import-resolution/initializer-caller
+  run above.
+- **Hardware result available:** the prior read-only run booted normally,
+  validated the shared-state segment, and read value 0.
+- **Unresolved questions:** the raw library/NID, proof of `sceKernelGetModel`,
+  `+0x66E0` callers/arguments, and cross-model semantics.
+- **Recommended next phase:** analyze only the returned import tuple and
+  initializer caller windows before designing any behavioral control.

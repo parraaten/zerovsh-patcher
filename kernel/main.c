@@ -97,13 +97,11 @@ static long b_level;
 #define VSH_REFERENCE_WINDOW_WORDS  \
     ((VSH_REFERENCE_WINDOW_BEFORE + VSH_REFERENCE_WINDOW_AFTER) / 4)
 #define VSH_PREDICATE_COUNT 8
-#define VSH_STATE_INITIALIZER_CANDIDATE 0x66EC
-#define VSH_STATE_GENERATOR_OFFSET 0x3F970
+#define VSH_STATE_INITIALIZER_CANDIDATE 0x66E0
+#define VSH_STATE_IMPORT_OFFSET 0x3F970
 #define VSH_STATE_TRACE_LIMIT 16
 #define VSH_INITIALIZER_CAPTURE_START 0x6680
 #define VSH_INITIALIZER_CAPTURE_SIZE 0xC0
-#define VSH_GENERATOR_CAPTURE_START 0x3F8F0
-#define VSH_GENERATOR_CAPTURE_SIZE 0x200
 
 static const unsigned int vsh_predicate_offsets[VSH_PREDICATE_COUNT] = {
     0x6F04, 0x6F44, 0x6F84, 0x6FC4,
@@ -195,16 +193,20 @@ typedef struct {
     ZeroCtrlVshGlobalReference vsh_global_references[VSH_REFERENCE_LIMIT];
     unsigned int vsh_initializer_capture_size;
     unsigned int vsh_initializer_code[VSH_INITIALIZER_CAPTURE_SIZE / 4];
-    unsigned int vsh_generator_capture_size;
-    unsigned int vsh_generator_code[VSH_GENERATOR_CAPTURE_SIZE / 4];
     unsigned int vsh_initializer_reference_total;
     unsigned int vsh_initializer_reference_count;
     unsigned int vsh_initializer_reference_overflow;
     ZeroCtrlVshStateReference vsh_initializer_references[VSH_STATE_TRACE_LIMIT];
-    unsigned int vsh_generator_reference_total;
-    unsigned int vsh_generator_reference_count;
-    unsigned int vsh_generator_reference_overflow;
-    ZeroCtrlVshStateReference vsh_generator_references[VSH_STATE_TRACE_LIMIT];
+    int vsh_state_import_match;
+    int vsh_state_import_library_valid;
+    int vsh_state_import_get_model_match;
+    unsigned int vsh_state_import_stub;
+    unsigned int vsh_state_import_words[2];
+    unsigned int vsh_state_import_nid;
+    unsigned int vsh_state_import_index;
+    unsigned int vsh_state_import_stubtable;
+    unsigned int vsh_state_import_nidtable;
+    char vsh_state_import_library[32];
     unsigned int module_start_addr;
     unsigned int elf_entry_addr;
     unsigned int module_start_original[2];
@@ -378,6 +380,117 @@ static void zeroCtrlDeriveVshSharedGlobal(unsigned int text_addr,
     slide_diag.vsh_shared_global_decode_valid = 1;
 }
 
+static int zeroCtrlVshModuleRangeValid(SceModule2 *mod, unsigned int addr,
+        unsigned int size) {
+    unsigned int i;
+
+    if (!mod || mod->nsegment > 4 || size == 0) return 0;
+    for (i = 0; i < mod->nsegment; i++) {
+        unsigned int start = mod->segmentaddr[i];
+        unsigned int segment_size = mod->segmentsize[i];
+        if (segment_size >= size && addr >= start &&
+                addr - start <= segment_size - size)
+            return 1;
+    }
+    return 0;
+}
+
+static int zeroCtrlCopyVshImportLibrary(SceModule2 *mod, const char *source,
+        char *destination, unsigned int capacity) {
+    unsigned int i;
+
+    if (!source || capacity < 2) return 0;
+    for (i = 0; i < capacity - 1; i++) {
+        unsigned int addr = (unsigned int)source + i;
+        if (addr < (unsigned int)source ||
+                !zeroCtrlVshModuleRangeValid(mod, addr, 1))
+            return 0;
+        destination[i] = *(const volatile char *)addr;
+        if (destination[i] == '\0') return 1;
+    }
+    destination[capacity - 1] = '\0';
+    return 0;
+}
+
+static void zeroCtrlResolveVshStateImport(SceModule2 *mod) {
+    unsigned int table_addr;
+    unsigned int table_size;
+    unsigned int offset = 0;
+    unsigned int target_stub;
+
+    slide_diag.vsh_state_import_match = 0;
+    if (!mod || mod->modid != slide_diag.vsh_modid ||
+            mod->text_addr != slide_diag.vsh_text_addr ||
+            VSH_STATE_IMPORT_OFFSET > mod->text_size ||
+            mod->text_size - VSH_STATE_IMPORT_OFFSET < 8)
+        return;
+    target_stub = mod->text_addr + VSH_STATE_IMPORT_OFFSET;
+    slide_diag.vsh_state_import_stub = target_stub;
+    slide_diag.vsh_state_import_words[0] = _lw(target_stub);
+    slide_diag.vsh_state_import_words[1] = _lw(target_stub + 4);
+    table_addr = (unsigned int)mod->stub_top;
+    table_size = mod->stub_size;
+    if ((table_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(mod, table_addr, table_size)) return;
+
+    while (offset < table_size) {
+        SceLibraryStubTable *entry;
+        unsigned int entry_addr;
+        unsigned int entry_size;
+        unsigned int functions_size;
+        unsigned int nids_size;
+        unsigned int stubtable;
+        unsigned int nidtable;
+        unsigned int i;
+
+        if (table_size - offset < 12 || table_addr + offset < table_addr) return;
+        entry_addr = table_addr + offset;
+        if (!zeroCtrlVshModuleRangeValid(mod, entry_addr, 12)) return;
+        entry = (SceLibraryStubTable *)entry_addr;
+        if (entry->len == 0) return;
+        entry_size = (unsigned int)entry->len * 4;
+        if (entry_size < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                entry_size > table_size - offset ||
+                !zeroCtrlVshModuleRangeValid(mod, entry_addr, entry_size))
+            return;
+        functions_size = (unsigned int)entry->stubcount * 8;
+        nids_size = (unsigned int)entry->stubcount * 4;
+        stubtable = (unsigned int)entry->stubtable;
+        nidtable = (unsigned int)entry->nidtable;
+        if ((stubtable & 3) != 0 || (nidtable & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(mod, nidtable, nids_size) ||
+                !zeroCtrlVshModuleRangeValid(mod, stubtable, functions_size)) {
+            offset += entry_size;
+            continue;
+        }
+        for (i = 0; i < entry->stubcount; i++) {
+            unsigned int function_stub;
+            if (i > (0xFFFFFFFFU - stubtable) / 8) return;
+            function_stub = stubtable + i * 8;
+            if (function_stub != target_stub) continue;
+            slide_diag.vsh_state_import_nid = entry->nidtable[i];
+            slide_diag.vsh_state_import_index = i;
+            slide_diag.vsh_state_import_stubtable =
+                    (unsigned int)entry->stubtable;
+            slide_diag.vsh_state_import_nidtable =
+                    (unsigned int)entry->nidtable;
+            slide_diag.vsh_state_import_library_valid =
+                    zeroCtrlCopyVshImportLibrary(mod, entry->libname,
+                            slide_diag.vsh_state_import_library,
+                            sizeof(slide_diag.vsh_state_import_library));
+            if (slide_diag.vsh_state_import_library_valid &&
+                    strcmp(slide_diag.vsh_state_import_library,
+                        "SysMemForKernel") == 0 &&
+                    (slide_diag.vsh_state_import_nid == 0x07C586A1 ||
+                     slide_diag.vsh_state_import_nid == 0x6373995D))
+                slide_diag.vsh_state_import_get_model_match = 1;
+            slide_diag.vsh_state_import_match = 1;
+            return;
+        }
+        offset += entry_size;
+    }
+}
+
 static void zeroCtrlValidateVshSharedGlobalSegment(int modid,
         unsigned int text_addr) {
     SceModule2 *mod = sceKernelFindModuleByName("vsh_module");
@@ -507,6 +620,8 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
             }
             zeroCtrlDeriveVshSharedGlobal(text_addr, text_size, target_offset);
             zeroCtrlValidateVshSharedGlobalSegment(modid, text_addr);
+            zeroCtrlResolveVshStateImport(
+                    sceKernelFindModuleByName("vsh_module"));
             zeroCtrlScanVshDirectReferences(text_addr, text_size);
             zeroCtrlScanVshGlobalReferences(text_addr, text_size);
             zeroCtrlCaptureVshFixedWindow(text_addr, text_size,
@@ -514,22 +629,12 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                     VSH_INITIALIZER_CAPTURE_SIZE,
                     &slide_diag.vsh_initializer_capture_size,
                     slide_diag.vsh_initializer_code);
-            zeroCtrlCaptureVshFixedWindow(text_addr, text_size,
-                    VSH_GENERATOR_CAPTURE_START, VSH_GENERATOR_CAPTURE_SIZE,
-                    &slide_diag.vsh_generator_capture_size,
-                    slide_diag.vsh_generator_code);
             zeroCtrlScanVshStateTarget(text_addr, text_size,
                     VSH_STATE_INITIALIZER_CANDIDATE,
                     &slide_diag.vsh_initializer_reference_total,
                     &slide_diag.vsh_initializer_reference_count,
                     &slide_diag.vsh_initializer_reference_overflow,
                     slide_diag.vsh_initializer_references);
-            zeroCtrlScanVshStateTarget(text_addr, text_size,
-                    VSH_STATE_GENERATOR_OFFSET,
-                    &slide_diag.vsh_generator_reference_total,
-                    &slide_diag.vsh_generator_reference_count,
-                    &slide_diag.vsh_generator_reference_overflow,
-                    slide_diag.vsh_generator_references);
             slide_diag.vsh_code_capture_result = 0;
         }
     }
@@ -1053,7 +1158,7 @@ static void zeroCtrlCaptureVshSharedGlobalValue(void) {
 static void zeroCtrlWriteVshStateReferences(const char *name,
         unsigned int target_offset, unsigned int total, unsigned int stored,
         unsigned int overflow, ZeroCtrlVshStateReference *references) {
-    char line[160];
+    char line[224];
     unsigned int i;
     unsigned int j;
 
@@ -1098,7 +1203,7 @@ static void zeroCtrlWriteVshFixedCode(const char *name, unsigned int start,
 static void zeroCtrlWriteVshSlideEvidence(void) {
     unsigned int i;
     unsigned int j;
-    char line[160];
+    char line[224];
 
     if (!slide_diag.vsh_module_seen) return;
     zeroCtrlCaptureVshSharedGlobalValue();
@@ -1203,28 +1308,40 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
             VSH_STATE_INITIALIZER_CANDIDATE);
     zeroCtrlDiagnosticsEvent("vsh_state_initializer_refs",
             slide_diag.vsh_initializer_reference_total);
-    zeroCtrlDiagnosticsEvent("vsh_state_generator_offset",
-            VSH_STATE_GENERATOR_OFFSET);
-    zeroCtrlDiagnosticsEvent("vsh_state_generator_refs",
-            slide_diag.vsh_generator_reference_total);
+    zeroCtrlDiagnosticsEvent("vsh_state_import_offset",
+            VSH_STATE_IMPORT_OFFSET);
+    zeroCtrlDiagnosticsEvent("vsh_state_import_match",
+            slide_diag.vsh_state_import_match);
+    zeroCtrlDiagnosticsEvent("vsh_state_import_get_model_match",
+            slide_diag.vsh_state_import_get_model_match);
+    zeroCtrlDiagnosticsEvent("vsh_state_import_library_valid",
+            slide_diag.vsh_state_import_library_valid);
+    zeroCtrlDiagnosticsEvent("vsh_state_import_word0",
+            slide_diag.vsh_state_import_words[0]);
+    zeroCtrlDiagnosticsEvent("vsh_state_import_word1",
+            slide_diag.vsh_state_import_words[1]);
+    if (slide_diag.vsh_state_import_match) {
+        snprintf(line, sizeof(line),
+                "[vshimport] stub=0x%08X offset=0x%05X library=%s index=%u nid=0x%08X stubtable=0x%08X nidtable=0x%08X\n",
+                slide_diag.vsh_state_import_stub, VSH_STATE_IMPORT_OFFSET,
+                slide_diag.vsh_state_import_library_valid ?
+                    slide_diag.vsh_state_import_library : "<invalid>",
+                slide_diag.vsh_state_import_index,
+                slide_diag.vsh_state_import_nid,
+                slide_diag.vsh_state_import_stubtable,
+                slide_diag.vsh_state_import_nidtable);
+        zeroCtrlDiagnosticsText(line);
+    }
     zeroCtrlWriteVshFixedCode("initializer_context",
             VSH_INITIALIZER_CAPTURE_START,
             slide_diag.vsh_initializer_capture_size,
             slide_diag.vsh_initializer_code);
-    zeroCtrlWriteVshFixedCode("generator", VSH_GENERATOR_CAPTURE_START,
-            slide_diag.vsh_generator_capture_size,
-            slide_diag.vsh_generator_code);
     zeroCtrlWriteVshStateReferences("initializer_candidate",
             VSH_STATE_INITIALIZER_CANDIDATE,
             slide_diag.vsh_initializer_reference_total,
             slide_diag.vsh_initializer_reference_count,
             slide_diag.vsh_initializer_reference_overflow,
             slide_diag.vsh_initializer_references);
-    zeroCtrlWriteVshStateReferences("generator", VSH_STATE_GENERATOR_OFFSET,
-            slide_diag.vsh_generator_reference_total,
-            slide_diag.vsh_generator_reference_count,
-            slide_diag.vsh_generator_reference_overflow,
-            slide_diag.vsh_generator_references);
 }
 
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
@@ -1698,6 +1815,7 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 				"[experiment] vsh_slide_patch=disabled\n"
 				"[experiment] vsh_reference_scan=read_only\n"
 				"[experiment] vsh_direct_windows=predicate_6f84_only\n"
+				"[experiment] vsh_state_import_resolution=read_only\n"
 				"[experiment] button_thread=disabled\n");
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");
