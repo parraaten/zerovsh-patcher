@@ -63,8 +63,6 @@ modules g_modules_mod[] = {
 const char *exts[] = { ".rco", ".pmf", ".bmp", ".pgf", ".prx", ".dat" };
 
 int model;
-int devkit;
-int vshLoaderResolved;
 
 PspIoDrv *lflash;
 PspIoDrv *fatms;
@@ -516,14 +514,8 @@ int zeroCtrlLoadStartModule(SceSize args UNUSED, void *argp UNUSED) {
 		sceKernelDelayThread(100000);
 		wait_iterations++;
 	} while(!sceKernelFindModuleByName("sceKernelLibrary"));
-	if (model == 0 &&
-			(devkit == 0x06060010 || devkit == 0x06060110)) {
-		modid = vshLoaderResolved ? sceKernelLoadModuleBufferVSH(
-				size_zerovsh_user_module, zerovsh_user_module, 0, NULL) : -1;
-	} else {
-		modid = sceKernelLoadModuleBuffer(
-				size_zerovsh_user_module, zerovsh_user_module, 0, NULL);
-	}
+	modid = sceKernelLoadModuleBuffer(
+			size_zerovsh_user_module, zerovsh_user_module, 0, NULL);
 	if (model == 0) {
 		zeroCtrlDiagnosticsCapturePartitions(&after_load);
 	}
@@ -535,14 +527,8 @@ int zeroCtrlLoadStartModule(SceSize args UNUSED, void *argp UNUSED) {
 	}
 
 	zeroCtrlDiagnosticsLoaderControl(wait_iterations);
-	zeroCtrlDiagnosticsLoaderApiControl();
-	zeroCtrlDiagnosticsModuleAttrControl();
-	zeroCtrlDiagnosticsEvent("vsh_loader_resolve", vshLoaderResolved);
 	if (modid >= 0) {
 		zeroCtrlDiagnosticsStartControl();
-#ifdef ZEROCTRL_PSP1000_NOOP_USER_START_CONTROL
-		zeroCtrlDiagnosticsUserStartControl();
-#endif
 	}
 	zeroCtrlDiagnosticsEvent("user_module_load", modid);
 	if (model == 0) {
@@ -772,6 +758,7 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	unsigned int startup_largest;
 	int module_hooked;
 	int driver_hooked;
+	unsigned int devkit;
 
 	model = sceKernelGetModel();
 	devkit = sceKernelDevkitVersion();
@@ -785,7 +772,6 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	zeroCtrlWriteDebug("[--- Full version ---]\n\n");
 
 	zeroCtrlResolveNids();
-	vshLoaderResolved = (model == 0) ? zeroCtrlResolveVshLoader() : 0;
 
 	const char *config = (model == 4) ? "ef0:/seplugins/zerovsh.ini" : "ms0:/seplugins/zerovsh.ini";
 

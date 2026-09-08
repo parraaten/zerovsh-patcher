@@ -179,12 +179,12 @@ work.
   alignment to 64 placed it at 0x4EC0 and the unchanged loader succeeded with
   module ID 0x045A4437. The loader's documented 64-byte buffer alignment is
   therefore a verified build requirement, now enforced by the Linux build.
-- The aligned successful load reduced USER free memory from 23,128,832 to
-  23,126,016 bytes: `0xB00` (2,816 bytes). Module metadata reported attribute
-  0x0007, `mpid_text=2`, `mpid_data=2`, text=2,360, data=0, BSS=20, one segment
-  of 2,756 bytes. The resident load cost closely matches the segment plus small
-  alignment/loader overhead; `sceKernelLoadModuleBuffer()` does not consume
-  roughly 18 MiB.
+- Cross-run free-memory values differed by `0xB00` (2,816 bytes), but VSH timing
+  makes that unsuitable as an exact loader-overhead measurement. Module
+  metadata is authoritative for the helper's intrinsic size: attribute 0x0007,
+  `mpid_text=2`, `mpid_data=2`, text=2,360, data=0, BSS=20, and one 2,756-byte
+  segment. The helper is only a few KiB, and `sceKernelLoadModuleBuffer()` does
+  not consume roughly 18 MiB.
 - The same run later measured 3,693,824 USER bytes free after module start, a
   `0x01288300` (19,432,192-byte, about 18.53 MiB) transition from the post-load
   capture. USER/PID 2 remained 25,165,824 bytes total and PID 5 remained a free
@@ -229,17 +229,12 @@ work.
   `[experiment] module_attr_control=vsh_0x0807` after applicable snapshots.
   With the ordinary loader it produced `SCE_KERNEL_ERROR_ILLEGAL_PERM`,
   justifying the separately controlled VSH-loader experiment below.
-- The current loader-API control keeps 0x0807 and the no-op start unchanged but
-  switches only the tested PSP-1000 6.60/6.61 path to the historical
-  `sceKernelLoadModuleBufferVSH` signature. Its historical NID is 0xF0CAC59E;
-  the verified 6.60/6.61 resolved NID is 0xC6DE0B9C. Resolution is explicitly
-  gated to devkits 0x06060010 and 0x06060110, with no guessed older mappings;
-  other models/firmware retain the ordinary buffer loader.
-- Diagnostics emit `[experiment] loader_api_control=buffer_vsh` only after the
-  post-load snapshot, including on a negative result. A failed resolution is
-  also recorded and prevents calling a null/unresolved function. The VSH loader
-  is an A/B hypothesis, not an assumed fix: success must still be evaluated for
-  the exact `0x01220000` post-start reservation.
+- The subsequent 0x0807 VSH-loader control successfully resolved historical
+  `sceKernelLoadModuleBufferVSH` (historical NID 0xF0CAC59E; resolved 6.60/6.61
+  NID 0xC6DE0B9C) but loading returned `0x80020149`
+  (`SCE_KERNEL_ERROR_ILLEGAL_PERM_CALL`). Like the ordinary-loader 0x0807 test,
+  it never reached module start and therefore did not measure start memory.
+  Further VSH loader/API/thread-attribute permutations are outside Phase 2.
 - As supporting context only, modern ARK-style implementations of
   `sctrlHENSetStartModuleHandler()` replace a stored handler pointer and return
   the previous pointer, making a direct 18 MiB allocation there appear
@@ -248,13 +243,14 @@ work.
 
 ## Current experimental state
 
-Phase 2 adds diagnostics, retains the temporary compile-time no-op user-start
-control and 0x0807 classification, and currently performs a 6.60/6.61
-VSH-buffer-loader A/B test, plus one bounded configuration-buffer fix.
+Phase 2 restores the functional 0x0007 helper, ordinary buffer loader, and
+original helper `module_start`, while retaining diagnostics, the bounded
+configuration-buffer fix, and permanent 64-byte embedded-buffer alignment.
 PSP-1000 remains excluded by the existing kernel and user model checks; its
 SlidePlugin is intentionally locked. No PSP-1000 SlidePlugin support or
-firmware patch is enabled, and diagnostic usefulness/stability still requires
-real-hardware verification.
+firmware patch is enabled. The full audit and Phase 3 plan are maintained in
+`docs/phase2-final-report.md`; a restored-baseline PSPDEV build and PSP-1000
+smoke test are the final external validation steps.
 
 ## Hardware testing workflow
 

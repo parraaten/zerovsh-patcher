@@ -106,21 +106,6 @@ void zeroCtrlDiagnosticsStartControl(void)
     zeroCtrlDiagnosticsWrite("[experiment] start_control=deferred_logging\n");
 }
 
-void zeroCtrlDiagnosticsUserStartControl(void)
-{
-    zeroCtrlDiagnosticsWrite("[experiment] user_start_control=noop\n");
-}
-
-void zeroCtrlDiagnosticsModuleAttrControl(void)
-{
-    zeroCtrlDiagnosticsWrite("[experiment] module_attr_control=vsh_0x0807\n");
-}
-
-void zeroCtrlDiagnosticsLoaderApiControl(void)
-{
-    zeroCtrlDiagnosticsWrite("[experiment] loader_api_control=buffer_vsh\n");
-}
-
 void zeroCtrlDiagnosticsMemory(const char *event)
 {
     char line[160];

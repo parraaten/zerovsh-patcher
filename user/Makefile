@@ -3,8 +3,7 @@ OBJS = main.o import.o stub.o
 
 INCDIR =
 EXTRA_WARNS= -Wextra -Wfloat-equal -Wundef -Wshadow -Wpointer-arith -Wwrite-strings -Wunreachable-code
-CFLAGS = -O2 -G0 -Wall -std=c99 $(EXTRA_WARNS) \
-	-DZEROCTRL_PSP1000_NOOP_USER_START_CONTROL
+CFLAGS = -O2 -G0 -Wall -std=c99 $(EXTRA_WARNS)
 
 ASFLAGS = $(CFLAGS)
 
