@@ -23,13 +23,32 @@
 #include "psploadcore.h"
 
 #define ZEROCTRL_DIAGNOSTIC_PATH "ms0:/zerovsh_psp1000.log"
+#define ZEROCTRL_PARTITION_COUNT 8
+
+typedef struct {
+    int valid;
+    int pid;
+    unsigned int startaddr;
+    unsigned int memsize;
+    unsigned int attr;
+    unsigned int total_free;
+    unsigned int largest_block;
+} ZeroCtrlPartitionEntry;
+
+typedef struct {
+    unsigned int user_total_free;
+    unsigned int user_largest_block;
+    ZeroCtrlPartitionEntry entries[ZEROCTRL_PARTITION_COUNT];
+} ZeroCtrlPartitionSnapshot;
 
 void zeroCtrlDiagnosticsInit(int model, unsigned int devkit,
         const char *clock_and_calendar, const char *redir_path,
         unsigned int startup_total, unsigned int startup_largest);
 void zeroCtrlDiagnosticsEvent(const char *event, int result);
 void zeroCtrlDiagnosticsMemory(const char *event);
-void zeroCtrlDiagnosticsPartitions(const char *event);
+void zeroCtrlDiagnosticsCapturePartitions(ZeroCtrlPartitionSnapshot *snapshot);
+void zeroCtrlDiagnosticsWritePartitions(const char *event,
+        const ZeroCtrlPartitionSnapshot *snapshot);
 void zeroCtrlDiagnosticsModule(const SceModule2 *module);
 
 #ifdef DEBUG

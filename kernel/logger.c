@@ -107,33 +107,69 @@ void zeroCtrlDiagnosticsMemory(const char *event)
     zeroCtrlDiagnosticsWrite(line);
 }
 
-void zeroCtrlDiagnosticsPartitions(const char *event)
+void zeroCtrlDiagnosticsCapturePartitions(ZeroCtrlPartitionSnapshot *snapshot)
 {
     PspSysmemPartitionInfo info;
-    char line[192];
     int pid;
+    ZeroCtrlPartitionEntry *entry;
 
-    if (!diagnostics_enabled) {
+    if (!snapshot) {
         return;
     }
+
+    memset(snapshot, 0, sizeof(*snapshot));
+    snapshot->user_total_free = sceKernelPartitionTotalFreeMemSize(
+            PSP_MEMORY_PARTITION_USER);
+    snapshot->user_largest_block = sceKernelPartitionMaxFreeMemSize(
+            PSP_MEMORY_PARTITION_USER);
 
     /* PSP system-memory partition IDs occupy this small range.  Querying is
      * authoritative: holes and partitions unavailable in this context are
      * omitted rather than treated as valid. */
-    for (pid = 1; pid <= 8; pid++) {
+    for (pid = 1; pid <= ZEROCTRL_PARTITION_COUNT; pid++) {
         memset(&info, 0, sizeof(info));
         info.size = sizeof(info);
         if (sceKernelQueryMemoryPartitionInfo(pid, &info) < 0) {
             continue;
         }
 
+        entry = &snapshot->entries[pid - 1];
+        entry->valid = 1;
+        entry->pid = pid;
+        entry->startaddr = (unsigned int)info.startaddr;
+        entry->memsize = (unsigned int)info.memsize;
+        entry->attr = (unsigned int)info.attr;
+        entry->total_free = sceKernelPartitionTotalFreeMemSize(pid);
+        entry->largest_block = sceKernelPartitionMaxFreeMemSize(pid);
+    }
+}
+
+void zeroCtrlDiagnosticsWritePartitions(const char *event,
+        const ZeroCtrlPartitionSnapshot *snapshot)
+{
+    char line[192];
+    int i;
+    const ZeroCtrlPartitionEntry *entry;
+
+    if (!diagnostics_enabled || !snapshot) {
+        return;
+    }
+
+    snprintf(line, sizeof(line),
+            "[mem] %s total_free=%u largest_block=%u\n", event,
+            snapshot->user_total_free, snapshot->user_largest_block);
+    zeroCtrlDiagnosticsWrite(line);
+
+    for (i = 0; i < ZEROCTRL_PARTITION_COUNT; i++) {
+        entry = &snapshot->entries[i];
+        if (!entry->valid) {
+            continue;
+        }
         snprintf(line, sizeof(line),
                 "[partition] %s pid=%d start=0x%08X size=%u attr=0x%08X "
                 "total_free=%u largest_block=%u\n",
-                event, pid, (unsigned int)info.startaddr,
-                (unsigned int)info.memsize, (unsigned int)info.attr,
-                (unsigned int)sceKernelPartitionTotalFreeMemSize(pid),
-                (unsigned int)sceKernelPartitionMaxFreeMemSize(pid));
+                event, entry->pid, entry->startaddr, entry->memsize,
+                entry->attr, entry->total_free, entry->largest_block);
         zeroCtrlDiagnosticsWrite(line);
     }
 }
@@ -157,17 +193,22 @@ void zeroCtrlDiagnosticsModule(const SceModule2 *module)
             "[module] modid=0x%08X name=%.27s attr=0x%04X mpid_text=%u "
             "mpid_data=%u text=%u data=%u bss=%u nsegment=%u\n",
             (unsigned int)module->modid, module->modname,
-            (unsigned int)module->attribute, module->mpid_text,
-            module->mpid_data, module->text_size, module->data_size,
-            module->bss_size, module->nsegment);
+            (unsigned int)module->attribute,
+            (unsigned int)module->mpid_text,
+            (unsigned int)module->mpid_data,
+            (unsigned int)module->text_size,
+            (unsigned int)module->data_size,
+            (unsigned int)module->bss_size,
+            (unsigned int)module->nsegment);
     zeroCtrlDiagnosticsWrite(line);
 
     segments = module->nsegment < 4 ? module->nsegment : 4;
     for (i = 0; i < segments; i++) {
         snprintf(line, sizeof(line),
                 "[segment] modid=0x%08X index=%u addr=0x%08X size=%u\n",
-                (unsigned int)module->modid, i, module->segmentaddr[i],
-                module->segmentsize[i]);
+                (unsigned int)module->modid, i,
+                (unsigned int)module->segmentaddr[i],
+                (unsigned int)module->segmentsize[i]);
         zeroCtrlDiagnosticsWrite(line);
     }
 }

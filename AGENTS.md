@@ -105,11 +105,14 @@ work.
   human-readable model, devkit, ClockAndCalendar value, redirection path, and
   locked SlidePlugin state. It then uses `[mem] <stage> total_free=<bytes>
   largest_block=<bytes>` and `[event] <operation> result=0x<code>` records.
-- Full partition snapshots are taken only before the embedded user-module
-  load, after a successful load, and after its start attempt. Valid partitions
-  in the PSP system-memory ID range are identified by a successful
-  `sceKernelQueryMemoryPartitionInfo()` call and logged with start address,
-  partition size, attributes, total free memory, and largest free block.
+- Full partition snapshots are captured in memory immediately before and after
+  the embedded user-module load regardless of its result, and after a start
+  attempt following a successful load. Pre-load details are not written until
+  the post-load snapshot is safe in memory, minimizing file-I/O and timing
+  interference around the loader call. Valid partitions in the PSP
+  system-memory ID range are identified by a successful
+  `sceKernelQueryMemoryPartitionInfo()` call and later written with start
+  address, partition size, attributes, total free memory, and largest block.
 - After a successful load, the existing LoadCore `SceModule2` definition and
   `sceKernelFindModuleByName()` are used to log the verified module fields:
   module ID/name, attributes, text/data partition IDs, text/data/BSS sizes, and
@@ -140,6 +143,21 @@ work.
   NID `0xF0CAC59E`. Its signature, 6.60/6.61 NID behavior, partition semantics,
   and suitability for this resolver remain research questions. Do not change
   the loader or perform an A/B test until the new hardware evidence is reviewed.
+- Phase 2.5 successfully enumerated the real PSP-1000 partition map before a
+  load: PID 2 reported the 25,165,824-byte (24 MiB) USER region at 0x08800000,
+  PID 6 mirrored that region, PIDs 1 and 3 mirrored the 3 MiB kernel region,
+  and PID 5 was a separate 4 MiB region at 0x08400000.
+- That test's module load failed with `0x80020148`
+  (`SCE_KERNEL_ERROR_UNSUPPORTED_PRX_TYPE`) yet still reduced USER free memory
+  from 23,177,728 to 4,139,520 bytes: exactly `0x01228000` (19,038,208 bytes).
+  Earlier successful loads reduced it by `0x01228B00` (19,041,024 bytes), a
+  difference of `0xB00` (2,816 bytes), close to the tiny module's loadable
+  footprint and plausible alignment/metadata overhead. This is a strong
+  hypothesis, not proof of the allocation mechanism.
+- The cause of `0x80020148` is unknown. Diagnostic file I/O is not established
+  as its cause. The old success-gated instrumentation left the post-failure
+  partition map unknown; the capture-before-write design now collects that map
+  even when loading fails.
 
 ## Current experimental state
 
