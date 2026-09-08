@@ -146,8 +146,10 @@ work.
   remain unverified hypotheses pending the new partition/module metadata log.
 - The embedded module historically used `0x0007`, comprising the no-stop,
   single-load, and single-start low bits. The current attribute-only A/B test
-  adds the historical VSH classification bit and uses `0x0807`; its effect is
-  not known until real-hardware results are collected.
+  added the historical VSH classification bit and used `0x0807`. The ordinary
+  buffer loader rejected that combination with `0x800200D1`
+  (`SCE_KERNEL_ERROR_ILLEGAL_PERM`) before module start, so it could not test
+  0x0807 start-memory behavior.
 - The project's ModuleMgr header documents VSH API type `0x20` and a path-based
   `sceKernelLoadModuleVSH()`, but does not expose the historical buffer-loader
   NID `0xF0CAC59E`. Its signature, 6.60/6.61 NID behavior, partition semantics,
@@ -222,15 +224,22 @@ work.
 - ModuleMgr/CFW start or classification semantics are now the leading area of
   investigation. Historical PSP/M33 and modern implementation documentation
   associate 0x0000 with USER, 0x0800 with VSH, and 0x1000 with KERNEL module
-  classification. The current single-variable experiment changes only the
-  helper's attribute from 0x0007 to 0x0807, retains the no-op start, and emits
+  classification. The completed attribute-only experiment changed only the
+  helper's attribute from 0x0007 to 0x0807, retained the no-op start, and emitted
   `[experiment] module_attr_control=vsh_0x0807` after applicable snapshots.
-  Loader, API type, start call, and main-thread attributes remain unchanged.
-- If 0x0807 loads and starts without `0x01220000`, classification is strongly
-  implicated and the result must be reproduced before SlidePlugin work. A
-  loader rejection instead supports a separately reviewed API-type experiment;
-  a successful start with the same delta shows the VSH bit alone is
-  insufficient. No alternative loader is part of this control.
+  With the ordinary loader it produced `SCE_KERNEL_ERROR_ILLEGAL_PERM`,
+  justifying the separately controlled VSH-loader experiment below.
+- The current loader-API control keeps 0x0807 and the no-op start unchanged but
+  switches only the tested PSP-1000 6.60/6.61 path to the historical
+  `sceKernelLoadModuleBufferVSH` signature. Its historical NID is 0xF0CAC59E;
+  the verified 6.60/6.61 resolved NID is 0xC6DE0B9C. Resolution is explicitly
+  gated to devkits 0x06060010 and 0x06060110, with no guessed older mappings;
+  other models/firmware retain the ordinary buffer loader.
+- Diagnostics emit `[experiment] loader_api_control=buffer_vsh` only after the
+  post-load snapshot, including on a negative result. A failed resolution is
+  also recorded and prevents calling a null/unresolved function. The VSH loader
+  is an A/B hypothesis, not an assumed fix: success must still be evaluated for
+  the exact `0x01220000` post-start reservation.
 - As supporting context only, modern ARK-style implementations of
   `sctrlHENSetStartModuleHandler()` replace a stored handler pointer and return
   the previous pointer, making a direct 18 MiB allocation there appear
@@ -240,8 +249,8 @@ work.
 ## Current experimental state
 
 Phase 2 adds diagnostics, retains the temporary compile-time no-op user-start
-control, and currently performs an attribute-only 0x0007-to-0x0807 A/B test,
-plus one bounded configuration-buffer fix.
+control and 0x0807 classification, and currently performs a 6.60/6.61
+VSH-buffer-loader A/B test, plus one bounded configuration-buffer fix.
 PSP-1000 remains excluded by the existing kernel and user model checks; its
 SlidePlugin is intentionally locked. No PSP-1000 SlidePlugin support or
 firmware patch is enabled, and diagnostic usefulness/stability still requires

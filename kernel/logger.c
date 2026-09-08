@@ -116,6 +116,11 @@ void zeroCtrlDiagnosticsModuleAttrControl(void)
     zeroCtrlDiagnosticsWrite("[experiment] module_attr_control=vsh_0x0807\n");
 }
 
+void zeroCtrlDiagnosticsLoaderApiControl(void)
+{
+    zeroCtrlDiagnosticsWrite("[experiment] loader_api_control=buffer_vsh\n");
+}
+
 void zeroCtrlDiagnosticsMemory(const char *event)
 {
     char line[160];

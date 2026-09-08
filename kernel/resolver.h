@@ -19,6 +19,7 @@
 #define RESOLVER_H_
 
 #include <psptypes.h>
+#include <pspmodulemgr.h>
 
 #define ITEMSOF(arr) (int)(sizeof(arr) / sizeof(0[arr]))
 
@@ -40,6 +41,12 @@ typedef struct {
 
 extern u32 moduleprobe_nid;
 
+/* Historical NID 0xF0CAC59E; resolved as 0xC6DE0B9C on 6.60/6.61. */
+typedef SceUID (*ZeroCtrlLoadModuleBufferVSH)(SceSize bufsize, void *buf,
+        int flags, SceKernelLMOption *option);
+extern ZeroCtrlLoadModuleBufferVSH sceKernelLoadModuleBufferVSH;
+
 void zeroCtrlResolveNids(void);
+int zeroCtrlResolveVshLoader(void);
 
 #endif /* RESOLVER_H_ */

@@ -33,6 +33,11 @@ unsigned int sceKernelQuerySystemCall(void * function);
 
 u32 moduleprobe_nid;
 
+#define NID_LOAD_MODULE_BUFFER_VSH_HISTORICAL 0xF0CAC59E
+#define NID_LOAD_MODULE_BUFFER_VSH_660 0xC6DE0B9C
+
+ZeroCtrlLoadModuleBufferVSH sceKernelLoadModuleBufferVSH = NULL;
+
 nid nids[] =
 {
     {
@@ -160,4 +165,20 @@ void zeroCtrlResolveNids(void) {
     	sceKernelDcacheWritebackInvalidateRange((const void *)nids[i].stub, 8);
     	sceKernelIcacheInvalidateRange((const void *)nids[i].stub, 8);
     }
+}
+
+int zeroCtrlResolveVshLoader(void)
+{
+    int fw_version = sceKernelDevkitVersion();
+
+    /* The historical NID is recorded above for provenance. No older firmware
+     * mappings are guessed for this explicitly 6.60/6.61-only experiment. */
+    if (fw_version != 0x06060010 && fw_version != 0x06060110) {
+        return 0;
+    }
+
+    sceKernelLoadModuleBufferVSH = (ZeroCtrlLoadModuleBufferVSH)
+            sctrlHENFindFunction("sceModuleManager", "ModuleMgrForKernel",
+                NID_LOAD_MODULE_BUFFER_VSH_660);
+    return sceKernelLoadModuleBufferVSH != NULL;
 }
