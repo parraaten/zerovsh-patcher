@@ -504,20 +504,20 @@ int OnModuleStart(SceModule2 *mod) {
 int zeroCtrlLoadStartModule(SceSize args UNUSED, void *argp UNUSED) {	
 	SceUID modid;
 	int start_result;
-	ZeroCtrlPartitionSnapshot before_load;
+	int wait_iterations = 0;
 	ZeroCtrlPartitionSnapshot after_load;
 	
 	//zeroCtrlWriteDebug("Thread\n");
 	
-	do {	sceKernelDelayThread(100000); } while(!sceKernelFindModuleByName("sceKernelLibrary"));	
-	if (model == 0) {
-		zeroCtrlDiagnosticsCapturePartitions(&before_load);
-	}
+	do {
+		sceKernelDelayThread(100000);
+		wait_iterations++;
+	} while(!sceKernelFindModuleByName("sceKernelLibrary"));
 	modid = sceKernelLoadModuleBuffer(size_zerovsh_user_module, zerovsh_user_module, 0, NULL);
 	if (model == 0) {
 		zeroCtrlDiagnosticsCapturePartitions(&after_load);
-		zeroCtrlDiagnosticsWritePartitions("before_user_module_load", &before_load);
 	}
+	zeroCtrlDiagnosticsLoaderControl(wait_iterations);
 	zeroCtrlDiagnosticsEvent("user_module_load", modid);
 	if (model == 0) {
 		zeroCtrlDiagnosticsWritePartitions("after_user_module_load", &after_load);

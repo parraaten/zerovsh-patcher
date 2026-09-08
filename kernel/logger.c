@@ -90,6 +90,17 @@ void zeroCtrlDiagnosticsEvent(const char *event, int result)
     zeroCtrlDiagnosticsWrite(line);
 }
 
+void zeroCtrlDiagnosticsLoaderControl(int wait_iterations)
+{
+    char line[128];
+
+    snprintf(line, sizeof(line),
+            "[experiment] loader_control=no_preload_diagnostics\n"
+            "[event] user_module_wait_iterations result=%d\n",
+            wait_iterations);
+    zeroCtrlDiagnosticsWrite(line);
+}
+
 void zeroCtrlDiagnosticsMemory(const char *event)
 {
     char line[160];

@@ -105,12 +105,13 @@ work.
   human-readable model, devkit, ClockAndCalendar value, redirection path, and
   locked SlidePlugin state. It then uses `[mem] <stage> total_free=<bytes>
   largest_block=<bytes>` and `[event] <operation> result=0x<code>` records.
-- Full partition snapshots are captured in memory immediately before and after
-  the embedded user-module load regardless of its result, and after a start
-  attempt following a successful load. Pre-load details are not written until
-  the post-load snapshot is safe in memory, minimizing file-I/O and timing
-  interference around the loader call. Valid partitions in the PSP
-  system-memory ID range are identified by a successful
+- The current loader-control experiment deliberately performs no diagnostic
+  calls after `sceKernelLibrary` is detected and before
+  `sceKernelLoadModuleBuffer()`. It captures a partition snapshot immediately
+  after the loader returns, for both success and failure, then writes the
+  experiment marker, wait-loop count, result, and snapshot. A post-start
+  snapshot remains available after successful loading. Valid partitions in the
+  PSP system-memory ID range are identified by a successful
   `sceKernelQueryMemoryPartitionInfo()` call and later written with start
   address, partition size, attributes, total free memory, and largest block.
 - After a successful load, the existing LoadCore `SceModule2` definition and
@@ -120,9 +121,11 @@ work.
 
 ## Phase 2 hardware evidence
 
-- Multiple clean real PSP-1000 tests measured 23,177,984 bytes free immediately
-  before `sceKernelLoadModuleBuffer()` and 4,136,960 bytes immediately after.
-  The exact, reproducible reduction is 19,041,024 bytes (about 18.16 MiB).
+- Multiple earlier real PSP-1000 logs recorded 23,177,984 bytes at the
+  pre-load-labelled stage and 4,136,960 bytes at the post-load-labelled stage,
+  a reproducible 19,041,024-byte difference (about 18.16 MiB). Those stages
+  enclosed diagnostic calls and VSH scheduling, so they did not isolate the
+  loader call and must not be interpreted as direct loader consumption.
 - Disabling other VSH plugins and disabling Inferno Cache did not remove the
   reduction. The PSP-1000 remained stable in these tests.
 - Clean runs consistently had `total_free == largest_block` both before and
@@ -147,17 +150,26 @@ work.
   load: PID 2 reported the 25,165,824-byte (24 MiB) USER region at 0x08800000,
   PID 6 mirrored that region, PIDs 1 and 3 mirrored the 3 MiB kernel region,
   and PID 5 was a separate 4 MiB region at 0x08400000.
-- That test's module load failed with `0x80020148`
-  (`SCE_KERNEL_ERROR_UNSUPPORTED_PRX_TYPE`) yet still reduced USER free memory
-  from 23,177,728 to 4,139,520 bytes: exactly `0x01228000` (19,038,208 bytes).
-  Earlier successful loads reduced it by `0x01228B00` (19,041,024 bytes), a
-  difference of `0xB00` (2,816 bytes), close to the tiny module's loadable
-  footprint and plausible alignment/metadata overhead. This is a strong
-  hypothesis, not proof of the allocation mechanism.
-- The cause of `0x80020148` is unknown. Diagnostic file I/O is not established
-  as its cause. The old success-gated instrumentation left the post-failure
-  partition map unknown; the capture-before-write design now collects that map
-  even when loading fails.
+- An earlier broad measurement interval paired a failed `0x80020148` load
+  (`SCE_KERNEL_ERROR_UNSUPPORTED_PRX_TYPE`) with a `0x01228000` USER-memory
+  reduction, versus `0x01228B00` on earlier successful runs. That reduction can
+  no longer be attributed directly to the loader because the interval included
+  diagnostic work and VSH scheduling before the loader call.
+- Deferred-write hardware diagnostics subsequently measured USER/PID 2 as
+  25,165,824 bytes total and 23,128,832 bytes free immediately before the load.
+  The load returned `0x80020148`; immediately afterward USER remained exactly
+  25,165,824 bytes total and 23,128,832 bytes free. The loader-call delta was
+  therefore zero bytes, and all successfully queried metadata for PIDs 1-6 was
+  unchanged.
+- Direct roughly 18 MiB consumption by `sceKernelLoadModuleBuffer()` is not
+  supported by the latest evidence. The previous reduction occurred somewhere
+  in a wider interval. VSH startup timing/state is now the primary hypothesis
+  and loader semantics a secondary hypothesis; neither is proven.
+- The cause of `0x80020148` remains unknown. Neither diagnostic file I/O nor
+  partition queries are established as its cause. This control restores the
+  upstream-like `sceKernelLibrary` detection followed immediately by the load;
+  diagnostic operations can be reintroduced individually only if this restores
+  successful loading.
 
 ## Current experimental state
 
