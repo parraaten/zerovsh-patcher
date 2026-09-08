@@ -503,9 +503,10 @@ int OnModuleStart(SceModule2 *mod) {
 //OK
 int zeroCtrlLoadStartModule(SceSize args UNUSED, void *argp UNUSED) {	
 	SceUID modid;
-	int start_result;
+	int start_result = 0;
 	int wait_iterations = 0;
 	ZeroCtrlPartitionSnapshot after_load;
+	ZeroCtrlPartitionSnapshot after_start;
 	
 	//zeroCtrlWriteDebug("Thread\n");
 	
@@ -517,25 +518,29 @@ int zeroCtrlLoadStartModule(SceSize args UNUSED, void *argp UNUSED) {
 	if (model == 0) {
 		zeroCtrlDiagnosticsCapturePartitions(&after_load);
 	}
+	if(modid >= 0) {
+		start_result = sceKernelStartModule(modid, 0, NULL, 0, NULL);
+		if (model == 0) {
+			zeroCtrlDiagnosticsCapturePartitions(&after_start);
+		}
+	}
+
 	zeroCtrlDiagnosticsLoaderControl(wait_iterations);
+	if (modid >= 0) {
+		zeroCtrlDiagnosticsStartControl();
+	}
 	zeroCtrlDiagnosticsEvent("user_module_load", modid);
 	if (model == 0) {
 		zeroCtrlDiagnosticsWritePartitions("after_user_module_load", &after_load);
 	}
 	
 	if(modid >= 0) {
-		if (model == 0) {
-			zeroCtrlDiagnosticsModule(sceKernelFindModuleByName("ZeroVSH_Patcher_User"));
-		}
-		start_result = sceKernelStartModule(modid, 0, NULL, 0, NULL);
-		if (model == 0) {
-			zeroCtrlDiagnosticsCapturePartitions(&after_load);
-		}
 		zeroCtrlDiagnosticsEvent("user_module_start", start_result);
 		if (model == 0) {
 			zeroCtrlDiagnosticsWritePartitions(start_result < 0 ?
 					"after_user_module_start_failed" : "after_user_module_start",
-					&after_load);
+					&after_start);
+			zeroCtrlDiagnosticsModule(sceKernelFindModuleByName("ZeroVSH_Patcher_User"));
 		}
 		if (start_result < 0) {
 			sceKernelUnloadModule(modid);

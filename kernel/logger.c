@@ -101,6 +101,11 @@ void zeroCtrlDiagnosticsLoaderControl(int wait_iterations)
     zeroCtrlDiagnosticsWrite(line);
 }
 
+void zeroCtrlDiagnosticsStartControl(void)
+{
+    zeroCtrlDiagnosticsWrite("[experiment] start_control=deferred_logging\n");
+}
+
 void zeroCtrlDiagnosticsMemory(const char *event)
 {
     char line[160];

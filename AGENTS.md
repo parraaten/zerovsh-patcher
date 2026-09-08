@@ -36,6 +36,13 @@ Use the current PSPDEV toolchain and run:
 Do not revert the modern PSPSDK compatibility work. The expected artifact is
 `bin/zerovsh_patcher.prx`.
 
+The Linux pipeline post-processes modern PSPSDK `bin2c` output to require at
+least 64-byte alignment for `zerovsh_user_module`, then validates the final ELF
+symbol address with `psp-nm` before copying the PRX. Both checks fail the build
+loudly. The historical Windows pipeline uses the repository `_bin2c`, whose
+embedded format string already requests `aligned(64)`; it does not use the
+modern Linux `bin2c` path and has not been otherwise changed.
+
 ## Branch strategy
 
 Keep major phases independently reviewable. Suggested branches are
@@ -105,13 +112,12 @@ work.
   human-readable model, devkit, ClockAndCalendar value, redirection path, and
   locked SlidePlugin state. It then uses `[mem] <stage> total_free=<bytes>
   largest_block=<bytes>` and `[event] <operation> result=0x<code>` records.
-- The current loader-control experiment deliberately performs no diagnostic
-  calls after `sceKernelLibrary` is detected and before
-  `sceKernelLoadModuleBuffer()`. It captures a partition snapshot immediately
-  after the loader returns, for both success and failure, then writes the
-  experiment marker, wait-loop count, result, and snapshot. A post-start
-  snapshot remains available after successful loading. Valid partitions in the
-  PSP system-memory ID range are identified by a successful
+- Loader-adjacent code deliberately performs no diagnostic calls after
+  `sceKernelLibrary` is detected and before `sceKernelLoadModuleBuffer()`.
+  After a successful load, the start-control path captures the post-load state,
+  immediately starts the module, and captures post-start state before writing
+  either snapshot. Valid partitions in the PSP system-memory ID range are
+  identified by a successful
   `sceKernelQueryMemoryPartitionInfo()` call and later written with start
   address, partition size, attributes, total free memory, and largest block.
 - After a successful load, the existing LoadCore `SceModule2` definition and
@@ -161,15 +167,33 @@ work.
   25,165,824 bytes total and 23,128,832 bytes free. The loader-call delta was
   therefore zero bytes, and all successfully queried metadata for PIDs 1-6 was
   unchanged.
-- Direct roughly 18 MiB consumption by `sceKernelLoadModuleBuffer()` is not
-  supported by the latest evidence. The previous reduction occurred somewhere
-  in a wider interval. VSH startup timing/state is now the primary hypothesis
-  and loader semantics a secondary hypothesis; neither is proven.
-- The cause of `0x80020148` remains unknown. Neither diagnostic file I/O nor
-  partition queries are established as its cause. This control restores the
-  upstream-like `sceKernelLibrary` detection followed immediately by the load;
-  diagnostic operations can be reintroduced individually only if this restores
-  successful loading.
+- Direct roughly 18 MiB consumption by `sceKernelLoadModuleBuffer()` was ruled
+  out: the isolated failed call changed USER free memory by zero bytes, and the
+  later aligned successful call consumed only `0xB00` bytes.
+- A controlled real-hardware A/B test established the cause of `0x80020148`:
+  modern PSPSDK `bin2c` emitted `aligned(16)`, placing
+  `zerovsh_user_module` at 0x4EB0 (48 modulo 64). Changing only the generated
+  alignment to 64 placed it at 0x4EC0 and the unchanged loader succeeded with
+  module ID 0x045A4437. The loader's documented 64-byte buffer alignment is
+  therefore a verified build requirement, now enforced by the Linux build.
+- The aligned successful load reduced USER free memory from 23,128,832 to
+  23,126,016 bytes: `0xB00` (2,816 bytes). Module metadata reported attribute
+  0x0007, `mpid_text=2`, `mpid_data=2`, text=2,360, data=0, BSS=20, one segment
+  of 2,756 bytes. The resident load cost closely matches the segment plus small
+  alignment/loader overhead; `sceKernelLoadModuleBuffer()` does not consume
+  roughly 18 MiB.
+- The same run later measured 3,693,824 USER bytes free after module start, a
+  `0x01288300` (19,432,192-byte, about 18.53 MiB) transition from the post-load
+  capture. USER/PID 2 remained 25,165,824 bytes total and PID 5 remained a free
+  4 MiB region, so no USER resize was visible. The older interval contained
+  diagnostic serialization and module lookup, so it does not prove that
+  `sceKernelStartModule()` caused the transition.
+- The current start-control experiment captures `after_load`, immediately
+  calls `sceKernelStartModule()`, and captures `after_start` before performing
+  any diagnostic write or module lookup. Only then are the control markers,
+  results, snapshots, and module metadata serialized. Hardware evidence is
+  required to localize the large transition to synchronous start/module-start
+  work versus asynchronous VSH startup.
 
 ## Current experimental state
 

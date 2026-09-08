@@ -46,6 +46,7 @@ void zeroCtrlDiagnosticsInit(int model, unsigned int devkit,
         unsigned int startup_total, unsigned int startup_largest);
 void zeroCtrlDiagnosticsEvent(const char *event, int result);
 void zeroCtrlDiagnosticsLoaderControl(int wait_iterations);
+void zeroCtrlDiagnosticsStartControl(void);
 void zeroCtrlDiagnosticsMemory(const char *event);
 void zeroCtrlDiagnosticsCapturePartitions(ZeroCtrlPartitionSnapshot *snapshot);
 void zeroCtrlDiagnosticsWritePartitions(const char *event,
