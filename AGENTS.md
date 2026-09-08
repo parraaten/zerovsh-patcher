@@ -89,10 +89,13 @@ work.
 
 - On PSP-1000 only, each VSH session truncates and writes
   `ms0:/zerovsh_psp1000.log`. Other models perform no diagnostic file I/O.
-- The kernel captures memory with `sceKernelTotalFreeMemSize()` and
-  `sceKernelMaxFreeMemSize()`. Records cover kernel entry, NID/config setup,
-  hook installation, embedded-user-module load/start, and completion, along
-  with important operation return codes.
+- The kernel captures memory in `PSP_MEMORY_PARTITION_USER` explicitly with
+  `sceKernelPartitionTotalFreeMemSize()` and
+  `sceKernelPartitionMaxFreeMemSize()`. Thus `total_free` and `largest_block`
+  describe the user partition relevant to VSH and module loading, rather than
+  an ambiguous context-dependent partition. Records cover kernel entry,
+  NID/config setup, hook installation, embedded-user-module load/start, and
+  completion, along with important operation return codes.
 - The logger opens the Memory Stick file only from sparse initialization and
   loader-thread call sites. It may pass through the installed Memory Stick
   driver hook, which forwards to the saved original driver method. Never call

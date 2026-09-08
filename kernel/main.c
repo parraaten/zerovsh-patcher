@@ -737,8 +737,10 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 
 	model = sceKernelGetModel();
 	devkit = sceKernelDevkitVersion();
-	startup_total = sceKernelTotalFreeMemSize();
-	startup_largest = sceKernelMaxFreeMemSize();
+	startup_total = sceKernelPartitionTotalFreeMemSize(
+			PSP_MEMORY_PARTITION_USER);
+	startup_largest = sceKernelPartitionMaxFreeMemSize(
+			PSP_MEMORY_PARTITION_USER);
 
 	zeroCtrlWriteDebug("ZeroVSH Patcher v0.4\n");
 	zeroCtrlWriteDebug("Copyright 2011-2015 (C) NightStar3 and codestation\n");

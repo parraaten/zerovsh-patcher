@@ -96,7 +96,9 @@ void zeroCtrlDiagnosticsMemory(const char *event)
 
     snprintf(line, sizeof(line),
             "[mem] %s total_free=%u largest_block=%u\n", event,
-            (unsigned int)sceKernelTotalFreeMemSize(),
-            (unsigned int)sceKernelMaxFreeMemSize());
+            (unsigned int)sceKernelPartitionTotalFreeMemSize(
+                PSP_MEMORY_PARTITION_USER),
+            (unsigned int)sceKernelPartitionMaxFreeMemSize(
+                PSP_MEMORY_PARTITION_USER));
     zeroCtrlDiagnosticsWrite(line);
 }
