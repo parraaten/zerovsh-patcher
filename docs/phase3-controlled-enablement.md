@@ -162,12 +162,20 @@ the Sony start transition rather than Sony loading/relocation.
 
 ### Sony entrypoint no-op control
 
-The next run changes one semantic variable. After capturing pre-start state,
-the kernel chains the prior SystemControl handler and retains its result. It
-then re-reads `mod->entry_addr` and accepts it only when it is word-aligned,
-both replacement words fit in the module text range, and both fit within one of
-the module's reported segments. Failure leaves Sony code untouched and records
-`slide_entry_patch_skipped=-1`.
+The next run changes one semantic variable. Commit `542b16f` was superseded
+before hardware validation because it targeted the ELF entry address at
+`SceModule2` offset `0x64`, not the ModuleMgr module-start function pointer at
+offset `0x50`. These are different concepts: ModuleMgr executes
+`module_start_func`, while `entry_addr` remains diagnostic evidence only.
+
+After capturing pre-start state, the kernel chains the prior SystemControl
+handler exactly once and retains its result. It then re-reads both live fields,
+using `module_start_func` as the control target and preserving `entry_addr`
+without modifying it. The target must be nonzero, not `0xFFFFFFFF`, word
+aligned, and have room for both replacement words in both the module text range
+and one reported segment. Subtraction-based bounds checks avoid address
+overflow. Failure leaves Sony code untouched and records a negative validation
+reason.
 
 On validation success, the original two words are retained in fixed kernel
 state and replaced in RAM—not on disk—with `0x03E00008` (`jr $ra`) and
@@ -178,10 +186,15 @@ instruction therefore returns integer success before control returns to the
 caller. Existing full D-cache writeback and I-cache invalidation run after the
 two stores. Only then is the in-memory start-seen flag published to the writer.
 
-Deferred output adds `[experiment] sony_module_start_control=noop`, entry
-address, in-segment validation, both original words, and either
-`slide_entry_patch_applied=1` plus `sony_module_start_control=noop_applied`, or
-the negative skip result. There is still no Sony start return-code observation.
+Deferred output adds `[experiment] sony_module_start_control=noop`, distinct
+`slide_module_start_func_addr` and `slide_elf_entry_addr` values,
+module-start in-segment validation, both original words, and either
+`slide_module_start_patch_applied=1` plus
+`sony_module_start_control=noop_applied`, or the negative
+`slide_module_start_patch_skipped` reason. There is still no Sony start
+return-code observation. The local header has build-time assertions for
+`module_start_func == 0x50`, `entry_addr == 0x64`, and `text_addr == 0x6C`, so
+renaming the known fields cannot silently alter their ABI layout.
 All trigger, opt-in, diagnostic-thread, asset, helper-loader, stack, and Sony
 behavior-hook semantics otherwise remain identical to the first run.
 
@@ -196,11 +209,9 @@ Files changed are the kernel/user handlers and export bridge, diagnostic writer,
 sample INI, this report, and `AGENTS.md`. `readme.txt`, Sony PRX/RCO files,
 loader attributes/APIs, stack sizes, and firmware data are untouched.
 
-Code inspection proves the guards and observation points described above. It
-does not prove that VSH requests the module, that Sony code starts, that the
-XMB remains stable, or what runtime memory it consumes on real hardware. The
-callback's precise position relative to Sony entry execution, VSH-owned load
-and start result codes, whether the RCO is opened before a freeze, and whether
-750 ms serialization runs are unresolved hardware questions. The recommended
-next phase is not predetermined: select exactly the one-variable experiment in
-the table matching the returned log and observation.
+Hardware now proves the request, RCO access, load/relocation, and pre-start
+boundary described above. It does not yet prove whether bypassing the actual
+Sony `module_start_func` prevents the freeze. The VSH-owned start result and
+normal USER allocation access to PID 5 also remain unknown. Return both logged
+addresses, validation and patch markers, memory snapshots, and stability result
+before choosing the next single-variable experiment.

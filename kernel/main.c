@@ -94,10 +94,11 @@ typedef struct {
     volatile int saw_probe;
     volatile int saw_start;
     volatile int deferred_thread_started;
-    unsigned int entry_addr;
-    unsigned int entry_original[2];
-    int entry_in_segment;
-    int entry_patch_result;
+    unsigned int module_start_addr;
+    unsigned int elf_entry_addr;
+    unsigned int module_start_original[2];
+    int module_start_in_segment;
+    int module_start_patch_result;
     ZeroCtrlPartitionSnapshot at_probe;
     ZeroCtrlPartitionSnapshot pre_start;
     ZeroCtrlPartitionSnapshot delayed_or_timeout;
@@ -560,18 +561,22 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         zeroCtrlDiagnosticsWritePartitions("slide_plugin_pre_start", &slide_diag.pre_start);
         zeroCtrlDiagnosticsModule(&slide_diag.module);
         zeroCtrlDiagnosticsText("[experiment] sony_module_start_control=noop\n");
-        zeroCtrlDiagnosticsEvent("slide_entry_addr", slide_diag.entry_addr);
-        zeroCtrlDiagnosticsEvent("slide_entry_in_segment", slide_diag.entry_in_segment);
-        if (slide_diag.entry_patch_result > 0) {
-            zeroCtrlDiagnosticsEvent("slide_entry_original_word0",
-                    slide_diag.entry_original[0]);
-            zeroCtrlDiagnosticsEvent("slide_entry_original_word1",
-                    slide_diag.entry_original[1]);
+        zeroCtrlDiagnosticsEvent("slide_module_start_func_addr",
+                slide_diag.module_start_addr);
+        zeroCtrlDiagnosticsEvent("slide_elf_entry_addr", slide_diag.elf_entry_addr);
+        zeroCtrlDiagnosticsEvent("slide_module_start_in_segment",
+                slide_diag.module_start_in_segment);
+        if (slide_diag.module_start_patch_result > 0) {
+            zeroCtrlDiagnosticsEvent("slide_module_start_original_word0",
+                    slide_diag.module_start_original[0]);
+            zeroCtrlDiagnosticsEvent("slide_module_start_original_word1",
+                    slide_diag.module_start_original[1]);
             zeroCtrlDiagnosticsText("[experiment] sony_module_start_control=noop_applied\n");
-            zeroCtrlDiagnosticsEvent("slide_entry_patch_applied", 1);
+            zeroCtrlDiagnosticsEvent("slide_module_start_patch_applied", 1);
         } else {
-            zeroCtrlDiagnosticsEvent("slide_entry_patch_skipped",
-                    slide_diag.entry_patch_result);
+            zeroCtrlDiagnosticsText("[experiment] slide_module_start_validation=failed\n");
+            zeroCtrlDiagnosticsEvent("slide_module_start_patch_skipped",
+                    slide_diag.module_start_patch_result);
         }
         zeroCtrlDiagnosticsWritePartitions("slide_plugin_delayed",
                 &slide_diag.delayed_or_timeout);
@@ -602,23 +607,25 @@ static int zeroCtrlCreateSlideDiagnosticsThread(void) {
     return result;
 }
 
-static int zeroCtrlSlideEntryInExecutableSegment(const SceModule2 *mod) {
+static int zeroCtrlValidateModuleStart(const SceModule2 *mod,
+        unsigned int target) {
     unsigned int i;
-    unsigned int entry = mod->entry_addr;
 
-    if ((entry & 3) != 0 || mod->text_size < 8 ||
-            entry < mod->text_addr ||
-            entry - mod->text_addr > mod->text_size - 8) {
-        return 0;
+    if (target == 0) return -1;
+    if (target == 0xFFFFFFFF) return -2;
+    if ((target & 3) != 0) return -3;
+    if (mod->text_size < 8 || target < mod->text_addr ||
+            target - mod->text_addr > mod->text_size - 8) {
+        return -4;
     }
     for (i = 0; i < mod->nsegment && i < 4; i++) {
         unsigned int start = mod->segmentaddr[i];
         unsigned int size = mod->segmentsize[i];
-        if (entry >= start && size >= 8 && entry - start <= size - 8) {
+        if (target >= start && size >= 8 && target - start <= size - 8) {
             return 1;
         }
     }
-    return 0;
+    return -5;
 }
 
 int OnModuleStart(SceModule2 *mod) {
@@ -631,20 +638,22 @@ int OnModuleStart(SceModule2 *mod) {
                 zeroCtrlDiagnosticsCapturePartitions(&slide_diag.pre_start);
                 memcpy(&slide_diag.module, mod, sizeof(slide_diag.module));
                 previous_result = previous ? previous(mod) : 0;
-                slide_diag.entry_addr = mod->entry_addr;
-                slide_diag.entry_in_segment =
-                        zeroCtrlSlideEntryInExecutableSegment(mod);
-                if (slide_diag.entry_in_segment) {
-                        slide_diag.entry_original[0] = _lw(mod->entry_addr);
-                        slide_diag.entry_original[1] = _lw(mod->entry_addr + 4);
+                slide_diag.module_start_addr = mod->module_start_func;
+                slide_diag.elf_entry_addr = mod->entry_addr;
+                slide_diag.module_start_patch_result =
+                        zeroCtrlValidateModuleStart(mod,
+                                slide_diag.module_start_addr);
+                slide_diag.module_start_in_segment =
+                        slide_diag.module_start_patch_result > 0;
+                if (slide_diag.module_start_in_segment) {
+                        unsigned int target = slide_diag.module_start_addr;
+                        slide_diag.module_start_original[0] = _lw(target);
+                        slide_diag.module_start_original[1] = _lw(target + 4);
                         /* MIPS: jr $ra; addiu $v0, $zero, 0 (delay slot). */
-                        _sw(0x03E00008, mod->entry_addr);
-                        _sw(0x24020000, mod->entry_addr + 4);
+                        _sw(0x03E00008, target);
+                        _sw(0x24020000, target + 4);
                         zeroCtrlDcacheWritebackAll();
                         zeroCtrlIcacheClearAll();
-                        slide_diag.entry_patch_result = 1;
-                } else {
-                        slide_diag.entry_patch_result = -1;
                 }
                 slide_diag.saw_start = 1;
                 return previous_result;

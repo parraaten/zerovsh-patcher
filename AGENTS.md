@@ -267,9 +267,12 @@ The first real Phase 3 run proved that the unmodified Sony PRX is requested,
 loaded, relocated, and reaches the pre-start callback on PSP-1000. It reported
 1,701,376 USER bytes free at pre-start while PID 5 remained separately fully
 free at 4,194,304 bytes; the XMB then froze before icons appeared. The active
-single-variable control validates the Sony entrypoint against its text and
-segment ranges, chains the previous handler, saves two original words, and
-replaces only those RAM words with a successful MIPS return. It does not modify
+single-variable control validates the Sony `module_start_func` at `SceModule2`
+offset `0x50` against its text and segment ranges, chains the previous handler,
+saves two original words, and replaces only those RAM words with a successful
+MIPS return. The distinct ELF `entry_addr` at offset `0x64` is logged but never
+patched. The earlier `542b16f` implementation was superseded before hardware
+validation because it targeted that ELF address. This control does not modify
 the Sony files or enable behavior hooks.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
