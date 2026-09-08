@@ -144,9 +144,10 @@ work.
 - USER-partition resizing, partition reassignment, a large ModuleMgr
   reservation, VSH-loader differences, and VSH-module-attribute differences
   remain unverified hypotheses pending the new partition/module metadata log.
-- The embedded module's `0x0007` attribute comprises the no-stop, single-load,
-  and single-start low bits; it has not been changed. Historical association
-  of `0x0800` with VSH modules is not yet sufficient evidence to use `0x0807`.
+- The embedded module historically used `0x0007`, comprising the no-stop,
+  single-load, and single-start low bits. The current attribute-only A/B test
+  adds the historical VSH classification bit and uses `0x0807`; its effect is
+  not known until real-hardware results are collected.
 - The project's ModuleMgr header documents VSH API type `0x20` and a path-based
   `sceKernelLoadModuleVSH()`, but does not expose the historical buffer-loader
   NID `0xF0CAC59E`. Its signature, 6.60/6.61 NID behavior, partition semantics,
@@ -212,11 +213,24 @@ work.
   logging, memory query, or delay; it only returns success. The original body
   remains under `#else`. Kernel diagnostics emit
   `[experiment] user_start_control=noop` only after both start snapshots exist.
-- If the no-op start still reserves about 18.125 MiB, the three original
-  ZeroVSH startup operations are excluded and ModuleMgr/CFW module start or
-  classification semantics become the leading explanation. If it does not,
-  restore `zeroCtrlGetModel()`, `sceKernelDevkitVersion()`, and
-  `sctrlHENSetStartModuleHandler()` one at a time in later controls.
+- Real PSP-1000 no-op testing produced the same byte-for-byte transition as the
+  normal body: normal `module_start` delta = `0x01220000`; no-op
+  `module_start` delta = `0x01220000`. The no-op run fell from 23,125,760 to
+  4,120,320 USER bytes free. This excludes `zeroCtrlGetModel()`,
+  `sceKernelDevkitVersion()`, `sctrlHENSetStartModuleHandler()`, handler
+  registration, and all other work in the original body as causes.
+- ModuleMgr/CFW start or classification semantics are now the leading area of
+  investigation. Historical PSP/M33 and modern implementation documentation
+  associate 0x0000 with USER, 0x0800 with VSH, and 0x1000 with KERNEL module
+  classification. The current single-variable experiment changes only the
+  helper's attribute from 0x0007 to 0x0807, retains the no-op start, and emits
+  `[experiment] module_attr_control=vsh_0x0807` after applicable snapshots.
+  Loader, API type, start call, and main-thread attributes remain unchanged.
+- If 0x0807 loads and starts without `0x01220000`, classification is strongly
+  implicated and the result must be reproduced before SlidePlugin work. A
+  loader rejection instead supports a separately reviewed API-type experiment;
+  a successful start with the same delta shows the VSH bit alone is
+  insufficient. No alternative loader is part of this control.
 - As supporting context only, modern ARK-style implementations of
   `sctrlHENSetStartModuleHandler()` replace a stored handler pointer and return
   the previous pointer, making a direct 18 MiB allocation there appear
@@ -225,7 +239,8 @@ work.
 
 ## Current experimental state
 
-Phase 2 adds diagnostics and a temporary compile-time no-op user-start control,
+Phase 2 adds diagnostics, retains the temporary compile-time no-op user-start
+control, and currently performs an attribute-only 0x0007-to-0x0807 A/B test,
 plus one bounded configuration-buffer fix.
 PSP-1000 remains excluded by the existing kernel and user model checks; its
 SlidePlugin is intentionally locked. No PSP-1000 SlidePlugin support or

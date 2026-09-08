@@ -36,7 +36,7 @@
 #include "../kernel/systemctrl.h"
 #include "../kernel/systemctrl_se.h"
 
-PSP_MODULE_INFO("ZeroVSH_Patcher_User", 0x0007, 0, 1);
+PSP_MODULE_INFO("ZeroVSH_Patcher_User", 0x0807, 0, 1);
 
 #define UNUSED __attribute__((unused))
 #define MAKE_CALL(a, f) _sw(0x0C000000 | (((u32)(f) >> 2) & 0x03FFFFFF), a); 
