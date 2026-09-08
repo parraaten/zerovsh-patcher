@@ -76,22 +76,55 @@ work.
 - No heap or partition-memory allocation was found in `user/`, `kernel/hook.c`,
   `kernel/resolver.c`, `kernel/blacklist.c`, or `kernel/logger.c` during the
   phase-one source audit.
+- Phase 1 was smoke-tested on a real PSP-1000: it booted normally, the XMB
+  remained usable, and no obvious freeze, crash, or boot loop was observed.
+  ClockAndCalendar was disabled, so this does not establish SlidePlugin
+  compatibility.
+- `zeroCtrlGetSlideConfig` formerly passed `sizeof(usermem)` to `ini_gets`.
+  Because `usermem` is a pointer, this limited the 256-byte allocation to the
+  pointer size (four bytes on PSP), truncating values to at most three
+  characters. Phase 2 now passes the allocation's actual 256-byte capacity.
+
+## Phase 2 diagnostics
+
+- On PSP-1000 only, each VSH session truncates and writes
+  `ms0:/zerovsh_psp1000.log`. Other models perform no diagnostic file I/O.
+- The kernel captures memory with `sceKernelTotalFreeMemSize()` and
+  `sceKernelMaxFreeMemSize()`. Records cover kernel entry, NID/config setup,
+  hook installation, embedded-user-module load/start, and completion, along
+  with important operation return codes.
+- The logger opens the Memory Stick file only from sparse initialization and
+  loader-thread call sites. It may pass through the installed Memory Stick
+  driver hook, which forwards to the saved original driver method. Never call
+  the logger from `zeroCtrlMsIoOpen`, `zeroCtrlMsIoGetstat`, redirection hooks,
+  module-probe file replacement, or other hot/recursively reachable I/O paths.
+- The expected compact format begins with the diagnostic version, numeric and
+  human-readable model, devkit, ClockAndCalendar value, redirection path, and
+  locked SlidePlugin state. It then uses `[mem] <stage> total_free=<bytes>
+  largest_block=<bytes>` and `[event] <operation> result=0x<code>` records.
 
 ## Current experimental state
 
-Phase 1 fixes ownership and lifetime errors only. PSP-1000 remains excluded by
-the existing model checks. No PSP-1000 SlidePlugin support, diagnostics, or
-firmware patch is enabled, and no hardware behavior is claimed.
+Phase 2 adds baseline diagnostics and one bounded configuration-buffer fix.
+PSP-1000 remains excluded by the existing kernel and user model checks; its
+SlidePlugin is intentionally locked. No PSP-1000 SlidePlugin support or
+firmware patch is enabled, and diagnostic usefulness/stability still requires
+real-hardware verification.
 
 ## Hardware testing workflow
 
-1. Build `bin/zerovsh_patcher.prx` on the PC.
-2. Copy it and redirected resources to Memory Stick without touching
-   `flash0`.
-3. Test on a real PSP-1000 with a documented recovery/disable procedure.
-4. Write sparse diagnostics to `ms0:/zerovsh_psp1000.log`, concentrating on
-   state transitions, memory measurements, and module load/start errors.
-5. Return the log and observed behavior for analysis before the next change.
+1. Confirm `ClockAndCalendar = Disabled` in
+   `ms0:/seplugins/zerovsh.ini` and retain a recovery method that can disable
+   the plugin.
+2. Run `./build_linux.sh` with PSPDEV and copy
+   `bin/zerovsh_patcher.prx` to the existing Memory Stick plugin location;
+   do not touch `flash0`.
+3. Restart the PSP/VSH, use the XMB normally for several minutes, and note any
+   instability. Do not attempt to start SlidePlugin.
+4. Copy the complete `ms0:/zerovsh_psp1000.log` back to the PC. Confirm it
+   contains the header, all memory stages, and module/thread result records.
+5. Return the unedited log and observations for analysis before any
+   experimental PSP-1000 enablement.
 
 Every phase report must state files changed, technical findings, assumptions,
 build status, required hardware tests, hardware results if available,

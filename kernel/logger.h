@@ -21,6 +21,14 @@
 #include <string.h>
 #include <stdio.h>
 
+#define ZEROCTRL_DIAGNOSTIC_PATH "ms0:/zerovsh_psp1000.log"
+
+void zeroCtrlDiagnosticsInit(int model, unsigned int devkit,
+        const char *clock_and_calendar, const char *redir_path,
+        unsigned int startup_total, unsigned int startup_largest);
+void zeroCtrlDiagnosticsEvent(const char *event, int result);
+void zeroCtrlDiagnosticsMemory(const char *event);
+
 #ifdef DEBUG
 #define zeroCtrlWriteDebug(format, ...) printf(format, ## __VA_ARGS__)
 #else

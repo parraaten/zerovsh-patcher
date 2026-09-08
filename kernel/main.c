@@ -395,14 +395,16 @@ int zeroCtrlModuleProbe(void *data, void *exec_info) {
     return sceKernelProbeExecutableObject(data, exec_info);
 }
 //OK
-void zeroCtrlHookModule(void) {
+int zeroCtrlHookModule(void) {
     SceModule2 *module = (SceModule2 *) sceKernelFindModuleByName("sceModuleManager");
 
     if (!module || hook_import_bynid(module, "LoadCoreForKernel", moduleprobe_nid, zeroCtrlModuleProbe, 0) < 0) {
         //zeroCtrlWriteDebug("failed to hook ProbeExecutableObject, nid: %08X\n", moduleprobe_nid);
+        return 0;
     } else {
         //zeroCtrlWriteDebug("ProbeExecutableObject nid: %08X, addr: %08X\n", moduleprobe_nid, (u32)sceKernelProbeExecutableObject);
     }
+    return 1;
 }
 //OK
 int zeroCtrlGetSlideState(void) {
@@ -501,14 +503,22 @@ int OnModuleStart(SceModule2 *mod) {
 //OK
 int zeroCtrlLoadStartModule(SceSize args UNUSED, void *argp UNUSED) {	
 	SceUID modid;
+	int start_result;
 	
 	//zeroCtrlWriteDebug("Thread\n");
 	
 	do {	sceKernelDelayThread(100000); } while(!sceKernelFindModuleByName("sceKernelLibrary"));	
+	zeroCtrlDiagnosticsMemory("before_user_module_load");
 	modid = sceKernelLoadModuleBuffer(size_zerovsh_user_module, zerovsh_user_module, 0, NULL);
+	zeroCtrlDiagnosticsEvent("user_module_load", modid);
+	zeroCtrlDiagnosticsMemory("after_user_module_load");
 	
 	if(modid >= 0) {
-		if (sceKernelStartModule(modid, 0, NULL, 0, NULL) < 0) {
+		start_result = sceKernelStartModule(modid, 0, NULL, 0, NULL);
+		zeroCtrlDiagnosticsEvent("user_module_start", start_result);
+		zeroCtrlDiagnosticsMemory(start_result < 0 ?
+				"after_user_module_start_failed" : "after_user_module_start");
+		if (start_result < 0) {
 			sceKernelUnloadModule(modid);
 		}
 	} else {
@@ -521,11 +531,15 @@ int zeroCtrlLoadStartModule(SceSize args UNUSED, void *argp UNUSED) {
 //OK
 void zeroCtrlCreatePatchThread(void) {	
 	SceUID thid;
+	int start_result;
 	
 	thid = sceKernelCreateThread("zeroctrl_umod", zeroCtrlLoadStartModule, 0x10, 0x10000, 0, NULL);
+	zeroCtrlDiagnosticsEvent("user_thread_create", thid);
 	
 	if(thid >= 0) {
-		if (sceKernelStartThread(thid, 0, NULL) < 0) {
+		start_result = sceKernelStartThread(thid, 0, NULL);
+		zeroCtrlDiagnosticsEvent("user_thread_start", start_result);
+		if (start_result < 0) {
 			sceKernelDeleteThread(thid);
 		}
 	} else {
@@ -544,7 +558,7 @@ int zeroCtrlGetSlideConfig(const char *item, char *value) {
 	}
 	
 	memset(usermem, 0, 256);
-	ini_gets("SlidePlugin", item, "Disabled", usermem, sizeof(usermem), "ms0:/seplugins/zerovsh.ini");
+	ini_gets("SlidePlugin", item, "Disabled", usermem, 256, "ms0:/seplugins/zerovsh.ini");
 	strcpy(value, usermem);
 	
 	zeroCtrlFreeUserBuffer(cfg_id);
@@ -715,7 +729,16 @@ void zeroCtrlCreateBtnThread(void) {
 }
 //OK
 int module_start(SceSize args UNUSED, void *argp UNUSED) {
+	unsigned int startup_total;
+	unsigned int startup_largest;
+	int module_hooked;
+	int driver_hooked;
+	unsigned int devkit;
+
 	model = sceKernelGetModel();
+	devkit = sceKernelDevkitVersion();
+	startup_total = sceKernelTotalFreeMemSize();
+	startup_largest = sceKernelMaxFreeMemSize();
 
 	zeroCtrlWriteDebug("ZeroVSH Patcher v0.4\n");
 	zeroCtrlWriteDebug("Copyright 2011-2015 (C) NightStar3 and codestation\n");
@@ -733,12 +756,19 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	ini_gets("SlidePlugin", "Contrast", "Disabled", slideContrast, sizeof(slideContrast), config);
 	ini_gets("PowerSave", "LED", "Disabled", ledDisable, sizeof(ledDisable), config);
 	b_level = ini_getl("PowerSave", "Brightness", -1, config);
+
+	zeroCtrlDiagnosticsInit(model, devkit, useSlide, redir_path,
+			startup_total, startup_largest);
+	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");
 	
 	//zeroCtrlWriteDebug("using [%s] as RedirPath\n", redir_path); 
 	//zeroCtrlWriteDebug("using [%s] as SlidePlugin\n", useSlide); 
 
-	zeroCtrlHookModule();
-	zeroCtrlHookDriver();    
+	module_hooked = zeroCtrlHookModule();
+	zeroCtrlDiagnosticsEvent("module_hook", module_hooked);
+	driver_hooked = zeroCtrlHookDriver();
+	zeroCtrlDiagnosticsEvent("driver_hook", driver_hooked);
+	zeroCtrlDiagnosticsMemory("after_driver_and_module_hooks");
     
 	zeroCtrlSetSlideState(ZERO_SLIDE_STOPPED);
 			
@@ -746,6 +776,7 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	set_registry_value("/CONFIG/SYSTEM", "slide_welcome", 1);	
 	
 	zeroCtrlCreatePatchThread();
+	zeroCtrlDiagnosticsMemory("kernel_initialization_complete");
 	
 	if((model != 4) && (model != 0) && (sceKernelDevkitVersion() >= 0x06000010)) {
 	    if(strcmp(useSlide, "Enabled") == 0) {					
