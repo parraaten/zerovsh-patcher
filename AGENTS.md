@@ -243,18 +243,29 @@ work.
 
 ## Current experimental state
 
-Phase 2 restores the functional 0x0007 helper, ordinary buffer loader, and
-original helper `module_start`, while retaining diagnostics, the bounded
-configuration-buffer fix, and permanent 64-byte embedded-buffer alignment.
-PSP-1000 remains excluded by the existing kernel and user model checks; its
-SlidePlugin is intentionally locked. No PSP-1000 SlidePlugin support or
-firmware patch is enabled. The full audit and Phase 3 plan are maintained in
-`docs/phase2-final-report.md`; a restored-baseline PSPDEV build and PSP-1000
-smoke test are the final external validation steps.
+Phase 1: **COMPLETE**. Phase 2: **COMPLETE**. Phase 3: **ACTIVE**.
+
+The final Phase 2 static measurements are:
+
+- user ELF: text 2,472 bytes, data 0 bytes, BSS 20 bytes, total 2,492 bytes;
+- kernel ELF: text 19,952 bytes, data 5,172 bytes, BSS 588 bytes, total 25,712
+  bytes; and
+- embedded user PRX: 4,834 bytes.
+
+Phase 3's objective is to determine whether the original Sony PSP Go
+`slide_plugin.prx` can be requested, loaded, and started on PSP-1000 before
+enabling its behavior patches. The first experiment is load/start observation
+only: it requires the explicit, default-disabled `PSP1000SlidePlugin` option,
+requires `ClockAndCalendar=Disabled`, does not create the button thread, and
+does not apply SlidePlugin clock, initialization, import, power, LED, or
+brightness patches on PSP-1000. It does not establish clock/calendar support.
+The complete implementation and hardware procedure are in
+`docs/phase3-controlled-enablement.md`.
 
 ## Hardware testing workflow
 
-1. Confirm `ClockAndCalendar = Disabled` in
+1. Confirm `ClockAndCalendar = Disabled` and
+   `PSP1000SlidePlugin = Enabled` in
    `ms0:/seplugins/zerovsh.ini` and retain a recovery method that can disable
    the plugin.
 2. Run `./build_linux.sh` with PSPDEV and copy
