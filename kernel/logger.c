@@ -94,6 +94,10 @@ void zeroCtrlDiagnosticsMemory(const char *event)
 {
     char line[160];
 
+    if (!diagnostics_enabled) {
+        return;
+    }
+
     snprintf(line, sizeof(line),
             "[mem] %s total_free=%u largest_block=%u\n", event,
             (unsigned int)sceKernelPartitionTotalFreeMemSize(
@@ -101,4 +105,69 @@ void zeroCtrlDiagnosticsMemory(const char *event)
             (unsigned int)sceKernelPartitionMaxFreeMemSize(
                 PSP_MEMORY_PARTITION_USER));
     zeroCtrlDiagnosticsWrite(line);
+}
+
+void zeroCtrlDiagnosticsPartitions(const char *event)
+{
+    PspSysmemPartitionInfo info;
+    char line[192];
+    int pid;
+
+    if (!diagnostics_enabled) {
+        return;
+    }
+
+    /* PSP system-memory partition IDs occupy this small range.  Querying is
+     * authoritative: holes and partitions unavailable in this context are
+     * omitted rather than treated as valid. */
+    for (pid = 1; pid <= 8; pid++) {
+        memset(&info, 0, sizeof(info));
+        info.size = sizeof(info);
+        if (sceKernelQueryMemoryPartitionInfo(pid, &info) < 0) {
+            continue;
+        }
+
+        snprintf(line, sizeof(line),
+                "[partition] %s pid=%d start=0x%08X size=%u attr=0x%08X "
+                "total_free=%u largest_block=%u\n",
+                event, pid, (unsigned int)info.startaddr,
+                (unsigned int)info.memsize, (unsigned int)info.attr,
+                (unsigned int)sceKernelPartitionTotalFreeMemSize(pid),
+                (unsigned int)sceKernelPartitionMaxFreeMemSize(pid));
+        zeroCtrlDiagnosticsWrite(line);
+    }
+}
+
+void zeroCtrlDiagnosticsModule(const SceModule2 *module)
+{
+    char line[224];
+    unsigned int i;
+    unsigned int segments;
+
+    if (!diagnostics_enabled) {
+        return;
+    }
+
+    if (!module) {
+        zeroCtrlDiagnosticsEvent("user_module_lookup", -1);
+        return;
+    }
+
+    snprintf(line, sizeof(line),
+            "[module] modid=0x%08X name=%.27s attr=0x%04X mpid_text=%u "
+            "mpid_data=%u text=%u data=%u bss=%u nsegment=%u\n",
+            (unsigned int)module->modid, module->modname,
+            (unsigned int)module->attribute, module->mpid_text,
+            module->mpid_data, module->text_size, module->data_size,
+            module->bss_size, module->nsegment);
+    zeroCtrlDiagnosticsWrite(line);
+
+    segments = module->nsegment < 4 ? module->nsegment : 4;
+    for (i = 0; i < segments; i++) {
+        snprintf(line, sizeof(line),
+                "[segment] modid=0x%08X index=%u addr=0x%08X size=%u\n",
+                (unsigned int)module->modid, i, module->segmentaddr[i],
+                module->segmentsize[i]);
+        zeroCtrlDiagnosticsWrite(line);
+    }
 }

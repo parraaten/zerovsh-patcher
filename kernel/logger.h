@@ -20,6 +20,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include "psploadcore.h"
 
 #define ZEROCTRL_DIAGNOSTIC_PATH "ms0:/zerovsh_psp1000.log"
 
@@ -28,6 +29,8 @@ void zeroCtrlDiagnosticsInit(int model, unsigned int devkit,
         unsigned int startup_total, unsigned int startup_largest);
 void zeroCtrlDiagnosticsEvent(const char *event, int result);
 void zeroCtrlDiagnosticsMemory(const char *event);
+void zeroCtrlDiagnosticsPartitions(const char *event);
+void zeroCtrlDiagnosticsModule(const SceModule2 *module);
 
 #ifdef DEBUG
 #define zeroCtrlWriteDebug(format, ...) printf(format, ## __VA_ARGS__)

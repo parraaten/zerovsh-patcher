@@ -105,6 +105,41 @@ work.
   human-readable model, devkit, ClockAndCalendar value, redirection path, and
   locked SlidePlugin state. It then uses `[mem] <stage> total_free=<bytes>
   largest_block=<bytes>` and `[event] <operation> result=0x<code>` records.
+- Full partition snapshots are taken only before the embedded user-module
+  load, after a successful load, and after its start attempt. Valid partitions
+  in the PSP system-memory ID range are identified by a successful
+  `sceKernelQueryMemoryPartitionInfo()` call and logged with start address,
+  partition size, attributes, total free memory, and largest free block.
+- After a successful load, the existing LoadCore `SceModule2` definition and
+  `sceKernelFindModuleByName()` are used to log the verified module fields:
+  module ID/name, attributes, text/data partition IDs, text/data/BSS sizes, and
+  up to the four address/size segment entries represented by that structure.
+
+## Phase 2 hardware evidence
+
+- Multiple clean real PSP-1000 tests measured 23,177,984 bytes free immediately
+  before `sceKernelLoadModuleBuffer()` and 4,136,960 bytes immediately after.
+  The exact, reproducible reduction is 19,041,024 bytes (about 18.16 MiB).
+- Disabling other VSH plugins and disabling Inferno Cache did not remove the
+  reduction. The PSP-1000 remained stable in these tests.
+- Clean runs consistently had `total_free == largest_block` both before and
+  after loading. Severe fragmentation is therefore not supported by current
+  evidence; investigation should focus on partition sizing/ownership and
+  ModuleMgr loader semantics unless later measurements contradict this.
+- The separately inspected `zerovsh_upatcher` has about 2.5 KiB of runtime ELF
+  segments (`text=2472`, `data=0`, `bss=20`; load segment memory sizes 0x9b0
+  and 0x14). Its text/data/BSS cannot explain the roughly 18 MiB reduction.
+- USER-partition resizing, partition reassignment, a large ModuleMgr
+  reservation, VSH-loader differences, and VSH-module-attribute differences
+  remain unverified hypotheses pending the new partition/module metadata log.
+- The embedded module's `0x0007` attribute comprises the no-stop, single-load,
+  and single-start low bits; it has not been changed. Historical association
+  of `0x0800` with VSH modules is not yet sufficient evidence to use `0x0807`.
+- The project's ModuleMgr header documents VSH API type `0x20` and a path-based
+  `sceKernelLoadModuleVSH()`, but does not expose the historical buffer-loader
+  NID `0xF0CAC59E`. Its signature, 6.60/6.61 NID behavior, partition semantics,
+  and suitability for this resolver remain research questions. Do not change
+  the loader or perform an A/B test until the new hardware evidence is reviewed.
 
 ## Current experimental state
 

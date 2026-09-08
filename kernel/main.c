@@ -509,15 +509,26 @@ int zeroCtrlLoadStartModule(SceSize args UNUSED, void *argp UNUSED) {
 	
 	do {	sceKernelDelayThread(100000); } while(!sceKernelFindModuleByName("sceKernelLibrary"));	
 	zeroCtrlDiagnosticsMemory("before_user_module_load");
+	if (model == 0) {
+		zeroCtrlDiagnosticsPartitions("before_user_module_load");
+	}
 	modid = sceKernelLoadModuleBuffer(size_zerovsh_user_module, zerovsh_user_module, 0, NULL);
 	zeroCtrlDiagnosticsEvent("user_module_load", modid);
 	zeroCtrlDiagnosticsMemory("after_user_module_load");
 	
 	if(modid >= 0) {
+		if (model == 0) {
+			zeroCtrlDiagnosticsPartitions("after_user_module_load");
+			zeroCtrlDiagnosticsModule(sceKernelFindModuleByName("ZeroVSH_Patcher_User"));
+		}
 		start_result = sceKernelStartModule(modid, 0, NULL, 0, NULL);
 		zeroCtrlDiagnosticsEvent("user_module_start", start_result);
 		zeroCtrlDiagnosticsMemory(start_result < 0 ?
 				"after_user_module_start_failed" : "after_user_module_start");
+		if (model == 0) {
+			zeroCtrlDiagnosticsPartitions(start_result < 0 ?
+					"after_user_module_start_failed" : "after_user_module_start");
+		}
 		if (start_result < 0) {
 			sceKernelUnloadModule(modid);
 		}
