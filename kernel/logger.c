@@ -46,6 +46,11 @@ static void zeroCtrlDiagnosticsWrite(const char *text)
     }
 }
 
+void zeroCtrlDiagnosticsText(const char *text)
+{
+    zeroCtrlDiagnosticsWrite(text);
+}
+
 void zeroCtrlDiagnosticsInit(int model, unsigned int devkit,
         const char *clock_and_calendar, const char *redir_path,
         unsigned int startup_total, unsigned int startup_largest)

@@ -83,6 +83,12 @@ void zeroCtrlSetSlideConfig(const char *item, char *value);
 
 int zeroCtrlContrast2Hour(void);
 int zeroCtrlGetModel(void);
+int zeroCtrlIsPsp1000SlideExperimentEnabled(void);
+void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
+        unsigned int text_size, unsigned int module_start_addr,
+        unsigned int elf_entry_addr, unsigned int target, int target_in_text,
+        unsigned int word_m8, unsigned int word_m4, unsigned int word_0,
+        unsigned int word_p4, unsigned int word_p8, unsigned int word_p12);
 void zeroCtrlSetLEDState(void);
 void zeroCtrlSetBrightness(void);
 void zeroCtrlSetClockSpeed(void);
@@ -141,16 +147,31 @@ void InjectionEntryFuncInit(u32 *unk0) {
 }
 //OK
 int OnModuleStart(SceModule2 *mod) {       
-	if((model != 0) && (model != 4)) {
+	int psp1000_experiment = zeroCtrlIsPsp1000SlideExperimentEnabled();
+	if(((model != 0) && (model != 4)) || psp1000_experiment) {
 		if(strcmp(mod->modname, "vsh_module") == 0) {
-			if(devkit == 0x06020010) {								
+			if(psp1000_experiment) {
+				unsigned int target = mod->text_addr + 0x6F84;
+				int valid = devkit == 0x06060110 && mod->text_size >= 24 &&
+						target >= mod->text_addr && target - mod->text_addr >= 8 &&
+						target - mod->text_addr <= mod->text_size - 16;
+				zeroCtrlRecordVshSlideTarget(mod->modid, mod->text_addr,
+						mod->text_size, mod->module_start_func, mod->entry_addr,
+						target, valid,
+						valid ? _lw(target - 8) : 0,
+						valid ? _lw(target - 4) : 0,
+						valid ? _lw(target) : 0,
+						valid ? _lw(target + 4) : 0,
+						valid ? _lw(target + 8) : 0,
+						valid ? _lw(target + 12) : 0);
+			} else if(devkit == 0x06020010) {								
 				zeroCtrlRedir2Stub(mod->text_addr+0x6D78, slide_check_stub, zeroCtrlDummyFunc);			
 			} else if((devkit >= 0x06030010) && (devkit <= 0x06030910)) {		
 				zeroCtrlRedir2Stub(mod->text_addr+0x6F6C, slide_check_stub, zeroCtrlDummyFunc);
 			} else if((devkit == 0x06060010) || (devkit == 0x06060110)) {
 				zeroCtrlRedir2Stub(mod->text_addr+0x6F84, slide_check_stub, zeroCtrlDummyFunc);
 			}
-		} else if(strcmp(mod->modname, "sysconf_plugin_module") == 0) {
+		} else if(!psp1000_experiment && strcmp(mod->modname, "sysconf_plugin_module") == 0) {
 			if(devkit == 0x06020010) {			
 				AddSysconfItem = zeroCtrlRedir2Stub(mod->text_addr+0x27918, add_sysconf_item_stub, zeroCtrlAddSysconfItem);		
 			} else if((devkit >= 0x06030010) && (devkit <= 0x06030910)) {			
@@ -164,7 +185,7 @@ int OnModuleStart(SceModule2 *mod) {
 		}  
 	}
 	
-	if(strcmp(mod->modname, "slide_plugin_module") == 0) {
+	if(!psp1000_experiment && strcmp(mod->modname, "slide_plugin_module") == 0) {
 		MAKE_CALL(mod->text_addr+0xC990, zeroCtrlGetCurrentClockLocalTime);
 		origFuncInit = zeroCtrlRedir2Stub(mod->text_addr+0x9038, slide_start_stub, InjectionEntryFuncInit);		
 	}

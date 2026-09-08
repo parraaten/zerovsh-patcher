@@ -243,18 +243,57 @@ work.
 
 ## Current experimental state
 
-Phase 2 restores the functional 0x0007 helper, ordinary buffer loader, and
-original helper `module_start`, while retaining diagnostics, the bounded
-configuration-buffer fix, and permanent 64-byte embedded-buffer alignment.
-PSP-1000 remains excluded by the existing kernel and user model checks; its
-SlidePlugin is intentionally locked. No PSP-1000 SlidePlugin support or
-firmware patch is enabled. The full audit and Phase 3 plan are maintained in
-`docs/phase2-final-report.md`; a restored-baseline PSPDEV build and PSP-1000
-smoke test are the final external validation steps.
+Phase 1: **COMPLETE**. Phase 2: **COMPLETE**. Phase 3: **ACTIVE**.
+
+The final Phase 2 static measurements are:
+
+- user ELF: text 2,472 bytes, data 0 bytes, BSS 20 bytes, total 2,492 bytes;
+- kernel ELF: text 19,952 bytes, data 5,172 bytes, BSS 588 bytes, total 25,712
+  bytes; and
+- embedded user PRX: 4,834 bytes.
+
+Phase 3's objective is to determine whether the original Sony PSP Go
+`slide_plugin.prx` can be requested, loaded, and started on PSP-1000 before
+enabling its behavior patches. The first experiment is load/start observation
+only: it requires the explicit, default-disabled `PSP1000SlidePlugin` option,
+requires `ClockAndCalendar=Disabled`, does not create the button thread, and
+does not apply SlidePlugin clock, initialization, import, power, LED, or
+brightness patches on PSP-1000. It does not establish clock/calendar support.
+Its diagnostic writer thread is created before the embedded helper, remains
+asleep with constant memory presence across the probe-to-pre-start interval,
+waits at most two seconds after the probe for the start callback, and performs
+all Memory Stick serialization only after that interval.
+The first real Phase 3 run proved that the unmodified Sony PRX is requested,
+loaded, relocated, and reaches the pre-start callback on PSP-1000. It reported
+1,701,376 USER bytes free at pre-start while PID 5 remained separately fully
+free at 4,194,304 bytes; the XMB then froze before icons appeared. The active
+single-variable control validates the Sony `module_start_func` at `SceModule2`
+offset `0x50` against its text and segment ranges, chains the previous handler,
+saves two original words, and replaces only those RAM words with a successful
+MIPS return. The distinct ELF `entry_addr` at offset `0x64` is logged but never
+patched. The earlier `542b16f` implementation was superseded before hardware
+validation because it targeted that ELF address. This control does not modify
+the Sony files or enable behavior hooks.
+The first corrected no-op hardware attempt is inconclusive: VSH froze before
+icons appeared, but the log contained no persisted SlidePlugin milestone, so
+there is no evidence that the no-op was applied. The active instrumentation-only
+build adds a three-second pre-probe timeout and writer-thread-only, once-per-stage
+breadcrumbs polled every 10 ms. These asynchronous writes are solely for freeze
+localization and must not be used for precise memory-cost measurements.
+That breadcrumb run subsequently ended with
+`request=0 rco_request=0 probe=0 start=0` while the XMB still froze. Phase 3.1a
+therefore keeps all instrumentation armed but suppresses only the experimental
+PSP-1000 `vsh_module + 0x6F84` redirection. It captures a bounds-checked,
+read-only six-word fingerprint around that address through a fixed-scalar
+kernel handoff; historical model behavior is unchanged. This control tests
+host-VSH stability and does not establish that the offset is incorrect.
+The complete implementation and hardware procedure are in
+`docs/phase3-controlled-enablement.md`.
 
 ## Hardware testing workflow
 
-1. Confirm `ClockAndCalendar = Disabled` in
+1. Confirm `ClockAndCalendar = Disabled` and
+   `PSP1000SlidePlugin = Enabled` in
    `ms0:/seplugins/zerovsh.ini` and retain a recovery method that can disable
    the plugin.
 2. Run `./build_linux.sh` with PSPDEV and copy
