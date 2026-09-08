@@ -47,7 +47,6 @@ typedef struct
   unsigned int * vars;
 }PspModuleImport;
 
-unsigned int sceKernelQuerySystemCall(void * function);
 
 PspModuleImport * find_import_lib(SceModule2 * module, const char * library)
 {
