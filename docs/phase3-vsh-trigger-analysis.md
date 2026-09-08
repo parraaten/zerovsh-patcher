@@ -405,3 +405,11 @@ It remains unknown whether `+0x58D4` specifically causes the native VSH to
 request SlidePlugin.  Request/RCO/probe/start breadcrumbs and the selective
 validation, original/replacement word, application, and cache-sync records are
 the required hardware evidence.  A build cannot establish runtime behavior.
+
+The hardware build must verify that `psp-nm -n user/zerovsh_upatcher.elf |
+grep zeroCtrlReturnTrue` reports a distinct symbol and that its disassembly is
+a standalone, state-independent leaf equivalent to `jr $ra; li $v0, 1` (the
+return assignment may occupy the branch delay slot).  In `main.o`, a displayed
+`jal 0 <zeroCtrlDummyFunc>` at offset `0x228` is only the unresolved pre-link
+placeholder: its `R_MIPS_26 zeroCtrlRecordVshSlideTarget` relocation identifies
+the actual link target and must not be interpreted as a dummy-function call.

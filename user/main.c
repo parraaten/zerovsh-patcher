@@ -121,6 +121,7 @@ int zeroCtrlDummyFunc2(void) {
 	return 0;
 }
 // Strict boolean result for the selective PSP-1000 VSH callsite experiment.
+__attribute__((noipa, used))
 int zeroCtrlReturnTrue(void) {
 	return 1;
 }
