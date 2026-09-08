@@ -259,6 +259,10 @@ only: it requires the explicit, default-disabled `PSP1000SlidePlugin` option,
 requires `ClockAndCalendar=Disabled`, does not create the button thread, and
 does not apply SlidePlugin clock, initialization, import, power, LED, or
 brightness patches on PSP-1000. It does not establish clock/calendar support.
+Its diagnostic writer thread is created before the embedded helper, remains
+asleep with constant memory presence across the probe-to-pre-start interval,
+waits at most two seconds after the probe for the start callback, and performs
+all Memory Stick serialization only after that interval.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
 

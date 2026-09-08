@@ -41,21 +41,29 @@ than adding a broad ModuleMgr loader hook:
 
 - `zeroCtrlModuleProbe()` recognizes `slide_plugin_module` without changing
   its buffer and captures the fixed kernel snapshot labelled
-  `before_slide_plugin`. This proves that the Sony image reached LoadCore, but
+  `at_slide_plugin_probe`. This proves that the Sony image reached LoadCore, but
   it is a probe-time measurement—not a snapshot before VSH's loader request.
-- the existing start-module callback captures the snapshot labelled both
-  `after_slide_plugin_load` and `before_slide_plugin_start`, plus a private copy
-  of `SceModule2`. At this point relocation has completed and start is being
-  announced. This distinguishes completed load/relocation from the earlier
-  probe.
-- a one-shot deferred kernel thread waits 750 ms, captures
-  `slide_plugin_delayed`, and serializes all retained state. No file I/O occurs
-  in flash hooks, the executable probe, or the start callback. Flash opens set
-  only fixed in-memory PRX/RCO request flags.
+- the existing start-module callback captures `slide_plugin_pre_start`, plus a
+  private copy of `SceModule2`. At this point relocation has completed and the
+  callback runs immediately before the Sony entrypoint. This distinguishes a
+  loaded/relocated module from the earlier probe without claiming an
+  after-start measurement.
+- the one-shot diagnostic writer thread and its unchanged 0x2000-byte stack are
+  created during kernel initialization, before the embedded helper can enable
+  the VSH request patch. It sleeps until the probe, then waits up to two seconds
+  for the start callback. If observed, it waits 750 ms from that callback,
+  captures `slide_plugin_delayed`, and serializes retained state. On timeout it
+  records `slide_module_start_not_seen` and `slide_plugin_start_timeout`.
+  Before either normal exit it clears `deferred_thread_started`.
+- no file I/O occurs in flash hooks, the executable probe, or the start
+  callback. Flash opens inspect the incoming filename with K1 locally cleared
+  and restored, and set only fixed in-memory PRX/RCO request flags.
 
 This is the least invasive useful option because the project already hooks the
 probe and already chains the start callback. It introduces no undocumented
 6.61 ModuleMgr NID and does not intercept or change loader arguments/results.
+Because the writer thread has constant memory presence across both snapshots,
+its stack and thread overhead do not contaminate the probe-to-pre-start delta.
 Consequently, this first scaffold **cannot** obtain the VSH-owned loader return
 code, the Sony `module_start` return code, or an immediate post-start snapshot.
 It must not label the delayed sample as direct start cost. If the callback is
@@ -117,10 +125,10 @@ Expected header markers are `[phase] psp1000_slide_phase3`, opt-in enabled,
 clock/calendar disabled, minimal hooks, and button thread disabled. Depending
 on progress, deferred records include `slide_request_seen`,
 `slide_rco_request_seen`, `slide_probe_seen`, `slide_module_start_seen`,
-`slide_module_modid`, `before_slide_plugin`, `after_slide_plugin_load`,
-`before_slide_plugin_start`, module/segment metadata, and
-`slide_plugin_delayed`. Absence of a marker is meaningful; an immediate freeze
-can also prevent the deferred serializer from writing captured state.
+`slide_module_modid`, `at_slide_plugin_probe`, `slide_plugin_pre_start`,
+module/segment metadata, and either `slide_plugin_delayed` or
+`slide_plugin_start_timeout`. Absence of a marker is meaningful; an immediate
+freeze can also prevent the deferred serializer from writing captured state.
 
 ## Interpretation and next one-variable experiment
 

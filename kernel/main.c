@@ -89,19 +89,19 @@ static long b_level;
 
 typedef struct {
     int armed;
-    int saw_request;
-    int saw_rco_request;
-    int saw_probe;
-    int saw_start;
-    int deferred_thread_started;
-    ZeroCtrlPartitionSnapshot before_slide;
-    ZeroCtrlPartitionSnapshot after_slide_load;
-    ZeroCtrlPartitionSnapshot delayed_slide;
+    volatile int saw_request;
+    volatile int saw_rco_request;
+    volatile int saw_probe;
+    volatile int saw_start;
+    volatile int deferred_thread_started;
+    ZeroCtrlPartitionSnapshot at_probe;
+    ZeroCtrlPartitionSnapshot pre_start;
+    ZeroCtrlPartitionSnapshot delayed_or_timeout;
     SceModule2 module;
 } ZeroCtrlSlideDiagnosticState;
 
 static ZeroCtrlSlideDiagnosticState slide_diag;
-static void zeroCtrlScheduleSlideDiagnostics(void);
+static int zeroCtrlCreateSlideDiagnosticsThread(void);
 
 int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
     return slide_diag.armed;
@@ -327,13 +327,16 @@ int zeroCtrlMsIoGetstat(PspIoDrvFileArg *arg, const char *file, SceIoStat *stat)
 //OK
 int zeroCtrlIoOpen(PspIoDrvFileArg *arg, char *file, int flags, SceMode mode) {          
     if (slide_diag.armed && file) {
-        const char *name = strrchr(file, '/');
+        const char *name;
+        int k1 = pspSdkSetK1(0);
+        name = strrchr(file, '/');
         name = name ? name + 1 : file;
         if (strcmp(name, "slide_plugin.prx") == 0) {
             slide_diag.saw_request = 1;
         } else if (strcmp(name, "slide_plugin.rco") == 0) {
             slide_diag.saw_rco_request = 1;
         }
+        pspSdkSetK1(k1);
     }
     if (ms_drv && zeroCtrlIsValidFileType(file)) {
         return zeroCtrlIoOpenEX(arg, file, flags, mode);
@@ -404,9 +407,8 @@ int zeroCtrlModuleProbe(void *data, void *exec_info) {
 
     if (slide_diag.armed && strcmp(modname, "slide_plugin_module") == 0 &&
             !slide_diag.saw_probe) {
+        zeroCtrlDiagnosticsCapturePartitions(&slide_diag.at_probe);
         slide_diag.saw_probe = 1;
-        zeroCtrlDiagnosticsCapturePartitions(&slide_diag.before_slide);
-        zeroCtrlScheduleSlideDiagnostics();
     }
 
     zeroCtrlSetBlackListItems(modname);
@@ -527,36 +529,59 @@ int set_registry_value(const char *dir, const char *name, unsigned int val)
 }
 //OK
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
-    sceKernelDelayThread(750000);
-    zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_slide);
+    int waited = 0;
+
+    while (!slide_diag.saw_probe) {
+        sceKernelDelayThread(10000);
+    }
+    while (!slide_diag.saw_start && waited < 2000000) {
+        sceKernelDelayThread(10000);
+        waited += 10000;
+    }
+    if (slide_diag.saw_start) {
+        /* Delay is measured from the observed pre-entrypoint callback. */
+        sceKernelDelayThread(750000);
+        zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
+    } else {
+        zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
+    }
+
     if (slide_diag.saw_request) zeroCtrlDiagnosticsText("[event] slide_request_seen\n");
     if (slide_diag.saw_rco_request) zeroCtrlDiagnosticsText("[event] slide_rco_request_seen\n");
-    if (slide_diag.saw_probe) {
-        zeroCtrlDiagnosticsText("[event] slide_probe_seen\n");
-        zeroCtrlDiagnosticsWritePartitions("before_slide_plugin", &slide_diag.before_slide);
-    }
+    zeroCtrlDiagnosticsText("[event] slide_probe_seen\n");
+    zeroCtrlDiagnosticsWritePartitions("at_slide_plugin_probe", &slide_diag.at_probe);
     if (slide_diag.saw_start) {
         zeroCtrlDiagnosticsText("[event] slide_module_start_seen\n");
         zeroCtrlDiagnosticsEvent("slide_module_modid", slide_diag.module.modid);
-        zeroCtrlDiagnosticsWritePartitions("after_slide_plugin_load", &slide_diag.after_slide_load);
-        zeroCtrlDiagnosticsWritePartitions("before_slide_plugin_start", &slide_diag.after_slide_load);
+        zeroCtrlDiagnosticsWritePartitions("slide_plugin_pre_start", &slide_diag.pre_start);
         zeroCtrlDiagnosticsModule(&slide_diag.module);
+        zeroCtrlDiagnosticsWritePartitions("slide_plugin_delayed",
+                &slide_diag.delayed_or_timeout);
+    } else {
+        zeroCtrlDiagnosticsText("[event] slide_module_start_not_seen timeout_us=2000000\n");
+        zeroCtrlDiagnosticsWritePartitions("slide_plugin_start_timeout",
+                &slide_diag.delayed_or_timeout);
     }
-    zeroCtrlDiagnosticsWritePartitions("slide_plugin_delayed", &slide_diag.delayed_slide);
+    slide_diag.deferred_thread_started = 0;
     sceKernelExitDeleteThread(0);
     return 0;
 }
 
-static void zeroCtrlScheduleSlideDiagnostics(void) {
+static int zeroCtrlCreateSlideDiagnosticsThread(void) {
     SceUID thid;
-    if (slide_diag.deferred_thread_started) return;
-    slide_diag.deferred_thread_started = 1;
+    int result;
+
+    if (slide_diag.deferred_thread_started) return 0;
     thid = sceKernelCreateThread("zeroctrl_slide_diag", zeroCtrlWriteSlideDiagnostics,
             0x18, 0x2000, 0, NULL);
-    if (thid < 0 || sceKernelStartThread(thid, 0, NULL) < 0) {
-        if (thid >= 0) sceKernelDeleteThread(thid);
+    if (thid < 0) return thid;
+    slide_diag.deferred_thread_started = 1;
+    result = sceKernelStartThread(thid, 0, NULL);
+    if (result < 0) {
+        sceKernelDeleteThread(thid);
         slide_diag.deferred_thread_started = 0;
     }
+    return result;
 }
 
 int OnModuleStart(SceModule2 *mod) {
@@ -564,10 +589,9 @@ int OnModuleStart(SceModule2 *mod) {
 
         if (zeroCtrlIsPsp1000SlideExperimentEnabled() &&
                 strcmp(mod->modname, "slide_plugin_module") == 0) {
-                slide_diag.saw_start = 1;
-                zeroCtrlDiagnosticsCapturePartitions(&slide_diag.after_slide_load);
+                zeroCtrlDiagnosticsCapturePartitions(&slide_diag.pre_start);
                 memcpy(&slide_diag.module, mod, sizeof(slide_diag.module));
-                zeroCtrlScheduleSlideDiagnostics();
+                slide_diag.saw_start = 1;
                 return previous ? previous(mod) : 0;
         }
         
@@ -895,6 +919,10 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	//Cool animation after reset vsh with no wallpaper enabled
 	set_registry_value("/CONFIG/SYSTEM", "slide_welcome", 1);	
 	
+	if (slide_diag.armed) {
+		zeroCtrlDiagnosticsEvent("slide_diagnostic_thread_start",
+				zeroCtrlCreateSlideDiagnosticsThread());
+	}
 	zeroCtrlCreatePatchThread();
 	zeroCtrlDiagnosticsMemory("kernel_initialization_complete");
 	
