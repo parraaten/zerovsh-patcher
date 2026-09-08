@@ -91,6 +91,41 @@ static long b_level;
 #define VSH_CODE_CAPTURE_AFTER  0x100
 #define VSH_CODE_CAPTURE_BYTES  (VSH_CODE_CAPTURE_BEFORE + VSH_CODE_CAPTURE_AFTER)
 #define VSH_CODE_CAPTURE_WORDS  (VSH_CODE_CAPTURE_BYTES / sizeof(unsigned int))
+#define VSH_REFERENCE_LIMIT     32
+#define VSH_REFERENCE_WINDOW_BEFORE 0x30
+#define VSH_REFERENCE_WINDOW_AFTER  0x50
+#define VSH_REFERENCE_WINDOW_WORDS  \
+    ((VSH_REFERENCE_WINDOW_BEFORE + VSH_REFERENCE_WINDOW_AFTER) / 4)
+#define VSH_PREDICATE_COUNT 8
+
+static const unsigned int vsh_predicate_offsets[VSH_PREDICATE_COUNT] = {
+    0x6F04, 0x6F44, 0x6F84, 0x6FC4,
+    0x7004, 0x701C, 0x7030, 0x7070
+};
+
+typedef struct {
+    unsigned int source_addr;
+    unsigned int source_offset;
+    unsigned int instruction;
+    unsigned int window_start_offset;
+    unsigned int window_size;
+    unsigned int window[VSH_REFERENCE_WINDOW_WORDS];
+    unsigned char kind;
+    unsigned char predicate_index;
+} ZeroCtrlVshDirectReference;
+
+typedef struct {
+    unsigned int source_addr;
+    unsigned int source_offset;
+    unsigned int instruction;
+    unsigned int lui_offset;
+    unsigned int window_start_offset;
+    unsigned int window_size;
+    unsigned int window[VSH_REFERENCE_WINDOW_WORDS];
+    unsigned char kind;
+    unsigned char base_register;
+    unsigned char value_register;
+} ZeroCtrlVshGlobalReference;
 
 typedef struct {
     int armed;
@@ -126,6 +161,15 @@ typedef struct {
     unsigned int vsh_code_capture_end;
     unsigned int vsh_code_capture_size;
     unsigned int vsh_code_words[VSH_CODE_CAPTURE_WORDS];
+    unsigned int vsh_direct_reference_count;
+    unsigned int vsh_direct_reference_total;
+    unsigned int vsh_direct_reference_overflow;
+    unsigned int vsh_predicate_reference_count[VSH_PREDICATE_COUNT];
+    ZeroCtrlVshDirectReference vsh_direct_references[VSH_REFERENCE_LIMIT];
+    unsigned int vsh_global_reference_count;
+    unsigned int vsh_global_reference_total;
+    unsigned int vsh_global_reference_overflow;
+    ZeroCtrlVshGlobalReference vsh_global_references[VSH_REFERENCE_LIMIT];
     unsigned int module_start_addr;
     unsigned int elf_entry_addr;
     unsigned int module_start_original[2];
@@ -139,6 +183,139 @@ typedef struct {
 
 static ZeroCtrlSlideDiagnosticState slide_diag;
 static int zeroCtrlCreateSlideDiagnosticsThread(void);
+
+static void zeroCtrlCaptureVshReferenceWindow(unsigned int text_addr,
+        unsigned int text_size, unsigned int source_offset,
+        unsigned int *window_start_offset, unsigned int *window_size,
+        unsigned int *window) {
+    unsigned int start = source_offset > VSH_REFERENCE_WINDOW_BEFORE ?
+            source_offset - VSH_REFERENCE_WINDOW_BEFORE : 0;
+    unsigned int end = text_size - source_offset < VSH_REFERENCE_WINDOW_AFTER ?
+            text_size : source_offset + VSH_REFERENCE_WINDOW_AFTER;
+    unsigned int i;
+
+    start &= ~3U;
+    end &= ~3U;
+    *window_start_offset = start;
+    *window_size = end - start;
+    for (i = 0; i < *window_size / 4; i++) {
+        window[i] = _lw(text_addr + start + i * 4);
+    }
+}
+
+static unsigned int zeroCtrlMipsJumpTarget(unsigned int pc,
+        unsigned int instruction) {
+    return ((pc + 4) & 0xF0000000) |
+            ((instruction & 0x03FFFFFF) << 2);
+}
+
+static void zeroCtrlScanVshDirectReferences(unsigned int text_addr,
+        unsigned int text_size) {
+    unsigned int pass;
+    unsigned int offset;
+    unsigned int predicate;
+
+    /* Two passes retain JAL references before less useful tail J references. */
+    for (pass = 0; pass < 2; pass++) {
+        unsigned int wanted_opcode = pass == 0 ? 3 : 2;
+        for (offset = 0; offset + 4 <= text_size; offset += 4) {
+            unsigned int pc = text_addr + offset;
+            unsigned int instruction = _lw(pc);
+            if (instruction >> 26 != wanted_opcode) continue;
+            for (predicate = 0; predicate < VSH_PREDICATE_COUNT; predicate++) {
+                if (zeroCtrlMipsJumpTarget(pc, instruction) !=
+                        text_addr + vsh_predicate_offsets[predicate]) continue;
+                slide_diag.vsh_direct_reference_total++;
+                slide_diag.vsh_predicate_reference_count[predicate]++;
+                if (slide_diag.vsh_direct_reference_count < VSH_REFERENCE_LIMIT) {
+                    ZeroCtrlVshDirectReference *ref =
+                            &slide_diag.vsh_direct_references[
+                                slide_diag.vsh_direct_reference_count++];
+                    ref->source_addr = pc;
+                    ref->source_offset = offset;
+                    ref->instruction = instruction;
+                    ref->kind = wanted_opcode;
+                    ref->predicate_index = predicate;
+                    zeroCtrlCaptureVshReferenceWindow(text_addr, text_size,
+                            offset, &ref->window_start_offset,
+                            &ref->window_size, ref->window);
+                } else {
+                    slide_diag.vsh_direct_reference_overflow++;
+                }
+                break;
+            }
+        }
+    }
+}
+
+static int zeroCtrlVshGlobalAccessKind(unsigned int instruction) {
+    unsigned int opcode = instruction >> 26;
+    if (opcode == 0x28 || opcode == 0x29 || opcode == 0x2B) return 2;
+    if (opcode == 0x20 || opcode == 0x21 || opcode == 0x23 ||
+            opcode == 0x24 || opcode == 0x25) return 1;
+    return 0;
+}
+
+static int zeroCtrlVshGlobalReferenceStored(unsigned int source_offset) {
+    unsigned int i;
+    for (i = 0; i < slide_diag.vsh_global_reference_count; i++) {
+        if (slide_diag.vsh_global_references[i].source_offset == source_offset)
+            return 1;
+    }
+    return 0;
+}
+
+static void zeroCtrlScanVshGlobalReferences(unsigned int text_addr,
+        unsigned int text_size) {
+    int pass;
+    unsigned int offset;
+
+    /* Store candidates are retained before reads if the fixed array fills. */
+    for (pass = 2; pass >= 1; pass--) {
+        for (offset = 4; offset + 4 <= text_size; offset += 4) {
+            unsigned int instruction = _lw(text_addr + offset);
+            unsigned int base = (instruction >> 21) & 0x1F;
+            unsigned int distance;
+            unsigned int lui_offset = 0;
+            int found = 0;
+            if ((instruction & 0xFFFF) != 0xDAE0 ||
+                    zeroCtrlVshGlobalAccessKind(instruction) != pass)
+                continue;
+            for (distance = 1; distance <= 4 && distance * 4 <= offset;
+                    distance++) {
+                unsigned int candidate_offset = offset - distance * 4;
+                unsigned int candidate = _lw(text_addr + candidate_offset);
+                if ((candidate >> 26) == 0x0F &&
+                        ((candidate >> 16) & 0x1F) == base &&
+                        (candidate & 0xFFFF) == 0x09C8) {
+                    lui_offset = candidate_offset;
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) continue;
+            slide_diag.vsh_global_reference_total++;
+            if (slide_diag.vsh_global_reference_count < VSH_REFERENCE_LIMIT &&
+                    !zeroCtrlVshGlobalReferenceStored(offset)) {
+                ZeroCtrlVshGlobalReference *ref =
+                        &slide_diag.vsh_global_references[
+                            slide_diag.vsh_global_reference_count++];
+                ref->source_addr = text_addr + offset;
+                ref->source_offset = offset;
+                ref->instruction = instruction;
+                ref->lui_offset = lui_offset;
+                ref->kind = (unsigned char)pass;
+                ref->base_register = base;
+                ref->value_register = (instruction >> 16) & 0x1F;
+                zeroCtrlCaptureVshReferenceWindow(text_addr, text_size,
+                        offset, &ref->window_start_offset,
+                        &ref->window_size, ref->window);
+            } else {
+                slide_diag.vsh_global_reference_overflow++;
+            }
+        }
+    }
+}
 
 int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
     return slide_diag.armed;
@@ -178,6 +355,8 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                 slide_diag.vsh_code_words[i] =
                         _lw(text_addr + start_offset + i * 4);
             }
+            zeroCtrlScanVshDirectReferences(text_addr, text_size);
+            zeroCtrlScanVshGlobalReferences(text_addr, text_size);
             slide_diag.vsh_code_capture_result = 0;
         }
     }
@@ -692,7 +871,8 @@ static void zeroCtrlWriteSlideCheckpoints(unsigned int *written) {
 
 static void zeroCtrlWriteVshSlideEvidence(void) {
     unsigned int i;
-    char line[96];
+    unsigned int j;
+    char line[160];
 
     if (!slide_diag.vsh_module_seen) return;
     zeroCtrlDiagnosticsEvent("vsh_modid", slide_diag.vsh_modid);
@@ -719,6 +899,65 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
                 slide_diag.vsh_text_addr + slide_diag.vsh_code_capture_start + i * 4,
                 slide_diag.vsh_code_words[i]);
         zeroCtrlDiagnosticsText(line);
+    }
+    zeroCtrlDiagnosticsEvent("vsh_direct_reference_total",
+            slide_diag.vsh_direct_reference_total);
+    zeroCtrlDiagnosticsEvent("vsh_direct_reference_stored",
+            slide_diag.vsh_direct_reference_count);
+    zeroCtrlDiagnosticsEvent("vsh_direct_reference_overflow",
+            slide_diag.vsh_direct_reference_overflow);
+    for (i = 0; i < VSH_PREDICATE_COUNT; i++) {
+        snprintf(line, sizeof(line),
+                "[vshmatrix] predicate=0x%04X references=%u\n",
+                vsh_predicate_offsets[i],
+                slide_diag.vsh_predicate_reference_count[i]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (i = 0; i < slide_diag.vsh_direct_reference_count; i++) {
+        ZeroCtrlVshDirectReference *ref = &slide_diag.vsh_direct_references[i];
+        snprintf(line, sizeof(line),
+                "[vshref] source=0x%08X offset=0x%05X word=0x%08X kind=%s predicate=0x%04X\n",
+                ref->source_addr, ref->source_offset, ref->instruction,
+                ref->kind == 3 ? "JAL" : "J",
+                vsh_predicate_offsets[ref->predicate_index]);
+        zeroCtrlDiagnosticsText(line);
+        snprintf(line, sizeof(line),
+                "[vshref_window] index=%u start=0x%05X size=0x%02X\n",
+                i, ref->window_start_offset, ref->window_size);
+        zeroCtrlDiagnosticsText(line);
+        for (j = 0; j < ref->window_size / 4; j++) {
+            snprintf(line, sizeof(line),
+                    "[vshrefcode] index=%u addr=0x%08X word=0x%08X\n",
+                    i, slide_diag.vsh_text_addr + ref->window_start_offset + j * 4,
+                    ref->window[j]);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+    zeroCtrlDiagnosticsEvent("vsh_global_reference_total",
+            slide_diag.vsh_global_reference_total);
+    zeroCtrlDiagnosticsEvent("vsh_global_reference_stored",
+            slide_diag.vsh_global_reference_count);
+    zeroCtrlDiagnosticsEvent("vsh_global_reference_overflow",
+            slide_diag.vsh_global_reference_overflow);
+    for (i = 0; i < slide_diag.vsh_global_reference_count; i++) {
+        ZeroCtrlVshGlobalReference *ref = &slide_diag.vsh_global_references[i];
+        snprintf(line, sizeof(line),
+                "[vshglobal] source=0x%08X offset=0x%05X word=0x%08X kind=%s base=%u value=%u lui=0x%05X\n",
+                ref->source_addr, ref->source_offset, ref->instruction,
+                ref->kind == 2 ? "STORE" : "LOAD", ref->base_register,
+                ref->value_register, ref->lui_offset);
+        zeroCtrlDiagnosticsText(line);
+        snprintf(line, sizeof(line),
+                "[vshglobal_window] index=%u start=0x%05X size=0x%02X\n",
+                i, ref->window_start_offset, ref->window_size);
+        zeroCtrlDiagnosticsText(line);
+        for (j = 0; j < ref->window_size / 4; j++) {
+            snprintf(line, sizeof(line),
+                    "[vshglobalcode] index=%u addr=0x%08X word=0x%08X\n",
+                    i, slide_diag.vsh_text_addr + ref->window_start_offset + j * 4,
+                    ref->window[j]);
+            zeroCtrlDiagnosticsText(line);
+        }
     }
 }
 
@@ -1191,6 +1430,7 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 				"[experiment] clock_and_calendar=disabled\n"
 				"[experiment] psp1000_vsh_slide_trigger=disabled_control\n"
 				"[experiment] vsh_slide_patch=disabled\n"
+				"[experiment] vsh_reference_scan=read_only\n"
 				"[experiment] button_thread=disabled\n");
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");

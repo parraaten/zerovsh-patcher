@@ -310,3 +310,21 @@ equivalence. In particular, the signed `lw` displacement resolves to
 `0x09C682E0`, not `0x09C782E0`. Full analysis, explicit unknowns, and the one
 next controlled hardware procedure are maintained in
 `docs/phase3-vsh-trigger-analysis.md`.
+
+### Phase 3.1c read-only predicate-reference scan
+
+Real hardware returned the complete 96-word window and remained fully usable.
+With that run's relocated base, `+0x6F84` is the exact start of a leaf predicate
+that reads `0x09C7DAE0`, returns strict 0/1, and is true for `{4,5,7,9}`.
+Adjacent leaf predicates classify the same apparent enumeration. This disproves
+the earlier “unknown boundary” assessment but does not identify slide semantics
+or establish whether historical `-1` is unsafe.
+
+The next build still leaves every VSH instruction and global untouched. It
+scans loaded VSH text in memory for correctly resolved direct J/JAL references
+to all eight captured predicates and for compatible LUI/load/store references
+to `0x09C7DAE0`. Fixed arrays retain at most 32 caller and 32 global-reference
+windows, prioritize JAL over J and stores over loads, and report totals and
+overflow. Only the existing writer thread serializes the compact matches and
+their bounds-clamped `-0x30/+0x50` windows. See
+`docs/phase3-vsh-trigger-analysis.md` for formats and the hardware procedure.

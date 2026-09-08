@@ -292,10 +292,16 @@ the forced modification was necessary for the observed freeze but not whether
 the offset or forced `-1` result is semantically wrong. Phase 3.1b leaves the
 patch suppressed and captures a clamped, read-only `0x180`-byte instruction
 window into fixed kernel state for writer-thread serialization. The available
-six words show a backward jump immediately before the candidate and resolve the
-signed global load to `0x09C682E0`; they do not yet establish function
-boundaries, callers, or slide semantics. The exact PSP-1000 6.61 `vsh_module`
-binary is not present in the repository.
+hardware window proves `+0x6F84` is the start of a leaf predicate that reads
+`0x09C7DAE0`, returns strict 0/1, and is true for `{4,5,7,9}`. It belongs to a
+cluster of eight nearby predicates over that shared apparent enumeration.
+Phase 3.1c keeps the patch suppressed and scans loaded VSH text read-only for
+properly resolved direct J/JAL callers of the cluster and compatible
+load/store references to the global. Fixed kernel arrays prioritize JAL and
+stores, retain bounded caller windows, and report overflow for offline return-
+value and state-writer analysis. Caller semantics and the global's identity
+remain unknown. The exact PSP-1000 6.61 `vsh_module` binary is not present in
+the repository.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
 
