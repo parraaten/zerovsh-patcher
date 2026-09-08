@@ -142,6 +142,56 @@ freeze can also prevent the deferred serializer from writing captured state.
 
 ## Findings, assumptions, and unresolved questions
 
+### First PSP-1000 hardware result
+
+The first controlled run requested both Sony assets, reached the executable
+probe, loaded and relocated `slide_plugin_module`, and reached the pre-start
+handler. Its module ID was `0x04A15317`, attribute `0x0000`, text/data
+partitions 2/2, text 1,804,080 bytes, data 80 bytes, BSS 4,460 bytes, and two
+segments of 1,804,080 and 4,540 bytes (1,808,620 bytes aggregate). This proves
+that the original Sony PRX itself fits and loads on the tested PSP-1000; it
+disproves simple PRX-load RAM insufficiency.
+
+USER free memory was 1,693,440 bytes at probe and 1,701,376 bytes at the
+pre-start callback. The 750 ms sample contained 1,745,920 free bytes. PID 5
+remained separately fully free at 4,194,304 bytes and must not be assumed
+available to ordinary Sony USER allocations. Runtime-memory insufficiency
+during Sony initialization therefore remains plausible but unproven. The XMB
+froze before its icons appeared, localizing the current boundary to at or after
+the Sony start transition rather than Sony loading/relocation.
+
+### Sony entrypoint no-op control
+
+The next run changes one semantic variable. After capturing pre-start state,
+the kernel chains the prior SystemControl handler and retains its result. It
+then re-reads `mod->entry_addr` and accepts it only when it is word-aligned,
+both replacement words fit in the module text range, and both fit within one of
+the module's reported segments. Failure leaves Sony code untouched and records
+`slide_entry_patch_skipped=-1`.
+
+On validation success, the original two words are retained in fixed kernel
+state and replaced in RAM—not on disk—with `0x03E00008` (`jr $ra`) and
+`0x24020000` (`addiu $v0, $zero, 0`). In standard MIPS encoding the first word
+has SPECIAL opcode 0, function 8, and source register 31; the second has ADDIU
+opcode 9 with source/destination registers 0/2 and immediate 0. The delay-slot
+instruction therefore returns integer success before control returns to the
+caller. Existing full D-cache writeback and I-cache invalidation run after the
+two stores. Only then is the in-memory start-seen flag published to the writer.
+
+Deferred output adds `[experiment] sony_module_start_control=noop`, entry
+address, in-segment validation, both original words, and either
+`slide_entry_patch_applied=1` plus `sony_module_start_control=noop_applied`, or
+the negative skip result. There is still no Sony start return-code observation.
+All trigger, opt-in, diagnostic-thread, asset, helper-loader, stack, and Sony
+behavior-hook semantics otherwise remain identical to the first run.
+
+Interpretation is deliberately narrow: normal XMB startup with the no-op shows
+that loading/relocation alone did not freeze it and makes original Sony startup
+the next dependency boundary. A continued freeze places the failure before or
+independently of the original entry body, so the next single-variable work is
+the VSH slide-state/registration semantics. Failed validation requires returning
+the logged address and ranges without guessing another patch location.
+
 Files changed are the kernel/user handlers and export bridge, diagnostic writer,
 sample INI, this report, and `AGENTS.md`. `readme.txt`, Sony PRX/RCO files,
 loader attributes/APIs, stack sizes, and firmware data are untouched.

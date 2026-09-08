@@ -263,6 +263,14 @@ Its diagnostic writer thread is created before the embedded helper, remains
 asleep with constant memory presence across the probe-to-pre-start interval,
 waits at most two seconds after the probe for the start callback, and performs
 all Memory Stick serialization only after that interval.
+The first real Phase 3 run proved that the unmodified Sony PRX is requested,
+loaded, relocated, and reaches the pre-start callback on PSP-1000. It reported
+1,701,376 USER bytes free at pre-start while PID 5 remained separately fully
+free at 4,194,304 bytes; the XMB then froze before icons appeared. The active
+single-variable control validates the Sony entrypoint against its text and
+segment ranges, chains the previous handler, saves two original words, and
+replaces only those RAM words with a successful MIPS return. It does not modify
+the Sony files or enable behavior hooks.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
 
