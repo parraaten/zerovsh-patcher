@@ -116,7 +116,7 @@ int zeroCtrlDummyFunc2(void) {
 	return 0;
 }
 //OK
-int zeroCtrlGetCurrentClockLocalTime(pspTime *ptime) {
+int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
 	int k1 = pspSdkSetK1(0);	
 	
@@ -125,7 +125,7 @@ int zeroCtrlGetCurrentClockLocalTime(pspTime *ptime) {
 	
 	if(level != -1) {
 		ptime->hour = level;
-		ptime->minutes = 0;
+		ptime->minute = 0;
 	}
 	
 	pspSdkSetK1(k1);

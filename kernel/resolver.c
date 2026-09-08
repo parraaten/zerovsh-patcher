@@ -19,6 +19,9 @@
 
 #include <pspmoduleinfo.h>
 #include <psploadcore.h>
+#include <pspsysmem_kernel.h>
+#include <pspmodulemgr_kernel.h>
+#include <psputils.h>
 #include <psputilsforkernel.h>
 #include <string.h>
 #include "logger.h"
@@ -144,7 +147,7 @@ void zeroCtrlResolveNids(void) {
 
     	func = sctrlHENFindFunction(libs[count].prxname, libs[count].name, fw_nid);
     	if(!func) {
-    		zeroCtrlWriteDebug("Cannot find address for nid: %08X\n", fw_nid);
+    		zeroCtrlWriteDebug("Cannot find address for nid: %08X\n", (unsigned int)fw_nid);
     		continue;
     	}
 

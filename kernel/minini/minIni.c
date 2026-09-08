@@ -41,6 +41,11 @@
   #include <ctype.h>
   #include <string.h>
   #include <stdlib.h>
+
+  #if defined PORTABLE_STRNICMP
+  int strnicmp(const TCHAR *s1, const TCHAR *s2, size_t n);
+  #endif
+
   /* definition of TCHAR already in minIni.h */
   #define __T(s)    s
   #define _tcscat   strcat
@@ -370,7 +375,8 @@ int ini_getbool(const TCHAR *Section, const TCHAR *Key, int DefValue, const TCHA
   int ret;
 
   ini_gets(Section, Key, __T(""), buff, sizearray(buff), Filename);
-  buff[0] = toupper(buff[0]);
+  if (buff[0] >= 'a' && buff[0] <= 'z')
+    buff[0] += ('A' - 'a');
   if (buff[0]=='Y' || buff[0]=='1' || buff[0]=='T')
     ret = 1;
   else if (buff[0]=='N' || buff[0]=='0' || buff[0]=='F')

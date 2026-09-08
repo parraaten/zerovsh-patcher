@@ -16,6 +16,11 @@
 #define PSPLOADCORE_H
 
 #include <pspkerneltypes.h>
+/*
+ * Modern PSPSDK compatibility.
+ * pspmodulemgr_kernel.h references this type as a pointer.
+ */
+typedef struct SceLoadCoreExecFileInfo SceLoadCoreExecFileInfo;
 
 /** @defgroup LoadCore Interface to the LoadCoreForKernel library.
  */
