@@ -84,6 +84,7 @@ static char useSlide[128];
 static char slideContrast[128];
 static char ledDisable[128];
 static char psp1000SlidePlugin[16];
+static char psp1000SelectiveSlideTrigger58D4[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -164,6 +165,13 @@ typedef struct {
     int probe_result;
     int previous_handler_result;
     volatile int vsh_module_seen;
+    int selective_58d4_enabled;
+    unsigned int selective_58d4_original_word;
+    unsigned int selective_58d4_original_target;
+    unsigned int selective_58d4_patched_word;
+    int selective_58d4_validation;
+    int selective_58d4_patch_applied;
+    int selective_58d4_cache_sync;
     int vsh_target_in_text;
     int vsh_modid;
     unsigned int vsh_text_addr;
@@ -586,7 +594,8 @@ int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
 
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int text_size, unsigned int module_start_addr,
-        unsigned int elf_entry_addr, unsigned int target) {
+        unsigned int elf_entry_addr, unsigned int target,
+        unsigned int return_true_addr) {
     unsigned int target_offset;
     unsigned int start_offset;
     unsigned int end_offset;
@@ -636,6 +645,34 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                     &slide_diag.vsh_initializer_reference_overflow,
                     slide_diag.vsh_initializer_references);
             slide_diag.vsh_code_capture_result = 0;
+
+            if (slide_diag.selective_58d4_enabled &&
+                    text_size >= 0x6F88 &&
+                    text_addr <= 0xFFFFFFFFU - 0x6F84) {
+                unsigned int callsite = text_addr + 0x58D4;
+                unsigned int word = _lw(callsite);
+                unsigned int original_target = ((callsite + 4) & 0xF0000000) |
+                        ((word & 0x03FFFFFF) << 2);
+
+                slide_diag.selective_58d4_original_word = word;
+                slide_diag.selective_58d4_original_target = original_target;
+                if ((word >> 26) == 3 && original_target == text_addr + 0x6F84 &&
+                        (return_true_addr & 3) == 0 &&
+                        ((callsite + 4) & 0xF0000000) ==
+                                (return_true_addr & 0xF0000000)) {
+                    unsigned int patched = 0x0C000000 |
+                            ((return_true_addr >> 2) & 0x03FFFFFF);
+                    slide_diag.selective_58d4_validation = 1;
+                    slide_diag.selective_58d4_patched_word = patched;
+                    _sw(patched, callsite); /* The experiment's only VSH write. */
+                    slide_diag.selective_58d4_patch_applied = 1;
+                    sceKernelDcacheWritebackInvalidateRange(
+                            (const void *)callsite, sizeof(unsigned int));
+                    sceKernelIcacheInvalidateRange(
+                            (const void *)callsite, sizeof(unsigned int));
+                    slide_diag.selective_58d4_cache_sync = 1;
+                }
+            }
         }
     }
     slide_diag.vsh_module_seen = 1;
@@ -1216,6 +1253,22 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
     zeroCtrlDiagnosticsEvent("vsh_slide_target", slide_diag.vsh_slide_target);
     zeroCtrlDiagnosticsEvent("vsh_slide_target_in_text",
             slide_diag.vsh_target_in_text);
+    if (slide_diag.selective_58d4_enabled) {
+        zeroCtrlDiagnosticsText(
+                "[experiment] psp1000_selective_trigger=caller_58d4\n");
+        zeroCtrlDiagnosticsEvent("selective_58d4_original_word",
+                slide_diag.selective_58d4_original_word);
+        zeroCtrlDiagnosticsEvent("selective_58d4_original_target",
+                slide_diag.selective_58d4_original_target);
+        zeroCtrlDiagnosticsEvent("selective_58d4_validation",
+                slide_diag.selective_58d4_validation);
+        zeroCtrlDiagnosticsEvent("selective_58d4_patched_word",
+                slide_diag.selective_58d4_patched_word);
+        zeroCtrlDiagnosticsEvent("selective_58d4_patch_applied",
+                slide_diag.selective_58d4_patch_applied);
+        zeroCtrlDiagnosticsEvent("selective_58d4_cache_sync",
+                slide_diag.selective_58d4_cache_sync);
+    }
     zeroCtrlDiagnosticsEvent("vsh_code_capture_start",
             slide_diag.vsh_code_capture_start);
     zeroCtrlDiagnosticsEvent("vsh_code_capture_end",
@@ -1396,24 +1449,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         zeroCtrlDiagnosticsEvent("slide_module_modid", slide_diag.module.modid);
         zeroCtrlDiagnosticsWritePartitions("slide_plugin_pre_start", &slide_diag.pre_start);
         zeroCtrlDiagnosticsModule(&slide_diag.module);
-        zeroCtrlDiagnosticsText("[experiment] sony_module_start_control=noop\n");
         zeroCtrlDiagnosticsEvent("slide_module_start_func_addr",
                 slide_diag.module_start_addr);
         zeroCtrlDiagnosticsEvent("slide_elf_entry_addr", slide_diag.elf_entry_addr);
-        zeroCtrlDiagnosticsEvent("slide_module_start_in_segment",
-                slide_diag.module_start_in_segment);
-        if (slide_diag.module_start_patch_result > 0) {
-            zeroCtrlDiagnosticsEvent("slide_module_start_original_word0",
-                    slide_diag.module_start_original[0]);
-            zeroCtrlDiagnosticsEvent("slide_module_start_original_word1",
-                    slide_diag.module_start_original[1]);
-            zeroCtrlDiagnosticsText("[experiment] sony_module_start_control=noop_applied\n");
-            zeroCtrlDiagnosticsEvent("slide_module_start_patch_applied", 1);
-        } else {
-            zeroCtrlDiagnosticsText("[experiment] slide_module_start_validation=failed\n");
-            zeroCtrlDiagnosticsEvent("slide_module_start_patch_skipped",
-                    slide_diag.module_start_patch_result);
-        }
+        zeroCtrlDiagnosticsText("[experiment] sony_module_start_control=natural\n");
         zeroCtrlDiagnosticsWritePartitions("slide_plugin_delayed",
                 &slide_diag.delayed_or_timeout);
     } else {
@@ -1443,27 +1482,6 @@ static int zeroCtrlCreateSlideDiagnosticsThread(void) {
     return result;
 }
 
-static int zeroCtrlValidateModuleStart(const SceModule2 *mod,
-        unsigned int target) {
-    unsigned int i;
-
-    if (target == 0) return -1;
-    if (target == 0xFFFFFFFF) return -2;
-    if ((target & 3) != 0) return -3;
-    if (mod->text_size < 8 || target < mod->text_addr ||
-            target - mod->text_addr > mod->text_size - 8) {
-        return -4;
-    }
-    for (i = 0; i < mod->nsegment && i < 4; i++) {
-        unsigned int start = mod->segmentaddr[i];
-        unsigned int size = mod->segmentsize[i];
-        if (target >= start && size >= 8 && target - start <= size - 8) {
-            return 1;
-        }
-    }
-    return -5;
-}
-
 int OnModuleStart(SceModule2 *mod) {
         zeroCtrlWriteDebug("Module: %s\n", mod->modname);
 
@@ -1479,28 +1497,6 @@ int OnModuleStart(SceModule2 *mod) {
                 slide_diag.previous_handler_returned = 1;
                 slide_diag.module_start_addr = mod->module_start_func;
                 slide_diag.elf_entry_addr = mod->entry_addr;
-                slide_diag.module_start_target_read = 1;
-                slide_diag.module_start_patch_result =
-                        zeroCtrlValidateModuleStart(mod,
-                                slide_diag.module_start_addr);
-                slide_diag.module_start_in_segment =
-                        slide_diag.module_start_patch_result > 0;
-                slide_diag.module_start_validated =
-                        slide_diag.module_start_in_segment;
-                slide_diag.module_start_validation_complete = 1;
-                if (slide_diag.module_start_in_segment) {
-                        unsigned int target = slide_diag.module_start_addr;
-                        slide_diag.module_start_original[0] = _lw(target);
-                        slide_diag.module_start_original[1] = _lw(target + 4);
-                        slide_diag.module_start_original_saved = 1;
-                        /* MIPS: jr $ra; addiu $v0, $zero, 0 (delay slot). */
-                        _sw(0x03E00008, target);
-                        _sw(0x24020000, target + 4);
-                        slide_diag.module_start_words_written = 1;
-                        zeroCtrlDcacheWritebackAll();
-                        zeroCtrlIcacheClearAll();
-                        slide_diag.module_start_cache_sync_complete = 1;
-                }
                 slide_diag.start_callback_returning = 1;
                 slide_diag.saw_start = 1;
                 return previous_result;
@@ -1799,10 +1795,16 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	b_level = ini_getl("PowerSave", "Brightness", -1, config);
 	ini_gets("Experimental", "PSP1000SlidePlugin", "Disabled",
 			psp1000SlidePlugin, sizeof(psp1000SlidePlugin), config);
+	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
+			psp1000SelectiveSlideTrigger58D4,
+			sizeof(psp1000SelectiveSlideTrigger58D4), config);
 	if (model == 0 && strcmp(psp1000SlidePlugin, "Enabled") == 0 &&
 			strcmp(useSlide, "Disabled") == 0) {
 		memset(&slide_diag, 0, sizeof(slide_diag));
 		slide_diag.armed = 1;
+		slide_diag.selective_58d4_enabled =
+			devkit == 0x06060110 &&
+			strcmp(psp1000SelectiveSlideTrigger58D4, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(model, devkit, useSlide, redir_path,
@@ -1811,12 +1813,18 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		zeroCtrlDiagnosticsText("[phase] psp1000_slide_phase3\n"
 				"[experiment] psp1000_slide_optin=enabled\n"
 				"[experiment] clock_and_calendar=disabled\n"
-				"[experiment] psp1000_vsh_slide_trigger=disabled_control\n"
-				"[experiment] vsh_slide_patch=disabled\n"
+				"[experiment] global_predicate_6f84_patch=disabled\n"
 				"[experiment] vsh_reference_scan=read_only\n"
 				"[experiment] vsh_direct_windows=predicate_6f84_only\n"
 				"[experiment] vsh_state_import_resolution=read_only\n"
 				"[experiment] button_thread=disabled\n");
+		if (slide_diag.selective_58d4_enabled) {
+			zeroCtrlDiagnosticsText(
+					"[experiment] psp1000_vsh_slide_trigger=selective_58d4_control\n");
+		} else {
+			zeroCtrlDiagnosticsText(
+					"[experiment] psp1000_vsh_slide_trigger=disabled_control\n");
+		}
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");
 	

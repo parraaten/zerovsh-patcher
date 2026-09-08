@@ -380,3 +380,28 @@ caller argument preparation offline before proposing any behavioral experiment.
   `+0x66E0` callers/arguments, and cross-model semantics.
 - **Recommended next phase:** analyze only the returned import tuple and
   initializer caller windows before designing any behavioral control.
+
+## Phase 3.2: selective caller `+0x58D4` behavioral control
+
+Hardware has now structurally resolved the shared-state source as
+`sceVshBridge:0x21C243FE`, publicly identified as `vshKernelGetModel`.  The
+PSP-1000 VSH model state is proven to be 0.  The initializer at `+0x66E0` is
+called directly from `+0x70E0` with `a0 = 1` and `a1 = 0xFFFF`, and stores the
+model query result when that condition is met.  The leaf at `+0x6F84` is thus a
+model/capability predicate; globally forcing it freezes PSP-1000.  Exactly
+three direct callers are proven at `+0x058D4`, `+0x13F6C`, and `+0x14020`.
+
+The first behavioral control modifies only the JAL at `+0x58D4`, directing it
+to a dedicated strict-true (`1`) function.  It is separately, default-disabled
+by `PSP1000SelectiveSlideTrigger58D4`, and additionally requires model 0,
+firmware 6.61, `PSP1000SlidePlugin=Enabled`, and
+`ClockAndCalendar=Disabled`.  Runtime validation requires the word to be a JAL,
+its relocation-aware pseudo-direct target to equal text `+0x6F84`, and the
+replacement to share the callsite's upper four address bits.  Failure is a
+normal no-patch boot.  The delay slot and all other VSH words remain untouched;
+the prior Sony `module_start` no-op is dormant so any Sony start is natural.
+
+It remains unknown whether `+0x58D4` specifically causes the native VSH to
+request SlidePlugin.  Request/RCO/probe/start breadcrumbs and the selective
+validation, original/replacement word, application, and cache-sync records are
+the required hardware evidence.  A build cannot establish runtime behavior.

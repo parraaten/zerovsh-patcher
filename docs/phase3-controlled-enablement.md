@@ -1,13 +1,54 @@
 # Phase 3 report: controlled PSP-1000 Sony SlidePlugin enablement
 
-## Scope and implementation
+## Current controlled behavioral experiment: selective `+0x58D4` trigger
 
-This phase adds one default-disabled setting, `[Experimental]
+Completed read-only reverse engineering proves that
+`sceVshBridge:0x21C243FE` is `vshKernelGetModel`, the PSP-1000 shared VSH model
+state is 0, and `+0x66E0` is called from `+0x70E0` with `a0=1` and
+`a1=0xFFFF`. It also proves that `+0x6F84` is a model/capability predicate,
+that globally forcing it freezes PSP-1000, and that its only direct callers are
+`+0x058D4`, `+0x13F6C`, and `+0x14020`.
+
+The next experiment is the first behavioral control. With both experimental
+options explicitly enabled, and only on PSP-1000 firmware 6.61 with
+`ClockAndCalendar=Disabled`, it semantically validates and rewrites the single
+JAL word at `+0x58D4` to call a strict-true function. It does not write the
+delay slot, predicate `+0x6F84`, shared state, either other caller, initializer,
+or model import. The Sony module-start no-op is dormant; request and start are
+left to the native VSH/Sony pipeline. Whether this caller specifically causes
+the SlidePlugin request remains unknown and requires hardware testing.
+
+### Phase report
+
+- **Files changed:** `user/main.c`, `kernel/main.c`, `bin/zerovsh.ini`, this
+  report, and `docs/phase3-vsh-trigger-analysis.md`.
+- **Technical findings:** the model source and three predicate callers are
+  hardware-proven; `+0x58D4` is the strongest gate-like caller, but its effect
+  is not yet proven.
+- **Assumptions:** loaded-module text bounds identify executable VSH text, and
+  the established module-start handler observes `vsh_module` before this gate
+  is needed.
+- **Build status:** the Linux build is required; a successful build does not
+  establish PSP-1000 runtime compatibility.
+- **Hardware test required:** boot once with both opt-ins enabled and return the
+  complete log plus XMB stability observations, using a recovery method.
+- **Hardware results available:** the prior read-only build booted normally;
+  the selective write has not yet been tested on hardware.
+- **Unresolved questions:** whether this one caller requests the PRX/RCO and
+  whether natural Sony initialization remains live.
+- **Recommended next phase:** classify the result as A-E before restoring this
+  word or considering a different single caller; do not enable clock/calendar.
+
+## Historical initial scope and implementation (superseded)
+
+The initial Phase 3 experiment added one default-disabled setting, `[Experimental]
 PSP1000SlidePlugin`. The kernel reads it into a fixed 16-byte buffer during
 normal initialization. The experiment is armed only when the hardware model is
 0, that value is exactly `Enabled`, and `ClockAndCalendar` is exactly
 `Disabled`. The exported predicate reports only this already-validated armed
-state to the embedded user helper; no USER allocation is added.
+state to the embedded user helper; no USER allocation was added. The global
+predicate patch and the later Sony start no-op described in the historical
+sections below are both dormant in the current selective build.
 
 The one condition bypassed is the user helper's existing
 `(model != 0) && (model != 4)` guard around the VSH slide-check patch. On 6.61,
