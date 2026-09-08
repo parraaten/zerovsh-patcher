@@ -287,6 +287,15 @@ PSP-1000 `vsh_module + 0x6F84` redirection. It captures a bounds-checked,
 read-only six-word fingerprint around that address through a fixed-scalar
 kernel handoff; historical model behavior is unchanged. This control tests
 host-VSH stability and does not establish that the offset is incorrect.
+Real hardware subsequently booted normally with that patch suppressed, proving
+the forced modification was necessary for the observed freeze but not whether
+the offset or forced `-1` result is semantically wrong. Phase 3.1b leaves the
+patch suppressed and captures a clamped, read-only `0x180`-byte instruction
+window into fixed kernel state for writer-thread serialization. The available
+six words show a backward jump immediately before the candidate and resolve the
+signed global load to `0x09C682E0`; they do not yet establish function
+boundaries, callers, or slide semantics. The exact PSP-1000 6.61 `vsh_module`
+binary is not present in the repository.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
 

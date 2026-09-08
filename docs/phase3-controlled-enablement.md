@@ -294,3 +294,19 @@ start result and normal USER allocation access to PID 5 also remain unknown.
 Return the breadcrumb sequence, both logged addresses, validation/patch
 markers, available snapshots, and stability result before choosing the next
 single-variable experiment.
+
+### Phase 3.1b read-only VSH code capture
+
+The trigger-disabled control booted normally on real PSP-1000 hardware while
+the corresponding trigger-enabled build froze before icons. The next build
+therefore retains the disabled `vsh_module + 0x6F84` patch and expands only the
+read-only evidence capture. For firmware 6.61, fixed kernel state holds the
+clamped, word-aligned range from candidate minus `0x80` through candidate plus
+`0xFF` (up to `0x180` bytes). No USER memory is allocated, and only the writer
+thread emits the capture range events and addressed `[vshcode]` records.
+
+The current six-word evidence does not establish a function entry or semantic
+equivalence. In particular, the signed `lw` displacement resolves to
+`0x09C682E0`, not `0x09C782E0`. Full analysis, explicit unknowns, and the one
+next controlled hardware procedure are maintained in
+`docs/phase3-vsh-trigger-analysis.md`.

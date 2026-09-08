@@ -87,6 +87,11 @@ static char psp1000SlidePlugin[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
+#define VSH_CODE_CAPTURE_BEFORE 0x80
+#define VSH_CODE_CAPTURE_AFTER  0x100
+#define VSH_CODE_CAPTURE_BYTES  (VSH_CODE_CAPTURE_BEFORE + VSH_CODE_CAPTURE_AFTER)
+#define VSH_CODE_CAPTURE_WORDS  (VSH_CODE_CAPTURE_BYTES / sizeof(unsigned int))
+
 typedef struct {
     int armed;
     volatile int saw_request;
@@ -116,7 +121,11 @@ typedef struct {
     unsigned int vsh_module_start_addr;
     unsigned int vsh_elf_entry_addr;
     unsigned int vsh_slide_target;
-    unsigned int vsh_slide_words[6];
+    int vsh_code_capture_result;
+    unsigned int vsh_code_capture_start;
+    unsigned int vsh_code_capture_end;
+    unsigned int vsh_code_capture_size;
+    unsigned int vsh_code_words[VSH_CODE_CAPTURE_WORDS];
     unsigned int module_start_addr;
     unsigned int elf_entry_addr;
     unsigned int module_start_original[2];
@@ -137,9 +146,12 @@ int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
 
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int text_size, unsigned int module_start_addr,
-        unsigned int elf_entry_addr, unsigned int target, int target_in_text,
-        unsigned int word_m8, unsigned int word_m4, unsigned int word_0,
-        unsigned int word_p4, unsigned int word_p8, unsigned int word_p12) {
+        unsigned int elf_entry_addr, unsigned int target) {
+    unsigned int target_offset;
+    unsigned int start_offset;
+    unsigned int end_offset;
+    unsigned int i;
+
     if (!slide_diag.armed || slide_diag.vsh_module_seen) return;
     slide_diag.vsh_modid = modid;
     slide_diag.vsh_text_addr = text_addr;
@@ -147,13 +159,28 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
     slide_diag.vsh_module_start_addr = module_start_addr;
     slide_diag.vsh_elf_entry_addr = elf_entry_addr;
     slide_diag.vsh_slide_target = target;
-    slide_diag.vsh_target_in_text = target_in_text;
-    slide_diag.vsh_slide_words[0] = word_m8;
-    slide_diag.vsh_slide_words[1] = word_m4;
-    slide_diag.vsh_slide_words[2] = word_0;
-    slide_diag.vsh_slide_words[3] = word_p4;
-    slide_diag.vsh_slide_words[4] = word_p8;
-    slide_diag.vsh_slide_words[5] = word_p12;
+    slide_diag.vsh_code_capture_result = -1;
+
+    if (target >= text_addr) {
+        target_offset = target - text_addr;
+        if (target_offset < text_size) {
+            slide_diag.vsh_target_in_text = 1;
+            start_offset = target_offset > VSH_CODE_CAPTURE_BEFORE ?
+                    target_offset - VSH_CODE_CAPTURE_BEFORE : 0;
+            end_offset = text_size - target_offset < VSH_CODE_CAPTURE_AFTER ?
+                    text_size : target_offset + VSH_CODE_CAPTURE_AFTER;
+            start_offset &= ~3U;
+            end_offset &= ~3U;
+            slide_diag.vsh_code_capture_start = start_offset;
+            slide_diag.vsh_code_capture_end = end_offset;
+            slide_diag.vsh_code_capture_size = end_offset - start_offset;
+            for (i = 0; i < slide_diag.vsh_code_capture_size / 4; i++) {
+                slide_diag.vsh_code_words[i] =
+                        _lw(text_addr + start_offset + i * 4);
+            }
+            slide_diag.vsh_code_capture_result = 0;
+        }
+    }
     slide_diag.vsh_module_seen = 1;
 }
 
@@ -664,11 +691,8 @@ static void zeroCtrlWriteSlideCheckpoints(unsigned int *written) {
 }
 
 static void zeroCtrlWriteVshSlideEvidence(void) {
-    static const char *events[6] = {
-        "vsh_slide_word_m8", "vsh_slide_word_m4", "vsh_slide_word_0",
-        "vsh_slide_word_p4", "vsh_slide_word_p8", "vsh_slide_word_p12"
-    };
-    int i;
+    unsigned int i;
+    char line[96];
 
     if (!slide_diag.vsh_module_seen) return;
     zeroCtrlDiagnosticsEvent("vsh_modid", slide_diag.vsh_modid);
@@ -680,9 +704,21 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
     zeroCtrlDiagnosticsEvent("vsh_slide_target", slide_diag.vsh_slide_target);
     zeroCtrlDiagnosticsEvent("vsh_slide_target_in_text",
             slide_diag.vsh_target_in_text);
-    if (!slide_diag.vsh_target_in_text) return;
-    for (i = 0; i < 6; i++) {
-        zeroCtrlDiagnosticsEvent(events[i], slide_diag.vsh_slide_words[i]);
+    zeroCtrlDiagnosticsEvent("vsh_code_capture_start",
+            slide_diag.vsh_code_capture_start);
+    zeroCtrlDiagnosticsEvent("vsh_code_capture_end",
+            slide_diag.vsh_code_capture_end);
+    zeroCtrlDiagnosticsEvent("vsh_code_capture_size",
+            slide_diag.vsh_code_capture_size);
+    zeroCtrlDiagnosticsEvent("vsh_code_capture_result",
+            slide_diag.vsh_code_capture_result);
+    if (slide_diag.vsh_code_capture_result < 0) return;
+    for (i = 0; i < slide_diag.vsh_code_capture_size / 4; i++) {
+        snprintf(line, sizeof(line),
+                "[vshcode] addr=0x%08X word=0x%08X\n",
+                slide_diag.vsh_text_addr + slide_diag.vsh_code_capture_start + i * 4,
+                slide_diag.vsh_code_words[i]);
+        zeroCtrlDiagnosticsText(line);
     }
 }
 
