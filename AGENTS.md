@@ -274,6 +274,12 @@ MIPS return. The distinct ELF `entry_addr` at offset `0x64` is logged but never
 patched. The earlier `542b16f` implementation was superseded before hardware
 validation because it targeted that ELF address. This control does not modify
 the Sony files or enable behavior hooks.
+The first corrected no-op hardware attempt is inconclusive: VSH froze before
+icons appeared, but the log contained no persisted SlidePlugin milestone, so
+there is no evidence that the no-op was applied. The active instrumentation-only
+build adds a three-second pre-probe timeout and writer-thread-only, once-per-stage
+breadcrumbs polled every 10 ms. These asynchronous writes are solely for freeze
+localization and must not be used for precise memory-cost measurements.
 The complete implementation and hardware procedure are in
 `docs/phase3-controlled-enablement.md`.
 
