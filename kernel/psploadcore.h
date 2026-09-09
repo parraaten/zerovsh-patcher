@@ -81,8 +81,11 @@ typedef struct SceModule2
 	unsigned int		ent_size; // 0x44
 	void *				stub_top; // 0x48
 	u32					stub_size; // 0x4C
-	u32					entry_addr_; // 0x50
-	u32					unk5[4]; // 0x54
+	u32					module_start_func; // 0x50
+	u32					module_stop_func; // 0x54
+	u32					module_bootstart_func; // 0x58
+	u32					module_reboot_before_func; // 0x5C
+	u32					module_reboot_phase_func; // 0x60
 	u32					entry_addr; // 0x64
 	u32					gp_value; // 0x68
 	u32					text_addr; // 0x6C
@@ -93,6 +96,14 @@ typedef struct SceModule2
 	u32					segmentaddr[4]; // 0x80
 	u32					segmentsize[4]; // 0x90
 } SceModule2;
+
+/* Keep the firmware-facing layout explicit and fail the build on ABI drift. */
+typedef char SceModule2_module_start_func_offset[
+	(__builtin_offsetof(SceModule2, module_start_func) == 0x50) ? 1 : -1];
+typedef char SceModule2_entry_addr_offset[
+	(__builtin_offsetof(SceModule2, entry_addr) == 0x64) ? 1 : -1];
+typedef char SceModule2_text_addr_offset[
+	(__builtin_offsetof(SceModule2, text_addr) == 0x6C) ? 1 : -1];
 
 /** Defines a library and its exported functions and variables.  Use the len
     member to determine the real size of the table (size = len * 4). */

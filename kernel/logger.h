@@ -52,6 +52,7 @@ void zeroCtrlDiagnosticsCapturePartitions(ZeroCtrlPartitionSnapshot *snapshot);
 void zeroCtrlDiagnosticsWritePartitions(const char *event,
         const ZeroCtrlPartitionSnapshot *snapshot);
 void zeroCtrlDiagnosticsModule(const SceModule2 *module);
+void zeroCtrlDiagnosticsText(const char *text);
 
 #ifdef DEBUG
 #define zeroCtrlWriteDebug(format, ...) printf(format, ## __VA_ARGS__)
