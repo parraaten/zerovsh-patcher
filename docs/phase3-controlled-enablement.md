@@ -456,3 +456,195 @@ stub/slot range and alignment check to the copy. The deferred log begins with
 
 This is an ABI transport correction only. The saved-RA assembly, its two-word
 Sony entry patch, trigger semantics, and production defaults are unchanged.
+
+## Phase 3 Strategy B: BSMan-only CLOSED experiment
+
+### Evidence boundary
+
+**PROVEN (PSP-1000 6.61 hardware):** selective VSH caller `+0x58D4` alone
+opens the native pipeline; the Sony PRX is requested; LoadCore probes it and
+returns zero; the pre-start handler observes it; natural Sony `module_start`
+enters, executes, returns, and returns success (`0`); and the RCO request occurs
+after that return. The current failure boundary is therefore
+**post-`module_start` runtime / RCO / activation / PAF**, not `+0xF98`, the
+external call near `+0xFA4`, or the routine near `+0xFE8`.
+
+**PROVEN:** USER memory is substantially lower at the deferred observation of
+Sony's successful return (1,802,496 bytes free and largest) than at an earlier
+safe snapshot (4,168,704 bytes free). Ownership of that delta is **UNKNOWN**;
+attributing all of it to `module_start` would be unsupported. PAF,
+`SceSlideHeaparea`, page creation, and resource/animation pressure remain
+**HYPOTHESES** and this experiment changes no allocation.
+
+The BSMan CLOSED shim is an **EXPERIMENT — NOT YET HARDWARE VERIFIED**. It does
+not establish that BSMan causes the crash and does not emulate physical slider
+hardware.
+
+### Structural import and CLOSED semantics
+
+The pre-start kernel handler walks the runtime-loaded `SceLibraryStubTable`
+range from `slide_plugin_module.stub_top/stub_size`. Every descriptor length,
+library string, NID array, and eight-byte function-stub array must remain in a
+loaded module segment. It accepts exactly one library/NID pair:
+`sceBSMan` / `0x23E3A9B6`, records its original two words, and rejects an
+ambiguous or malformed table without writing code. There is no static runtime
+stub address.
+
+The repository's legally pre-existing 6.60 research image was inspected only
+to establish semantics; no Sony binary/resource is added or modified. At static
+`+0x93AC`, the four-word evidence is `0x3C130000, 0x0C00A856,
+0x3C130000, 0x1040000A`: the `jal` targets the static BSMan stub at `+0x2A158`,
+its delay slot is followed by `beq v0,zero`. The zero branch skips the nonzero path which sets the observed
+boolean state to one. The live installer independently requires one runtime
+JAL to the structurally resolved stub and the same `beq v0,zero` consumption,
+and logs the four-word caller evidence. Thus `CLOSED=0` is classified
+**STRONG INFERENCE**, not a hardware fact: consumption is proven statically to
+be boolean, while the UI meaning of the zero path remains an inference from the
+non-open path.
+
+Only after all gates and validations succeed, the transaction replaces the
+exact import stub with `J zeroCtrlBSManClosedLeaf; NOP`. The replacement word is
+computed from the registered helper leaf address and pseudo-direct
+reachability is reconstructed before the first write. The leaf is assembly-only:
+
+```asm
+lui   t0, %hi(zeroCtrlBSManClosedHits)
+lw    t1, %lo(zeroCtrlBSManClosedHits)(t0)
+addiu t1, t1, 1
+sw    t1, %lo(zeroCtrlBSManClosedHits)(t0)
+jr    ra
+addu  v0, zero, zero
+```
+
+It has no stack or `gp`, calls no import, and performs no I/O, allocation,
+memory query, or hardware access. The kernel writes exactly the two replacement
+words after validation and applies D-cache writeback/invalidate and I-cache
+invalidate to exactly those eight bytes. All failure paths perform zero BSMan
+code writes. The exact original and replacement words are runtime addresses and
+are therefore recorded in `[bsman] original_words=... replacement_words=...`.
+The static unresolved import image contains `0x03E00008,0x00000000`; these are
+research-image words, not a promise about the resolved hardware stub. The
+runtime replacement is exactly
+`0x08000000 | ((leaf_addr >> 2) & 0x03FFFFFF), 0x00000000`.
+
+### Required configuration and expected evidence
+
+```ini
+[SlidePlugin]
+ClockAndCalendar = Disabled
+Contrast = Disabled
+StartBtn = 0x010000
+StopBtn = 0x010000
+
+[PowerSave]
+LED = Disabled
+Brightness = -1
+
+[Experimental]
+PSP1000SlidePlugin = Enabled
+PSP1000SlideTriggerMode = DangerousCaller58D4
+PSP1000Diagnostics = Enabled
+PSP1000SonyStartTrace = Enabled
+PSP1000SelectiveSlideTrigger58D4 = Disabled
+PSP1000BSManClosedShim = Enabled
+```
+
+All gates are mandatory: model 0, devkit `0x06060110`, SlidePlugin opt-in,
+diagnostics, exact `DangerousCaller58D4` mode, disabled ClockAndCalendar, and
+the independent BSMan opt-in. Expected deferred records are `[bsman]` state,
+exact library/NID/stub/value, original/replacement words, the caller fingerprint,
+and changed-only `[late] elapsed_us=... bsman_hit_count=N`. No import traversal
+or leaf performs file I/O. A safe reset disables every experimental key and
+ClockAndCalendar; recovery may disable the VSH plugin. Nothing writes `flash0`.
+
+This commit intentionally does not implement sceVshBridge/impose, OPEN state,
+software transitions, PAF changes, allocations, model spoofing, or hardware
+emulation.
+
+### First BSMan hardware run: resolved SYSCALL/NOP form
+
+**PROVEN on real PSP-1000 6.61 hardware:** the existing native baseline was
+reproduced (`caller_58d4_hit_count=1`, request/probe/pre-start observed), and
+Sony natural `module_start` again entered and returned success. The runtime
+import traversal uniquely resolved `sceBSMan` / `0x23E3A9B6` at
+`0x09CA3358`. From runtime `module_start=0x09C7A198` and static start offset
+`+0xF98`, the module text base is `0x09C79200`; the resolved import is therefore
+exactly `text+0x2A158`, consistent with the research image. No address
+adjustment is justified.
+
+The runtime words were `0x0000054C,0x00000000`: structurally a MIPS
+`SYSCALL; NOP` stub. The prior build did not recognize this form, reported
+`validation=0 install=0 cache_sync=0`, and performed zero BSMan writes before
+its caller scan. Caller evidence consequently remained zero. This is Outcome E
+and provides no evidence that BSMan was called or that CLOSED substitution
+helps.
+
+The validator now recognizes `SYSCALL; NOP` by masking the SPECIAL opcode and
+`0x0C` function bits rather than matching `0x0000054C`. It records
+`stub_form=SYSCALL_NOP` and extracts the 20-bit syscall code for deferred
+diagnostics. Existing `J/JAL; NOP` and `JR RA; SYSCALL` forms remain accepted.
+All unique-caller, strict `beq v0,zero`, helper-range, reachability,
+transaction, two-write, and narrow cache-sync checks remain required and
+unchanged. `CLOSED=0` remains **STRONG INFERENCE**. This recognition change is
+not yet hardware-verified through installation and does not add impose or PAF
+behavior.
+
+## Natural activation localization trace
+
+The next read-only behavioral control keeps `PSP1000BSManClosedShim=Disabled`
+and adds `PSP1000ActivationTrace=Enabled`. It does not substitute BSMan or any
+other Sony result. Runtime import traversal first re-proves the unique
+`sceBSMan`/`0x23E3A9B6` stub and its sole direct caller. From that caller it
+searches backward only `0x200` bytes for a unique five-word function prologue,
+rather than trusting `+0x9304`. On the research image the unique structure is:
+
+```
++0x9304  addiu sp,sp,-32
++0x9308  sw    s1,4(sp)
++0x930C  move  s1,a0
++0x9310  sw    s0,0(sp)
++0x9314  sw    ra,28(sp)
+```
+
+This establishes `+0x9304` as a **STRONG STATIC INFERENCE** for the activation
+entry; the runtime trace must independently validate it. Static control flow
+from that entry reaches internal work at `+0x16EC`, an imported call at
+`+0x2A658` with an early zero-result return, and only then the proven BSMan call
+at `+0x93AC`. Farther code contains the known impose-shaped dependency, but its
+identity/effect remains an **INFERENCE** and is not patched.
+
+After every address, instruction, helper range, unique-caller, and pseudo-direct
+check succeeds as one transaction, three tiny helper leaves record only:
+
+* activation-function entry; and
+* arrival immediately before the natural BSMan syscall stub; and
+* return from the natural BSMan syscall stub, preserving its result.
+
+The entry leaf reproduces the displaced `addiu sp,sp,-32` and `sw s1,4(sp)` and
+jumps to `entry+8`. The call-boundary leaf records the original JAL return
+address, substitutes a return breadcrumb, and tail-jumps to the untouched
+resolved BSMan stub. The return leaf records completion without modifying
+`v0`, then resumes at the original Sony return address. The trace does not
+replace BSMan. All leaves use fixed BSS state, no `gp`, no
+imports, no allocation, no file I/O, and no diagnostic API. Deferred writer
+records changed-only counts and captures correlated USER memory only on the
+first observed transition. These snapshots do not attribute memory to Sony.
+The leaves also update one monotonic volatile stage (`1=activation entry`,
+`2=before BSMan`, `3=after BSMan`). After the RCO breadcrumb, the existing
+writer temporarily polls this compact state every 10 ms for two seconds, then
+returns to 200 ms; it performs file I/O only when evidence changes.
+
+The hardware run should distinguish: no activation entry; activation entry but
+no BSMan boundary; arrival at BSMan without return; or return and farther
+execution before the last persisted record. Use the
+existing exact T9 configuration except set:
+
+```ini
+PSP1000BSManClosedShim = Disabled
+PSP1000ActivationTrace = Enabled
+```
+
+Expected records include `[activation-trace] validation=1 install=1`,
+`slide_last_stage`, `slide_activation_entry_count`,
+`slide_bsman_call_boundary_count`, and the two
+optional first-observed memory stages. Any structure mismatch fails closed.

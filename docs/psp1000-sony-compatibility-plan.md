@@ -107,3 +107,44 @@ and trigger targets point into it.
 
 Stack reductions are deferred until real high-water measurements exist. A
 smaller guessed stack is not a memory optimization.
+
+## Current Strategy B decision: BSMan CLOSED only
+
+Hardware now **PROVES** that `DangerousCaller58D4` opens the native Sony
+pipeline, LoadCore probe returns zero, natural Sony `module_start` enters and
+returns success, and the RCO request follows. The active failure boundary is
+post-start runtime/RCO/activation/PAF. Memory is substantially lower at the
+deferred return observation, but its owner is **UNKNOWN**.
+
+The isolated `sceBSMan` / `0x23E3A9B6` CLOSED shim is an
+**EXPERIMENT — NOT YET HARDWARE VERIFIED**. Runtime import descriptors and a
+unique boolean caller are structurally resolved; static `+0x93AC` branches on
+`v0 == 0` into the non-open path, supporting `CLOSED=0` as a **STRONG
+INFERENCE**. The experiment changes only that resolved two-word import stub and
+returns virtual UI CLOSED. It does not implement impose, OPEN, PAF, allocation,
+model, physical-slider, power, display, LED, or brightness behavior. Hardware
+outcomes must be evaluated using T9 before selecting any next shim.
+
+### BSMan runtime-stub hardware evidence
+
+The first real T9 run **PROVED** unique resolution of `sceBSMan` /
+`0x23E3A9B6` at runtime `text+0x2A158` and observed the resolved words
+`0x0000054C,0x00000000` (`SYSCALL; NOP`). The prior validator rejected that
+shape and made zero writes, so the run is Outcome E: it proves neither a BSMan
+call nor any effect from CLOSED substitution. The narrow retry recognizes this
+form structurally while retaining all caller and transaction checks. CLOSED=0
+remains **STRONG INFERENCE**, and impose/PAF remain outside this change.
+
+## Activation localization and eventual overhead
+
+The current natural-behavior trace structurally derives the activation entry
+from the unique BSMan caller and records entry, pre-BSMan-call, and natural
+BSMan-return boundaries in one compact last-stage scalar. A two-second 10 ms
+observer window begins only after RCO and then returns to the normal cadence.
+It is research instrumentation, not a compatibility layer. Its helper leaves
+and four scalar slots are intentionally tiny, while all serialization and
+memory queries remain deferred. The eventual stable implementation should
+remove this trace, the large fixed VSH scan/capture arrays, diagnostic writer
+thread and stack, verbose strings, and superseded trigger modes after hardware
+selects the minimal compatibility behavior. No such memory optimization is
+made before the evidence is collected.
