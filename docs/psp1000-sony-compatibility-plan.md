@@ -124,3 +124,13 @@ INFERENCE**. The experiment changes only that resolved two-word import stub and
 returns virtual UI CLOSED. It does not implement impose, OPEN, PAF, allocation,
 model, physical-slider, power, display, LED, or brightness behavior. Hardware
 outcomes must be evaluated using T9 before selecting any next shim.
+
+### BSMan runtime-stub hardware evidence
+
+The first real T9 run **PROVED** unique resolution of `sceBSMan` /
+`0x23E3A9B6` at runtime `text+0x2A158` and observed the resolved words
+`0x0000054C,0x00000000` (`SYSCALL; NOP`). The prior validator rejected that
+shape and made zero writes, so the run is Outcome E: it proves neither a BSMan
+call nor any effect from CLOSED substitution. The narrow retry recognizes this
+form structurally while retaining all caller and transaction checks. CLOSED=0
+remains **STRONG INFERENCE**, and impose/PAF remain outside this change.

@@ -93,13 +93,35 @@ def check_sources(root):
         'strcmp(mod->modname, "slide_plugin_module")',
         '0x23E3A9B6', 'mod->stub_top', 'table->nidtable',
         'table->stubtable', 'bsman->match_count == 1',
-        'zeroCtrlVshModuleRangeValid', 'zeroCtrlBSManOriginalStubValid',
+        'zeroCtrlVshModuleRangeValid', 'zeroCtrlBSManOriginalStubForm',
         'caller_matches != 1', 'bsman->validation = 1',
     ):
         if required not in bsman:
             fail("BSMan structural resolution is missing " + required)
     if 'static const char expected[] = "sceBSMan"' not in kernel:
         fail("BSMan import library is not checked exactly")
+    stub_form_start = kernel.find(
+        "static unsigned int zeroCtrlBSManOriginalStubForm(")
+    stub_form_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
+        stub_form_start)
+    if stub_form_start < 0 or stub_form_end <= stub_form_start:
+        fail("BSMan original-stub form validator is missing")
+    stub_form = kernel[stub_form_start:stub_form_end]
+    for required in (
+        "ZERO_BSMAN_STUB_JUMP_NOP",
+        "ZERO_BSMAN_STUB_JR_RA_SYSCALL",
+        "ZERO_BSMAN_STUB_SYSCALL_NOP",
+        "(word0 & 0xFC00003F) == 0x0000000C && word1 == 0",
+    ):
+        if required not in stub_form:
+            fail("BSMan original-stub validator lost form " + required)
+    if "0x0000054C" in stub_form:
+        fail("BSMan SYSCALL/NOP validation hardcodes one hardware syscall")
+    stub_validation = bsman.find("bsman->stub_form =")
+    caller_proof = bsman.find("Runtime caller proof:")
+    if stub_validation < 0 or caller_proof <= stub_validation or \
+            "caller_matches != 1" not in bsman[caller_proof:]:
+        fail("BSMan caller proof no longer follows stub-form validation")
     bsman_commit = bsman.find(
         "Transaction commit: no BSMan code write occurs before every check.")
     if bsman_commit < 0:

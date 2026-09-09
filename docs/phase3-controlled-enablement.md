@@ -560,3 +560,31 @@ ClockAndCalendar; recovery may disable the VSH plugin. Nothing writes `flash0`.
 This commit intentionally does not implement sceVshBridge/impose, OPEN state,
 software transitions, PAF changes, allocations, model spoofing, or hardware
 emulation.
+
+### First BSMan hardware run: resolved SYSCALL/NOP form
+
+**PROVEN on real PSP-1000 6.61 hardware:** the existing native baseline was
+reproduced (`caller_58d4_hit_count=1`, request/probe/pre-start observed), and
+Sony natural `module_start` again entered and returned success. The runtime
+import traversal uniquely resolved `sceBSMan` / `0x23E3A9B6` at
+`0x09CA3358`. From runtime `module_start=0x09C7A198` and static start offset
+`+0xF98`, the module text base is `0x09C79200`; the resolved import is therefore
+exactly `text+0x2A158`, consistent with the research image. No address
+adjustment is justified.
+
+The runtime words were `0x0000054C,0x00000000`: structurally a MIPS
+`SYSCALL; NOP` stub. The prior build did not recognize this form, reported
+`validation=0 install=0 cache_sync=0`, and performed zero BSMan writes before
+its caller scan. Caller evidence consequently remained zero. This is Outcome E
+and provides no evidence that BSMan was called or that CLOSED substitution
+helps.
+
+The validator now recognizes `SYSCALL; NOP` by masking the SPECIAL opcode and
+`0x0C` function bits rather than matching `0x0000054C`. It records
+`stub_form=SYSCALL_NOP` and extracts the 20-bit syscall code for deferred
+diagnostics. Existing `J/JAL; NOP` and `JR RA; SYSCALL` forms remain accepted.
+All unique-caller, strict `beq v0,zero`, helper-range, reachability,
+transaction, two-write, and narrow cache-sync checks remain required and
+unchanged. `CLOSED=0` remains **STRONG INFERENCE**. This recognition change is
+not yet hardware-verified through installation and does not add impose or PAF
+behavior.

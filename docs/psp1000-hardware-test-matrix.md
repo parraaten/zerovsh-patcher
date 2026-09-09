@@ -287,3 +287,17 @@ PSP1000SelectiveSlideTrigger58D4 = Disabled
 PSP1000BSManClosedShim = Disabled
 ClockAndCalendar = Disabled
 ```
+
+### T9 Outcome E hardware result and retry
+
+The first T9 run is **PROVEN Outcome E**: `sceBSMan` / `0x23E3A9B6` uniquely
+resolved at runtime `text+0x2A158` (`0x09CA3358`) with words
+`0x0000054C,0x00000000`, but the old validator did not accept the observed
+`SYSCALL; NOP` form. It installed nothing and performed zero BSMan code writes.
+The zero caller evidence means the caller scan was not reached; it does not show
+that BSMan was or was not called.
+
+Repeat T9 with the same configuration. Require `stub_form=SYSCALL_NOP`, retain
+the unique direct-JAL and strict-zero-test evidence, and interpret behavior only
+if `validation=1 install=1`. CLOSED remains **STRONG INFERENCE**, and no fix is
+claimed.

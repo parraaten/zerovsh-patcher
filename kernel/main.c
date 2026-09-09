@@ -217,8 +217,16 @@ typedef struct {
     unsigned int original_words[2], replacement_words[2];
     unsigned int caller_addr, caller_words[4];
     unsigned int match_count;
+    unsigned int stub_form, syscall_code;
     int closed_value;
 } ZeroCtrlBSManEvidence;
+
+enum zeroCtrlBSManStubForm {
+    ZERO_BSMAN_STUB_UNKNOWN = 0,
+    ZERO_BSMAN_STUB_JUMP_NOP,
+    ZERO_BSMAN_STUB_JR_RA_SYSCALL,
+    ZERO_BSMAN_STUB_SYSCALL_NOP
+};
 
 static const unsigned int vsh_predicate_offsets[VSH_PREDICATE_COUNT] = {
     0x6F04, 0x6F44, 0x6F84, 0x6FC4,
@@ -1860,6 +1868,14 @@ static unsigned int zeroCtrlReadBSManHits(void) {
     return *(volatile unsigned int *)bsman->hit_count_addr;
 }
 
+static const char *zeroCtrlBSManStubFormName(unsigned int form) {
+    static const char *names[] = {
+        "UNKNOWN", "JUMP_NOP", "JR_RA_SYSCALL", "SYSCALL_NOP"
+    };
+    if (form >= sizeof(names) / sizeof(names[0])) return "UNKNOWN";
+    return names[form];
+}
+
 static const char *zeroCtrlSonyRegisterReasonName(int reason) {
     static const char *names[] = {
         "NONE", "TRACE_DISABLED", "ALREADY_REGISTERED", "HELPER_NOT_FOUND",
@@ -1956,6 +1972,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         "size=%u validation=%d\n",
                         trace->descriptor_addr, trace->descriptor_size,
                         trace->descriptor_validation);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[bsman] stub_form=%s syscall_code=0x%05X\n",
+                        zeroCtrlBSManStubFormName(bsman->stub_form),
+                        bsman->syscall_code);
                 zeroCtrlDiagnosticsText(line);
                 snprintf(line, sizeof(line),
                         "[sony-start-register] called=1 success=%d "
@@ -2291,11 +2312,17 @@ static int zeroCtrlBSManLibraryNameValid(SceModule2 *mod, const char *name) {
     return 1;
 }
 
-static int zeroCtrlBSManOriginalStubValid(unsigned int word0,
+static unsigned int zeroCtrlBSManOriginalStubForm(unsigned int word0,
         unsigned int word1) {
     unsigned int opcode = word0 >> 26;
-    if ((opcode == 2 || opcode == 3) && word1 == 0) return 1;
-    return word0 == 0x03E00008 && (word1 & 0xFC00003F) == 0x0000000C;
+    if ((opcode == 2 || opcode == 3) && word1 == 0)
+        return ZERO_BSMAN_STUB_JUMP_NOP;
+    if (word0 == 0x03E00008 &&
+            (word1 & 0xFC00003F) == 0x0000000C)
+        return ZERO_BSMAN_STUB_JR_RA_SYSCALL;
+    if ((word0 & 0xFC00003F) == 0x0000000C && word1 == 0)
+        return ZERO_BSMAN_STUB_SYSCALL_NOP;
+    return ZERO_BSMAN_STUB_UNKNOWN;
 }
 
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
@@ -2346,8 +2373,13 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
 
     bsman->original_words[0] = _lw(bsman->import_stub_addr);
     bsman->original_words[1] = _lw(bsman->import_stub_addr + 4);
-    if (!zeroCtrlBSManOriginalStubValid(bsman->original_words[0],
-                bsman->original_words[1])) return;
+    bsman->stub_form = zeroCtrlBSManOriginalStubForm(
+            bsman->original_words[0], bsman->original_words[1]);
+    if (bsman->stub_form == ZERO_BSMAN_STUB_UNKNOWN) return;
+    if (bsman->stub_form == ZERO_BSMAN_STUB_SYSCALL_NOP)
+        bsman->syscall_code = (bsman->original_words[0] >> 6) & 0xFFFFF;
+    else if (bsman->stub_form == ZERO_BSMAN_STUB_JR_RA_SYSCALL)
+        bsman->syscall_code = (bsman->original_words[1] >> 6) & 0xFFFFF;
 
     /* Runtime caller proof: require one direct call and a strict zero test. */
     for (offset = 0; offset + 12 <= mod->text_size; offset += 4) {
