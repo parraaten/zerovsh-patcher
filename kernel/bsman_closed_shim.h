@@ -49,9 +49,48 @@ typedef struct {
     u32 prefix_paf_natural_result_addr;
     u32 prefix_paf_substitution_hits_addr;
     u32 prefix_paf_return_hits_addr;
+    u32 post_path_mask_addr;
+    u32 bsman_natural_result_addr;
+    u32 bsman_return_hits_addr;
+    u32 post_bs_branch_leaf_addr;
+    u32 post_bs_branch_leaf_end_addr;
+    u32 post_bs_zero_addr;
+    u32 post_bs_nonzero_addr;
+    u32 post_bs_zero_hits_addr;
+    u32 post_bs_nonzero_hits_addr;
+    u32 post_state_branch_leaf_addr;
+    u32 post_state_branch_leaf_end_addr;
+    u32 post_state_zero_addr;
+    u32 post_state_nonzero_addr;
+    u32 post_state_delay_value_addr;
+    u32 post_state_zero_hits_addr;
+    u32 post_state_nonzero_hits_addr;
+    u32 post_paf_call_leaf_addr;
+    u32 post_paf_call_leaf_end_addr;
+    u32 post_paf_return_leaf_addr;
+    u32 post_paf_return_leaf_end_addr;
+    u32 post_paf_target_addr;
+    u32 post_paf_call0_ra_addr;
+    u32 post_paf_call1_ra_addr;
+    u32 post_paf_saved_ra_addr;
+    u32 post_paf_result0_addr;
+    u32 post_paf_result1_addr;
+    u32 post_paf_return0_hits_addr;
+    u32 post_paf_return1_hits_addr;
+    u32 post_vsh_call_leaf_addr;
+    u32 post_vsh_call_leaf_end_addr;
+    u32 post_vsh_return_leaf_addr;
+    u32 post_vsh_return_leaf_end_addr;
+    u32 post_vsh_target_addr;
+    u32 post_vsh_saved_ra_addr;
+    u32 post_vsh_natural_result_addr;
+    u32 post_vsh_return_hits_addr;
+    u32 post_paf_entry0_hits_addr;
+    u32 post_paf_entry1_hits_addr;
+    u32 post_vsh_entry_hits_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 180 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 336 ? 1 : -1];
 
 #endif

@@ -193,6 +193,27 @@ extern volatile unsigned int zeroCtrlSlidePrefixPafCompatMode;
 extern volatile unsigned int zeroCtrlSlidePrefixPafNaturalResult;
 extern volatile unsigned int zeroCtrlSlidePrefixPafSubstitutionHits;
 extern volatile unsigned int zeroCtrlSlidePrefixPafReturnHits;
+extern void zeroCtrlPostBSManBranchTrace(void), zeroCtrlPostBSManBranchTraceEnd(void);
+extern void zeroCtrlPostStateBranchTrace(void), zeroCtrlPostStateBranchTraceEnd(void);
+extern void zeroCtrlPostPafCallTrace(void), zeroCtrlPostPafCallTraceEnd(void);
+extern void zeroCtrlPostPafReturnTrace(void), zeroCtrlPostPafReturnTraceEnd(void);
+extern void zeroCtrlPostVshCallTrace(void), zeroCtrlPostVshCallTraceEnd(void);
+extern void zeroCtrlPostVshReturnTrace(void), zeroCtrlPostVshReturnTraceEnd(void);
+extern volatile unsigned int zeroCtrlPostPathMask;
+extern volatile unsigned int zeroCtrlPostBSManNaturalResult, zeroCtrlPostBSManReturnHits;
+extern volatile unsigned int zeroCtrlPostBSManZero, zeroCtrlPostBSManNonzero;
+extern volatile unsigned int zeroCtrlPostBSManZeroHits, zeroCtrlPostBSManNonzeroHits;
+extern volatile unsigned int zeroCtrlPostStateZero, zeroCtrlPostStateNonzero;
+extern volatile unsigned int zeroCtrlPostStateDelayValue;
+extern volatile unsigned int zeroCtrlPostStateZeroHits, zeroCtrlPostStateNonzeroHits;
+extern volatile unsigned int zeroCtrlPostPafTarget, zeroCtrlPostPafCall0RA;
+extern volatile unsigned int zeroCtrlPostPafCall1RA, zeroCtrlPostPafSavedRA;
+extern volatile unsigned int zeroCtrlPostPafResult0, zeroCtrlPostPafResult1;
+extern volatile unsigned int zeroCtrlPostPafReturn0Hits, zeroCtrlPostPafReturn1Hits;
+extern volatile unsigned int zeroCtrlPostVshTarget, zeroCtrlPostVshSavedRA;
+extern volatile unsigned int zeroCtrlPostVshNaturalResult, zeroCtrlPostVshReturnHits;
+extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
+extern volatile unsigned int zeroCtrlPostVshEntryHits;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -373,6 +394,69 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlSlidePrefixPafSubstitutionHits;
 	bsmanClosedRegistration.prefix_paf_return_hits_addr =
 			(u32)&zeroCtrlSlidePrefixPafReturnHits;
+	bsmanClosedRegistration.post_path_mask_addr = (u32)&zeroCtrlPostPathMask;
+	bsmanClosedRegistration.bsman_natural_result_addr =
+			(u32)&zeroCtrlPostBSManNaturalResult;
+	bsmanClosedRegistration.bsman_return_hits_addr =
+			(u32)&zeroCtrlPostBSManReturnHits;
+	bsmanClosedRegistration.post_bs_branch_leaf_addr =
+			(u32)zeroCtrlPostBSManBranchTrace;
+	bsmanClosedRegistration.post_bs_branch_leaf_end_addr =
+			(u32)zeroCtrlPostBSManBranchTraceEnd;
+	bsmanClosedRegistration.post_bs_zero_addr = (u32)&zeroCtrlPostBSManZero;
+	bsmanClosedRegistration.post_bs_nonzero_addr = (u32)&zeroCtrlPostBSManNonzero;
+	bsmanClosedRegistration.post_bs_zero_hits_addr =
+			(u32)&zeroCtrlPostBSManZeroHits;
+	bsmanClosedRegistration.post_bs_nonzero_hits_addr =
+			(u32)&zeroCtrlPostBSManNonzeroHits;
+	bsmanClosedRegistration.post_state_branch_leaf_addr =
+			(u32)zeroCtrlPostStateBranchTrace;
+	bsmanClosedRegistration.post_state_branch_leaf_end_addr =
+			(u32)zeroCtrlPostStateBranchTraceEnd;
+	bsmanClosedRegistration.post_state_zero_addr = (u32)&zeroCtrlPostStateZero;
+	bsmanClosedRegistration.post_state_nonzero_addr = (u32)&zeroCtrlPostStateNonzero;
+	bsmanClosedRegistration.post_state_delay_value_addr =
+			(u32)&zeroCtrlPostStateDelayValue;
+	bsmanClosedRegistration.post_state_zero_hits_addr =
+			(u32)&zeroCtrlPostStateZeroHits;
+	bsmanClosedRegistration.post_state_nonzero_hits_addr =
+			(u32)&zeroCtrlPostStateNonzeroHits;
+	bsmanClosedRegistration.post_paf_call_leaf_addr = (u32)zeroCtrlPostPafCallTrace;
+	bsmanClosedRegistration.post_paf_call_leaf_end_addr =
+			(u32)zeroCtrlPostPafCallTraceEnd;
+	bsmanClosedRegistration.post_paf_return_leaf_addr =
+			(u32)zeroCtrlPostPafReturnTrace;
+	bsmanClosedRegistration.post_paf_return_leaf_end_addr =
+			(u32)zeroCtrlPostPafReturnTraceEnd;
+	bsmanClosedRegistration.post_paf_target_addr = (u32)&zeroCtrlPostPafTarget;
+	bsmanClosedRegistration.post_paf_call0_ra_addr = (u32)&zeroCtrlPostPafCall0RA;
+	bsmanClosedRegistration.post_paf_call1_ra_addr = (u32)&zeroCtrlPostPafCall1RA;
+	bsmanClosedRegistration.post_paf_saved_ra_addr = (u32)&zeroCtrlPostPafSavedRA;
+	bsmanClosedRegistration.post_paf_result0_addr = (u32)&zeroCtrlPostPafResult0;
+	bsmanClosedRegistration.post_paf_result1_addr = (u32)&zeroCtrlPostPafResult1;
+	bsmanClosedRegistration.post_paf_return0_hits_addr =
+			(u32)&zeroCtrlPostPafReturn0Hits;
+	bsmanClosedRegistration.post_paf_return1_hits_addr =
+			(u32)&zeroCtrlPostPafReturn1Hits;
+	bsmanClosedRegistration.post_vsh_call_leaf_addr = (u32)zeroCtrlPostVshCallTrace;
+	bsmanClosedRegistration.post_vsh_call_leaf_end_addr =
+			(u32)zeroCtrlPostVshCallTraceEnd;
+	bsmanClosedRegistration.post_vsh_return_leaf_addr =
+			(u32)zeroCtrlPostVshReturnTrace;
+	bsmanClosedRegistration.post_vsh_return_leaf_end_addr =
+			(u32)zeroCtrlPostVshReturnTraceEnd;
+	bsmanClosedRegistration.post_vsh_target_addr = (u32)&zeroCtrlPostVshTarget;
+	bsmanClosedRegistration.post_vsh_saved_ra_addr = (u32)&zeroCtrlPostVshSavedRA;
+	bsmanClosedRegistration.post_vsh_natural_result_addr =
+			(u32)&zeroCtrlPostVshNaturalResult;
+	bsmanClosedRegistration.post_vsh_return_hits_addr =
+			(u32)&zeroCtrlPostVshReturnHits;
+	bsmanClosedRegistration.post_paf_entry0_hits_addr =
+			(u32)&zeroCtrlPostPafEntry0Hits;
+	bsmanClosedRegistration.post_paf_entry1_hits_addr =
+			(u32)&zeroCtrlPostPafEntry1Hits;
+	bsmanClosedRegistration.post_vsh_entry_hits_addr =
+			(u32)&zeroCtrlPostVshEntryHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

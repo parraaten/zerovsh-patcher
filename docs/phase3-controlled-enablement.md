@@ -821,3 +821,82 @@ This is an experiment, not a final compatibility decision. If hardware proves
 the zero-to-one conversion is required, the optimized implementation should
 retain only this validated callsite-specific post-call conversion and remove
 the broad temporary masks, counters, writer polling, and analysis strings.
+
+### T12 result and post-BSMan natural-path tracer
+
+T12 **proved on PSP-1000 hardware** that the callsite conversion is effective:
+four natural `scePaf` returns were zero, four zero-to-one conversions occurred,
+and all four activations then produced `result_nonzero`, `flag_nonzero`,
+`mask_unequal`, and pre-BSMan counts. The cumulative prefix mask was `0x37F`.
+Stage 3 and bit `0x200` prove at least one natural BSMan return; they do not
+prove four returns because the former evidence had no dedicated return count.
+
+Static analysis gives the following post-BSMan CFG and raw tests:
+
+```
++0x93AC  jal  sceBSMan / 0x23E3A9B6
++0x93B4  beq  v0,zero,+0x93E0       # BSMan result: zero/nonzero
++0x93B8  lbu  v0,0xDCD(s3)          # delay slot on both sides
++0x93BC  load relocated byte flag
++0x93C4  bne  flag,zero,epilogue
+          [zero flag sets two state bytes, then joins +0x93E0]
++0x93E0  beq  v0,zero,+0x957C       # byte from +0x93B8: zero/nonzero
++0x93E4  lui  v0,<relocated-hi>      # delay slot on both sides
++0x93EC  jal  scePaf / 0xFF03BCD5   # a0=0 in delay slot
++0x93F4  bgtz v0,epilogue            # positive exits; zero/negative continue
++0x93FC  jal  scePaf / 0xFF03BCD5   # a0=1 in delay slot
++0x9404  bgtz v0,epilogue            # positive exits; zero/negative continue
++0x940C  lui  a0,0x8000
++0x9410  jal  sceVshBridge / 0x639C3CB3
++0x9414  ori  a0,a0,0x000D           # exact argument 0x8000000D
++0x9418  bne  v0,zero,epilogue       # VshBridge result: zero/nonzero
++0x9420  load virtual target +0x50
++0x9424  jalr target                  # farther object/PAF activation work
+```
+
+The `0x8000000D` path is therefore not inferred merely from proximity. Runtime
+import traversal structurally requires exactly one `sceVshBridge` NID
+`0x639C3CB3`; the caller must construct `a0=0x8000000D`, call that exact stub,
+and immediately consume its natural result as zero/nonzero. Its private impose
+meaning remains unproven, so the tracer calls it naturally and never changes
+its argument or result. Likewise, `scePaf` NID `0xFF03BCD5` is uniquely
+resolved and both direct callers must target it with exact `a0=0` and `a0=1`
+delay slots.
+
+The new post-BSMan mask and counters are temporary fixed-scalar evidence:
+
+| Mask | Boundary |
+| --- | --- |
+| `0x001` | natural BSMan returned |
+| `0x002` / `0x004` | immediate BSMan-result branch reached / result nonzero |
+| `0x008` / `0x010` | state-byte branch reached / byte nonzero |
+| `0x020` / `0x040` | first `0xFF03BCD5` call entered / returned |
+| `0x080` / `0x100` | second `0xFF03BCD5` call entered / returned |
+| `0x200` / `0x400` | `sceVshBridge` call entered / returned |
+
+Dedicated counters separately record BSMan returns, both immediate branch
+outcomes, both state-byte outcomes, entry/return for each PAF call, and
+VshBridge entry/return. Raw BSMan, PAF, and VshBridge results are captured
+before any tracer use or deferred serialization. Branch leaves reproduce the
+original `lbu v0,0xDCD(s3)` and relocated `LUI v0` delay slots. Call leaves
+retain the original PAF `a0=0/1` and VshBridge `a0=0x8000000D` JAL delay slots,
+tail-call the validated natural imports, restore the Sony return addresses, and
+preserve every natural result.
+
+The next hardware run keeps `PSP1000PafPresentCompat=Enabled` and
+`PSP1000BSManClosedShim=Disabled`. A BSMan zero/nonzero counter selects the
+immediate branch. A state-zero count localizes to the `+0x957C` path; state
+nonzero proceeds toward the two PAF calls. For each PAF, entry without return
+localizes inside the import, while a returned positive raw value explains its
+immediate epilogue. Two nonpositive PAF results permit VshBridge entry;
+VshBridge entry without return localizes inside it, nonzero return selects its
+epilogue, and zero return reaches the farther virtual-call path. No downstream
+result is substituted in this experiment.
+
+Phase report: changed the shared helper registration, user assembly/registration,
+kernel validation/installation and deferred diagnostics, the safety verifier,
+and Phase 3 documentation. The static checks and host Allegrex-compatible
+assembly check pass; a PSPDEV build and PSP-1000 run remain required. The
+VshBridge call shape and raw tests are proven statically, but private PAF,
+VshBridge, and virtual-target semantics remain unresolved. Analyze the T13
+natural counters before considering any additional compatibility behavior.

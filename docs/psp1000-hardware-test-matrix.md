@@ -376,3 +376,25 @@ this callsite, and leaves natural nonzero results unchanged. Interpret the
 existing flag, mask, pre-BSMan, and BSMan-return evidence as described in the
 Phase 3 report. Do not enable impose, OPEN-state, or any other compatibility
 control in this run.
+
+## T13 — post-BSMan natural boundary localization
+
+T12 recorded four natural first-PAF zeros, four isolated conversions, and four
+paths through the prefix to pre-BSMan. Stage 3 proves at least one BSMan return,
+not four. Retain `PSP1000PafPresentCompat=Enabled`, keep
+`PSP1000BSManClosedShim=Disabled`, and change no other behavior.
+
+Require the exact `[post-bsman]` fingerprints, including uniquely resolved
+`scePaf/0xFF03BCD5`, `sceVshBridge/0x639C3CB3`, and VshBridge argument
+`0x8000000D`. Interpret dedicated entry/return counters and raw results:
+
+* BSMan return count plus zero/nonzero counters identifies its immediate path.
+* State zero selects `+0x957C`; state nonzero advances to the PAF pair.
+* A PAF entry without return localizes inside that import; a positive returned
+  value selects its `bgtz` epilogue, while zero or negative advances.
+* VshBridge entry proves the verified `0x8000000D` path is active. Entry without
+  return localizes inside it; nonzero return selects the epilogue; zero return
+  reaches the virtual-call sequence at `+0x9420`.
+
+Return the unedited log and XMB observations. This row substitutes no BSMan,
+second-PAF, VshBridge, impose, OPEN/CLOSE, or model result.

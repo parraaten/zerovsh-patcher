@@ -199,6 +199,16 @@ zeroCtrlBSManCallTraceEnd:
 .type zeroCtrlBSManReturnTrace @function
 .ent zeroCtrlBSManReturnTrace, 0
 zeroCtrlBSManReturnTrace:
+    lui     $t0, %hi(zeroCtrlPostBSManNaturalResult)
+    sw      $v0, %lo(zeroCtrlPostBSManNaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlPostBSManReturnHits)
+    lw      $t1, %lo(zeroCtrlPostBSManReturnHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostBSManReturnHits)($t0)
+    lui     $t0, %hi(zeroCtrlPostPathMask)
+    lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    ori     $t1, $t1, 0x0001
+    sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
     lui     $t0, %hi(zeroCtrlSlidePrefixPathMask)
     lw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
     ori     $t1, $t1, 0x0200
@@ -224,6 +234,168 @@ zeroCtrlBSManReturnTraceEnd:
     addiu   $t2, $t2, 1
     sw      $t2, %lo(\counter)($t0)
 .endm
+
+.globl zeroCtrlPostBSManBranchTrace
+.type zeroCtrlPostBSManBranchTrace @function
+.ent zeroCtrlPostBSManBranchTrace, 0
+zeroCtrlPostBSManBranchTrace:
+    lui     $t0, %hi(zeroCtrlPostPathMask)
+    lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    ori     $t1, $t1, 0x0002
+    beqz    $v0, 8f
+    sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    ori     $t1, $t1, 0x0004
+    sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    RECORD_PREFIX_COUNTER zeroCtrlPostBSManNonzeroHits
+    lui     $t0, %hi(zeroCtrlPostBSManNonzero)
+    lw      $t9, %lo(zeroCtrlPostBSManNonzero)($t0)
+    b       9f
+    nop
+8:
+    RECORD_PREFIX_COUNTER zeroCtrlPostBSManZeroHits
+    lui     $t0, %hi(zeroCtrlPostBSManZero)
+    lw      $t9, %lo(zeroCtrlPostBSManZero)($t0)
+9:
+    lbu     $v0, 0x0DCD($s3)
+    jr      $t9
+    nop
+.globl zeroCtrlPostBSManBranchTraceEnd
+zeroCtrlPostBSManBranchTraceEnd:
+.end zeroCtrlPostBSManBranchTrace
+
+.globl zeroCtrlPostStateBranchTrace
+.type zeroCtrlPostStateBranchTrace @function
+.ent zeroCtrlPostStateBranchTrace, 0
+zeroCtrlPostStateBranchTrace:
+    lui     $t0, %hi(zeroCtrlPostPathMask)
+    lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    ori     $t1, $t1, 0x0008
+    beqz    $v0, 10f
+    sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    ori     $t1, $t1, 0x0010
+    sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    RECORD_PREFIX_COUNTER zeroCtrlPostStateNonzeroHits
+    lui     $t0, %hi(zeroCtrlPostStateNonzero)
+    lw      $t9, %lo(zeroCtrlPostStateNonzero)($t0)
+    b       11f
+    nop
+10:
+    RECORD_PREFIX_COUNTER zeroCtrlPostStateZeroHits
+    lui     $t0, %hi(zeroCtrlPostStateZero)
+    lw      $t9, %lo(zeroCtrlPostStateZero)($t0)
+11:
+    lui     $t0, %hi(zeroCtrlPostStateDelayValue)
+    lw      $v0, %lo(zeroCtrlPostStateDelayValue)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlPostStateBranchTraceEnd
+zeroCtrlPostStateBranchTraceEnd:
+.end zeroCtrlPostStateBranchTrace
+
+.globl zeroCtrlPostPafCallTrace
+.type zeroCtrlPostPafCallTrace @function
+.ent zeroCtrlPostPafCallTrace, 0
+zeroCtrlPostPafCallTrace:
+    lui     $t0, %hi(zeroCtrlPostPafCall0RA)
+    lw      $t2, %lo(zeroCtrlPostPafCall0RA)($t0)
+    bne     $ra, $t2, 12f
+    nop
+    RECORD_PREFIX_COUNTER zeroCtrlPostPafEntry0Hits
+    addiu   $t2, $zero, 0x0020
+    b       13f
+    nop
+12:
+    RECORD_PREFIX_COUNTER zeroCtrlPostPafEntry1Hits
+    addiu   $t2, $zero, 0x0080
+13:
+    lui     $t0, %hi(zeroCtrlPostPathMask)
+    lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    or      $t1, $t1, $t2
+    sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlPostPafSavedRA)
+    sw      $ra, %lo(zeroCtrlPostPafSavedRA)($t0)
+    lui     $ra, %hi(zeroCtrlPostPafReturnTrace)
+    addiu   $ra, $ra, %lo(zeroCtrlPostPafReturnTrace)
+    lui     $t0, %hi(zeroCtrlPostPafTarget)
+    lw      $t9, %lo(zeroCtrlPostPafTarget)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlPostPafCallTraceEnd
+zeroCtrlPostPafCallTraceEnd:
+.end zeroCtrlPostPafCallTrace
+
+.globl zeroCtrlPostPafReturnTrace
+.type zeroCtrlPostPafReturnTrace @function
+.ent zeroCtrlPostPafReturnTrace, 0
+zeroCtrlPostPafReturnTrace:
+    lui     $t0, %hi(zeroCtrlPostPafSavedRA)
+    lw      $t9, %lo(zeroCtrlPostPafSavedRA)($t0)
+    lui     $t0, %hi(zeroCtrlPostPafCall0RA)
+    lw      $t2, %lo(zeroCtrlPostPafCall0RA)($t0)
+    bne     $t9, $t2, 14f
+    nop
+    lui     $t0, %hi(zeroCtrlPostPafResult0)
+    sw      $v0, %lo(zeroCtrlPostPafResult0)($t0)
+    RECORD_PREFIX_COUNTER zeroCtrlPostPafReturn0Hits
+    addiu   $t2, $zero, 0x0040
+    b       15f
+    nop
+14:
+    lui     $t0, %hi(zeroCtrlPostPafResult1)
+    sw      $v0, %lo(zeroCtrlPostPafResult1)($t0)
+    RECORD_PREFIX_COUNTER zeroCtrlPostPafReturn1Hits
+    addiu   $t2, $zero, 0x0100
+15:
+    lui     $t0, %hi(zeroCtrlPostPathMask)
+    lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    or      $t1, $t1, $t2
+    sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    move    $ra, $t9
+    jr      $ra
+    nop
+.globl zeroCtrlPostPafReturnTraceEnd
+zeroCtrlPostPafReturnTraceEnd:
+.end zeroCtrlPostPafReturnTrace
+
+.globl zeroCtrlPostVshCallTrace
+.type zeroCtrlPostVshCallTrace @function
+.ent zeroCtrlPostVshCallTrace, 0
+zeroCtrlPostVshCallTrace:
+    RECORD_PREFIX_COUNTER zeroCtrlPostVshEntryHits
+    lui     $t0, %hi(zeroCtrlPostPathMask)
+    lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    ori     $t1, $t1, 0x0200
+    sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlPostVshSavedRA)
+    sw      $ra, %lo(zeroCtrlPostVshSavedRA)($t0)
+    lui     $ra, %hi(zeroCtrlPostVshReturnTrace)
+    addiu   $ra, $ra, %lo(zeroCtrlPostVshReturnTrace)
+    lui     $t0, %hi(zeroCtrlPostVshTarget)
+    lw      $t9, %lo(zeroCtrlPostVshTarget)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlPostVshCallTraceEnd
+zeroCtrlPostVshCallTraceEnd:
+.end zeroCtrlPostVshCallTrace
+
+.globl zeroCtrlPostVshReturnTrace
+.type zeroCtrlPostVshReturnTrace @function
+.ent zeroCtrlPostVshReturnTrace, 0
+zeroCtrlPostVshReturnTrace:
+    lui     $t0, %hi(zeroCtrlPostVshNaturalResult)
+    sw      $v0, %lo(zeroCtrlPostVshNaturalResult)($t0)
+    RECORD_PREFIX_COUNTER zeroCtrlPostVshReturnHits
+    lui     $t0, %hi(zeroCtrlPostPathMask)
+    lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    ori     $t1, $t1, 0x0400
+    sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlPostVshSavedRA)
+    lw      $ra, %lo(zeroCtrlPostVshSavedRA)($t0)
+    jr      $ra
+    nop
+.globl zeroCtrlPostVshReturnTraceEnd
+zeroCtrlPostVshReturnTraceEnd:
+.end zeroCtrlPostVshReturnTrace
 
 .globl zeroCtrlSlidePrefixPafCallTrace
 .type zeroCtrlSlidePrefixPafCallTrace @function
@@ -412,3 +584,57 @@ zeroCtrlSlidePrefixPafNaturalResult: .space 4
 zeroCtrlSlidePrefixPafSubstitutionHits: .space 4
 .globl zeroCtrlSlidePrefixPafReturnHits
 zeroCtrlSlidePrefixPafReturnHits: .space 4
+.globl zeroCtrlPostPathMask
+zeroCtrlPostPathMask: .space 4
+.globl zeroCtrlPostBSManNaturalResult
+zeroCtrlPostBSManNaturalResult: .space 4
+.globl zeroCtrlPostBSManReturnHits
+zeroCtrlPostBSManReturnHits: .space 4
+.globl zeroCtrlPostBSManZero
+zeroCtrlPostBSManZero: .space 4
+.globl zeroCtrlPostBSManNonzero
+zeroCtrlPostBSManNonzero: .space 4
+.globl zeroCtrlPostBSManZeroHits
+zeroCtrlPostBSManZeroHits: .space 4
+.globl zeroCtrlPostBSManNonzeroHits
+zeroCtrlPostBSManNonzeroHits: .space 4
+.globl zeroCtrlPostStateZero
+zeroCtrlPostStateZero: .space 4
+.globl zeroCtrlPostStateNonzero
+zeroCtrlPostStateNonzero: .space 4
+.globl zeroCtrlPostStateDelayValue
+zeroCtrlPostStateDelayValue: .space 4
+.globl zeroCtrlPostStateZeroHits
+zeroCtrlPostStateZeroHits: .space 4
+.globl zeroCtrlPostStateNonzeroHits
+zeroCtrlPostStateNonzeroHits: .space 4
+.globl zeroCtrlPostPafTarget
+zeroCtrlPostPafTarget: .space 4
+.globl zeroCtrlPostPafCall0RA
+zeroCtrlPostPafCall0RA: .space 4
+.globl zeroCtrlPostPafCall1RA
+zeroCtrlPostPafCall1RA: .space 4
+.globl zeroCtrlPostPafSavedRA
+zeroCtrlPostPafSavedRA: .space 4
+.globl zeroCtrlPostPafResult0
+zeroCtrlPostPafResult0: .space 4
+.globl zeroCtrlPostPafResult1
+zeroCtrlPostPafResult1: .space 4
+.globl zeroCtrlPostPafReturn0Hits
+zeroCtrlPostPafReturn0Hits: .space 4
+.globl zeroCtrlPostPafReturn1Hits
+zeroCtrlPostPafReturn1Hits: .space 4
+.globl zeroCtrlPostVshTarget
+zeroCtrlPostVshTarget: .space 4
+.globl zeroCtrlPostVshSavedRA
+zeroCtrlPostVshSavedRA: .space 4
+.globl zeroCtrlPostVshNaturalResult
+zeroCtrlPostVshNaturalResult: .space 4
+.globl zeroCtrlPostVshReturnHits
+zeroCtrlPostVshReturnHits: .space 4
+.globl zeroCtrlPostPafEntry0Hits
+zeroCtrlPostPafEntry0Hits: .space 4
+.globl zeroCtrlPostPafEntry1Hits
+zeroCtrlPostPafEntry1Hits: .space 4
+.globl zeroCtrlPostVshEntryHits
+zeroCtrlPostVshEntryHits: .space 4
