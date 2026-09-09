@@ -40,9 +40,32 @@ def fail(message):
 def check_sources(root):
     kernel = (root / "kernel/main.c").read_text()
     user = (root / "user/main.c").read_text()
+    kernel_exports = (root / "kernel/exports.exp").read_text()
+    user_imports = (root / "user/import.S").read_text()
     registration_header = (root / "kernel/sony_start_trace.h").read_text()
     assembly = (root / "user/stub.S").read_text()
     build = (root / "build_linux.sh").read_text()
+    if "PSP_EXPORT_FUNC_NID(zeroCtrlRegisterBSManClosedShim, 0x1337357C)" \
+            not in kernel_exports:
+        fail("kernel BSMan registration export NID is missing or changed")
+    if "STUB_FUNC 0x1337357C, zeroCtrlRegisterBSManClosedShim" \
+            not in user_imports:
+        fail("user BSMan registration import NID is missing or changed")
+    if "STUB_FUNC 0x1337357B, zeroCtrlRegisterSonyStartTrace" \
+            not in user_imports:
+        fail("Sony trace registration import NID changed")
+    zeroctrl_import = re.search(
+        r'STUB_START\s+"ZeroCtrlForUser"\s+0x[0-9A-Fa-f]+,\s*'
+        r'0x([0-9A-Fa-f]{4})0005(?P<body>.*?)STUB_END',
+        user_imports, re.S)
+    if not zeroctrl_import:
+        fail("cannot parse ZeroCtrlForUser import table")
+    declared_count = int(zeroctrl_import.group(1), 16)
+    actual_count = len(re.findall(r"^\s*STUB_FUNC\b",
+        zeroctrl_import.group("body"), re.M))
+    if declared_count != actual_count:
+        fail("ZeroCtrlForUser declares %d functions but imports %d" %
+             (declared_count, actual_count))
     if '"PSP1000SlideTriggerMode", "Disabled"' not in kernel:
         fail("dangerous trigger selector does not default to Disabled")
     if '"PSP1000Diagnostics", "Disabled"' not in kernel:
