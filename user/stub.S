@@ -135,6 +135,8 @@ zeroCtrlBSManClosedHits: .space 4
 .section .text
 .set noreorder
 .globl zeroCtrlSlideActivationTrace
+.type zeroCtrlSlideActivationTrace @function
+.ent zeroCtrlSlideActivationTrace, 0
 zeroCtrlSlideActivationTrace:
     lui     $t0, %hi(zeroCtrlSlideActivationHits)
     lw      $t1, %lo(zeroCtrlSlideActivationHits)($t0)
@@ -151,8 +153,11 @@ zeroCtrlSlideActivationTrace:
     nop
 .globl zeroCtrlSlideActivationTraceEnd
 zeroCtrlSlideActivationTraceEnd:
+.end zeroCtrlSlideActivationTrace
 
 .globl zeroCtrlBSManCallTrace
+.type zeroCtrlBSManCallTrace @function
+.ent zeroCtrlBSManCallTrace, 0
 zeroCtrlBSManCallTrace:
     lui     $t0, %hi(zeroCtrlSlideTraceStage)
     addiu   $t1, $zero, 2
@@ -171,8 +176,11 @@ zeroCtrlBSManCallTrace:
     nop
 .globl zeroCtrlBSManCallTraceEnd
 zeroCtrlBSManCallTraceEnd:
+.end zeroCtrlBSManCallTrace
 
 .globl zeroCtrlBSManReturnTrace
+.type zeroCtrlBSManReturnTrace @function
+.ent zeroCtrlBSManReturnTrace, 0
 zeroCtrlBSManReturnTrace:
     lui     $t0, %hi(zeroCtrlSlideTraceStage)
     addiu   $t1, $zero, 3
@@ -183,6 +191,7 @@ zeroCtrlBSManReturnTrace:
     nop
 .globl zeroCtrlBSManReturnTraceEnd
 zeroCtrlBSManReturnTraceEnd:
+.end zeroCtrlBSManReturnTrace
 
 .section .bss
 .align 2
