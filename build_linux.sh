@@ -7,6 +7,9 @@ cd user
 make clean
 make
 
+python3 ../tools/verify_psp1000_safety.py \
+    --source-root .. --user-elf zerovsh_upatcher.elf --stub-object stub.o
+
 bin2c zerovsh_upatcher.prx zerovsh_upatcher.h zerovsh_user_module
 python3 ../tools/align_bin2c.py zerovsh_upatcher.h zerovsh_user_module
 

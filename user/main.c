@@ -35,6 +35,7 @@
 #include "../kernel/psploadcore.h"
 #include "../kernel/systemctrl.h"
 #include "../kernel/systemctrl_se.h"
+#include "../kernel/sony_start_trace.h"
 
 PSP_MODULE_INFO("ZeroVSH_Patcher_User", 0x0007, 0, 1);
 
@@ -87,12 +88,18 @@ int zeroCtrlIsPsp1000SlideExperimentEnabled(void);
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int text_size, unsigned int module_start_addr,
         unsigned int elf_entry_addr, unsigned int target,
-        unsigned int return_true_addr);
+        unsigned int stub_58d4, unsigned int stub_13f6c,
+        unsigned int stub_14020, unsigned int counter_58d4,
+        unsigned int counter_13f6c, unsigned int counter_14020,
+        unsigned int global_stub, unsigned int global_counter);
+void zeroCtrlRegisterSonyStartTrace(
+        const ZeroCtrlSonyStartTraceRegistration *registration);
 void zeroCtrlSetLEDState(void);
 void zeroCtrlSetBrightness(void);
 void zeroCtrlSetClockSpeed(void);
 
 int model;
+static ZeroCtrlSonyStartTraceRegistration sonyStartTraceRegistration;
 
 //OK
 void *zeroCtrlRedir2Stub(u32 address, void *stub, void *func) {
@@ -120,11 +127,23 @@ int zeroCtrlDummyFunc(void) {
 int zeroCtrlDummyFunc2(void) {
 	return 0;
 }
-// Strict boolean result for the selective PSP-1000 VSH callsite experiment.
-__attribute__((noipa, used))
-int zeroCtrlReturnTrue(void) {
-	return 1;
-}
+extern int zeroCtrlTrigger58D4(void);
+extern int zeroCtrlTrigger13F6C(void);
+extern int zeroCtrlTrigger14020(void);
+extern volatile unsigned int zeroCtrlTrigger58D4Hits;
+extern volatile unsigned int zeroCtrlTrigger13F6CHits;
+extern volatile unsigned int zeroCtrlTrigger14020Hits;
+extern int zeroCtrlGlobalPredicate6F84True(void);
+extern volatile unsigned int zeroCtrlGlobalPredicate6F84Hits;
+extern void zeroCtrlSonyModuleStartEntryTrace(void);
+extern void zeroCtrlSonyModuleStartEntryTraceEnd(void);
+extern void zeroCtrlSonyModuleStartExitTrace(void);
+extern void zeroCtrlSonyModuleStartExitTraceEnd(void);
+extern volatile unsigned int zeroCtrlSonyModuleStartResume;
+extern volatile unsigned int zeroCtrlSonyModuleStartCallerRA;
+extern volatile unsigned int zeroCtrlSonyModuleStartEntrySeen;
+extern volatile unsigned int zeroCtrlSonyModuleStartReturnSeen;
+extern volatile unsigned int zeroCtrlSonyModuleStartResult;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -160,7 +179,14 @@ int OnModuleStart(SceModule2 *mod) {
 					zeroCtrlRecordVshSlideTarget(mod->modid, mod->text_addr,
 							mod->text_size, mod->module_start_func,
 							mod->entry_addr, target,
-							(unsigned int)zeroCtrlReturnTrue);
+							(unsigned int)zeroCtrlTrigger58D4,
+							(unsigned int)zeroCtrlTrigger13F6C,
+							(unsigned int)zeroCtrlTrigger14020,
+							(unsigned int)&zeroCtrlTrigger58D4Hits,
+							(unsigned int)&zeroCtrlTrigger13F6CHits,
+							(unsigned int)&zeroCtrlTrigger14020Hits,
+							(unsigned int)zeroCtrlGlobalPredicate6F84True,
+							(unsigned int)&zeroCtrlGlobalPredicate6F84Hits);
 				}
 			} else if(devkit == 0x06020010) {								
 				zeroCtrlRedir2Stub(mod->text_addr+0x6D78, slide_check_stub, zeroCtrlDummyFunc);			
@@ -191,9 +217,28 @@ int OnModuleStart(SceModule2 *mod) {
        return previous ? previous(mod) : 0;
 }
 //OK
-int module_start(SceSize args UNUSED, void *argp UNUSED) {  	
+int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	model = zeroCtrlGetModel();
-	devkit = sceKernelDevkitVersion();	
+	devkit = sceKernelDevkitVersion();
+	sonyStartTraceRegistration.entry_addr =
+			(u32)zeroCtrlSonyModuleStartEntryTrace;
+	sonyStartTraceRegistration.entry_end_addr =
+			(u32)zeroCtrlSonyModuleStartEntryTraceEnd;
+	sonyStartTraceRegistration.exit_addr =
+			(u32)zeroCtrlSonyModuleStartExitTrace;
+	sonyStartTraceRegistration.exit_end_addr =
+			(u32)zeroCtrlSonyModuleStartExitTraceEnd;
+	sonyStartTraceRegistration.resume_slot_addr =
+			(u32)&zeroCtrlSonyModuleStartResume;
+	sonyStartTraceRegistration.caller_ra_slot_addr =
+			(u32)&zeroCtrlSonyModuleStartCallerRA;
+	sonyStartTraceRegistration.entry_seen_addr =
+			(u32)&zeroCtrlSonyModuleStartEntrySeen;
+	sonyStartTraceRegistration.return_seen_addr =
+			(u32)&zeroCtrlSonyModuleStartReturnSeen;
+	sonyStartTraceRegistration.result_addr =
+			(u32)&zeroCtrlSonyModuleStartResult;
+	zeroCtrlRegisterSonyStartTrace(&sonyStartTraceRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        
 	return 0;

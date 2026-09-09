@@ -405,3 +405,54 @@ trusted VSH segments, validates NID and function-stub arrays, and structurally
 matches runtime stub `+0x3F970` to its library and NID. It scans callers of
 `+0x66E0` with the existing relocation-safe algorithm so their `a0/a1` setup can
 be analyzed. No import is called and VSH code/state remains untouched.
+
+## Natural Sony module_start boundary trace
+
+Extended real PSP-1000 T4 evidence now proves the ordered native pipeline:
+`+0x58D4` forced true, PRX request, LoadCore probe, pre-start handler, RCO
+request, then a later crash. The `saw_start` breadcrumb is only **PROVEN**
+evidence that the pre-start handler observed `slide_plugin_module`; it does not
+prove Sony's natural body entered or returned.
+
+The exact opt-in `PSP1000SonyStartTrace=Enabled` installs only when diagnostics,
+the PSP-1000 SlidePlugin experiment, ClockAndCalendar-disabled state, 6.61, and
+`DangerousCaller58D4` all match. Hardware proved the earlier metadata-pointer
+installation but did not persist an entry marker, so the current control uses a
+return-address interposition trace. Hardware already proved the prior direct
+return scan failed closed (`validation=0`, `install=0`) after recognizing the
+entry pair, so that crash is not attributed to the tracer. The replacement
+validates three prologue instructions but patches only the first two with
+`J`/NOP. The entry stub saves the incoming ModuleMgr `ra`, substitutes the exit
+stub address, reproduces `addiu sp,sp,-16` and `sw s0,0(sp)`, then jumps to the
+natural body at `+8`. Sony's untouched `sw ra,4(sp)` saves the interposed return.
+If Sony naturally restores and uses it, the exit stub records unchanged `v0`
+and jumps to the saved ModuleMgr caller address. No Sony return site is located
+or patched. Entry, return, and result are fixed BSS evidence. Only the
+deferred writer persists them. No memory query is made in either stub. When
+that writer first observes a return,
+it captures the nearest safe USER-partition snapshot; this is not an exact
+in-wrapper interval measurement.
+
+### Saved-RA registration failure localization
+
+The first saved-RA hardware run retained the native `+0x58D4` pipeline but
+persisted no `[sony-start-ra]` record even though its exact config marker was
+present. This proves neither entry nor non-entry: the installer sets
+`attempted=1` only after its initial guards, and `registered=0` is the leading
+hypothesis. Registration now records each supplied helper address, helper module
+metadata and four bounded segment ranges, and one stable failure reason without
+changing any acceptance condition. The installer similarly records the exact
+initial guard that precedes `attempted=1`. All persistence remains in the
+existing deferred writer.
+
+Hardware subsequently **PROVED** `RESULT_SLOT_OUT_OF_RANGE(14)`: the first
+eight scalar arguments were coherent, while the ninth arrived as `0x00008613`
+instead of an address in the helper segment. The private registration ABI now
+passes one pointer to a fixed 36-byte, nine-`u32` descriptor. The kernel first
+validates that the complete descriptor lies in a loaded helper segment, copies
+it once under the existing K1 convention, and only then applies every existing
+stub/slot range and alignment check to the copy. The deferred log begins with
+`[sony-start-register-descriptor] address=... size=36 validation=...`.
+
+This is an ABI transport correction only. The saved-RA assembly, its two-word
+Sony entry patch, trigger semantics, and production defaults are unchanged.

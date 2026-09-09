@@ -51,14 +51,15 @@ void zeroCtrlDiagnosticsText(const char *text)
     zeroCtrlDiagnosticsWrite(text);
 }
 
-void zeroCtrlDiagnosticsInit(int model, unsigned int devkit,
+void zeroCtrlDiagnosticsInit(int enabled, int model, unsigned int devkit,
         const char *clock_and_calendar, const char *redir_path,
         unsigned int startup_total, unsigned int startup_largest)
 {
     char line[256];
     SceUID fd;
 
-    if (model != 0) {
+    diagnostics_enabled = 0;
+    if (!enabled || model != 0) {
         return;
     }
 

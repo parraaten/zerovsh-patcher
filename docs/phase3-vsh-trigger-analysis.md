@@ -311,11 +311,12 @@ fixed 32-byte kernel buffer; absence of a terminator or leaving a segment marks
 the name invalid. No arbitrary-memory structure scan is performed.
 
 A match records raw library, index, NID, stub/NID table addresses, and both stub
-words. It separately reports whether the validated tuple is exactly
-`SysMemForKernel` plus known historical/resolved `sceKernelGetModel` NID
-`0x6373995D` or `0x07C586A1`. Until hardware returns that structural match, the
-model interpretation remains a strong hypothesis rather than proof. The import
-stub is never called or modified.
+words. Real PSP-1000 hardware subsequently proved that the validated tuple is
+`sceVshBridge:0x21C243FE`, publicly identified as the VSH wrapper
+`vshKernelGetModel`. This is distinct from importing `sceKernelGetModel`
+directly from a system-memory library. The diagnostic exact-match flag now
+recognizes the proven VSH wrapper tuple. The import stub is never called or
+modified.
 
 ### Initializer caller scan and concise output
 
@@ -340,15 +341,14 @@ Expected new records are:
 [vshimport] stub=... offset=0x3F970 library=... index=... nid=... stubtable=... nidtable=...
 ```
 
-### Current hypothesis, unknowns, and safety
+### Current evidence, unknowns, and safety
 
-If structural traversal returns `SysMemForKernel` and `0x07C586A1`, then the
-source is proven to be the firmware-resolved `sceKernelGetModel`, and the
-observed PSP-1000 value 0 plus predicate true set `{4,5,7,9}` strongly supports
-a Go/platform capability classifier. It is not yet proven: the import tuple has
-not been returned, `+0x66E0` callers and their exact arguments are unknown,
-indirect references have not been excluded, and supported-model semantics have
-not been compared.
+**PROVEN:** structural traversal returned `sceVshBridge:0x21C243FE`, the public
+`vshKernelGetModel` wrapper identity; the initializer's verified caller passes
+`a0=1, a1=0xFFFF`; and the resulting PSP-1000 VSH model state is 0.
+**INFERENCE:** the wrapper ultimately obtains the hardware model represented by
+that state. **HYPOTHESIS:** meanings of the downstream capability bits and the
+minimum caller combination needed to request SlidePlugin remain unresolved.
 
 This change performs zero VSH writes, zero shared-state writes, zero import-stub
 calls, and no Sony request. `vsh_slide_patch=disabled` and
@@ -376,8 +376,9 @@ caller argument preparation offline before proposing any behavioral experiment.
   run above.
 - **Hardware result available:** the prior read-only run booted normally,
   validated the shared-state segment, and read value 0.
-- **Unresolved questions:** the raw library/NID, proof of `sceKernelGetModel`,
-  `+0x66E0` callers/arguments, and cross-model semantics.
+- **Unresolved questions:** downstream capability semantics, indirect users,
+  and cross-model behavior; this evidence does not claim a direct
+  `sceKernelGetModel` import.
 - **Recommended next phase:** analyze only the returned import tuple and
   initializer caller windows before designing any behavioral control.
 
@@ -413,3 +414,27 @@ return assignment may occupy the branch delay slot).  In `main.o`, a displayed
 `jal 0 <zeroCtrlDummyFunc>` at offset `0x228` is only the unresolved pre-link
 placeholder: its `R_MIPS_26 zeroCtrlRecordVshSlideTarget` relocation identifies
 the actual link target and must not be interpreted as a dummy-function call.
+
+## Phase 3.3: late observation and controlled global reproduction
+
+Real 6.61 PSP-1000 T1, T2, and T3 runs proved that `+0x13F6C`, `+0x14020`,
+and their combination each executed but did not cause a PRX/RCO request, probe,
+or start in the observed startup window. Extended T4 subsequently **PROVED**
+that `+0x58D4` executes at roughly 6.8 seconds and is the smallest presently
+proven selective trigger for PRX request, probe, pre-start observation, and RCO
+request before the later crash. The writer polls fixed state every 200 ms for
+12 seconds, persists only transitions, and emits a final snapshot when VSH
+survives long enough.
+
+`DangerousGlobalPredicate6F84` is a separate, explicit reproduction mode. It
+validates the hardware-captured first two predicate instructions semantically:
+`LUI v0,upper` followed by `LW a0,signed_disp(v0)` must reconstruct the
+independently derived, segment-validated shared global at text `+0x56CE0`.
+The runtime words remain logged because the load displacement changes when VSH
+relocates. The mode then redirects only the predicate entry to a dedicated
+counted strict-true assembly leaf. It does not
+modify the shared model or any known direct caller. `DangerousAllCallers` is
+**not proven equivalent**: it changes three known direct JALs, whereas the global
+mode affects every path reaching the predicate, including unidentified indirect
+or tail paths. The expected request/probe/freeze sequence remains historical
+evidence until the new mode is run on hardware.

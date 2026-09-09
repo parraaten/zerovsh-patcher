@@ -36,6 +36,7 @@
 #include "blacklist.h"
 #include "resolver.h"
 #include "hook.h"
+#include "sony_start_trace.h"
 #include "minini/minIni.h"
 
 #include "zerovsh_upatcher.h"
@@ -84,7 +85,9 @@ static char useSlide[128];
 static char slideContrast[128];
 static char ledDisable[128];
 static char psp1000SlidePlugin[16];
-static char psp1000SelectiveSlideTrigger58D4[16];
+static char psp1000SlideTriggerMode[40];
+static char psp1000Diagnostics[16];
+static char psp1000SonyStartTrace[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -103,6 +106,106 @@ static long b_level;
 #define VSH_STATE_TRACE_LIMIT 16
 #define VSH_INITIALIZER_CAPTURE_START 0x6680
 #define VSH_INITIALIZER_CAPTURE_SIZE 0xC0
+#define VSH_TRIGGER_COUNT 3
+#define SLIDE_OBSERVATION_WINDOW_US 12000000
+#define SLIDE_OBSERVATION_POLL_US     200000
+
+enum zeroCtrlTriggerMode {
+    ZERO_TRIGGER_DISABLED = 0,
+    ZERO_TRIGGER_58D4 = 1,
+    ZERO_TRIGGER_13F6C = 2,
+    ZERO_TRIGGER_14020 = 4
+};
+
+static const unsigned int vsh_trigger_offsets[VSH_TRIGGER_COUNT] = {
+    0x58D4, 0x13F6C, 0x14020
+};
+
+typedef struct {
+    unsigned int callsite;
+    unsigned int original_word;
+    unsigned int original_target;
+    unsigned int replacement_word;
+    unsigned int stub_addr;
+    unsigned int counter_addr;
+    unsigned int hit_count;
+    int validation;
+    int patch_applied;
+    int cache_sync;
+} ZeroCtrlVshTriggerEvidence;
+
+typedef struct {
+    unsigned int target_addr;
+    unsigned int original_words[2];
+    unsigned int replacement_words[2];
+    unsigned int decoded_global_addr;
+    unsigned int expected_global_addr;
+    unsigned int stub_addr;
+    unsigned int counter_addr;
+    unsigned int hit_count;
+    int validation;
+    int structure_valid;
+    int patch_applied;
+    int cache_sync;
+} ZeroCtrlGlobalPredicateEvidence;
+
+enum zeroCtrlSonyStartRegisterReason {
+    SONY_START_REGISTER_NONE = 0,
+    SONY_START_REGISTER_TRACE_DISABLED = 1,
+    SONY_START_REGISTER_ALREADY_REGISTERED = 2,
+    SONY_START_REGISTER_HELPER_NOT_FOUND = 3,
+    SONY_START_REGISTER_ENTRY_END_ORDER = 4,
+    SONY_START_REGISTER_EXIT_END_ORDER = 5,
+    SONY_START_REGISTER_ENTRY_STUB_TOO_LARGE = 6,
+    SONY_START_REGISTER_EXIT_STUB_TOO_LARGE = 7,
+    SONY_START_REGISTER_ENTRY_STUB_OUT_OF_RANGE = 8,
+    SONY_START_REGISTER_EXIT_STUB_OUT_OF_RANGE = 9,
+    SONY_START_REGISTER_RESUME_SLOT_OUT_OF_RANGE = 10,
+    SONY_START_REGISTER_CALLER_RA_SLOT_OUT_OF_RANGE = 11,
+    SONY_START_REGISTER_ENTRY_FLAG_OUT_OF_RANGE = 12,
+    SONY_START_REGISTER_RETURN_FLAG_OUT_OF_RANGE = 13,
+    SONY_START_REGISTER_RESULT_SLOT_OUT_OF_RANGE = 14,
+    SONY_START_REGISTER_ENTRY_MISALIGNED = 15,
+    SONY_START_REGISTER_EXIT_MISALIGNED = 16,
+    SONY_START_REGISTER_DESCRIPTOR_NULL = 17,
+    SONY_START_REGISTER_DESCRIPTOR_OUT_OF_RANGE = 18
+};
+
+enum zeroCtrlSonyStartGuardReason {
+    SONY_START_GUARD_NONE = 0,
+    SONY_START_GUARD_TRACE_DISABLED = 1,
+    SONY_START_GUARD_TRACE_NOT_REGISTERED = 2,
+    SONY_START_GUARD_MODEL_MISMATCH = 3,
+    SONY_START_GUARD_NULL_MODULE = 4,
+    SONY_START_GUARD_MODULE_NAME_MISMATCH = 5,
+    SONY_START_GUARD_DEVKIT_MISMATCH = 6,
+    SONY_START_GUARD_TEXT_TOO_SMALL = 7,
+    SONY_START_GUARD_ADDRESS_OVERFLOW = 8
+};
+
+typedef struct {
+    int enabled, registered, attempted, validation, install, cache_sync;
+    volatile int registration_called, registration_success;
+    volatile int initial_guard_checked;
+    int registration_fail_reason, initial_guard_reason;
+    unsigned int descriptor_addr, descriptor_size;
+    int descriptor_validation;
+    unsigned int supplied_addrs[9];
+    unsigned int helper_text_addr, helper_text_size;
+    unsigned int helper_data_size, helper_bss_size, helper_segment_count;
+    unsigned int helper_segment_addr[4], helper_segment_size[4];
+    unsigned int original_addr;
+    unsigned int entry_stub_addr, entry_stub_size;
+    unsigned int exit_stub_addr, exit_stub_size;
+    unsigned int resume_slot_addr, caller_ra_slot_addr;
+    unsigned int entry_seen_addr, return_seen_addr;
+    unsigned int result_addr;
+    unsigned int entry_original[3], entry_replacement[2];
+    volatile int entry_seen, return_seen;
+    int result;
+    int return_snapshot_captured;
+    ZeroCtrlPartitionSnapshot return_observed;
+} ZeroCtrlSonyStartTrace;
 
 static const unsigned int vsh_predicate_offsets[VSH_PREDICATE_COUNT] = {
     0x6F04, 0x6F44, 0x6F84, 0x6FC4,
@@ -165,13 +268,11 @@ typedef struct {
     int probe_result;
     int previous_handler_result;
     volatile int vsh_module_seen;
-    int selective_58d4_enabled;
-    unsigned int selective_58d4_original_word;
-    unsigned int selective_58d4_original_target;
-    unsigned int selective_58d4_patched_word;
-    int selective_58d4_validation;
-    int selective_58d4_patch_applied;
-    int selective_58d4_cache_sync;
+    unsigned int trigger_mode;
+    ZeroCtrlVshTriggerEvidence triggers[VSH_TRIGGER_COUNT];
+    int global_predicate_enabled;
+    ZeroCtrlGlobalPredicateEvidence global_predicate;
+    ZeroCtrlSonyStartTrace sony_start_trace;
     int vsh_target_in_text;
     int vsh_modid;
     unsigned int vsh_text_addr;
@@ -228,6 +329,22 @@ typedef struct {
 
 static ZeroCtrlSlideDiagnosticState slide_diag;
 static int zeroCtrlCreateSlideDiagnosticsThread(void);
+
+static unsigned int zeroCtrlParseTriggerMode(const char *mode) {
+    if (strcmp(mode, "Caller13F6C") == 0) return ZERO_TRIGGER_13F6C;
+    if (strcmp(mode, "Caller14020") == 0) return ZERO_TRIGGER_14020;
+    if (strcmp(mode, "Caller13F6C_14020") == 0)
+        return ZERO_TRIGGER_13F6C | ZERO_TRIGGER_14020;
+    /* Names containing 58D4 are intentionally conspicuous and never default. */
+    if (strcmp(mode, "DangerousCaller58D4") == 0) return ZERO_TRIGGER_58D4;
+    if (strcmp(mode, "DangerousCaller58D4_13F6C") == 0)
+        return ZERO_TRIGGER_58D4 | ZERO_TRIGGER_13F6C;
+    if (strcmp(mode, "DangerousCaller58D4_14020") == 0)
+        return ZERO_TRIGGER_58D4 | ZERO_TRIGGER_14020;
+    if (strcmp(mode, "DangerousAllCallers") == 0)
+        return ZERO_TRIGGER_58D4 | ZERO_TRIGGER_13F6C | ZERO_TRIGGER_14020;
+    return ZERO_TRIGGER_DISABLED;
+}
 
 static void zeroCtrlCaptureVshReferenceWindow(unsigned int text_addr,
         unsigned int text_size, unsigned int source_offset,
@@ -488,9 +605,8 @@ static void zeroCtrlResolveVshStateImport(SceModule2 *mod) {
                             sizeof(slide_diag.vsh_state_import_library));
             if (slide_diag.vsh_state_import_library_valid &&
                     strcmp(slide_diag.vsh_state_import_library,
-                        "SysMemForKernel") == 0 &&
-                    (slide_diag.vsh_state_import_nid == 0x07C586A1 ||
-                     slide_diag.vsh_state_import_nid == 0x6373995D))
+                        "sceVshBridge") == 0 &&
+                    slide_diag.vsh_state_import_nid == 0x21C243FE)
                 slide_diag.vsh_state_import_get_model_match = 1;
             slide_diag.vsh_state_import_match = 1;
             return;
@@ -592,10 +708,148 @@ int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
     return slide_diag.armed;
 }
 
+void zeroCtrlRegisterSonyStartTrace(
+        const ZeroCtrlSonyStartTraceRegistration *registration) {
+    SceModule2 *helper;
+    ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+    ZeroCtrlSonyStartTraceRegistration copied;
+    unsigned int descriptor_addr = (unsigned int)registration;
+    unsigned int i;
+    int k1;
+
+    trace->registration_called = 1;
+    trace->registration_success = 0;
+    trace->descriptor_addr = descriptor_addr;
+    trace->descriptor_size = sizeof(copied);
+    trace->descriptor_validation = 0;
+    if (!trace->enabled) {
+        trace->registration_fail_reason = SONY_START_REGISTER_TRACE_DISABLED;
+        return;
+    }
+    if (trace->registered) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ALREADY_REGISTERED;
+        return;
+    }
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!helper) {
+        trace->registration_fail_reason = SONY_START_REGISTER_HELPER_NOT_FOUND;
+        return;
+    }
+    trace->helper_text_addr = helper->text_addr;
+    trace->helper_text_size = helper->text_size;
+    trace->helper_data_size = helper->data_size;
+    trace->helper_bss_size = helper->bss_size;
+    trace->helper_segment_count = helper->nsegment;
+    for (i = 0; i < helper->nsegment && i < 4; i++) {
+        trace->helper_segment_addr[i] = helper->segmentaddr[i];
+        trace->helper_segment_size[i] = helper->segmentsize[i];
+    }
+    if (!registration) {
+        trace->registration_fail_reason = SONY_START_REGISTER_DESCRIPTOR_NULL;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, descriptor_addr,
+            sizeof(copied))) {
+        trace->registration_fail_reason =
+                SONY_START_REGISTER_DESCRIPTOR_OUT_OF_RANGE;
+        return;
+    }
+    trace->descriptor_validation = 1;
+    k1 = pspSdkSetK1(0);
+    memcpy(&copied, registration, sizeof(copied));
+    pspSdkSetK1(k1);
+    trace->supplied_addrs[0] = copied.entry_addr;
+    trace->supplied_addrs[1] = copied.entry_end_addr;
+    trace->supplied_addrs[2] = copied.exit_addr;
+    trace->supplied_addrs[3] = copied.exit_end_addr;
+    trace->supplied_addrs[4] = copied.resume_slot_addr;
+    trace->supplied_addrs[5] = copied.caller_ra_slot_addr;
+    trace->supplied_addrs[6] = copied.entry_seen_addr;
+    trace->supplied_addrs[7] = copied.return_seen_addr;
+    trace->supplied_addrs[8] = copied.result_addr;
+    if (copied.entry_end_addr <= copied.entry_addr) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_END_ORDER;
+        return;
+    }
+    if (copied.exit_end_addr <= copied.exit_addr) {
+        trace->registration_fail_reason = SONY_START_REGISTER_EXIT_END_ORDER;
+        return;
+    }
+    if (copied.entry_end_addr - copied.entry_addr > 256) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_STUB_TOO_LARGE;
+        return;
+    }
+    if (copied.exit_end_addr - copied.exit_addr > 256) {
+        trace->registration_fail_reason = SONY_START_REGISTER_EXIT_STUB_TOO_LARGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.entry_addr,
+            copied.entry_end_addr - copied.entry_addr)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_STUB_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.exit_addr,
+            copied.exit_end_addr - copied.exit_addr)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_EXIT_STUB_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.resume_slot_addr, 4)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_RESUME_SLOT_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.caller_ra_slot_addr, 4)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_CALLER_RA_SLOT_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.entry_seen_addr, 4)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_FLAG_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.return_seen_addr, 4)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_RETURN_FLAG_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.result_addr, 4)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_RESULT_SLOT_OUT_OF_RANGE;
+        return;
+    }
+    if ((copied.entry_addr & 3) != 0) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_MISALIGNED;
+        return;
+    }
+    if ((copied.exit_addr & 3) != 0) {
+        trace->registration_fail_reason = SONY_START_REGISTER_EXIT_MISALIGNED;
+        return;
+    }
+    trace->entry_stub_addr = copied.entry_addr;
+    trace->entry_stub_size = copied.entry_end_addr - copied.entry_addr;
+    trace->exit_stub_addr = copied.exit_addr;
+    trace->exit_stub_size = copied.exit_end_addr - copied.exit_addr;
+    trace->resume_slot_addr = copied.resume_slot_addr;
+    trace->caller_ra_slot_addr = copied.caller_ra_slot_addr;
+    trace->entry_seen_addr = copied.entry_seen_addr;
+    trace->return_seen_addr = copied.return_seen_addr;
+    trace->result_addr = copied.result_addr;
+    trace->registration_fail_reason = SONY_START_REGISTER_NONE;
+    trace->registration_success = 1;
+    trace->registered = 1;
+}
+
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int text_size, unsigned int module_start_addr,
         unsigned int elf_entry_addr, unsigned int target,
-        unsigned int return_true_addr) {
+        unsigned int stub_58d4, unsigned int stub_13f6c,
+        unsigned int stub_14020, unsigned int counter_58d4,
+        unsigned int counter_13f6c, unsigned int counter_14020,
+        unsigned int global_stub, unsigned int global_counter) {
+    const unsigned int stubs[VSH_TRIGGER_COUNT] = {
+        stub_58d4, stub_13f6c, stub_14020
+    };
+    const unsigned int counters[VSH_TRIGGER_COUNT] = {
+        counter_58d4, counter_13f6c, counter_14020
+    };
+    SceModule2 *helper;
+    int all_selected_valid;
     unsigned int target_offset;
     unsigned int start_offset;
     unsigned int end_offset;
@@ -646,31 +900,131 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                     slide_diag.vsh_initializer_references);
             slide_diag.vsh_code_capture_result = 0;
 
-            if (slide_diag.selective_58d4_enabled &&
-                    text_size >= 0x6F88 &&
-                    text_addr <= 0xFFFFFFFFU - 0x6F84) {
-                unsigned int callsite = text_addr + 0x58D4;
-                unsigned int word = _lw(callsite);
-                unsigned int original_target = ((callsite + 4) & 0xF0000000) |
-                        ((word & 0x03FFFFFF) << 2);
+            helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+            all_selected_valid =
+                    slide_diag.trigger_mode != ZERO_TRIGGER_DISABLED &&
+                    target_offset == 0x6F84;
+            /* Validation pass: no VSH write may occur in this loop. */
+            for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
+                ZeroCtrlVshTriggerEvidence *evidence = &slide_diag.triggers[i];
+                unsigned int callsite;
+                unsigned int word;
+                unsigned int original_target;
 
-                slide_diag.selective_58d4_original_word = word;
-                slide_diag.selective_58d4_original_target = original_target;
-                if ((word >> 26) == 3 && original_target == text_addr + 0x6F84 &&
-                        (return_true_addr & 3) == 0 &&
+                evidence->stub_addr = stubs[i];
+                evidence->counter_addr = counters[i];
+                if (!(slide_diag.trigger_mode & (1U << i))) continue;
+                if (text_size < 4 ||
+                        vsh_trigger_offsets[i] > text_size - 4 ||
+                        text_addr > 0xFFFFFFFFU - vsh_trigger_offsets[i]) {
+                    all_selected_valid = 0;
+                    continue;
+                }
+                callsite = text_addr + vsh_trigger_offsets[i];
+                evidence->callsite = callsite;
+                word = _lw(callsite);
+                original_target = ((callsite + 4) & 0xF0000000) |
+                        ((word & 0x03FFFFFF) << 2);
+                evidence->original_word = word;
+                evidence->original_target = original_target;
+                if ((word >> 26) == 3 && original_target == target &&
+                        zeroCtrlVshModuleRangeValid(helper, stubs[i], 24) &&
+                        zeroCtrlVshModuleRangeValid(helper, counters[i], 4) &&
+                        (stubs[i] & 3) == 0 &&
                         ((callsite + 4) & 0xF0000000) ==
-                                (return_true_addr & 0xF0000000)) {
+                                (stubs[i] & 0xF0000000)) {
                     unsigned int patched = 0x0C000000 |
-                            ((return_true_addr >> 2) & 0x03FFFFFF);
-                    slide_diag.selective_58d4_validation = 1;
-                    slide_diag.selective_58d4_patched_word = patched;
-                    _sw(patched, callsite); /* The experiment's only VSH write. */
-                    slide_diag.selective_58d4_patch_applied = 1;
+                            ((stubs[i] >> 2) & 0x03FFFFFF);
+                    evidence->validation = 1;
+                    evidence->replacement_word = patched;
+                } else {
+                    all_selected_valid = 0;
+                }
+            }
+
+            /* Commit pass: selected callsites are all valid or none are written. */
+            if (all_selected_valid) {
+                for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
+                    ZeroCtrlVshTriggerEvidence *evidence =
+                            &slide_diag.triggers[i];
+                    if (!(slide_diag.trigger_mode & (1U << i))) continue;
+                    _sw(evidence->replacement_word, evidence->callsite);
+                    evidence->patch_applied = 1;
                     sceKernelDcacheWritebackInvalidateRange(
-                            (const void *)callsite, sizeof(unsigned int));
+                            (const void *)evidence->callsite,
+                            sizeof(unsigned int));
                     sceKernelIcacheInvalidateRange(
-                            (const void *)callsite, sizeof(unsigned int));
-                    slide_diag.selective_58d4_cache_sync = 1;
+                            (const void *)evidence->callsite,
+                            sizeof(unsigned int));
+                    evidence->cache_sync = 1;
+                }
+            }
+
+            /* Dangerous global predicate block: never edits direct callers. */
+            if (slide_diag.global_predicate_enabled) {
+                SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+                ZeroCtrlGlobalPredicateEvidence *global =
+                        &slide_diag.global_predicate;
+                unsigned int predicate = target;
+                unsigned int lui;
+                unsigned int load;
+                unsigned int upper;
+                int displacement;
+
+                global->stub_addr = global_stub;
+                global->counter_addr = global_counter;
+                if (model == 0 && sceKernelDevkitVersion() == 0x06060110 &&
+                        vsh && vsh->modid == modid &&
+                        vsh->text_addr == text_addr &&
+                        vsh->text_size == text_size &&
+                        target_offset == 0x6F84 && text_size >= 0x6F8C &&
+                        text_addr <= 0xFFFFFFFFU - 0x6F8B &&
+                        zeroCtrlVshModuleRangeValid(vsh, predicate, 8)) {
+                    global->target_addr = predicate;
+                    global->original_words[0] = _lw(predicate);
+                    global->original_words[1] = _lw(predicate + 4);
+                    lui = global->original_words[0];
+                    load = global->original_words[1];
+                    upper = (lui & 0xFFFF) << 16;
+                    displacement = (short)(load & 0xFFFF);
+                    global->decoded_global_addr =
+                            upper + (unsigned int)displacement;
+                    global->expected_global_addr =
+                            slide_diag.vsh_shared_global_addr;
+                    if ((lui >> 26) == 0x0F && ((lui >> 16) & 0x1F) == 2 &&
+                            (load >> 26) == 0x23 &&
+                            ((load >> 21) & 0x1F) == 2 &&
+                            ((load >> 16) & 0x1F) == 4)
+                        global->structure_valid = 1;
+                }
+                if (global->structure_valid &&
+                        slide_diag.vsh_shared_global_decode_valid &&
+                        slide_diag.vsh_shared_global_segment_valid &&
+                        slide_diag.vsh_shared_global_addr >= text_addr &&
+                        slide_diag.vsh_shared_global_addr - text_addr == 0x56CE0 &&
+                        global->decoded_global_addr ==
+                                slide_diag.vsh_shared_global_addr &&
+                        zeroCtrlVshModuleRangeValid(helper, global_stub, 24) &&
+                        zeroCtrlVshModuleRangeValid(helper, global_counter, 4) &&
+                        (global_stub & 3) == 0 &&
+                        ((predicate + 4) & 0xF0000000) ==
+                                (global_stub & 0xF0000000)) {
+                    global->replacement_words[0] = 0x08000000 |
+                            ((global_stub >> 2) & 0x03FFFFFF);
+                    global->replacement_words[1] = 0;
+                    if ((((predicate + 4) & 0xF0000000) |
+                            ((global->replacement_words[0] & 0x03FFFFFF)
+                            << 2)) == global_stub)
+                        global->validation = 1;
+                }
+                if (global->validation) {
+                    _sw(global->replacement_words[0], predicate);
+                    _sw(global->replacement_words[1], predicate + 4);
+                    global->patch_applied = 1;
+                    sceKernelDcacheWritebackInvalidateRange(
+                            (const void *)predicate, 8);
+                    sceKernelIcacheInvalidateRange((const void *)predicate, 8);
+                    global->cache_sync = 1;
                 }
             }
         }
@@ -1241,6 +1595,7 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
     unsigned int i;
     unsigned int j;
     char line[224];
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
 
     if (!slide_diag.vsh_module_seen) return;
     zeroCtrlCaptureVshSharedGlobalValue();
@@ -1253,21 +1608,42 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
     zeroCtrlDiagnosticsEvent("vsh_slide_target", slide_diag.vsh_slide_target);
     zeroCtrlDiagnosticsEvent("vsh_slide_target_in_text",
             slide_diag.vsh_target_in_text);
-    if (slide_diag.selective_58d4_enabled) {
-        zeroCtrlDiagnosticsText(
-                "[experiment] psp1000_selective_trigger=caller_58d4\n");
-        zeroCtrlDiagnosticsEvent("selective_58d4_original_word",
-                slide_diag.selective_58d4_original_word);
-        zeroCtrlDiagnosticsEvent("selective_58d4_original_target",
-                slide_diag.selective_58d4_original_target);
-        zeroCtrlDiagnosticsEvent("selective_58d4_validation",
-                slide_diag.selective_58d4_validation);
-        zeroCtrlDiagnosticsEvent("selective_58d4_patched_word",
-                slide_diag.selective_58d4_patched_word);
-        zeroCtrlDiagnosticsEvent("selective_58d4_patch_applied",
-                slide_diag.selective_58d4_patch_applied);
-        zeroCtrlDiagnosticsEvent("selective_58d4_cache_sync",
-                slide_diag.selective_58d4_cache_sync);
+    for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
+        ZeroCtrlVshTriggerEvidence *evidence = &slide_diag.triggers[i];
+        if (!(slide_diag.trigger_mode & (1U << i))) continue;
+        if (evidence->validation &&
+                zeroCtrlVshModuleRangeValid(helper, evidence->counter_addr, 4))
+            evidence->hit_count = *(volatile unsigned int *)evidence->counter_addr;
+        snprintf(line, sizeof(line),
+                "[trigger] caller_offset=0x%05X original_word=0x%08X "
+                "target=0x%08X validation=%d replacement=0x%08X "
+                "patch_applied=%d cache_sync=%d hit_count=%u\n",
+                vsh_trigger_offsets[i], evidence->original_word,
+                evidence->original_target, evidence->validation,
+                evidence->replacement_word, evidence->patch_applied,
+                evidence->cache_sync, evidence->hit_count);
+        zeroCtrlDiagnosticsText(line);
+    }
+    if (slide_diag.global_predicate_enabled) {
+        ZeroCtrlGlobalPredicateEvidence *global =
+                &slide_diag.global_predicate;
+        if (global->validation && zeroCtrlVshModuleRangeValid(helper,
+                global->counter_addr, 4))
+            global->hit_count =
+                    *(volatile unsigned int *)global->counter_addr;
+        snprintf(line, sizeof(line),
+                "[global6f84] validation=%d structure_valid=%d "
+                "decoded_global_addr=0x%08X expected_global_addr=0x%08X "
+                "original_words=0x%08X,0x%08X "
+                "replacement_words=0x%08X,0x%08X patch_applied=%d "
+                "cache_sync=%d hit_count=%u\n",
+                global->validation, global->structure_valid,
+                global->decoded_global_addr, global->expected_global_addr,
+                global->original_words[0],
+                global->original_words[1], global->replacement_words[0],
+                global->replacement_words[1], global->patch_applied,
+                global->cache_sync, global->hit_count);
+        zeroCtrlDiagnosticsText(line);
     }
     zeroCtrlDiagnosticsEvent("vsh_code_capture_start",
             slide_diag.vsh_code_capture_start);
@@ -1397,53 +1773,271 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
             slide_diag.vsh_initializer_references);
 }
 
+static unsigned int zeroCtrlReadTriggerHits(unsigned int index) {
+    SceModule2 *helper;
+    ZeroCtrlVshTriggerEvidence *evidence;
+
+    if (index >= VSH_TRIGGER_COUNT) return 0;
+    evidence = &slide_diag.triggers[index];
+    if (!evidence->validation || !evidence->counter_addr) return 0;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!zeroCtrlVshModuleRangeValid(helper, evidence->counter_addr, 4))
+        return 0;
+    return *(volatile unsigned int *)evidence->counter_addr;
+}
+
+static unsigned int zeroCtrlReadGlobalPredicateHits(void) {
+    SceModule2 *helper;
+    ZeroCtrlGlobalPredicateEvidence *global = &slide_diag.global_predicate;
+
+    if (!global->validation || !global->counter_addr) return 0;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!zeroCtrlVshModuleRangeValid(helper, global->counter_addr, 4)) return 0;
+    return *(volatile unsigned int *)global->counter_addr;
+}
+
+static void zeroCtrlRefreshSonyStartTrace(void) {
+    SceModule2 *helper;
+    ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+    if (!trace->registered) return;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!zeroCtrlVshModuleRangeValid(helper, trace->entry_seen_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->return_seen_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->result_addr, 4)) return;
+    trace->entry_seen = *(volatile int *)trace->entry_seen_addr;
+    trace->return_seen = *(volatile int *)trace->return_seen_addr;
+    trace->result = *(volatile int *)trace->result_addr;
+}
+
+static const char *zeroCtrlSonyRegisterReasonName(int reason) {
+    static const char *names[] = {
+        "NONE", "TRACE_DISABLED", "ALREADY_REGISTERED", "HELPER_NOT_FOUND",
+        "ENTRY_END_ORDER", "EXIT_END_ORDER", "ENTRY_STUB_TOO_LARGE",
+        "EXIT_STUB_TOO_LARGE", "ENTRY_STUB_OUT_OF_RANGE",
+        "EXIT_STUB_OUT_OF_RANGE", "RESUME_SLOT_OUT_OF_RANGE",
+        "CALLER_RA_SLOT_OUT_OF_RANGE", "ENTRY_FLAG_OUT_OF_RANGE",
+        "RETURN_FLAG_OUT_OF_RANGE", "RESULT_SLOT_OUT_OF_RANGE",
+        "ENTRY_MISALIGNED", "EXIT_MISALIGNED", "DESCRIPTOR_NULL",
+        "DESCRIPTOR_OUT_OF_RANGE"
+    };
+    if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
+        return "UNKNOWN";
+    return names[reason];
+}
+
+static const char *zeroCtrlSonyGuardReasonName(int reason) {
+    static const char *names[] = {
+        "NONE", "TRACE_DISABLED", "TRACE_NOT_REGISTERED", "MODEL_MISMATCH",
+        "NULL_MODULE", "MODULE_NAME_MISMATCH", "DEVKIT_MISMATCH",
+        "TEXT_TOO_SMALL", "ADDRESS_OVERFLOW"
+    };
+    if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
+        return "UNKNOWN";
+    return names[reason];
+}
+
+static void zeroCtrlWriteLateTransition(unsigned int elapsed,
+        const char *name, unsigned int value) {
+    char line[112];
+
+    snprintf(line, sizeof(line), "[late] elapsed_us=%u %s=%u\n",
+            elapsed, name, value);
+    zeroCtrlDiagnosticsText(line);
+}
+
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
-    int waited = 0;
+    unsigned int elapsed = 0;
     unsigned int written = 0;
+    unsigned int observed_hits[VSH_TRIGGER_COUNT] = { 0, 0, 0 };
+    int observed_request = 0;
+    int observed_rco_request = 0;
+    int observed_probe = 0;
+    int observed_start = 0;
+    unsigned int observed_global_hits = 0;
+    int observed_trace_attempt = 0, observed_trace_validation = 0;
+    int observed_trace_install = 0, observed_start_entry = 0;
+    int observed_start_return = 0;
+    int observed_registration_called = 0, observed_guard_checked = 0;
+    char line[160];
+    unsigned int i;
 
     slide_diag.writer_alive = 1;
     zeroCtrlDiagnosticsText("[checkpoint] slide_diag_writer_alive\n");
-    while (!slide_diag.saw_probe && waited < 3000000) {
+    while (elapsed < SLIDE_OBSERVATION_WINDOW_US) {
         zeroCtrlWriteSlideCheckpoints(&written);
-        sceKernelDelayThread(10000);
-        waited += 10000;
+        for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
+            unsigned int hits = zeroCtrlReadTriggerHits(i);
+            if (hits != observed_hits[i]) {
+                static const char *names[VSH_TRIGGER_COUNT] = {
+                    "caller_58d4_hit_count", "caller_13f6c_hit_count",
+                    "caller_14020_hit_count"
+                };
+                observed_hits[i] = hits;
+                zeroCtrlWriteLateTransition(elapsed, names[i], hits);
+            }
+        }
+        if (slide_diag.global_predicate_enabled) {
+            unsigned int hits = zeroCtrlReadGlobalPredicateHits();
+            if (hits != observed_global_hits) {
+                observed_global_hits = hits;
+                zeroCtrlWriteLateTransition(elapsed,
+                        "global_6f84_hit_count", hits);
+            }
+        }
+#define WRITE_LATE_FLAG(field, observed, name) \
+        if ((field) != (observed)) { \
+            (observed) = (field); \
+            zeroCtrlWriteLateTransition(elapsed, (name), (unsigned int)(observed)); \
+        }
+        WRITE_LATE_FLAG(slide_diag.saw_request, observed_request, "request");
+        WRITE_LATE_FLAG(slide_diag.saw_rco_request, observed_rco_request,
+                "rco_request");
+        WRITE_LATE_FLAG(slide_diag.saw_probe, observed_probe, "probe");
+        WRITE_LATE_FLAG(slide_diag.saw_start, observed_start, "start");
+        if (slide_diag.sony_start_trace.enabled) {
+            ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+            zeroCtrlRefreshSonyStartTrace();
+            if (trace->registration_called && !observed_registration_called) {
+                snprintf(line, sizeof(line),
+                        "[sony-start-register-descriptor] address=0x%08X "
+                        "size=%u validation=%d\n",
+                        trace->descriptor_addr, trace->descriptor_size,
+                        trace->descriptor_validation);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[sony-start-register] called=1 success=%d "
+                        "fail_reason=%s(%d)\n",
+                        trace->registration_success,
+                        zeroCtrlSonyRegisterReasonName(
+                            trace->registration_fail_reason),
+                        trace->registration_fail_reason);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[sony-start-register-addresses] entry=0x%08X "
+                        "entry_end=0x%08X exit=0x%08X exit_end=0x%08X\n",
+                        trace->supplied_addrs[0], trace->supplied_addrs[1],
+                        trace->supplied_addrs[2], trace->supplied_addrs[3]);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[sony-start-register-slots] resume=0x%08X caller_ra=0x%08X "
+                        "entry_seen=0x%08X return_seen=0x%08X result=0x%08X\n",
+                        trace->supplied_addrs[4], trace->supplied_addrs[5],
+                        trace->supplied_addrs[6], trace->supplied_addrs[7],
+                        trace->supplied_addrs[8]);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[sony-start-register-helper] text=0x%08X text_size=0x%X "
+                        "data_size=0x%X bss_size=0x%X segments=%u\n",
+                        trace->helper_text_addr, trace->helper_text_size,
+                        trace->helper_data_size, trace->helper_bss_size,
+                        trace->helper_segment_count);
+                zeroCtrlDiagnosticsText(line);
+                for (i = 0; i < trace->helper_segment_count && i < 4; i++) {
+                    snprintf(line, sizeof(line),
+                            "[sony-start-register-segment] index=%u "
+                            "start=0x%08X size=0x%X\n", i,
+                            trace->helper_segment_addr[i],
+                            trace->helper_segment_size[i]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                observed_registration_called = 1;
+            }
+            if (trace->initial_guard_checked && !observed_guard_checked) {
+                snprintf(line, sizeof(line),
+                        "[sony-start-guard] checked=1 reason=%s(%d)\n",
+                        zeroCtrlSonyGuardReasonName(trace->initial_guard_reason),
+                        trace->initial_guard_reason);
+                zeroCtrlDiagnosticsText(line);
+                observed_guard_checked = 1;
+            }
+            if (trace->attempted != observed_trace_attempt ||
+                    trace->validation != observed_trace_validation ||
+                    trace->install != observed_trace_install) {
+                snprintf(line, sizeof(line),
+                        "[sony-start-ra] attempted=%d validation=%d "
+                        "install=%d cache_sync=%d original=0x%08X\n",
+                        trace->attempted, trace->validation, trace->install,
+                        trace->cache_sync, trace->original_addr);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[sony-start-entry] original_words=0x%08X,0x%08X,0x%08X "
+                        "replacement_words=0x%08X,0x%08X resume=0x%08X "
+                        "exit_stub=0x%08X\n",
+                        trace->entry_original[0], trace->entry_original[1],
+                        trace->entry_original[2], trace->entry_replacement[0],
+                        trace->entry_replacement[1], trace->original_addr + 8,
+                        trace->exit_stub_addr);
+                zeroCtrlDiagnosticsText(line);
+                observed_trace_attempt = trace->attempted;
+                observed_trace_validation = trace->validation;
+                observed_trace_install = trace->install;
+            }
+            WRITE_LATE_FLAG(trace->entry_seen, observed_start_entry,
+                    "sony_module_start_entered");
+            if (trace->return_seen != observed_start_return) {
+                observed_start_return = trace->return_seen;
+                zeroCtrlWriteLateTransition(elapsed,
+                        "sony_module_start_returned",
+                        (unsigned int)observed_start_return);
+                if (observed_start_return) {
+                    zeroCtrlDiagnosticsCapturePartitions(
+                            &trace->return_observed);
+                    trace->return_snapshot_captured = 1;
+                    snprintf(line, sizeof(line),
+                            "[sony-start] result=0x%08X\n",
+                            (unsigned int)trace->result);
+                    zeroCtrlDiagnosticsText(line);
+                    zeroCtrlDiagnosticsWritePartitions(
+                            "sony_module_start_return_observed",
+                            &trace->return_observed);
+                }
+            }
+        }
+#undef WRITE_LATE_FLAG
+        sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);
+        elapsed += SLIDE_OBSERVATION_POLL_US;
     }
     zeroCtrlWriteSlideCheckpoints(&written);
-    if (!slide_diag.saw_probe) {
-        char line[128];
-        snprintf(line, sizeof(line),
-                "[state] request=%d rco_request=%d probe=%d start=%d\n",
-                slide_diag.saw_request, slide_diag.saw_rco_request,
-                slide_diag.saw_probe, slide_diag.saw_start);
-        zeroCtrlDiagnosticsText(line);
-        zeroCtrlWriteVshSlideEvidence();
-        zeroCtrlDiagnosticsText("[event] slide_probe_not_seen timeout_us=3000000\n");
-        slide_diag.deferred_thread_started = 0;
-        sceKernelExitDeleteThread(0);
-        return 0;
-    }
+    zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
 
-    waited = 0;
-    while (!slide_diag.saw_start && waited < 2000000) {
-        zeroCtrlWriteSlideCheckpoints(&written);
-        sceKernelDelayThread(10000);
-        waited += 10000;
-    }
-    zeroCtrlWriteSlideCheckpoints(&written);
-    if (slide_diag.saw_start) {
-        /* Delay is measured from the observed pre-entrypoint callback. */
-        sceKernelDelayThread(750000);
-        zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
-    } else {
-        zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
+    for (i = 0; i < VSH_TRIGGER_COUNT; i++)
+        observed_hits[i] = zeroCtrlReadTriggerHits(i);
+    observed_global_hits = zeroCtrlReadGlobalPredicateHits();
+    snprintf(line, sizeof(line),
+            "[final] observation_window_us=%u\n"
+            "[final] caller_58d4_hit_count=%u caller_13f6c_hit_count=%u "
+            "caller_14020_hit_count=%u\n"
+            "[final] global_6f84_hit_count=%u\n"
+            "[final] request=%d rco_request=%d probe=%d start=%d\n",
+            SLIDE_OBSERVATION_WINDOW_US, observed_hits[0], observed_hits[1],
+            observed_hits[2], observed_global_hits, slide_diag.saw_request,
+            slide_diag.saw_rco_request, slide_diag.saw_probe,
+            slide_diag.saw_start);
+    zeroCtrlDiagnosticsText(line);
+    if (slide_diag.sony_start_trace.enabled) {
+        ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+        zeroCtrlRefreshSonyStartTrace();
+        snprintf(line, sizeof(line),
+                "[sony-start] final attempted=%d validation=%d install=%d "
+                "cache_sync=%d entered=%d returned=%d result=0x%08X\n",
+                trace->attempted, trace->validation, trace->install,
+                trace->cache_sync, trace->entry_seen, trace->return_seen,
+                (unsigned int)trace->result);
+        zeroCtrlDiagnosticsText(line);
     }
 
     zeroCtrlWriteVshSlideEvidence();
     if (slide_diag.saw_request) zeroCtrlDiagnosticsText("[event] slide_request_seen\n");
     if (slide_diag.saw_rco_request) zeroCtrlDiagnosticsText("[event] slide_rco_request_seen\n");
-    zeroCtrlDiagnosticsText("[event] slide_probe_seen\n");
-    zeroCtrlDiagnosticsEvent("slide_probe_result", slide_diag.probe_result);
-    zeroCtrlDiagnosticsWritePartitions("at_slide_plugin_probe", &slide_diag.at_probe);
+    if (slide_diag.saw_probe) {
+        zeroCtrlDiagnosticsText("[event] slide_probe_seen\n");
+        zeroCtrlDiagnosticsEvent("slide_probe_result", slide_diag.probe_result);
+        zeroCtrlDiagnosticsWritePartitions("at_slide_plugin_probe",
+                &slide_diag.at_probe);
+    } else {
+        zeroCtrlDiagnosticsText(
+                "[event] slide_probe_not_seen timeout_us=12000000\n");
+    }
     if (slide_diag.saw_start) {
         zeroCtrlDiagnosticsText("[event] slide_module_start_seen\n");
         zeroCtrlDiagnosticsEvent("slide_module_modid", slide_diag.module.modid);
@@ -1456,7 +2050,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         zeroCtrlDiagnosticsWritePartitions("slide_plugin_delayed",
                 &slide_diag.delayed_or_timeout);
     } else {
-        zeroCtrlDiagnosticsText("[event] slide_module_start_not_seen timeout_us=2000000\n");
+        zeroCtrlDiagnosticsText(
+                "[event] slide_module_start_not_seen timeout_us=12000000\n");
         zeroCtrlDiagnosticsWritePartitions("slide_plugin_start_timeout",
                 &slide_diag.delayed_or_timeout);
     }
@@ -1482,6 +2077,112 @@ static int zeroCtrlCreateSlideDiagnosticsThread(void) {
     return result;
 }
 
+static void zeroCtrlInstallSonyStartTrace(SceModule2 *mod) {
+    ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+    SceModule2 *helper;
+    unsigned int start;
+
+    trace->initial_guard_checked = 1;
+    if (!trace->enabled) {
+        trace->initial_guard_reason = SONY_START_GUARD_TRACE_DISABLED;
+        return;
+    }
+    if (!trace->registered) {
+        trace->initial_guard_reason = SONY_START_GUARD_TRACE_NOT_REGISTERED;
+        return;
+    }
+    if (model != 0) {
+        trace->initial_guard_reason = SONY_START_GUARD_MODEL_MISMATCH;
+        return;
+    }
+    if (!mod) {
+        trace->initial_guard_reason = SONY_START_GUARD_NULL_MODULE;
+        return;
+    }
+    if (strcmp(mod->modname, "slide_plugin_module") != 0) {
+        trace->initial_guard_reason = SONY_START_GUARD_MODULE_NAME_MISMATCH;
+        return;
+    }
+    if (sceKernelDevkitVersion() != 0x06060110) {
+        trace->initial_guard_reason = SONY_START_GUARD_DEVKIT_MISMATCH;
+        return;
+    }
+    if (mod->text_size < 0xFA4) {
+        trace->initial_guard_reason = SONY_START_GUARD_TEXT_TOO_SMALL;
+        return;
+    }
+    if (mod->text_addr > 0xFFFFFFFFU - 0xF98) {
+        trace->initial_guard_reason = SONY_START_GUARD_ADDRESS_OVERFLOW;
+        return;
+    }
+    trace->initial_guard_reason = SONY_START_GUARD_NONE;
+    trace->attempted = 1;
+    start = mod->module_start_func;
+    trace->original_addr = start;
+    if (start != mod->text_addr + 0xF98 || (start & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(mod, start, 12)) return;
+
+    trace->entry_original[0] = _lw(start);
+    trace->entry_original[1] = _lw(start + 4);
+    trace->entry_original[2] = _lw(start + 8);
+    if ((trace->entry_original[0] >> 26) != 9 ||
+            ((trace->entry_original[0] >> 21) & 0x1F) != 29 ||
+            ((trace->entry_original[0] >> 16) & 0x1F) != 29 ||
+            (short)(trace->entry_original[0] & 0xFFFF) != -16 ||
+            (trace->entry_original[1] >> 26) != 0x2B ||
+            ((trace->entry_original[1] >> 21) & 0x1F) != 29 ||
+            ((trace->entry_original[1] >> 16) & 0x1F) != 16 ||
+            (trace->entry_original[1] & 0xFFFF) != 0 ||
+            (trace->entry_original[2] >> 26) != 0x2B ||
+            ((trace->entry_original[2] >> 21) & 0x1F) != 29 ||
+            ((trace->entry_original[2] >> 16) & 0x1F) != 31 ||
+            (trace->entry_original[2] & 0xFFFF) != 4) return;
+
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!zeroCtrlVshModuleRangeValid(helper, trace->entry_stub_addr,
+                trace->entry_stub_size) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->exit_stub_addr,
+                trace->exit_stub_size) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->resume_slot_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->caller_ra_slot_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->entry_seen_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->return_seen_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->result_addr, 4) ||
+            ((start + 4) & 0xF0000000) !=
+                (trace->entry_stub_addr & 0xF0000000)) return;
+
+    trace->entry_replacement[0] = 0x08000000 |
+            ((trace->entry_stub_addr >> 2) & 0x03FFFFFF);
+    trace->entry_replacement[1] = 0;
+    if ((((start + 4) & 0xF0000000) |
+                ((trace->entry_replacement[0] & 0x03FFFFFF) << 2)) !=
+                    trace->entry_stub_addr) return;
+    trace->validation = 1;
+
+    _sw(start + 8, trace->resume_slot_addr);
+    _sw(0, trace->caller_ra_slot_addr);
+    _sw(0, trace->entry_seen_addr);
+    _sw(0, trace->return_seen_addr);
+    _sw(0, trace->result_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trace->resume_slot_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trace->caller_ra_slot_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trace->entry_seen_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trace->return_seen_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange((const void *)trace->result_addr, 4);
+
+    /* Transaction commit: the complete entry interposition validated above. */
+    _sw(trace->entry_replacement[0], start);
+    _sw(trace->entry_replacement[1], start + 4);
+    sceKernelDcacheWritebackInvalidateRange((const void *)start, 8);
+    sceKernelIcacheInvalidateRange((const void *)start, 8);
+    trace->install = 1;
+    trace->cache_sync = 1;
+}
+
 int OnModuleStart(SceModule2 *mod) {
         zeroCtrlWriteDebug("Module: %s\n", mod->modname);
 
@@ -1497,6 +2198,7 @@ int OnModuleStart(SceModule2 *mod) {
                 slide_diag.previous_handler_returned = 1;
                 slide_diag.module_start_addr = mod->module_start_func;
                 slide_diag.elf_entry_addr = mod->entry_addr;
+                zeroCtrlInstallSonyStartTrace(mod);
                 slide_diag.start_callback_returning = 1;
                 slide_diag.saw_start = 1;
                 return previous_result;
@@ -1769,6 +2471,7 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	int module_hooked;
 	int driver_hooked;
 	unsigned int devkit;
+	char legacySelective58D4[16];
 
 	model = sceKernelGetModel();
 	devkit = sceKernelDevkitVersion();
@@ -1795,36 +2498,70 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	b_level = ini_getl("PowerSave", "Brightness", -1, config);
 	ini_gets("Experimental", "PSP1000SlidePlugin", "Disabled",
 			psp1000SlidePlugin, sizeof(psp1000SlidePlugin), config);
+	ini_gets("Experimental", "PSP1000SlideTriggerMode", "Disabled",
+			psp1000SlideTriggerMode, sizeof(psp1000SlideTriggerMode), config);
+	ini_gets("Experimental", "PSP1000Diagnostics", "Disabled",
+			psp1000Diagnostics, sizeof(psp1000Diagnostics), config);
+	ini_gets("Experimental", "PSP1000SonyStartTrace", "Disabled",
+			psp1000SonyStartTrace, sizeof(psp1000SonyStartTrace), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
-			psp1000SelectiveSlideTrigger58D4,
-			sizeof(psp1000SelectiveSlideTrigger58D4), config);
+			legacySelective58D4, sizeof(legacySelective58D4), config);
+	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
+			strcmp(legacySelective58D4, "Enabled") == 0)
+		strcpy(psp1000SlideTriggerMode, "DangerousCaller58D4");
 	if (model == 0 && strcmp(psp1000SlidePlugin, "Enabled") == 0 &&
 			strcmp(useSlide, "Disabled") == 0) {
 		memset(&slide_diag, 0, sizeof(slide_diag));
 		slide_diag.armed = 1;
-		slide_diag.selective_58d4_enabled =
+		slide_diag.global_predicate_enabled =
 			devkit == 0x06060110 &&
-			strcmp(psp1000SelectiveSlideTrigger58D4, "Enabled") == 0;
+			strcmp(psp1000SlideTriggerMode,
+				"DangerousGlobalPredicate6F84") == 0;
+		slide_diag.trigger_mode =
+			devkit == 0x06060110 &&
+			!slide_diag.global_predicate_enabled ?
+			zeroCtrlParseTriggerMode(psp1000SlideTriggerMode) :
+			ZERO_TRIGGER_DISABLED;
+		slide_diag.sony_start_trace.enabled =
+			devkit == 0x06060110 &&
+			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
+			strcmp(psp1000SonyStartTrace, "Enabled") == 0 &&
+			strcmp(psp1000SlideTriggerMode,
+					"DangerousCaller58D4") == 0;
 	}
 
-	zeroCtrlDiagnosticsInit(model, devkit, useSlide, redir_path,
+	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,
+			model, devkit, useSlide, redir_path,
 			startup_total, startup_largest);
-	if (slide_diag.armed) {
+	if (slide_diag.armed && strcmp(psp1000Diagnostics, "Enabled") == 0) {
 		zeroCtrlDiagnosticsText("[phase] psp1000_slide_phase3\n"
 				"[experiment] psp1000_slide_optin=enabled\n"
 				"[experiment] clock_and_calendar=disabled\n"
-				"[experiment] global_predicate_6f84_patch=disabled\n"
 				"[experiment] vsh_reference_scan=read_only\n"
 				"[experiment] vsh_direct_windows=predicate_6f84_only\n"
 				"[experiment] vsh_state_import_resolution=read_only\n"
 				"[experiment] button_thread=disabled\n");
-		if (slide_diag.selective_58d4_enabled) {
+		if (slide_diag.global_predicate_enabled) {
 			zeroCtrlDiagnosticsText(
-					"[experiment] psp1000_vsh_slide_trigger=selective_58d4_control\n");
+					"[experiment] global_predicate_6f84_patch=enabled_dangerous\n"
+					"[experiment] psp1000_vsh_slide_trigger="
+					"DangerousGlobalPredicate6F84\n");
+		} else if (slide_diag.trigger_mode != ZERO_TRIGGER_DISABLED) {
+			char line[96];
+			zeroCtrlDiagnosticsText(
+					"[experiment] global_predicate_6f84_patch=disabled\n");
+			snprintf(line, sizeof(line),
+					"[experiment] psp1000_vsh_slide_trigger=%s mask=0x%X\n",
+					psp1000SlideTriggerMode, slide_diag.trigger_mode);
+			zeroCtrlDiagnosticsText(line);
 		} else {
 			zeroCtrlDiagnosticsText(
+					"[experiment] global_predicate_6f84_patch=disabled\n"
 					"[experiment] psp1000_vsh_slide_trigger=disabled_control\n");
 		}
+		if (slide_diag.sony_start_trace.enabled)
+			zeroCtrlDiagnosticsText(
+					"[experiment] psp1000_sony_start_trace=enabled_natural\n");
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");
 	
@@ -1840,9 +2577,10 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	zeroCtrlSetSlideState(ZERO_SLIDE_STOPPED);
 			
 	//Cool animation after reset vsh with no wallpaper enabled
-	set_registry_value("/CONFIG/SYSTEM", "slide_welcome", 1);	
+	if (!slide_diag.sony_start_trace.enabled)
+		set_registry_value("/CONFIG/SYSTEM", "slide_welcome", 1);
 	
-	if (slide_diag.armed) {
+	if (slide_diag.armed && strcmp(psp1000Diagnostics, "Enabled") == 0) {
 		zeroCtrlDiagnosticsEvent("slide_diagnostic_thread_start",
 				zeroCtrlCreateSlideDiagnosticsThread());
 	}
