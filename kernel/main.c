@@ -1974,11 +1974,6 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         trace->descriptor_validation);
                 zeroCtrlDiagnosticsText(line);
                 snprintf(line, sizeof(line),
-                        "[bsman] stub_form=%s syscall_code=0x%05X\n",
-                        zeroCtrlBSManStubFormName(bsman->stub_form),
-                        bsman->syscall_code);
-                zeroCtrlDiagnosticsText(line);
-                snprintf(line, sizeof(line),
                         "[sony-start-register] called=1 success=%d "
                         "fail_reason=%s(%d)\n",
                         trace->registration_success,
@@ -2082,6 +2077,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         "[bsman] library=sceBSMan nid=0x23E3A9B6 "
                         "stub=0x%08X closed_value=%d\n",
                         bsman->import_stub_addr, bsman->closed_value);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[bsman] stub_form=%s syscall_code=0x%05X\n",
+                        zeroCtrlBSManStubFormName(bsman->stub_form),
+                        bsman->syscall_code);
                 zeroCtrlDiagnosticsText(line);
                 snprintf(line, sizeof(line),
                         "[bsman] original_words=0x%08X,0x%08X "

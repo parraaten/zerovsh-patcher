@@ -117,6 +117,29 @@ def check_sources(root):
             fail("BSMan original-stub validator lost form " + required)
     if "0x0000054C" in stub_form:
         fail("BSMan SYSCALL/NOP validation hardcodes one hardware syscall")
+    writer_start = kernel.find("static int zeroCtrlWriteSlideDiagnostics(")
+    writer_end = kernel.find("static int zeroCtrlCreateSlideDiagnosticsThread(",
+        writer_start)
+    if writer_start < 0 or writer_end <= writer_start:
+        fail("deferred slide diagnostic writer is missing")
+    writer = kernel[writer_start:writer_end]
+    sony_diag_start = writer.find("if (slide_diag.sony_start_trace.enabled)")
+    bsman_diag_start = writer.find("if (slide_diag.bsman.enabled)",
+        sony_diag_start)
+    attempted_start = writer.find(
+        "if (bsman->attempted && !observed_bsman_attempted)",
+        bsman_diag_start)
+    attempted_end = writer.find("if (hits != observed_bsman_hits)",
+        attempted_start)
+    stub_form_record = '"[bsman] stub_form=%s syscall_code=0x%05X\\n"'
+    if min(sony_diag_start, bsman_diag_start, attempted_start, attempted_end) < 0:
+        fail("BSMan deferred diagnostic scope is missing")
+    if stub_form_record in writer[sony_diag_start:bsman_diag_start]:
+        fail("BSMan stub-form diagnostic escaped into Sony trace scope")
+    if stub_form_record not in writer[attempted_start:attempted_end] or \
+            "bsman->stub_form" not in writer[attempted_start:attempted_end] or \
+            "bsman->syscall_code" not in writer[attempted_start:attempted_end]:
+        fail("BSMan stub-form diagnostic is outside first-attempt BSMan scope")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
     if stub_validation < 0 or caller_proof <= stub_validation or \
