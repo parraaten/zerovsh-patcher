@@ -41,7 +41,7 @@ typedef struct {
     ZeroCtrlPartitionEntry entries[ZEROCTRL_PARTITION_COUNT];
 } ZeroCtrlPartitionSnapshot;
 
-void zeroCtrlDiagnosticsInit(int model, unsigned int devkit,
+void zeroCtrlDiagnosticsInit(int enabled, int model, unsigned int devkit,
         const char *clock_and_calendar, const char *redir_path,
         unsigned int startup_total, unsigned int startup_largest);
 void zeroCtrlDiagnosticsEvent(const char *event, int result);

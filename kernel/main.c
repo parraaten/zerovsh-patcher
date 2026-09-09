@@ -84,7 +84,8 @@ static char useSlide[128];
 static char slideContrast[128];
 static char ledDisable[128];
 static char psp1000SlidePlugin[16];
-static char psp1000SelectiveSlideTrigger58D4[16];
+static char psp1000SlideTriggerMode[40];
+static char psp1000Diagnostics[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -103,6 +104,30 @@ static long b_level;
 #define VSH_STATE_TRACE_LIMIT 16
 #define VSH_INITIALIZER_CAPTURE_START 0x6680
 #define VSH_INITIALIZER_CAPTURE_SIZE 0xC0
+#define VSH_TRIGGER_COUNT 3
+
+enum zeroCtrlTriggerMode {
+    ZERO_TRIGGER_DISABLED = 0,
+    ZERO_TRIGGER_58D4 = 1,
+    ZERO_TRIGGER_13F6C = 2,
+    ZERO_TRIGGER_14020 = 4
+};
+
+static const unsigned int vsh_trigger_offsets[VSH_TRIGGER_COUNT] = {
+    0x58D4, 0x13F6C, 0x14020
+};
+
+typedef struct {
+    unsigned int original_word;
+    unsigned int original_target;
+    unsigned int replacement_word;
+    unsigned int stub_addr;
+    unsigned int counter_addr;
+    unsigned int hit_count;
+    int validation;
+    int patch_applied;
+    int cache_sync;
+} ZeroCtrlVshTriggerEvidence;
 
 static const unsigned int vsh_predicate_offsets[VSH_PREDICATE_COUNT] = {
     0x6F04, 0x6F44, 0x6F84, 0x6FC4,
@@ -165,13 +190,8 @@ typedef struct {
     int probe_result;
     int previous_handler_result;
     volatile int vsh_module_seen;
-    int selective_58d4_enabled;
-    unsigned int selective_58d4_original_word;
-    unsigned int selective_58d4_original_target;
-    unsigned int selective_58d4_patched_word;
-    int selective_58d4_validation;
-    int selective_58d4_patch_applied;
-    int selective_58d4_cache_sync;
+    unsigned int trigger_mode;
+    ZeroCtrlVshTriggerEvidence triggers[VSH_TRIGGER_COUNT];
     int vsh_target_in_text;
     int vsh_modid;
     unsigned int vsh_text_addr;
@@ -228,6 +248,22 @@ typedef struct {
 
 static ZeroCtrlSlideDiagnosticState slide_diag;
 static int zeroCtrlCreateSlideDiagnosticsThread(void);
+
+static unsigned int zeroCtrlParseTriggerMode(const char *mode) {
+    if (strcmp(mode, "Caller13F6C") == 0) return ZERO_TRIGGER_13F6C;
+    if (strcmp(mode, "Caller14020") == 0) return ZERO_TRIGGER_14020;
+    if (strcmp(mode, "Caller13F6C_14020") == 0)
+        return ZERO_TRIGGER_13F6C | ZERO_TRIGGER_14020;
+    /* Names containing 58D4 are intentionally conspicuous and never default. */
+    if (strcmp(mode, "DangerousCaller58D4") == 0) return ZERO_TRIGGER_58D4;
+    if (strcmp(mode, "DangerousCaller58D4_13F6C") == 0)
+        return ZERO_TRIGGER_58D4 | ZERO_TRIGGER_13F6C;
+    if (strcmp(mode, "DangerousCaller58D4_14020") == 0)
+        return ZERO_TRIGGER_58D4 | ZERO_TRIGGER_14020;
+    if (strcmp(mode, "DangerousAllCallers") == 0)
+        return ZERO_TRIGGER_58D4 | ZERO_TRIGGER_13F6C | ZERO_TRIGGER_14020;
+    return ZERO_TRIGGER_DISABLED;
+}
 
 static void zeroCtrlCaptureVshReferenceWindow(unsigned int text_addr,
         unsigned int text_size, unsigned int source_offset,
@@ -595,7 +631,16 @@ int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int text_size, unsigned int module_start_addr,
         unsigned int elf_entry_addr, unsigned int target,
-        unsigned int return_true_addr) {
+        unsigned int stub_58d4, unsigned int stub_13f6c,
+        unsigned int stub_14020, unsigned int counter_58d4,
+        unsigned int counter_13f6c, unsigned int counter_14020) {
+    const unsigned int stubs[VSH_TRIGGER_COUNT] = {
+        stub_58d4, stub_13f6c, stub_14020
+    };
+    const unsigned int counters[VSH_TRIGGER_COUNT] = {
+        counter_58d4, counter_13f6c, counter_14020
+    };
+    SceModule2 *helper;
     unsigned int target_offset;
     unsigned int start_offset;
     unsigned int end_offset;
@@ -646,31 +691,41 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                     slide_diag.vsh_initializer_references);
             slide_diag.vsh_code_capture_result = 0;
 
-            if (slide_diag.selective_58d4_enabled &&
-                    text_size >= 0x6F88 &&
-                    text_addr <= 0xFFFFFFFFU - 0x6F84) {
-                unsigned int callsite = text_addr + 0x58D4;
-                unsigned int word = _lw(callsite);
-                unsigned int original_target = ((callsite + 4) & 0xF0000000) |
-                        ((word & 0x03FFFFFF) << 2);
+            helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+            for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
+                ZeroCtrlVshTriggerEvidence *evidence = &slide_diag.triggers[i];
+                unsigned int callsite;
+                unsigned int word;
+                unsigned int original_target;
 
-                slide_diag.selective_58d4_original_word = word;
-                slide_diag.selective_58d4_original_target = original_target;
+                evidence->stub_addr = stubs[i];
+                evidence->counter_addr = counters[i];
+                if (!(slide_diag.trigger_mode & (1U << i)) ||
+                        text_size < 4 || vsh_trigger_offsets[i] > text_size - 4)
+                    continue;
+                callsite = text_addr + vsh_trigger_offsets[i];
+                word = _lw(callsite);
+                original_target = ((callsite + 4) & 0xF0000000) |
+                        ((word & 0x03FFFFFF) << 2);
+                evidence->original_word = word;
+                evidence->original_target = original_target;
                 if ((word >> 26) == 3 && original_target == text_addr + 0x6F84 &&
-                        (return_true_addr & 3) == 0 &&
+                        zeroCtrlVshModuleRangeValid(helper, stubs[i], 24) &&
+                        zeroCtrlVshModuleRangeValid(helper, counters[i], 4) &&
+                        (stubs[i] & 3) == 0 &&
                         ((callsite + 4) & 0xF0000000) ==
-                                (return_true_addr & 0xF0000000)) {
+                                (stubs[i] & 0xF0000000)) {
                     unsigned int patched = 0x0C000000 |
-                            ((return_true_addr >> 2) & 0x03FFFFFF);
-                    slide_diag.selective_58d4_validation = 1;
-                    slide_diag.selective_58d4_patched_word = patched;
-                    _sw(patched, callsite); /* The experiment's only VSH write. */
-                    slide_diag.selective_58d4_patch_applied = 1;
+                            ((stubs[i] >> 2) & 0x03FFFFFF);
+                    evidence->validation = 1;
+                    evidence->replacement_word = patched;
+                    _sw(patched, callsite); /* Central selective-write primitive. */
+                    evidence->patch_applied = 1;
                     sceKernelDcacheWritebackInvalidateRange(
                             (const void *)callsite, sizeof(unsigned int));
                     sceKernelIcacheInvalidateRange(
                             (const void *)callsite, sizeof(unsigned int));
-                    slide_diag.selective_58d4_cache_sync = 1;
+                    evidence->cache_sync = 1;
                 }
             }
         }
@@ -1241,6 +1296,7 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
     unsigned int i;
     unsigned int j;
     char line[224];
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
 
     if (!slide_diag.vsh_module_seen) return;
     zeroCtrlCaptureVshSharedGlobalValue();
@@ -1253,21 +1309,21 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
     zeroCtrlDiagnosticsEvent("vsh_slide_target", slide_diag.vsh_slide_target);
     zeroCtrlDiagnosticsEvent("vsh_slide_target_in_text",
             slide_diag.vsh_target_in_text);
-    if (slide_diag.selective_58d4_enabled) {
-        zeroCtrlDiagnosticsText(
-                "[experiment] psp1000_selective_trigger=caller_58d4\n");
-        zeroCtrlDiagnosticsEvent("selective_58d4_original_word",
-                slide_diag.selective_58d4_original_word);
-        zeroCtrlDiagnosticsEvent("selective_58d4_original_target",
-                slide_diag.selective_58d4_original_target);
-        zeroCtrlDiagnosticsEvent("selective_58d4_validation",
-                slide_diag.selective_58d4_validation);
-        zeroCtrlDiagnosticsEvent("selective_58d4_patched_word",
-                slide_diag.selective_58d4_patched_word);
-        zeroCtrlDiagnosticsEvent("selective_58d4_patch_applied",
-                slide_diag.selective_58d4_patch_applied);
-        zeroCtrlDiagnosticsEvent("selective_58d4_cache_sync",
-                slide_diag.selective_58d4_cache_sync);
+    for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
+        ZeroCtrlVshTriggerEvidence *evidence = &slide_diag.triggers[i];
+        if (!(slide_diag.trigger_mode & (1U << i))) continue;
+        if (evidence->validation &&
+                zeroCtrlVshModuleRangeValid(helper, evidence->counter_addr, 4))
+            evidence->hit_count = *(volatile unsigned int *)evidence->counter_addr;
+        snprintf(line, sizeof(line),
+                "[trigger] caller_offset=0x%05X original_word=0x%08X "
+                "target=0x%08X validation=%d replacement=0x%08X "
+                "patch_applied=%d cache_sync=%d hit_count=%u\n",
+                vsh_trigger_offsets[i], evidence->original_word,
+                evidence->original_target, evidence->validation,
+                evidence->replacement_word, evidence->patch_applied,
+                evidence->cache_sync, evidence->hit_count);
+        zeroCtrlDiagnosticsText(line);
     }
     zeroCtrlDiagnosticsEvent("vsh_code_capture_start",
             slide_diag.vsh_code_capture_start);
@@ -1769,6 +1825,7 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	int module_hooked;
 	int driver_hooked;
 	unsigned int devkit;
+	char legacySelective58D4[16];
 
 	model = sceKernelGetModel();
 	devkit = sceKernelDevkitVersion();
@@ -1795,21 +1852,28 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	b_level = ini_getl("PowerSave", "Brightness", -1, config);
 	ini_gets("Experimental", "PSP1000SlidePlugin", "Disabled",
 			psp1000SlidePlugin, sizeof(psp1000SlidePlugin), config);
+	ini_gets("Experimental", "PSP1000SlideTriggerMode", "Disabled",
+			psp1000SlideTriggerMode, sizeof(psp1000SlideTriggerMode), config);
+	ini_gets("Experimental", "PSP1000Diagnostics", "Disabled",
+			psp1000Diagnostics, sizeof(psp1000Diagnostics), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
-			psp1000SelectiveSlideTrigger58D4,
-			sizeof(psp1000SelectiveSlideTrigger58D4), config);
+			legacySelective58D4, sizeof(legacySelective58D4), config);
+	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
+			strcmp(legacySelective58D4, "Enabled") == 0)
+		strcpy(psp1000SlideTriggerMode, "DangerousCaller58D4");
 	if (model == 0 && strcmp(psp1000SlidePlugin, "Enabled") == 0 &&
 			strcmp(useSlide, "Disabled") == 0) {
 		memset(&slide_diag, 0, sizeof(slide_diag));
 		slide_diag.armed = 1;
-		slide_diag.selective_58d4_enabled =
-			devkit == 0x06060110 &&
-			strcmp(psp1000SelectiveSlideTrigger58D4, "Enabled") == 0;
+		slide_diag.trigger_mode = devkit == 0x06060110 ?
+			zeroCtrlParseTriggerMode(psp1000SlideTriggerMode) :
+			ZERO_TRIGGER_DISABLED;
 	}
 
-	zeroCtrlDiagnosticsInit(model, devkit, useSlide, redir_path,
+	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,
+			model, devkit, useSlide, redir_path,
 			startup_total, startup_largest);
-	if (slide_diag.armed) {
+	if (slide_diag.armed && strcmp(psp1000Diagnostics, "Enabled") == 0) {
 		zeroCtrlDiagnosticsText("[phase] psp1000_slide_phase3\n"
 				"[experiment] psp1000_slide_optin=enabled\n"
 				"[experiment] clock_and_calendar=disabled\n"
@@ -1818,9 +1882,12 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 				"[experiment] vsh_direct_windows=predicate_6f84_only\n"
 				"[experiment] vsh_state_import_resolution=read_only\n"
 				"[experiment] button_thread=disabled\n");
-		if (slide_diag.selective_58d4_enabled) {
-			zeroCtrlDiagnosticsText(
-					"[experiment] psp1000_vsh_slide_trigger=selective_58d4_control\n");
+		if (slide_diag.trigger_mode != ZERO_TRIGGER_DISABLED) {
+			char line[96];
+			snprintf(line, sizeof(line),
+					"[experiment] psp1000_vsh_slide_trigger=%s mask=0x%X\n",
+					psp1000SlideTriggerMode, slide_diag.trigger_mode);
+			zeroCtrlDiagnosticsText(line);
 		} else {
 			zeroCtrlDiagnosticsText(
 					"[experiment] psp1000_vsh_slide_trigger=disabled_control\n");
@@ -1842,7 +1909,7 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	//Cool animation after reset vsh with no wallpaper enabled
 	set_registry_value("/CONFIG/SYSTEM", "slide_welcome", 1);	
 	
-	if (slide_diag.armed) {
+	if (slide_diag.armed && strcmp(psp1000Diagnostics, "Enabled") == 0) {
 		zeroCtrlDiagnosticsEvent("slide_diagnostic_thread_start",
 				zeroCtrlCreateSlideDiagnosticsThread());
 	}
