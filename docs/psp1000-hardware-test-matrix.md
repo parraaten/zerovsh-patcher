@@ -314,8 +314,11 @@ interpreting counters.
 * Entry count positive and BSMan-boundary count zero: the improved last-safe
   boundary lies inside the naturally executed activation prefix, including its
   internal/imported early-return dependencies.
-* Both positive: natural execution reaches the known BSMan caller; use ordering
-  and deferred memory correlation to select the next isolated investigation.
+* `slide_last_stage=2`: natural execution reaches the known BSMan syscall but
+  no return breadcrumb was persisted.
+* `slide_last_stage=3`: the natural BSMan syscall returned; failure is farther
+  into activation/impose/PAF processing. Use ordering and deferred memory
+  correlation to select the next isolated investigation.
 
 This row performs no BSMan, impose, PAF, OPEN, or model substitution. Missing
 asynchronous output is not proof of non-execution.

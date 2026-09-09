@@ -149,6 +149,9 @@ def check_sources(root):
         'strcmp(psp1000BSManClosedShim, "Disabled") == 0',
         '"slide_activation_entry_count"',
         '"slide_bsman_call_boundary_count"',
+        '"slide_last_stage"',
+        'fast_poll_until = elapsed + 2000000',
+        'elapsed < fast_poll_until ?\n                    10000',
         'candidates != 1',
         'bsman->caller_addr',
         'Transaction commit: both transparent trace sites validated above.',
@@ -160,13 +163,20 @@ def check_sources(root):
         activation_start)
     call_start = assembly.find("zeroCtrlBSManCallTrace:")
     call_end = assembly.find("zeroCtrlBSManCallTraceEnd:", call_start)
-    if min(activation_start, activation_end, call_start, call_end) < 0:
+    return_start = assembly.find("zeroCtrlBSManReturnTrace:")
+    return_end = assembly.find("zeroCtrlBSManReturnTraceEnd:", return_start)
+    if min(activation_start, activation_end, call_start, call_end,
+            return_start, return_end) < 0:
         fail("activation localization assembly leaves are missing")
     localization_leaves = assembly[activation_start:activation_end] + \
-        assembly[call_start:call_end]
+        assembly[call_start:call_end] + assembly[return_start:return_end]
     if any(token in localization_leaves for token in
             ("$gp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
         fail("activation localization leaves use gp, calls, I/O, or allocation")
+    return_leaf = assembly[return_start:return_end]
+    if "$v0" in return_leaf or "zeroCtrlSlideTraceStage" not in return_leaf or \
+            "zeroCtrlBSManCallRA" not in return_leaf:
+        fail("BSMan return trace does not preserve the natural result")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
     if stub_validation < 0 or caller_proof <= stub_validation or \

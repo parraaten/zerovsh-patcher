@@ -159,6 +159,10 @@ extern void zeroCtrlBSManCallTrace(void);
 extern void zeroCtrlBSManCallTraceEnd(void);
 extern volatile unsigned int zeroCtrlBSManCallTarget;
 extern volatile unsigned int zeroCtrlBSManCallHits;
+extern volatile unsigned int zeroCtrlSlideTraceStage;
+extern volatile unsigned int zeroCtrlBSManCallRA;
+extern void zeroCtrlBSManReturnTrace(void);
+extern void zeroCtrlBSManReturnTraceEnd(void);
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -273,6 +277,12 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlBSManCallTarget;
 	bsmanClosedRegistration.bsman_call_hits_addr =
 			(u32)&zeroCtrlBSManCallHits;
+	bsmanClosedRegistration.trace_stage_addr = (u32)&zeroCtrlSlideTraceStage;
+	bsmanClosedRegistration.bsman_call_ra_addr = (u32)&zeroCtrlBSManCallRA;
+	bsmanClosedRegistration.bsman_return_leaf_addr =
+			(u32)zeroCtrlBSManReturnTrace;
+	bsmanClosedRegistration.bsman_return_leaf_end_addr =
+			(u32)zeroCtrlBSManReturnTraceEnd;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

@@ -140,6 +140,9 @@ zeroCtrlSlideActivationTrace:
     lw      $t1, %lo(zeroCtrlSlideActivationHits)($t0)
     addiu   $t1, $t1, 1
     sw      $t1, %lo(zeroCtrlSlideActivationHits)($t0)
+    lui     $t0, %hi(zeroCtrlSlideTraceStage)
+    addiu   $t1, $zero, 1
+    sw      $t1, %lo(zeroCtrlSlideTraceStage)($t0)
     addiu   $sp, $sp, -32
     sw      $s1, 4($sp)
     lui     $t0, %hi(zeroCtrlSlideActivationResume)
@@ -151,16 +154,35 @@ zeroCtrlSlideActivationTraceEnd:
 
 .globl zeroCtrlBSManCallTrace
 zeroCtrlBSManCallTrace:
+    lui     $t0, %hi(zeroCtrlSlideTraceStage)
+    addiu   $t1, $zero, 2
+    sw      $t1, %lo(zeroCtrlSlideTraceStage)($t0)
     lui     $t0, %hi(zeroCtrlBSManCallHits)
     lw      $t1, %lo(zeroCtrlBSManCallHits)($t0)
     addiu   $t1, $t1, 1
     sw      $t1, %lo(zeroCtrlBSManCallHits)($t0)
+    lui     $t0, %hi(zeroCtrlBSManCallRA)
+    sw      $ra, %lo(zeroCtrlBSManCallRA)($t0)
+    lui     $ra, %hi(zeroCtrlBSManReturnTrace)
+    addiu   $ra, $ra, %lo(zeroCtrlBSManReturnTrace)
     lui     $t0, %hi(zeroCtrlBSManCallTarget)
     lw      $t9, %lo(zeroCtrlBSManCallTarget)($t0)
     jr      $t9
     nop
 .globl zeroCtrlBSManCallTraceEnd
 zeroCtrlBSManCallTraceEnd:
+
+.globl zeroCtrlBSManReturnTrace
+zeroCtrlBSManReturnTrace:
+    lui     $t0, %hi(zeroCtrlSlideTraceStage)
+    addiu   $t1, $zero, 3
+    sw      $t1, %lo(zeroCtrlSlideTraceStage)($t0)
+    lui     $t0, %hi(zeroCtrlBSManCallRA)
+    lw      $t9, %lo(zeroCtrlBSManCallRA)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlBSManReturnTraceEnd
+zeroCtrlBSManReturnTraceEnd:
 
 .section .bss
 .align 2
@@ -172,3 +194,7 @@ zeroCtrlSlideActivationHits: .space 4
 zeroCtrlBSManCallTarget: .space 4
 .globl zeroCtrlBSManCallHits
 zeroCtrlBSManCallHits: .space 4
+.globl zeroCtrlSlideTraceStage
+zeroCtrlSlideTraceStage: .space 4
+.globl zeroCtrlBSManCallRA
+zeroCtrlBSManCallRA: .space 4

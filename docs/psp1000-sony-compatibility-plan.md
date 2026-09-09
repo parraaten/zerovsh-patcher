@@ -138,7 +138,9 @@ remains **STRONG INFERENCE**, and impose/PAF remain outside this change.
 ## Activation localization and eventual overhead
 
 The current natural-behavior trace structurally derives the activation entry
-from the unique BSMan caller and records entry plus the pre-BSMan-call boundary.
+from the unique BSMan caller and records entry, pre-BSMan-call, and natural
+BSMan-return boundaries in one compact last-stage scalar. A two-second 10 ms
+observer window begins only after RCO and then returns to the normal cadence.
 It is research instrumentation, not a compatibility layer. Its helper leaves
 and four scalar slots are intentionally tiny, while all serialization and
 memory queries remain deferred. The eventual stable implementation should

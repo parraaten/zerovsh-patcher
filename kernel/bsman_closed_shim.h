@@ -15,9 +15,13 @@ typedef struct {
     u32 bsman_call_leaf_end_addr;
     u32 bsman_call_target_addr;
     u32 bsman_call_hits_addr;
+    u32 trace_stage_addr;
+    u32 bsman_call_ra_addr;
+    u32 bsman_return_leaf_addr;
+    u32 bsman_return_leaf_end_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 44 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 60 ? 1 : -1];
 
 #endif

@@ -228,6 +228,8 @@ typedef struct {
     unsigned int activation_resume_addr, activation_hits_addr;
     unsigned int call_leaf_addr, call_leaf_size, call_target_addr, call_hits_addr;
     unsigned int call_original, call_replacement;
+    unsigned int trace_stage_addr, call_ra_addr;
+    unsigned int return_leaf_addr, return_leaf_size;
 } ZeroCtrlBSManEvidence;
 
 enum zeroCtrlBSManStubForm {
@@ -897,7 +899,13 @@ void zeroCtrlRegisterBSManClosedShim(
             !zeroCtrlVshModuleRangeValid(helper, copied.bsman_call_leaf_addr,
                 copied.bsman_call_leaf_end_addr - copied.bsman_call_leaf_addr) ||
             !zeroCtrlVshModuleRangeValid(helper, copied.bsman_call_target_addr, 4) ||
-            !zeroCtrlVshModuleRangeValid(helper, copied.bsman_call_hits_addr, 4))
+            !zeroCtrlVshModuleRangeValid(helper, copied.bsman_call_hits_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.trace_stage_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.bsman_call_ra_addr, 4) ||
+            copied.bsman_return_leaf_end_addr <= copied.bsman_return_leaf_addr ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.bsman_return_leaf_addr,
+                copied.bsman_return_leaf_end_addr -
+                    copied.bsman_return_leaf_addr))
         return;
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -910,6 +918,11 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->call_leaf_size = copied.bsman_call_leaf_end_addr - copied.bsman_call_leaf_addr;
     bsman->call_target_addr = copied.bsman_call_target_addr;
     bsman->call_hits_addr = copied.bsman_call_hits_addr;
+    bsman->trace_stage_addr = copied.trace_stage_addr;
+    bsman->call_ra_addr = copied.bsman_call_ra_addr;
+    bsman->return_leaf_addr = copied.bsman_return_leaf_addr;
+    bsman->return_leaf_size = copied.bsman_return_leaf_end_addr -
+            copied.bsman_return_leaf_addr;
     bsman->registered = 1;
 }
 
@@ -1897,8 +1910,7 @@ static unsigned int zeroCtrlReadBSManHits(void) {
 }
 
 static unsigned int zeroCtrlReadHelperCounter(unsigned int address) {
-    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-    if (!zeroCtrlVshModuleRangeValid(helper, address, 4)) return 0;
+    if (!slide_diag.bsman.registered || !address) return 0;
     return *(volatile unsigned int *)address;
 }
 
@@ -1961,6 +1973,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_registration_called = 0, observed_guard_checked = 0;
     unsigned int observed_bsman_hits = 0;
     unsigned int observed_activation_hits = 0, observed_bsman_call_hits = 0;
+    unsigned int observed_trace_stage = 0, fast_poll_until = 0;
     int observed_bsman_attempted = 0;
     char line[256];
     unsigned int i;
@@ -1994,8 +2007,13 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             zeroCtrlWriteLateTransition(elapsed, (name), (unsigned int)(observed)); \
         }
         WRITE_LATE_FLAG(slide_diag.saw_request, observed_request, "request");
-        WRITE_LATE_FLAG(slide_diag.saw_rco_request, observed_rco_request,
-                "rco_request");
+        if (slide_diag.saw_rco_request != observed_rco_request) {
+            observed_rco_request = slide_diag.saw_rco_request;
+            zeroCtrlWriteLateTransition(elapsed, "rco_request",
+                    (unsigned int)observed_rco_request);
+            if (observed_rco_request)
+                fast_poll_until = elapsed + 2000000;
+        }
         WRITE_LATE_FLAG(slide_diag.saw_probe, observed_probe, "probe");
         WRITE_LATE_FLAG(slide_diag.saw_start, observed_start, "start");
         if (slide_diag.sony_start_trace.enabled) {
@@ -2166,6 +2184,13 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     bsman->activation_hits_addr);
             unsigned int call_hits = zeroCtrlReadHelperCounter(
                     bsman->call_hits_addr);
+            unsigned int stage = zeroCtrlReadHelperCounter(
+                    bsman->trace_stage_addr);
+            if (stage != observed_trace_stage) {
+                observed_trace_stage = stage;
+                zeroCtrlWriteLateTransition(elapsed,
+                        "slide_last_stage", stage);
+            }
             if (hits != observed_activation_hits) {
                 observed_activation_hits = hits;
                 zeroCtrlWriteLateTransition(elapsed,
@@ -2184,8 +2209,12 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             }
         }
 #undef WRITE_LATE_FLAG
-        sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);
-        elapsed += SLIDE_OBSERVATION_POLL_US;
+        {
+            unsigned int delay = elapsed < fast_poll_until ?
+                    10000 : SLIDE_OBSERVATION_POLL_US;
+            sceKernelDelayThread(delay);
+            elapsed += delay;
+        }
     }
     zeroCtrlWriteSlideCheckpoints(&written);
     zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
@@ -2504,6 +2533,9 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     bsman->activation_leaf_size) ||
                 !zeroCtrlVshModuleRangeValid(helper, bsman->call_leaf_addr,
                     bsman->call_leaf_size) ||
+                !zeroCtrlVshModuleRangeValid(helper, bsman->return_leaf_addr,
+                    bsman->return_leaf_size) ||
+                (bsman->return_leaf_addr & 3) != 0 ||
                 ((bsman->activation_addr + 4) & 0xF0000000) !=
                     (bsman->activation_leaf_addr & 0xF0000000) ||
                 ((bsman->caller_addr + 4) & 0xF0000000) !=
@@ -2526,6 +2558,8 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         _sw(bsman->import_stub_addr, bsman->call_target_addr);
         _sw(0, bsman->activation_hits_addr);
         _sw(0, bsman->call_hits_addr);
+        _sw(0, bsman->trace_stage_addr);
+        _sw(0, bsman->call_ra_addr);
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)bsman->activation_resume_addr, 4);
         sceKernelDcacheWritebackInvalidateRange(
@@ -2534,6 +2568,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 (const void *)bsman->activation_hits_addr, 4);
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)bsman->call_hits_addr, 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->trace_stage_addr, 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->call_ra_addr, 4);
         /* Transaction commit: both transparent trace sites validated above. */
         _sw(bsman->activation_replacement[0], bsman->activation_addr);
         _sw(bsman->activation_replacement[1], bsman->activation_addr + 4);

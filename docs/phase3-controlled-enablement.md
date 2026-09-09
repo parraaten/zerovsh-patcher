@@ -614,21 +614,29 @@ at `+0x93AC`. Farther code contains the known impose-shaped dependency, but its
 identity/effect remains an **INFERENCE** and is not patched.
 
 After every address, instruction, helper range, unique-caller, and pseudo-direct
-check succeeds as one transaction, two tiny helper leaves record only:
+check succeeds as one transaction, three tiny helper leaves record only:
 
 * activation-function entry; and
-* arrival immediately before the natural BSMan syscall stub.
+* arrival immediately before the natural BSMan syscall stub; and
+* return from the natural BSMan syscall stub, preserving its result.
 
 The entry leaf reproduces the displaced `addiu sp,sp,-32` and `sw s1,4(sp)` and
-jumps to `entry+8`. The call-boundary leaf increments a counter and tail-jumps
-to the untouched resolved BSMan stub with the original JAL return address. It
-does not call or replace BSMan. Both leaves use fixed BSS state, no `gp`, no
+jumps to `entry+8`. The call-boundary leaf records the original JAL return
+address, substitutes a return breadcrumb, and tail-jumps to the untouched
+resolved BSMan stub. The return leaf records completion without modifying
+`v0`, then resumes at the original Sony return address. The trace does not
+replace BSMan. All leaves use fixed BSS state, no `gp`, no
 imports, no allocation, no file I/O, and no diagnostic API. Deferred writer
 records changed-only counts and captures correlated USER memory only on the
 first observed transition. These snapshots do not attribute memory to Sony.
+The leaves also update one monotonic volatile stage (`1=activation entry`,
+`2=before BSMan`, `3=after BSMan`). After the RCO breadcrumb, the existing
+writer temporarily polls this compact state every 10 ms for two seconds, then
+returns to 200 ms; it performs file I/O only when evidence changes.
 
 The hardware run should distinguish: no activation entry; activation entry but
-no BSMan boundary; or both boundaries before the last persisted record. Use the
+no BSMan boundary; arrival at BSMan without return; or return and farther
+execution before the last persisted record. Use the
 existing exact T9 configuration except set:
 
 ```ini
@@ -637,5 +645,6 @@ PSP1000ActivationTrace = Enabled
 ```
 
 Expected records include `[activation-trace] validation=1 install=1`,
-`slide_activation_entry_count`, `slide_bsman_call_boundary_count`, and the two
+`slide_last_stage`, `slide_activation_entry_count`,
+`slide_bsman_call_boundary_count`, and the two
 optional first-observed memory stages. Any structure mismatch fails closed.
