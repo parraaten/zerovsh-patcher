@@ -151,6 +151,14 @@ extern volatile unsigned int zeroCtrlSonyModuleStartResult;
 extern int zeroCtrlBSManClosedLeaf(void);
 extern void zeroCtrlBSManClosedLeafEnd(void);
 extern volatile unsigned int zeroCtrlBSManClosedHits;
+extern void zeroCtrlSlideActivationTrace(void);
+extern void zeroCtrlSlideActivationTraceEnd(void);
+extern volatile unsigned int zeroCtrlSlideActivationResume;
+extern volatile unsigned int zeroCtrlSlideActivationHits;
+extern void zeroCtrlBSManCallTrace(void);
+extern void zeroCtrlBSManCallTraceEnd(void);
+extern volatile unsigned int zeroCtrlBSManCallTarget;
+extern volatile unsigned int zeroCtrlBSManCallHits;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -250,6 +258,21 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.leaf_end_addr = (u32)zeroCtrlBSManClosedLeafEnd;
 	bsmanClosedRegistration.hit_count_addr =
 			(u32)&zeroCtrlBSManClosedHits;
+	bsmanClosedRegistration.activation_leaf_addr =
+			(u32)zeroCtrlSlideActivationTrace;
+	bsmanClosedRegistration.activation_leaf_end_addr =
+			(u32)zeroCtrlSlideActivationTraceEnd;
+	bsmanClosedRegistration.activation_resume_addr =
+			(u32)&zeroCtrlSlideActivationResume;
+	bsmanClosedRegistration.activation_hits_addr =
+			(u32)&zeroCtrlSlideActivationHits;
+	bsmanClosedRegistration.bsman_call_leaf_addr = (u32)zeroCtrlBSManCallTrace;
+	bsmanClosedRegistration.bsman_call_leaf_end_addr =
+			(u32)zeroCtrlBSManCallTraceEnd;
+	bsmanClosedRegistration.bsman_call_target_addr =
+			(u32)&zeroCtrlBSManCallTarget;
+	bsmanClosedRegistration.bsman_call_hits_addr =
+			(u32)&zeroCtrlBSManCallHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

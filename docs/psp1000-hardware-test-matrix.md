@@ -301,3 +301,21 @@ Repeat T9 with the same configuration. Require `stub_form=SYSCALL_NOP`, retain
 the unique direct-JAL and strict-zero-test evidence, and interpret behavior only
 if `validation=1 install=1`. CLOSED remains **STRONG INFERENCE**, and no fix is
 claimed.
+
+## T10 — natural activation-to-BSMan localization
+
+Keep the proven `DangerousCaller58D4` path and Sony start trace, disable the
+BSMan CLOSED shim, and enable only `PSP1000ActivationTrace`. Require the runtime
+resolver/caller evidence and `[activation-trace] validation=1 install=1` before
+interpreting counters.
+
+* Entry count zero: activation was not observed before persistence; investigate
+  earlier RCO/PAF dispatch without claiming non-execution.
+* Entry count positive and BSMan-boundary count zero: the improved last-safe
+  boundary lies inside the naturally executed activation prefix, including its
+  internal/imported early-return dependencies.
+* Both positive: natural execution reaches the known BSMan caller; use ordering
+  and deferred memory correlation to select the next isolated investigation.
+
+This row performs no BSMan, impose, PAF, OPEN, or model substitution. Missing
+asynchronous output is not proof of non-execution.

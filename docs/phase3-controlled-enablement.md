@@ -588,3 +588,54 @@ transaction, two-write, and narrow cache-sync checks remain required and
 unchanged. `CLOSED=0` remains **STRONG INFERENCE**. This recognition change is
 not yet hardware-verified through installation and does not add impose or PAF
 behavior.
+
+## Natural activation localization trace
+
+The next read-only behavioral control keeps `PSP1000BSManClosedShim=Disabled`
+and adds `PSP1000ActivationTrace=Enabled`. It does not substitute BSMan or any
+other Sony result. Runtime import traversal first re-proves the unique
+`sceBSMan`/`0x23E3A9B6` stub and its sole direct caller. From that caller it
+searches backward only `0x200` bytes for a unique five-word function prologue,
+rather than trusting `+0x9304`. On the research image the unique structure is:
+
+```
++0x9304  addiu sp,sp,-32
++0x9308  sw    s1,4(sp)
++0x930C  move  s1,a0
++0x9310  sw    s0,0(sp)
++0x9314  sw    ra,28(sp)
+```
+
+This establishes `+0x9304` as a **STRONG STATIC INFERENCE** for the activation
+entry; the runtime trace must independently validate it. Static control flow
+from that entry reaches internal work at `+0x16EC`, an imported call at
+`+0x2A658` with an early zero-result return, and only then the proven BSMan call
+at `+0x93AC`. Farther code contains the known impose-shaped dependency, but its
+identity/effect remains an **INFERENCE** and is not patched.
+
+After every address, instruction, helper range, unique-caller, and pseudo-direct
+check succeeds as one transaction, two tiny helper leaves record only:
+
+* activation-function entry; and
+* arrival immediately before the natural BSMan syscall stub.
+
+The entry leaf reproduces the displaced `addiu sp,sp,-32` and `sw s1,4(sp)` and
+jumps to `entry+8`. The call-boundary leaf increments a counter and tail-jumps
+to the untouched resolved BSMan stub with the original JAL return address. It
+does not call or replace BSMan. Both leaves use fixed BSS state, no `gp`, no
+imports, no allocation, no file I/O, and no diagnostic API. Deferred writer
+records changed-only counts and captures correlated USER memory only on the
+first observed transition. These snapshots do not attribute memory to Sony.
+
+The hardware run should distinguish: no activation entry; activation entry but
+no BSMan boundary; or both boundaries before the last persisted record. Use the
+existing exact T9 configuration except set:
+
+```ini
+PSP1000BSManClosedShim = Disabled
+PSP1000ActivationTrace = Enabled
+```
+
+Expected records include `[activation-trace] validation=1 install=1`,
+`slide_activation_entry_count`, `slide_bsman_call_boundary_count`, and the two
+optional first-observed memory stages. Any structure mismatch fails closed.

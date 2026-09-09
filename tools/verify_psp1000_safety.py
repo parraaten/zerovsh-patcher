@@ -124,7 +124,8 @@ def check_sources(root):
         fail("deferred slide diagnostic writer is missing")
     writer = kernel[writer_start:writer_end]
     sony_diag_start = writer.find("if (slide_diag.sony_start_trace.enabled)")
-    bsman_diag_start = writer.find("if (slide_diag.bsman.enabled)",
+    bsman_diag_start = writer.find(
+        "if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled)",
         sony_diag_start)
     attempted_start = writer.find(
         "if (bsman->attempted && !observed_bsman_attempted)",
@@ -136,10 +137,36 @@ def check_sources(root):
         fail("BSMan deferred diagnostic scope is missing")
     if stub_form_record in writer[sony_diag_start:bsman_diag_start]:
         fail("BSMan stub-form diagnostic escaped into Sony trace scope")
+    if "bsman->" in writer[sony_diag_start:bsman_diag_start]:
+        fail("BSMan diagnostic state is referenced from Sony trace scope")
     if stub_form_record not in writer[attempted_start:attempted_end] or \
             "bsman->stub_form" not in writer[attempted_start:attempted_end] or \
             "bsman->syscall_code" not in writer[attempted_start:attempted_end]:
         fail("BSMan stub-form diagnostic is outside first-attempt BSMan scope")
+    for required in (
+        '"PSP1000ActivationTrace", "Disabled"',
+        'strcmp(psp1000ActivationTrace, "Enabled") == 0',
+        'strcmp(psp1000BSManClosedShim, "Disabled") == 0',
+        '"slide_activation_entry_count"',
+        '"slide_bsman_call_boundary_count"',
+        'candidates != 1',
+        'bsman->caller_addr',
+        'Transaction commit: both transparent trace sites validated above.',
+    ):
+        if required not in kernel:
+            fail("activation localization trace is missing " + required)
+    activation_start = assembly.find("zeroCtrlSlideActivationTrace:")
+    activation_end = assembly.find("zeroCtrlSlideActivationTraceEnd:",
+        activation_start)
+    call_start = assembly.find("zeroCtrlBSManCallTrace:")
+    call_end = assembly.find("zeroCtrlBSManCallTraceEnd:", call_start)
+    if min(activation_start, activation_end, call_start, call_end) < 0:
+        fail("activation localization assembly leaves are missing")
+    localization_leaves = assembly[activation_start:activation_end] + \
+        assembly[call_start:call_end]
+    if any(token in localization_leaves for token in
+            ("$gp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
+        fail("activation localization leaves use gp, calls, I/O, or allocation")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
     if stub_validation < 0 or caller_proof <= stub_validation or \

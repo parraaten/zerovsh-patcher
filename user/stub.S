@@ -130,3 +130,45 @@ zeroCtrlBSManClosedLeafEnd:
 .align 2
 .globl zeroCtrlBSManClosedHits
 zeroCtrlBSManClosedHits: .space 4
+
+/* Transparent localization leaves: fixed-state writes only, no calls/stack/gp. */
+.section .text
+.set noreorder
+.globl zeroCtrlSlideActivationTrace
+zeroCtrlSlideActivationTrace:
+    lui     $t0, %hi(zeroCtrlSlideActivationHits)
+    lw      $t1, %lo(zeroCtrlSlideActivationHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlSlideActivationHits)($t0)
+    addiu   $sp, $sp, -32
+    sw      $s1, 4($sp)
+    lui     $t0, %hi(zeroCtrlSlideActivationResume)
+    lw      $t9, %lo(zeroCtrlSlideActivationResume)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlSlideActivationTraceEnd
+zeroCtrlSlideActivationTraceEnd:
+
+.globl zeroCtrlBSManCallTrace
+zeroCtrlBSManCallTrace:
+    lui     $t0, %hi(zeroCtrlBSManCallHits)
+    lw      $t1, %lo(zeroCtrlBSManCallHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlBSManCallHits)($t0)
+    lui     $t0, %hi(zeroCtrlBSManCallTarget)
+    lw      $t9, %lo(zeroCtrlBSManCallTarget)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlBSManCallTraceEnd
+zeroCtrlBSManCallTraceEnd:
+
+.section .bss
+.align 2
+.globl zeroCtrlSlideActivationResume
+zeroCtrlSlideActivationResume: .space 4
+.globl zeroCtrlSlideActivationHits
+zeroCtrlSlideActivationHits: .space 4
+.globl zeroCtrlBSManCallTarget
+zeroCtrlBSManCallTarget: .space 4
+.globl zeroCtrlBSManCallHits
+zeroCtrlBSManCallHits: .space 4

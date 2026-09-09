@@ -90,6 +90,7 @@ static char psp1000SlideTriggerMode[40];
 static char psp1000Diagnostics[16];
 static char psp1000SonyStartTrace[16];
 static char psp1000BSManClosedShim[16];
+static char psp1000ActivationTrace[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -219,6 +220,14 @@ typedef struct {
     unsigned int match_count;
     unsigned int stub_form, syscall_code;
     int closed_value;
+    int activation_enabled, activation_validation, activation_install;
+    int activation_cache_sync;
+    unsigned int activation_addr, activation_original[2];
+    unsigned int activation_replacement[2];
+    unsigned int activation_leaf_addr, activation_leaf_size;
+    unsigned int activation_resume_addr, activation_hits_addr;
+    unsigned int call_leaf_addr, call_leaf_size, call_target_addr, call_hits_addr;
+    unsigned int call_original, call_replacement;
 } ZeroCtrlBSManEvidence;
 
 enum zeroCtrlBSManStubForm {
@@ -865,7 +874,8 @@ void zeroCtrlRegisterBSManClosedShim(
     int k1;
 
     bsman->registration_called = 1;
-    if (!bsman->enabled || bsman->registered || !registration) return;
+    if ((!bsman->enabled && !bsman->activation_enabled) ||
+            bsman->registered || !registration) return;
     helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     if (!helper || !zeroCtrlVshModuleRangeValid(helper,
                 (unsigned int)registration, sizeof(copied))) return;
@@ -877,11 +887,29 @@ void zeroCtrlRegisterBSManClosedShim(
             (copied.leaf_addr & 3) != 0 ||
             !zeroCtrlVshModuleRangeValid(helper, copied.leaf_addr,
                 copied.leaf_end_addr - copied.leaf_addr) ||
-            !zeroCtrlVshModuleRangeValid(helper, copied.hit_count_addr, 4))
+            !zeroCtrlVshModuleRangeValid(helper, copied.hit_count_addr, 4) ||
+            copied.activation_leaf_end_addr <= copied.activation_leaf_addr ||
+            copied.bsman_call_leaf_end_addr <= copied.bsman_call_leaf_addr ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.activation_leaf_addr,
+                copied.activation_leaf_end_addr - copied.activation_leaf_addr) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.activation_resume_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.activation_hits_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.bsman_call_leaf_addr,
+                copied.bsman_call_leaf_end_addr - copied.bsman_call_leaf_addr) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.bsman_call_target_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.bsman_call_hits_addr, 4))
         return;
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
     bsman->hit_count_addr = copied.hit_count_addr;
+    bsman->activation_leaf_addr = copied.activation_leaf_addr;
+    bsman->activation_leaf_size = copied.activation_leaf_end_addr - copied.activation_leaf_addr;
+    bsman->activation_resume_addr = copied.activation_resume_addr;
+    bsman->activation_hits_addr = copied.activation_hits_addr;
+    bsman->call_leaf_addr = copied.bsman_call_leaf_addr;
+    bsman->call_leaf_size = copied.bsman_call_leaf_end_addr - copied.bsman_call_leaf_addr;
+    bsman->call_target_addr = copied.bsman_call_target_addr;
+    bsman->call_hits_addr = copied.bsman_call_hits_addr;
     bsman->registered = 1;
 }
 
@@ -1868,6 +1896,12 @@ static unsigned int zeroCtrlReadBSManHits(void) {
     return *(volatile unsigned int *)bsman->hit_count_addr;
 }
 
+static unsigned int zeroCtrlReadHelperCounter(unsigned int address) {
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!zeroCtrlVshModuleRangeValid(helper, address, 4)) return 0;
+    return *(volatile unsigned int *)address;
+}
+
 static const char *zeroCtrlBSManStubFormName(unsigned int form) {
     static const char *names[] = {
         "UNKNOWN", "JUMP_NOP", "JR_RA_SYSCALL", "SYSCALL_NOP"
@@ -1926,6 +1960,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_start_return = 0;
     int observed_registration_called = 0, observed_guard_checked = 0;
     unsigned int observed_bsman_hits = 0;
+    unsigned int observed_activation_hits = 0, observed_bsman_call_hits = 0;
     int observed_bsman_attempted = 0;
     char line[256];
     unsigned int i;
@@ -2062,7 +2097,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 }
             }
         }
-        if (slide_diag.bsman.enabled) {
+        if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled) {
             ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
             unsigned int hits = zeroCtrlReadBSManHits();
             if (bsman->attempted && !observed_bsman_attempted) {
@@ -2098,11 +2133,54 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->caller_words[1], bsman->caller_words[2],
                         bsman->caller_words[3]);
                 zeroCtrlDiagnosticsText(line);
+                if (bsman->activation_enabled) {
+                    snprintf(line, sizeof(line),
+                            "[activation-trace] validation=%d install=%d "
+                            "cache_sync=%d entry=0x%08X bsman_call=0x%08X\n",
+                            bsman->activation_validation,
+                            bsman->activation_install,
+                            bsman->activation_cache_sync,
+                            bsman->activation_addr, bsman->caller_addr);
+                    zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[activation-trace] original=0x%08X,0x%08X "
+                            "replacement=0x%08X,0x%08X "
+                            "call_original=0x%08X call_replacement=0x%08X\n",
+                            bsman->activation_original[0],
+                            bsman->activation_original[1],
+                            bsman->activation_replacement[0],
+                            bsman->activation_replacement[1],
+                            bsman->call_original, bsman->call_replacement);
+                    zeroCtrlDiagnosticsText(line);
+                }
                 observed_bsman_attempted = 1;
             }
             if (hits != observed_bsman_hits) {
                 observed_bsman_hits = hits;
                 zeroCtrlWriteLateTransition(elapsed, "bsman_hit_count", hits);
+            }
+        }
+        if (slide_diag.bsman.activation_enabled) {
+            ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+            unsigned int hits = zeroCtrlReadHelperCounter(
+                    bsman->activation_hits_addr);
+            unsigned int call_hits = zeroCtrlReadHelperCounter(
+                    bsman->call_hits_addr);
+            if (hits != observed_activation_hits) {
+                observed_activation_hits = hits;
+                zeroCtrlWriteLateTransition(elapsed,
+                        "slide_activation_entry_count", hits);
+                if (hits)
+                    zeroCtrlDiagnosticsMemory(
+                            "slide_activation_entry_first_observed");
+            }
+            if (call_hits != observed_bsman_call_hits) {
+                observed_bsman_call_hits = call_hits;
+                zeroCtrlWriteLateTransition(elapsed,
+                        "slide_bsman_call_boundary_count", call_hits);
+                if (call_hits)
+                    zeroCtrlDiagnosticsMemory(
+                            "slide_bsman_call_boundary_first_observed");
             }
         }
 #undef WRITE_LATE_FLAG
@@ -2137,7 +2215,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 (unsigned int)trace->result);
         zeroCtrlDiagnosticsText(line);
     }
-    if (slide_diag.bsman.enabled) {
+    if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled) {
         snprintf(line, sizeof(line),
                 "[bsman] final install=%d validation=%d hit_count=%u\n",
                 slide_diag.bsman.install, slide_diag.bsman.validation,
@@ -2330,7 +2408,8 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
     unsigned int cursor, end, offset, caller_matches = 0;
 
-    if (!bsman->enabled || !bsman->registered || model != 0 || !mod ||
+    if ((!bsman->enabled && !bsman->activation_enabled) ||
+            !bsman->registered || model != 0 || !mod ||
             strcmp(mod->modname, "slide_plugin_module") != 0 ||
             sceKernelDevkitVersion() != 0x06060110) return;
     bsman->attempted = 1;
@@ -2403,6 +2482,73 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         caller_matches++;
     }
     if (caller_matches != 1 || !bsman->caller_addr) return;
+
+    if (bsman->activation_enabled) {
+        unsigned int scan_start = bsman->caller_addr > mod->text_addr + 0x200 ?
+                bsman->caller_addr - 0x200 : mod->text_addr;
+        unsigned int pc;
+        unsigned int candidates = 0;
+        SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+        for (pc = scan_start; pc + 20 <= bsman->caller_addr; pc += 4) {
+            if (_lw(pc) == 0x27BDFFE0 && _lw(pc + 4) == 0xAFB10004 &&
+                    _lw(pc + 8) == 0x00808821 &&
+                    _lw(pc + 12) == 0xAFB00000 &&
+                    _lw(pc + 16) == 0xAFBF001C) {
+                bsman->activation_addr = pc;
+                candidates++;
+            }
+        }
+        if (candidates != 1 || !helper ||
+                !zeroCtrlVshModuleRangeValid(mod, bsman->activation_addr, 20) ||
+                !zeroCtrlVshModuleRangeValid(helper, bsman->activation_leaf_addr,
+                    bsman->activation_leaf_size) ||
+                !zeroCtrlVshModuleRangeValid(helper, bsman->call_leaf_addr,
+                    bsman->call_leaf_size) ||
+                ((bsman->activation_addr + 4) & 0xF0000000) !=
+                    (bsman->activation_leaf_addr & 0xF0000000) ||
+                ((bsman->caller_addr + 4) & 0xF0000000) !=
+                    (bsman->call_leaf_addr & 0xF0000000)) return;
+        bsman->activation_original[0] = _lw(bsman->activation_addr);
+        bsman->activation_original[1] = _lw(bsman->activation_addr + 4);
+        bsman->call_original = _lw(bsman->caller_addr);
+        bsman->activation_replacement[0] = 0x08000000 |
+                ((bsman->activation_leaf_addr >> 2) & 0x03FFFFFF);
+        bsman->activation_replacement[1] = 0;
+        bsman->call_replacement = 0x0C000000 |
+                ((bsman->call_leaf_addr >> 2) & 0x03FFFFFF);
+        if (zeroCtrlMipsJumpTarget(bsman->activation_addr,
+                    bsman->activation_replacement[0]) !=
+                        bsman->activation_leaf_addr ||
+                zeroCtrlMipsJumpTarget(bsman->caller_addr,
+                    bsman->call_replacement) != bsman->call_leaf_addr) return;
+        bsman->activation_validation = 1;
+        _sw(bsman->activation_addr + 8, bsman->activation_resume_addr);
+        _sw(bsman->import_stub_addr, bsman->call_target_addr);
+        _sw(0, bsman->activation_hits_addr);
+        _sw(0, bsman->call_hits_addr);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->activation_resume_addr, 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->call_target_addr, 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->activation_hits_addr, 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->call_hits_addr, 4);
+        /* Transaction commit: both transparent trace sites validated above. */
+        _sw(bsman->activation_replacement[0], bsman->activation_addr);
+        _sw(bsman->activation_replacement[1], bsman->activation_addr + 4);
+        _sw(bsman->call_replacement, bsman->caller_addr);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->activation_addr, 8);
+        sceKernelIcacheInvalidateRange((const void *)bsman->activation_addr, 8);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->caller_addr, 4);
+        sceKernelIcacheInvalidateRange((const void *)bsman->caller_addr, 4);
+        bsman->activation_install = 1;
+        bsman->activation_cache_sync = 1;
+    }
+
+    if (!bsman->enabled) return;
 
     bsman->replacement_words[0] = 0x08000000 |
             ((bsman->leaf_addr >> 2) & 0x03FFFFFF);
@@ -2746,6 +2892,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			psp1000SonyStartTrace, sizeof(psp1000SonyStartTrace), config);
 	ini_gets("Experimental", "PSP1000BSManClosedShim", "Disabled",
 			psp1000BSManClosedShim, sizeof(psp1000BSManClosedShim), config);
+	ini_gets("Experimental", "PSP1000ActivationTrace", "Disabled",
+			psp1000ActivationTrace, sizeof(psp1000ActivationTrace), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -2774,6 +2922,13 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000BSManClosedShim, "Enabled") == 0 &&
+			strcmp(psp1000SlideTriggerMode,
+					"DangerousCaller58D4") == 0;
+		slide_diag.bsman.activation_enabled =
+			devkit == 0x06060110 &&
+			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
+			strcmp(psp1000ActivationTrace, "Enabled") == 0 &&
+			strcmp(psp1000BSManClosedShim, "Disabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0;
 	}
@@ -2813,6 +2968,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		if (slide_diag.bsman.enabled)
 			zeroCtrlDiagnosticsText(
 					"[experiment] psp1000_bsman_closed_shim=enabled_unverified\n");
+		if (slide_diag.bsman.activation_enabled)
+			zeroCtrlDiagnosticsText(
+					"[experiment] psp1000_activation_trace=enabled_natural\n");
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");
 	

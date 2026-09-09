@@ -134,3 +134,15 @@ shape and made zero writes, so the run is Outcome E: it proves neither a BSMan
 call nor any effect from CLOSED substitution. The narrow retry recognizes this
 form structurally while retaining all caller and transaction checks. CLOSED=0
 remains **STRONG INFERENCE**, and impose/PAF remain outside this change.
+
+## Activation localization and eventual overhead
+
+The current natural-behavior trace structurally derives the activation entry
+from the unique BSMan caller and records entry plus the pre-BSMan-call boundary.
+It is research instrumentation, not a compatibility layer. Its helper leaves
+and four scalar slots are intentionally tiny, while all serialization and
+memory queries remain deferred. The eventual stable implementation should
+remove this trace, the large fixed VSH scan/capture arrays, diagnostic writer
+thread and stack, verbose strings, and superseded trigger modes after hardware
+selects the minimal compatibility behavior. No such memory optimization is
+made before the evidence is collected.
