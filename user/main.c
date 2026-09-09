@@ -163,6 +163,32 @@ extern volatile unsigned int zeroCtrlSlideTraceStage;
 extern volatile unsigned int zeroCtrlBSManCallRA;
 extern void zeroCtrlBSManReturnTrace(void);
 extern void zeroCtrlBSManReturnTraceEnd(void);
+extern void zeroCtrlSlidePrefixResultTrace(void);
+extern void zeroCtrlSlidePrefixResultTraceEnd(void);
+extern void zeroCtrlSlidePrefixFlagTrace(void);
+extern void zeroCtrlSlidePrefixFlagTraceEnd(void);
+extern void zeroCtrlSlidePrefixMaskTrace(void);
+extern void zeroCtrlSlidePrefixMaskTraceEnd(void);
+extern volatile unsigned int zeroCtrlSlidePrefixResultZero;
+extern volatile unsigned int zeroCtrlSlidePrefixResultNonzero;
+extern volatile unsigned int zeroCtrlSlidePrefixFlagZero;
+extern volatile unsigned int zeroCtrlSlidePrefixFlagNonzero;
+extern volatile unsigned int zeroCtrlSlidePrefixMaskEqual;
+extern volatile unsigned int zeroCtrlSlidePrefixMaskUnequal;
+extern volatile unsigned int zeroCtrlSlidePrefixMaskDelayValue;
+extern volatile unsigned int zeroCtrlSlidePrefixPathMask;
+extern volatile unsigned int zeroCtrlSlidePrefixResultZeroHits;
+extern volatile unsigned int zeroCtrlSlidePrefixResultNonzeroHits;
+extern volatile unsigned int zeroCtrlSlidePrefixFlagZeroHits;
+extern volatile unsigned int zeroCtrlSlidePrefixFlagNonzeroHits;
+extern volatile unsigned int zeroCtrlSlidePrefixMaskEqualHits;
+extern volatile unsigned int zeroCtrlSlidePrefixMaskUnequalHits;
+extern void zeroCtrlSlidePrefixPafCallTrace(void);
+extern void zeroCtrlSlidePrefixPafCallTraceEnd(void);
+extern void zeroCtrlSlidePrefixPafReturnTrace(void);
+extern void zeroCtrlSlidePrefixPafReturnTraceEnd(void);
+extern volatile unsigned int zeroCtrlSlidePrefixPafTarget;
+extern volatile unsigned int zeroCtrlSlidePrefixPafRA;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -283,6 +309,58 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)zeroCtrlBSManReturnTrace;
 	bsmanClosedRegistration.bsman_return_leaf_end_addr =
 			(u32)zeroCtrlBSManReturnTraceEnd;
+	bsmanClosedRegistration.prefix_result_leaf_addr =
+			(u32)zeroCtrlSlidePrefixResultTrace;
+	bsmanClosedRegistration.prefix_result_leaf_end_addr =
+			(u32)zeroCtrlSlidePrefixResultTraceEnd;
+	bsmanClosedRegistration.prefix_result_zero_addr =
+			(u32)&zeroCtrlSlidePrefixResultZero;
+	bsmanClosedRegistration.prefix_result_nonzero_addr =
+			(u32)&zeroCtrlSlidePrefixResultNonzero;
+	bsmanClosedRegistration.prefix_flag_leaf_addr =
+			(u32)zeroCtrlSlidePrefixFlagTrace;
+	bsmanClosedRegistration.prefix_flag_leaf_end_addr =
+			(u32)zeroCtrlSlidePrefixFlagTraceEnd;
+	bsmanClosedRegistration.prefix_flag_zero_addr =
+			(u32)&zeroCtrlSlidePrefixFlagZero;
+	bsmanClosedRegistration.prefix_flag_nonzero_addr =
+			(u32)&zeroCtrlSlidePrefixFlagNonzero;
+	bsmanClosedRegistration.prefix_mask_leaf_addr =
+			(u32)zeroCtrlSlidePrefixMaskTrace;
+	bsmanClosedRegistration.prefix_mask_leaf_end_addr =
+			(u32)zeroCtrlSlidePrefixMaskTraceEnd;
+	bsmanClosedRegistration.prefix_mask_equal_addr =
+			(u32)&zeroCtrlSlidePrefixMaskEqual;
+	bsmanClosedRegistration.prefix_mask_unequal_addr =
+			(u32)&zeroCtrlSlidePrefixMaskUnequal;
+	bsmanClosedRegistration.prefix_mask_delay_value_addr =
+			(u32)&zeroCtrlSlidePrefixMaskDelayValue;
+	bsmanClosedRegistration.prefix_path_mask_addr =
+			(u32)&zeroCtrlSlidePrefixPathMask;
+	bsmanClosedRegistration.prefix_result_zero_hits_addr =
+			(u32)&zeroCtrlSlidePrefixResultZeroHits;
+	bsmanClosedRegistration.prefix_result_nonzero_hits_addr =
+			(u32)&zeroCtrlSlidePrefixResultNonzeroHits;
+	bsmanClosedRegistration.prefix_flag_zero_hits_addr =
+			(u32)&zeroCtrlSlidePrefixFlagZeroHits;
+	bsmanClosedRegistration.prefix_flag_nonzero_hits_addr =
+			(u32)&zeroCtrlSlidePrefixFlagNonzeroHits;
+	bsmanClosedRegistration.prefix_mask_equal_hits_addr =
+			(u32)&zeroCtrlSlidePrefixMaskEqualHits;
+	bsmanClosedRegistration.prefix_mask_unequal_hits_addr =
+			(u32)&zeroCtrlSlidePrefixMaskUnequalHits;
+	bsmanClosedRegistration.prefix_paf_call_leaf_addr =
+			(u32)zeroCtrlSlidePrefixPafCallTrace;
+	bsmanClosedRegistration.prefix_paf_call_leaf_end_addr =
+			(u32)zeroCtrlSlidePrefixPafCallTraceEnd;
+	bsmanClosedRegistration.prefix_paf_return_leaf_addr =
+			(u32)zeroCtrlSlidePrefixPafReturnTrace;
+	bsmanClosedRegistration.prefix_paf_return_leaf_end_addr =
+			(u32)zeroCtrlSlidePrefixPafReturnTraceEnd;
+	bsmanClosedRegistration.prefix_paf_target_addr =
+			(u32)&zeroCtrlSlidePrefixPafTarget;
+	bsmanClosedRegistration.prefix_paf_ra_addr =
+			(u32)&zeroCtrlSlidePrefixPafRA;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

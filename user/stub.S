@@ -142,9 +142,17 @@ zeroCtrlSlideActivationTrace:
     lw      $t1, %lo(zeroCtrlSlideActivationHits)($t0)
     addiu   $t1, $t1, 1
     sw      $t1, %lo(zeroCtrlSlideActivationHits)($t0)
+    lui     $t0, %hi(zeroCtrlSlidePrefixPathMask)
+    lw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    ori     $t1, $t1, 0x0001
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
     lui     $t0, %hi(zeroCtrlSlideTraceStage)
+    lw      $t2, %lo(zeroCtrlSlideTraceStage)($t0)
+    bnez    $t2, 1f
+    nop
     addiu   $t1, $zero, 1
     sw      $t1, %lo(zeroCtrlSlideTraceStage)($t0)
+1:
     addiu   $sp, $sp, -32
     sw      $s1, 4($sp)
     lui     $t0, %hi(zeroCtrlSlideActivationResume)
@@ -159,9 +167,18 @@ zeroCtrlSlideActivationTraceEnd:
 .type zeroCtrlBSManCallTrace @function
 .ent zeroCtrlBSManCallTrace, 0
 zeroCtrlBSManCallTrace:
+    lui     $t0, %hi(zeroCtrlSlidePrefixPathMask)
+    lw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    ori     $t1, $t1, 0x0100
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
     lui     $t0, %hi(zeroCtrlSlideTraceStage)
+    lw      $t2, %lo(zeroCtrlSlideTraceStage)($t0)
+    sltiu   $t2, $t2, 2
+    beqz    $t2, 2f
+    nop
     addiu   $t1, $zero, 2
     sw      $t1, %lo(zeroCtrlSlideTraceStage)($t0)
+2:
     lui     $t0, %hi(zeroCtrlBSManCallHits)
     lw      $t1, %lo(zeroCtrlBSManCallHits)($t0)
     addiu   $t1, $t1, 1
@@ -182,6 +199,10 @@ zeroCtrlBSManCallTraceEnd:
 .type zeroCtrlBSManReturnTrace @function
 .ent zeroCtrlBSManReturnTrace, 0
 zeroCtrlBSManReturnTrace:
+    lui     $t0, %hi(zeroCtrlSlidePrefixPathMask)
+    lw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    ori     $t1, $t1, 0x0200
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
     lui     $t0, %hi(zeroCtrlSlideTraceStage)
     addiu   $t1, $zero, 3
     sw      $t1, %lo(zeroCtrlSlideTraceStage)($t0)
@@ -192,6 +213,135 @@ zeroCtrlBSManReturnTrace:
 .globl zeroCtrlBSManReturnTraceEnd
 zeroCtrlBSManReturnTraceEnd:
 .end zeroCtrlBSManReturnTrace
+
+/*
+ * Prefix branch tracers reproduce only the displaced Sony branch semantics.
+ * They record fixed scalar bits and jump to validated natural basic blocks.
+ */
+.macro RECORD_PREFIX_COUNTER counter
+    lui     $t0, %hi(\counter)
+    lw      $t2, %lo(\counter)($t0)
+    addiu   $t2, $t2, 1
+    sw      $t2, %lo(\counter)($t0)
+.endm
+
+.globl zeroCtrlSlidePrefixPafCallTrace
+.type zeroCtrlSlidePrefixPafCallTrace @function
+.ent zeroCtrlSlidePrefixPafCallTrace, 0
+zeroCtrlSlidePrefixPafCallTrace:
+    lui     $t0, %hi(zeroCtrlSlidePrefixPathMask)
+    lw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    ori     $t1, $t1, 0x0002
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlSlidePrefixPafRA)
+    sw      $ra, %lo(zeroCtrlSlidePrefixPafRA)($t0)
+    lui     $ra, %hi(zeroCtrlSlidePrefixPafReturnTrace)
+    addiu   $ra, $ra, %lo(zeroCtrlSlidePrefixPafReturnTrace)
+    lui     $t0, %hi(zeroCtrlSlidePrefixPafTarget)
+    lw      $t9, %lo(zeroCtrlSlidePrefixPafTarget)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlSlidePrefixPafCallTraceEnd
+zeroCtrlSlidePrefixPafCallTraceEnd:
+.end zeroCtrlSlidePrefixPafCallTrace
+
+.globl zeroCtrlSlidePrefixPafReturnTrace
+.type zeroCtrlSlidePrefixPafReturnTrace @function
+.ent zeroCtrlSlidePrefixPafReturnTrace, 0
+zeroCtrlSlidePrefixPafReturnTrace:
+    lui     $t0, %hi(zeroCtrlSlidePrefixPathMask)
+    lw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    ori     $t1, $t1, 0x0004
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlSlidePrefixPafRA)
+    lw      $ra, %lo(zeroCtrlSlidePrefixPafRA)($t0)
+    jr      $ra
+    nop
+.globl zeroCtrlSlidePrefixPafReturnTraceEnd
+zeroCtrlSlidePrefixPafReturnTraceEnd:
+.end zeroCtrlSlidePrefixPafReturnTrace
+
+.globl zeroCtrlSlidePrefixResultTrace
+.type zeroCtrlSlidePrefixResultTrace @function
+.ent zeroCtrlSlidePrefixResultTrace, 0
+zeroCtrlSlidePrefixResultTrace:
+    lw      $ra, 28($sp)
+    lui     $t0, %hi(zeroCtrlSlidePrefixPathMask)
+    lw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    beqz    $v0, 3f
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    ori     $t1, $t1, 0x0008
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    RECORD_PREFIX_COUNTER zeroCtrlSlidePrefixResultNonzeroHits
+    lui     $t0, %hi(zeroCtrlSlidePrefixResultNonzero)
+    lw      $t9, %lo(zeroCtrlSlidePrefixResultNonzero)($t0)
+    jr      $t9
+    nop
+3:
+    RECORD_PREFIX_COUNTER zeroCtrlSlidePrefixResultZeroHits
+    lui     $t0, %hi(zeroCtrlSlidePrefixResultZero)
+    lw      $t9, %lo(zeroCtrlSlidePrefixResultZero)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlSlidePrefixResultTraceEnd
+zeroCtrlSlidePrefixResultTraceEnd:
+.end zeroCtrlSlidePrefixResultTrace
+
+.globl zeroCtrlSlidePrefixFlagTrace
+.type zeroCtrlSlidePrefixFlagTrace @function
+.ent zeroCtrlSlidePrefixFlagTrace, 0
+zeroCtrlSlidePrefixFlagTrace:
+    lui     $t0, %hi(zeroCtrlSlidePrefixPathMask)
+    lw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    ori     $t1, $t1, 0x0010
+    beqz    $v1, 4f
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    ori     $t1, $t1, 0x0020
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    RECORD_PREFIX_COUNTER zeroCtrlSlidePrefixFlagNonzeroHits
+    lui     $t0, %hi(zeroCtrlSlidePrefixFlagNonzero)
+    lw      $t9, %lo(zeroCtrlSlidePrefixFlagNonzero)($t0)
+    jr      $t9
+    nop
+4:
+    RECORD_PREFIX_COUNTER zeroCtrlSlidePrefixFlagZeroHits
+    lui     $t0, %hi(zeroCtrlSlidePrefixFlagZero)
+    lw      $t9, %lo(zeroCtrlSlidePrefixFlagZero)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlSlidePrefixFlagTraceEnd
+zeroCtrlSlidePrefixFlagTraceEnd:
+.end zeroCtrlSlidePrefixFlagTrace
+
+.globl zeroCtrlSlidePrefixMaskTrace
+.type zeroCtrlSlidePrefixMaskTrace @function
+.ent zeroCtrlSlidePrefixMaskTrace, 0
+zeroCtrlSlidePrefixMaskTrace:
+    lui     $t0, %hi(zeroCtrlSlidePrefixPathMask)
+    lw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    ori     $t1, $t1, 0x0040
+    addiu   $t2, $zero, 0x0101
+    bne     $v1, $t2, 5f
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    ori     $t1, $t1, 0x0080
+    sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    RECORD_PREFIX_COUNTER zeroCtrlSlidePrefixMaskEqualHits
+    lui     $t0, %hi(zeroCtrlSlidePrefixMaskEqual)
+    lw      $t9, %lo(zeroCtrlSlidePrefixMaskEqual)($t0)
+    b       6f
+    nop
+5:
+    RECORD_PREFIX_COUNTER zeroCtrlSlidePrefixMaskUnequalHits
+    lui     $t0, %hi(zeroCtrlSlidePrefixMaskUnequal)
+    lw      $t9, %lo(zeroCtrlSlidePrefixMaskUnequal)($t0)
+6:
+    lui     $t0, %hi(zeroCtrlSlidePrefixMaskDelayValue)
+    lw      $v0, %lo(zeroCtrlSlidePrefixMaskDelayValue)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlSlidePrefixMaskTraceEnd
+zeroCtrlSlidePrefixMaskTraceEnd:
+.end zeroCtrlSlidePrefixMaskTrace
 
 .section .bss
 .align 2
@@ -207,3 +357,35 @@ zeroCtrlBSManCallHits: .space 4
 zeroCtrlSlideTraceStage: .space 4
 .globl zeroCtrlBSManCallRA
 zeroCtrlBSManCallRA: .space 4
+.globl zeroCtrlSlidePrefixResultZero
+zeroCtrlSlidePrefixResultZero: .space 4
+.globl zeroCtrlSlidePrefixResultNonzero
+zeroCtrlSlidePrefixResultNonzero: .space 4
+.globl zeroCtrlSlidePrefixFlagZero
+zeroCtrlSlidePrefixFlagZero: .space 4
+.globl zeroCtrlSlidePrefixFlagNonzero
+zeroCtrlSlidePrefixFlagNonzero: .space 4
+.globl zeroCtrlSlidePrefixMaskEqual
+zeroCtrlSlidePrefixMaskEqual: .space 4
+.globl zeroCtrlSlidePrefixMaskUnequal
+zeroCtrlSlidePrefixMaskUnequal: .space 4
+.globl zeroCtrlSlidePrefixMaskDelayValue
+zeroCtrlSlidePrefixMaskDelayValue: .space 4
+.globl zeroCtrlSlidePrefixPathMask
+zeroCtrlSlidePrefixPathMask: .space 4
+.globl zeroCtrlSlidePrefixResultZeroHits
+zeroCtrlSlidePrefixResultZeroHits: .space 4
+.globl zeroCtrlSlidePrefixResultNonzeroHits
+zeroCtrlSlidePrefixResultNonzeroHits: .space 4
+.globl zeroCtrlSlidePrefixFlagZeroHits
+zeroCtrlSlidePrefixFlagZeroHits: .space 4
+.globl zeroCtrlSlidePrefixFlagNonzeroHits
+zeroCtrlSlidePrefixFlagNonzeroHits: .space 4
+.globl zeroCtrlSlidePrefixMaskEqualHits
+zeroCtrlSlidePrefixMaskEqualHits: .space 4
+.globl zeroCtrlSlidePrefixMaskUnequalHits
+zeroCtrlSlidePrefixMaskUnequalHits: .space 4
+.globl zeroCtrlSlidePrefixPafTarget
+zeroCtrlSlidePrefixPafTarget: .space 4
+.globl zeroCtrlSlidePrefixPafRA
+zeroCtrlSlidePrefixPafRA: .space 4

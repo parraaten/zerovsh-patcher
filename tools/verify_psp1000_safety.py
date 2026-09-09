@@ -33,6 +33,13 @@ BSMAN_COUNTER = "zeroCtrlBSManClosedHits"
 BSMAN_RETURN_TRACE = "zeroCtrlBSManReturnTrace"
 BSMAN_RETURN_TRACE_END = "zeroCtrlBSManReturnTraceEnd"
 BSMAN_CALL_RA = "zeroCtrlBSManCallRA"
+PREFIX_TRACE_STUBS = (
+    "zeroCtrlSlidePrefixPafCallTrace",
+    "zeroCtrlSlidePrefixPafReturnTrace",
+    "zeroCtrlSlidePrefixResultTrace",
+    "zeroCtrlSlidePrefixFlagTrace",
+    "zeroCtrlSlidePrefixMaskTrace",
+)
 
 
 def fail(message):
@@ -157,7 +164,14 @@ def check_sources(root):
         'elapsed < fast_poll_until ?\n                    10000',
         'candidates != 1',
         'bsman->caller_addr',
-        'Transaction commit: both transparent trace sites validated above.',
+        'Transaction commit: all transparent trace sites validated above.',
+        'bsman->prefix_original[0] != 0x10400006',
+        'bsman->prefix_original[2] != 0x1460000B',
+        'bsman->prefix_original[4] != 0x10420090',
+        'table->nidtable[i] != 0xED83BBCF',
+        'paf_matches != 1',
+        'slide_prefix_path_mask=0x%03X',
+        'paf_call_words=0x%08X,0x%08X',
     ):
         if required not in kernel:
             fail("activation localization trace is missing " + required)
@@ -171,6 +185,10 @@ def check_sources(root):
     if min(activation_start, activation_end, call_start, call_end,
             return_start, return_end) < 0:
         fail("activation localization assembly leaves are missing")
+    if "ori     $t1, $t1, 0x0001" not in assembly[activation_start:activation_end] or \
+            "bnez    $t2, 1f" not in assembly[activation_start:activation_end] or \
+            "sltiu   $t2, $t2, 2" not in assembly[call_start:call_end]:
+        fail("activation stage/mask evidence is not monotonic")
     localization_leaves = assembly[activation_start:activation_end] + \
         assembly[call_start:call_end] + assembly[return_start:return_end]
     if any(token in localization_leaves for token in
@@ -182,6 +200,26 @@ def check_sources(root):
             "lw      $ra, %lo(zeroCtrlBSManCallRA)($t0)" not in return_leaf or \
             "jr      $ra" not in return_leaf:
         fail("BSMan return trace does not preserve the natural result")
+    for symbol in PREFIX_TRACE_STUBS:
+        start = assembly.find(symbol + ":")
+        end = assembly.find(symbol + "End:", start)
+        if start < 0 or end < 0:
+            fail("activation-prefix trace leaf is missing " + symbol)
+        leaf = assembly[start:end]
+        if any(token in leaf for token in
+                ("$gp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
+            fail(symbol + " uses gp, calls, I/O, or allocation")
+        if symbol == "zeroCtrlSlidePrefixPafReturnTrace" and \
+                ("$v0" in leaf or
+                 "lw      $ra, %lo(zeroCtrlSlidePrefixPafRA)" not in leaf or
+                 "jr      $ra" not in leaf):
+            fail("prefix PAF return trace does not preserve v0 and restore ra")
+    fast_poll = kernel[kernel.find(
+        "if (slide_diag.bsman.activation_enabled)"):kernel.find(
+            "#undef WRITE_LATE_FLAG")]
+    if "zeroCtrlDiagnosticsMemory" in fast_poll or \
+            "zeroCtrlDiagnosticsCapturePartitions" in fast_poll:
+        fail("activation fast-poll path performs a memory query")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
     if stub_validation < 0 or caller_proof <= stub_validation or \
@@ -199,8 +237,10 @@ def check_sources(root):
     if "sceKernelDcacheWritebackInvalidateRange(\n            (const void *)bsman->import_stub_addr, 8)" not in commit or \
             "sceKernelIcacheInvalidateRange((const void *)bsman->import_stub_addr, 8)" not in commit:
         fail("BSMan transaction does not narrowly synchronize eight bytes")
-    if "0x639C3CB3" in bsman or "0x8000000D" in bsman or "scePaf" in bsman:
-        fail("BSMan experiment includes impose or PAF behavior")
+    if "0x639C3CB3" in bsman or "0x8000000D" in bsman:
+        fail("BSMan experiment includes impose behavior")
+    if "_sw(prefix_paf_stub, bsman->prefix_paf_target_addr)" not in bsman:
+        fail("activation prefix trace does not retain the natural PAF target")
     validation_marker = "Validation pass: no VSH write may occur in this loop."
     commit_marker = "Commit pass: selected callsites are all valid or none are written."
     validation_start = kernel.find(validation_marker)
@@ -427,7 +467,7 @@ def check_elf(elf):
             fail("missing helper trigger stub symbol " + symbol)
     for symbol in (SONY_ENTRY_STUB, SONY_ENTRY_STUB_END,
             SONY_EXIT_STUB, SONY_EXIT_STUB_END, BSMAN_STUB, BSMAN_STUB_END,
-            BSMAN_RETURN_TRACE, BSMAN_RETURN_TRACE_END):
+            BSMAN_RETURN_TRACE, BSMAN_RETURN_TRACE_END, *PREFIX_TRACE_STUBS):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing Sony module_start wrapper symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
@@ -453,6 +493,15 @@ def check_elf(elf):
     if not re.search(r"\blw\s+ra,", return_trace) or \
             not re.search(r"\bjr\s+ra\b", return_trace):
         fail("BSMan return trace does not restore and return through ra")
+    for symbol in PREFIX_TRACE_STUBS:
+        prefix_trace = function_body(disassembly, symbol)
+        if re.search(r"\bgp\b|\bjalr?\b", prefix_trace):
+            fail(symbol + " uses gp or a call")
+        if symbol == "zeroCtrlSlidePrefixPafReturnTrace" and \
+                (re.search(r"\bv0\b", prefix_trace) or
+                 not re.search(r"\blw\s+ra,", prefix_trace) or
+                 not re.search(r"\bjr\s+ra\b", prefix_trace)):
+            fail("prefix PAF return trace does not preserve v0 and restore ra")
 
 
 def check_stub_object(stub_object):

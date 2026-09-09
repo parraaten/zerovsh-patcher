@@ -322,3 +322,27 @@ interpreting counters.
 
 This row performs no BSMan, impose, PAF, OPEN, or model substitution. Missing
 asynchronous output is not proof of non-execution.
+
+The first T10 run recorded successful installation, stage 1, and an activation
+entry count increasing from one to three within 10 ms, with no persisted
+pre-BSMan boundary. This strongly localizes the next question to the naturally
+executed `+0x9304..+0x93AC` prefix.
+
+## T11 — activation-prefix branch localization
+
+Retain the T10 configuration and natural BSMan stub. Require activation
+validation/installation and the exact `[activation-prefix] branch_words`
+fingerprint before interpreting `slide_prefix_path_mask` or
+`slide_prefix_counts`. The mask is cumulative; use counts to distinguish paths
+across repeated activations.
+
+* `result_zero>0`: the first `scePaf` import selected the direct epilogue.
+* `result_nonzero>0, flag_zero>0`: the relocated byte selected the epilogue.
+* `flag_nonzero>0` with no mask outcome and no pre-BSMan count: the second
+  `scePaf` import was entered but no return was persisted.
+* `mask_equal>0`: the alternate `+0x95DC` state-machine path was selected.
+* `mask_unequal>0` without pre-BSMan: localize to the two state clears.
+* A pre-BSMan count proves the prefix completed; interpret stage 2/3 as above.
+
+This build changes no Sony result. Return the complete unedited log and normal
+XMB observations before selecting any compatibility behavior.
