@@ -178,8 +178,8 @@ zeroCtrlBSManReturnTrace:
     addiu   $t1, $zero, 3
     sw      $t1, %lo(zeroCtrlSlideTraceStage)($t0)
     lui     $t0, %hi(zeroCtrlBSManCallRA)
-    lw      $t9, %lo(zeroCtrlBSManCallRA)($t0)
-    jr      $t9
+    lw      $ra, %lo(zeroCtrlBSManCallRA)($t0)
+    jr      $ra
     nop
 .globl zeroCtrlBSManReturnTraceEnd
 zeroCtrlBSManReturnTraceEnd:

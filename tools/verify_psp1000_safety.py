@@ -30,6 +30,9 @@ SONY_TRACE_BASELINE_SHA256 = \
 BSMAN_STUB = "zeroCtrlBSManClosedLeaf"
 BSMAN_STUB_END = "zeroCtrlBSManClosedLeafEnd"
 BSMAN_COUNTER = "zeroCtrlBSManClosedHits"
+BSMAN_RETURN_TRACE = "zeroCtrlBSManReturnTrace"
+BSMAN_RETURN_TRACE_END = "zeroCtrlBSManReturnTraceEnd"
+BSMAN_CALL_RA = "zeroCtrlBSManCallRA"
 
 
 def fail(message):
@@ -174,8 +177,10 @@ def check_sources(root):
             ("$gp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
         fail("activation localization leaves use gp, calls, I/O, or allocation")
     return_leaf = assembly[return_start:return_end]
-    if "$v0" in return_leaf or "zeroCtrlSlideTraceStage" not in return_leaf or \
-            "zeroCtrlBSManCallRA" not in return_leaf:
+    if "$v0" in return_leaf or "$sp" in return_leaf or \
+            "zeroCtrlSlideTraceStage" not in return_leaf or \
+            "lw      $ra, %lo(zeroCtrlBSManCallRA)($t0)" not in return_leaf or \
+            "jr      $ra" not in return_leaf:
         fail("BSMan return trace does not preserve the natural result")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
@@ -421,7 +426,8 @@ def check_elf(elf):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing helper trigger stub symbol " + symbol)
     for symbol in (SONY_ENTRY_STUB, SONY_ENTRY_STUB_END,
-            SONY_EXIT_STUB, SONY_EXIT_STUB_END, BSMAN_STUB, BSMAN_STUB_END):
+            SONY_EXIT_STUB, SONY_EXIT_STUB_END, BSMAN_STUB, BSMAN_STUB_END,
+            BSMAN_RETURN_TRACE, BSMAN_RETURN_TRACE_END):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing Sony module_start wrapper symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
@@ -441,6 +447,12 @@ def check_elf(elf):
     if not re.search(r"\bjr\s+ra\b", body) or not re.search(
             r"\b(?:move\s+v0,\s*zero|addu\s+v0,\s*zero,\s*zero)\b", body):
         fail("BSMan leaf does not return deterministic CLOSED=0")
+    return_trace = function_body(disassembly, BSMAN_RETURN_TRACE)
+    if re.search(r"\bv0\b|\bgp\b|\bsp\b|\bjalr?\b", return_trace):
+        fail("BSMan return trace clobbers v0 or uses gp, sp, or a call")
+    if not re.search(r"\blw\s+ra,", return_trace) or \
+            not re.search(r"\bjr\s+ra\b", return_trace):
+        fail("BSMan return trace does not restore and return through ra")
 
 
 def check_stub_object(stub_object):
@@ -458,6 +470,14 @@ def check_stub_object(stub_object):
             len(re.findall(r"R_MIPS_LO16\s+" + BSMAN_COUNTER + r"\b",
                 bsman_leaf)) != 2:
         fail("BSMan leaf lacks the exact dedicated-counter relocations")
+    return_trace = function_body(disassembly, BSMAN_RETURN_TRACE)
+    if not re.search(r"R_MIPS_HI16\s+" + BSMAN_CALL_RA + r"\b",
+            return_trace) or not re.search(
+                r"\blw\s+ra,.*R_MIPS_LO16\s+" + BSMAN_CALL_RA + r"\b",
+                return_trace, re.S) or not re.search(r"\bjr\s+ra\b", return_trace):
+        fail("BSMan return trace lacks the saved-ra restore relocations")
+    if re.search(r"\bv0\b|\bgp\b|\bsp\b|\bjalr?\b", return_trace):
+        fail("BSMan return trace clobbers v0 or uses gp, sp, or a call")
     entry = function_body(disassembly, SONY_ENTRY_STUB)
     exit_stub = function_body(disassembly, SONY_EXIT_STUB)
     for symbol in ("zeroCtrlSonyModuleStartEntrySeen",
