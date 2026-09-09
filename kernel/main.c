@@ -36,6 +36,7 @@
 #include "blacklist.h"
 #include "resolver.h"
 #include "hook.h"
+#include "sony_start_trace.h"
 #include "minini/minIni.h"
 
 #include "zerovsh_upatcher.h"
@@ -165,7 +166,9 @@ enum zeroCtrlSonyStartRegisterReason {
     SONY_START_REGISTER_RETURN_FLAG_OUT_OF_RANGE = 13,
     SONY_START_REGISTER_RESULT_SLOT_OUT_OF_RANGE = 14,
     SONY_START_REGISTER_ENTRY_MISALIGNED = 15,
-    SONY_START_REGISTER_EXIT_MISALIGNED = 16
+    SONY_START_REGISTER_EXIT_MISALIGNED = 16,
+    SONY_START_REGISTER_DESCRIPTOR_NULL = 17,
+    SONY_START_REGISTER_DESCRIPTOR_OUT_OF_RANGE = 18
 };
 
 enum zeroCtrlSonyStartGuardReason {
@@ -185,6 +188,8 @@ typedef struct {
     volatile int registration_called, registration_success;
     volatile int initial_guard_checked;
     int registration_fail_reason, initial_guard_reason;
+    unsigned int descriptor_addr, descriptor_size;
+    int descriptor_validation;
     unsigned int supplied_addrs[9];
     unsigned int helper_text_addr, helper_text_size;
     unsigned int helper_data_size, helper_bss_size, helper_segment_count;
@@ -703,26 +708,20 @@ int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
     return slide_diag.armed;
 }
 
-void zeroCtrlRegisterSonyStartTrace(unsigned int entry_addr,
-        unsigned int entry_end_addr, unsigned int exit_addr,
-        unsigned int exit_end_addr, unsigned int resume_slot_addr,
-        unsigned int caller_ra_slot_addr,
-        unsigned int entry_seen_addr, unsigned int return_seen_addr,
-        unsigned int result_addr) {
+void zeroCtrlRegisterSonyStartTrace(
+        const ZeroCtrlSonyStartTraceRegistration *registration) {
     SceModule2 *helper;
     ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+    ZeroCtrlSonyStartTraceRegistration copied;
+    unsigned int descriptor_addr = (unsigned int)registration;
     unsigned int i;
+    int k1;
 
     trace->registration_called = 1;
-    trace->supplied_addrs[0] = entry_addr;
-    trace->supplied_addrs[1] = entry_end_addr;
-    trace->supplied_addrs[2] = exit_addr;
-    trace->supplied_addrs[3] = exit_end_addr;
-    trace->supplied_addrs[4] = resume_slot_addr;
-    trace->supplied_addrs[5] = caller_ra_slot_addr;
-    trace->supplied_addrs[6] = entry_seen_addr;
-    trace->supplied_addrs[7] = return_seen_addr;
-    trace->supplied_addrs[8] = result_addr;
+    trace->registration_success = 0;
+    trace->descriptor_addr = descriptor_addr;
+    trace->descriptor_size = sizeof(copied);
+    trace->descriptor_validation = 0;
     if (!trace->enabled) {
         trace->registration_fail_reason = SONY_START_REGISTER_TRACE_DISABLED;
         return;
@@ -731,7 +730,6 @@ void zeroCtrlRegisterSonyStartTrace(unsigned int entry_addr,
         trace->registration_fail_reason = SONY_START_REGISTER_ALREADY_REGISTERED;
         return;
     }
-    trace->registration_success = 0;
     helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     if (!helper) {
         trace->registration_fail_reason = SONY_START_REGISTER_HELPER_NOT_FOUND;
@@ -746,69 +744,92 @@ void zeroCtrlRegisterSonyStartTrace(unsigned int entry_addr,
         trace->helper_segment_addr[i] = helper->segmentaddr[i];
         trace->helper_segment_size[i] = helper->segmentsize[i];
     }
-    if (entry_end_addr <= entry_addr) {
+    if (!registration) {
+        trace->registration_fail_reason = SONY_START_REGISTER_DESCRIPTOR_NULL;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, descriptor_addr,
+            sizeof(copied))) {
+        trace->registration_fail_reason =
+                SONY_START_REGISTER_DESCRIPTOR_OUT_OF_RANGE;
+        return;
+    }
+    trace->descriptor_validation = 1;
+    k1 = pspSdkSetK1(0);
+    memcpy(&copied, registration, sizeof(copied));
+    pspSdkSetK1(k1);
+    trace->supplied_addrs[0] = copied.entry_addr;
+    trace->supplied_addrs[1] = copied.entry_end_addr;
+    trace->supplied_addrs[2] = copied.exit_addr;
+    trace->supplied_addrs[3] = copied.exit_end_addr;
+    trace->supplied_addrs[4] = copied.resume_slot_addr;
+    trace->supplied_addrs[5] = copied.caller_ra_slot_addr;
+    trace->supplied_addrs[6] = copied.entry_seen_addr;
+    trace->supplied_addrs[7] = copied.return_seen_addr;
+    trace->supplied_addrs[8] = copied.result_addr;
+    if (copied.entry_end_addr <= copied.entry_addr) {
         trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_END_ORDER;
         return;
     }
-    if (exit_end_addr <= exit_addr) {
+    if (copied.exit_end_addr <= copied.exit_addr) {
         trace->registration_fail_reason = SONY_START_REGISTER_EXIT_END_ORDER;
         return;
     }
-    if (entry_end_addr - entry_addr > 256) {
+    if (copied.entry_end_addr - copied.entry_addr > 256) {
         trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_STUB_TOO_LARGE;
         return;
     }
-    if (exit_end_addr - exit_addr > 256) {
+    if (copied.exit_end_addr - copied.exit_addr > 256) {
         trace->registration_fail_reason = SONY_START_REGISTER_EXIT_STUB_TOO_LARGE;
         return;
     }
-    if (!zeroCtrlVshModuleRangeValid(helper, entry_addr,
-            entry_end_addr - entry_addr)) {
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.entry_addr,
+            copied.entry_end_addr - copied.entry_addr)) {
         trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_STUB_OUT_OF_RANGE;
         return;
     }
-    if (!zeroCtrlVshModuleRangeValid(helper, exit_addr,
-            exit_end_addr - exit_addr)) {
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.exit_addr,
+            copied.exit_end_addr - copied.exit_addr)) {
         trace->registration_fail_reason = SONY_START_REGISTER_EXIT_STUB_OUT_OF_RANGE;
         return;
     }
-    if (!zeroCtrlVshModuleRangeValid(helper, resume_slot_addr, 4)) {
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.resume_slot_addr, 4)) {
         trace->registration_fail_reason = SONY_START_REGISTER_RESUME_SLOT_OUT_OF_RANGE;
         return;
     }
-    if (!zeroCtrlVshModuleRangeValid(helper, caller_ra_slot_addr, 4)) {
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.caller_ra_slot_addr, 4)) {
         trace->registration_fail_reason = SONY_START_REGISTER_CALLER_RA_SLOT_OUT_OF_RANGE;
         return;
     }
-    if (!zeroCtrlVshModuleRangeValid(helper, entry_seen_addr, 4)) {
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.entry_seen_addr, 4)) {
         trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_FLAG_OUT_OF_RANGE;
         return;
     }
-    if (!zeroCtrlVshModuleRangeValid(helper, return_seen_addr, 4)) {
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.return_seen_addr, 4)) {
         trace->registration_fail_reason = SONY_START_REGISTER_RETURN_FLAG_OUT_OF_RANGE;
         return;
     }
-    if (!zeroCtrlVshModuleRangeValid(helper, result_addr, 4)) {
+    if (!zeroCtrlVshModuleRangeValid(helper, copied.result_addr, 4)) {
         trace->registration_fail_reason = SONY_START_REGISTER_RESULT_SLOT_OUT_OF_RANGE;
         return;
     }
-    if ((entry_addr & 3) != 0) {
+    if ((copied.entry_addr & 3) != 0) {
         trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_MISALIGNED;
         return;
     }
-    if ((exit_addr & 3) != 0) {
+    if ((copied.exit_addr & 3) != 0) {
         trace->registration_fail_reason = SONY_START_REGISTER_EXIT_MISALIGNED;
         return;
     }
-    trace->entry_stub_addr = entry_addr;
-    trace->entry_stub_size = entry_end_addr - entry_addr;
-    trace->exit_stub_addr = exit_addr;
-    trace->exit_stub_size = exit_end_addr - exit_addr;
-    trace->resume_slot_addr = resume_slot_addr;
-    trace->caller_ra_slot_addr = caller_ra_slot_addr;
-    trace->entry_seen_addr = entry_seen_addr;
-    trace->return_seen_addr = return_seen_addr;
-    trace->result_addr = result_addr;
+    trace->entry_stub_addr = copied.entry_addr;
+    trace->entry_stub_size = copied.entry_end_addr - copied.entry_addr;
+    trace->exit_stub_addr = copied.exit_addr;
+    trace->exit_stub_size = copied.exit_end_addr - copied.exit_addr;
+    trace->resume_slot_addr = copied.resume_slot_addr;
+    trace->caller_ra_slot_addr = copied.caller_ra_slot_addr;
+    trace->entry_seen_addr = copied.entry_seen_addr;
+    trace->return_seen_addr = copied.return_seen_addr;
+    trace->result_addr = copied.result_addr;
     trace->registration_fail_reason = SONY_START_REGISTER_NONE;
     trace->registration_success = 1;
     trace->registered = 1;
@@ -1796,7 +1817,8 @@ static const char *zeroCtrlSonyRegisterReasonName(int reason) {
         "EXIT_STUB_OUT_OF_RANGE", "RESUME_SLOT_OUT_OF_RANGE",
         "CALLER_RA_SLOT_OUT_OF_RANGE", "ENTRY_FLAG_OUT_OF_RANGE",
         "RETURN_FLAG_OUT_OF_RANGE", "RESULT_SLOT_OUT_OF_RANGE",
-        "ENTRY_MISALIGNED", "EXIT_MISALIGNED"
+        "ENTRY_MISALIGNED", "EXIT_MISALIGNED", "DESCRIPTOR_NULL",
+        "DESCRIPTOR_OUT_OF_RANGE"
     };
     if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
         return "UNKNOWN";
@@ -1876,6 +1898,12 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
             zeroCtrlRefreshSonyStartTrace();
             if (trace->registration_called && !observed_registration_called) {
+                snprintf(line, sizeof(line),
+                        "[sony-start-register-descriptor] address=0x%08X "
+                        "size=%u validation=%d\n",
+                        trace->descriptor_addr, trace->descriptor_size,
+                        trace->descriptor_validation);
+                zeroCtrlDiagnosticsText(line);
                 snprintf(line, sizeof(line),
                         "[sony-start-register] called=1 success=%d "
                         "fail_reason=%s(%d)\n",

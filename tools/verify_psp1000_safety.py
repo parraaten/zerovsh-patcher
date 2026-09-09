@@ -33,6 +33,8 @@ def fail(message):
 
 def check_sources(root):
     kernel = (root / "kernel/main.c").read_text()
+    user = (root / "user/main.c").read_text()
+    registration_header = (root / "kernel/sony_start_trace.h").read_text()
     assembly = (root / "user/stub.S").read_text()
     build = (root / "build_linux.sh").read_text()
     if '"PSP1000SlideTriggerMode", "Disabled"' not in kernel:
@@ -153,6 +155,32 @@ def check_sources(root):
             register.find("trace->registration_success = 1") > \
             register.find("trace->registered = 1"):
         fail("Sony registration success does not exclusively gate registered=1")
+    if "const ZeroCtrlSonyStartTraceRegistration *registration" not in register:
+        fail("Sony trace registration does not use the one-pointer ABI")
+    if re.search(r"zeroCtrlRegisterSonyStartTrace\s*\(\s*unsigned int", kernel + user):
+        fail("obsolete scalar Sony trace registration ABI remains")
+    descriptor_fields = (
+        "entry_addr", "entry_end_addr", "exit_addr", "exit_end_addr",
+        "resume_slot_addr", "caller_ra_slot_addr", "entry_seen_addr",
+        "return_seen_addr", "result_addr",
+    )
+    for field in descriptor_fields:
+        if not re.search(r"\bu32\s+" + field + r"\s*;", registration_header):
+            fail("Sony trace descriptor lacks 32-bit field " + field)
+    if "sizeof(ZeroCtrlSonyStartTraceRegistration) == 36" not in registration_header:
+        fail("Sony trace registration descriptor is not asserted to 36 bytes")
+    if "zeroCtrlRegisterSonyStartTrace(&sonyStartTraceRegistration);" not in user:
+        fail("user helper does not pass one Sony trace descriptor pointer")
+    descriptor_check = register.find(
+        "zeroCtrlVshModuleRangeValid(helper, descriptor_addr,")
+    descriptor_copy = register.find("memcpy(&copied, registration, sizeof(copied))")
+    first_copied_field = register.find("copied.entry_addr")
+    if descriptor_check < 0 or descriptor_copy <= descriptor_check or \
+            first_copied_field <= descriptor_copy:
+        fail("Sony descriptor is read before its complete helper range is validated")
+    if "SONY_START_REGISTER_DESCRIPTOR_OUT_OF_RANGE" not in register or \
+            "SONY_START_REGISTER_DESCRIPTOR_NULL" not in register:
+        fail("Sony registration lacks descriptor pointer failure evidence")
     for reason in (
         "HELPER_NOT_FOUND", "ENTRY_END_ORDER", "EXIT_END_ORDER",
         "ENTRY_STUB_TOO_LARGE", "EXIT_STUB_TOO_LARGE",

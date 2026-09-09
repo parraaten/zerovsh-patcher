@@ -35,6 +35,7 @@
 #include "../kernel/psploadcore.h"
 #include "../kernel/systemctrl.h"
 #include "../kernel/systemctrl_se.h"
+#include "../kernel/sony_start_trace.h"
 
 PSP_MODULE_INFO("ZeroVSH_Patcher_User", 0x0007, 0, 1);
 
@@ -91,17 +92,14 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int stub_14020, unsigned int counter_58d4,
         unsigned int counter_13f6c, unsigned int counter_14020,
         unsigned int global_stub, unsigned int global_counter);
-void zeroCtrlRegisterSonyStartTrace(unsigned int entry_addr,
-        unsigned int entry_end_addr, unsigned int exit_addr,
-        unsigned int exit_end_addr, unsigned int resume_slot_addr,
-        unsigned int caller_ra_slot_addr,
-        unsigned int entry_seen_addr, unsigned int return_seen_addr,
-        unsigned int result_addr);
+void zeroCtrlRegisterSonyStartTrace(
+        const ZeroCtrlSonyStartTraceRegistration *registration);
 void zeroCtrlSetLEDState(void);
 void zeroCtrlSetBrightness(void);
 void zeroCtrlSetClockSpeed(void);
 
 int model;
+static ZeroCtrlSonyStartTraceRegistration sonyStartTraceRegistration;
 
 //OK
 void *zeroCtrlRedir2Stub(u32 address, void *stub, void *func) {
@@ -222,16 +220,25 @@ int OnModuleStart(SceModule2 *mod) {
 int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	model = zeroCtrlGetModel();
 	devkit = sceKernelDevkitVersion();
-	zeroCtrlRegisterSonyStartTrace(
-			(unsigned int)zeroCtrlSonyModuleStartEntryTrace,
-			(unsigned int)zeroCtrlSonyModuleStartEntryTraceEnd,
-			(unsigned int)zeroCtrlSonyModuleStartExitTrace,
-			(unsigned int)zeroCtrlSonyModuleStartExitTraceEnd,
-			(unsigned int)&zeroCtrlSonyModuleStartResume,
-			(unsigned int)&zeroCtrlSonyModuleStartCallerRA,
-			(unsigned int)&zeroCtrlSonyModuleStartEntrySeen,
-			(unsigned int)&zeroCtrlSonyModuleStartReturnSeen,
-			(unsigned int)&zeroCtrlSonyModuleStartResult);
+	sonyStartTraceRegistration.entry_addr =
+			(u32)zeroCtrlSonyModuleStartEntryTrace;
+	sonyStartTraceRegistration.entry_end_addr =
+			(u32)zeroCtrlSonyModuleStartEntryTraceEnd;
+	sonyStartTraceRegistration.exit_addr =
+			(u32)zeroCtrlSonyModuleStartExitTrace;
+	sonyStartTraceRegistration.exit_end_addr =
+			(u32)zeroCtrlSonyModuleStartExitTraceEnd;
+	sonyStartTraceRegistration.resume_slot_addr =
+			(u32)&zeroCtrlSonyModuleStartResume;
+	sonyStartTraceRegistration.caller_ra_slot_addr =
+			(u32)&zeroCtrlSonyModuleStartCallerRA;
+	sonyStartTraceRegistration.entry_seen_addr =
+			(u32)&zeroCtrlSonyModuleStartEntrySeen;
+	sonyStartTraceRegistration.return_seen_addr =
+			(u32)&zeroCtrlSonyModuleStartReturnSeen;
+	sonyStartTraceRegistration.result_addr =
+			(u32)&zeroCtrlSonyModuleStartResult;
+	zeroCtrlRegisterSonyStartTrace(&sonyStartTraceRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        
 	return 0;

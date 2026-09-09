@@ -444,3 +444,15 @@ metadata and four bounded segment ranges, and one stable failure reason without
 changing any acceptance condition. The installer similarly records the exact
 initial guard that precedes `attempted=1`. All persistence remains in the
 existing deferred writer.
+
+Hardware subsequently **PROVED** `RESULT_SLOT_OUT_OF_RANGE(14)`: the first
+eight scalar arguments were coherent, while the ninth arrived as `0x00008613`
+instead of an address in the helper segment. The private registration ABI now
+passes one pointer to a fixed 36-byte, nine-`u32` descriptor. The kernel first
+validates that the complete descriptor lies in a loaded helper segment, copies
+it once under the existing K1 convention, and only then applies every existing
+stub/slot range and alignment check to the copy. The deferred log begins with
+`[sony-start-register-descriptor] address=... size=36 validation=...`.
+
+This is an ABI transport correction only. The saved-RA assembly, its two-word
+Sony entry patch, trigger semantics, and production defaults are unchanged.
