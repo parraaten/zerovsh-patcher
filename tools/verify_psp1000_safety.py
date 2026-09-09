@@ -8,11 +8,17 @@ import subprocess
 import sys
 
 
-STUBS = ("zeroCtrlTrigger58D4", "zeroCtrlTrigger13F6C", "zeroCtrlTrigger14020")
+STUBS = (
+    "zeroCtrlTrigger58D4",
+    "zeroCtrlTrigger13F6C",
+    "zeroCtrlTrigger14020",
+    "zeroCtrlGlobalPredicate6F84True",
+)
 COUNTERS = (
     "zeroCtrlTrigger58D4Hits",
     "zeroCtrlTrigger13F6CHits",
     "zeroCtrlTrigger14020Hits",
+    "zeroCtrlGlobalPredicate6F84Hits",
 )
 
 
@@ -41,6 +47,20 @@ def check_sources(root):
         fail("selective framework must have exactly one VSH write primitive")
     if "if (all_selected_valid)" not in kernel[commit_start:]:
         fail("selective commit pass is not gated by aggregate validation")
+    global_marker = "Dangerous global predicate block: never edits direct callers."
+    global_start = kernel.find(global_marker)
+    global_end = kernel.find("slide_diag.vsh_module_seen = 1", global_start)
+    if global_start < 0 or global_end <= global_start:
+        fail("controlled global predicate patch block is missing")
+    global_block = kernel[global_start:global_end]
+    if global_block.count("_sw(global->replacement_words") != 2:
+        fail("global predicate mode must write exactly its two entry words")
+    if "vsh_trigger_offsets" in global_block or "evidence->callsite" in global_block:
+        fail("global predicate mode modifies a selective direct caller")
+    if 'strcmp(psp1000SlideTriggerMode,\n\t\t\t\t"DangerousGlobalPredicate6F84") == 0' not in kernel:
+        fail("global predicate patch is not gated by its exact dangerous mode")
+    if "!slide_diag.global_predicate_enabled ?" not in kernel:
+        fail("global predicate mode does not disable selective caller modes")
     if "global_predicate_6f84_patch=disabled" not in kernel:
         fail("global PSP Go predicate patch is not explicitly disabled")
     if "% 64" not in build:
@@ -66,18 +86,22 @@ def check_sources(root):
             fail("JAL semantic reconstruction self-test failed")
 
 
+def function_body(disassembly, symbol):
+    start = disassembly.find("<" + symbol + ">:")
+    end = disassembly.find("\n\n", start)
+    if start < 0:
+        fail("cannot disassemble " + symbol)
+    return disassembly[start:end if end >= 0 else None]
+
+
 def check_elf(elf):
     nm = subprocess.check_output(["psp-nm", "-n", str(elf)], text=True)
     for symbol in STUBS:
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing helper trigger stub symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
-    for symbol, counter in zip(STUBS, COUNTERS):
-        start = disassembly.find("<" + symbol + ">:")
-        end = disassembly.find("\n\n", start)
-        if start < 0:
-            fail("cannot disassemble " + symbol)
-        body = disassembly[start:end if end >= 0 else None]
+    for symbol in STUBS:
+        body = function_body(disassembly, symbol)
         if re.search(r"\bgp\b|\bsp\b|\bjal\b", body):
             fail(symbol + " uses gp, sp, or an imported/called function")
         if not re.search(r"\bjr\s+ra\b", body):
@@ -86,18 +110,31 @@ def check_elf(elf):
             r"\b(?:li\s+v0,\s*1|addiu\s+v0,\s*zero,\s*1)\b", body
         ):
             fail(symbol + " does not return strict boolean 1")
-        if counter not in body:
-            fail(symbol + " has no relocation to its dedicated counter")
+
+
+def check_stub_object(stub_object):
+    disassembly = subprocess.check_output(
+        ["psp-objdump", "-dr", str(stub_object)], text=True
+    )
+    for symbol, counter in zip(STUBS, COUNTERS):
+        body = function_body(disassembly, symbol)
+        if not re.search(r"R_MIPS_HI16\s+" + counter + r"\b", body):
+            fail(symbol + " has no HI16 relocation to its dedicated counter")
+        if len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
+            fail(symbol + " does not have two LO16 counter relocations")
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=pathlib.Path, default=pathlib.Path("."))
     parser.add_argument("--user-elf", type=pathlib.Path)
+    parser.add_argument("--stub-object", type=pathlib.Path)
     args = parser.parse_args()
     check_sources(args.source_root.resolve())
     if args.user_elf:
         check_elf(args.user_elf)
+    if args.stub_object:
+        check_stub_object(args.stub_object)
     print("verified PSP-1000 static safety invariants")
 
 

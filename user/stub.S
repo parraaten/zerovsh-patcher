@@ -39,6 +39,7 @@ CREATE_STUB slide_start_stub
 CREATE_TRIGGER_STUB zeroCtrlTrigger58D4, zeroCtrlTrigger58D4Hits
 CREATE_TRIGGER_STUB zeroCtrlTrigger13F6C, zeroCtrlTrigger13F6CHits
 CREATE_TRIGGER_STUB zeroCtrlTrigger14020, zeroCtrlTrigger14020Hits
+CREATE_TRIGGER_STUB zeroCtrlGlobalPredicate6F84True, zeroCtrlGlobalPredicate6F84Hits
 
 .section .bss
 .align 2
@@ -48,3 +49,5 @@ zeroCtrlTrigger58D4Hits: .space 4
 zeroCtrlTrigger13F6CHits: .space 4
 .globl zeroCtrlTrigger14020Hits
 zeroCtrlTrigger14020Hits: .space 4
+.globl zeroCtrlGlobalPredicate6F84Hits
+zeroCtrlGlobalPredicate6F84Hits: .space 4

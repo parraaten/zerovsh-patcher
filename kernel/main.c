@@ -105,6 +105,8 @@ static long b_level;
 #define VSH_INITIALIZER_CAPTURE_START 0x6680
 #define VSH_INITIALIZER_CAPTURE_SIZE 0xC0
 #define VSH_TRIGGER_COUNT 3
+#define SLIDE_OBSERVATION_WINDOW_US 12000000
+#define SLIDE_OBSERVATION_POLL_US     200000
 
 enum zeroCtrlTriggerMode {
     ZERO_TRIGGER_DISABLED = 0,
@@ -129,6 +131,18 @@ typedef struct {
     int patch_applied;
     int cache_sync;
 } ZeroCtrlVshTriggerEvidence;
+
+typedef struct {
+    unsigned int target_addr;
+    unsigned int original_words[2];
+    unsigned int replacement_words[2];
+    unsigned int stub_addr;
+    unsigned int counter_addr;
+    unsigned int hit_count;
+    int validation;
+    int patch_applied;
+    int cache_sync;
+} ZeroCtrlGlobalPredicateEvidence;
 
 static const unsigned int vsh_predicate_offsets[VSH_PREDICATE_COUNT] = {
     0x6F04, 0x6F44, 0x6F84, 0x6FC4,
@@ -193,6 +207,8 @@ typedef struct {
     volatile int vsh_module_seen;
     unsigned int trigger_mode;
     ZeroCtrlVshTriggerEvidence triggers[VSH_TRIGGER_COUNT];
+    int global_predicate_enabled;
+    ZeroCtrlGlobalPredicateEvidence global_predicate;
     int vsh_target_in_text;
     int vsh_modid;
     unsigned int vsh_text_addr;
@@ -633,7 +649,8 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int elf_entry_addr, unsigned int target,
         unsigned int stub_58d4, unsigned int stub_13f6c,
         unsigned int stub_14020, unsigned int counter_58d4,
-        unsigned int counter_13f6c, unsigned int counter_14020) {
+        unsigned int counter_13f6c, unsigned int counter_14020,
+        unsigned int global_stub, unsigned int global_counter) {
     const unsigned int stubs[VSH_TRIGGER_COUNT] = {
         stub_58d4, stub_13f6c, stub_14020
     };
@@ -749,6 +766,52 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                             (const void *)evidence->callsite,
                             sizeof(unsigned int));
                     evidence->cache_sync = 1;
+                }
+            }
+
+            /* Dangerous global predicate block: never edits direct callers. */
+            if (slide_diag.global_predicate_enabled) {
+                SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+                ZeroCtrlGlobalPredicateEvidence *global =
+                        &slide_diag.global_predicate;
+                unsigned int predicate = target;
+
+                global->stub_addr = global_stub;
+                global->counter_addr = global_counter;
+                if (model == 0 && sceKernelDevkitVersion() == 0x06060110 &&
+                        vsh && vsh->modid == modid &&
+                        vsh->text_addr == text_addr &&
+                        vsh->text_size == text_size &&
+                        target_offset == 0x6F84 && text_size >= 0x6F8C &&
+                        text_addr <= 0xFFFFFFFFU - 0x6F8B &&
+                        zeroCtrlVshModuleRangeValid(vsh, predicate, 8) &&
+                        zeroCtrlVshModuleRangeValid(helper, global_stub, 24) &&
+                        zeroCtrlVshModuleRangeValid(helper, global_counter, 4) &&
+                        (global_stub & 3) == 0 &&
+                        ((predicate + 4) & 0xF0000000) ==
+                                (global_stub & 0xF0000000)) {
+                    global->target_addr = predicate;
+                    global->original_words[0] = _lw(predicate);
+                    global->original_words[1] = _lw(predicate + 4);
+                    if (global->original_words[0] == 0x3C0209C8 &&
+                            global->original_words[1] == 0x8C44DAE0) {
+                        global->replacement_words[0] = 0x08000000 |
+                                ((global_stub >> 2) & 0x03FFFFFF);
+                        global->replacement_words[1] = 0;
+                        if ((((predicate + 4) & 0xF0000000) |
+                                ((global->replacement_words[0] & 0x03FFFFFF)
+                                << 2)) == global_stub)
+                            global->validation = 1;
+                    }
+                }
+                if (global->validation) {
+                    _sw(global->replacement_words[0], predicate);
+                    _sw(global->replacement_words[1], predicate + 4);
+                    global->patch_applied = 1;
+                    sceKernelDcacheWritebackInvalidateRange(
+                            (const void *)predicate, 8);
+                    sceKernelIcacheInvalidateRange((const void *)predicate, 8);
+                    global->cache_sync = 1;
                 }
             }
         }
@@ -1348,6 +1411,23 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
                 evidence->cache_sync, evidence->hit_count);
         zeroCtrlDiagnosticsText(line);
     }
+    if (slide_diag.global_predicate_enabled) {
+        ZeroCtrlGlobalPredicateEvidence *global =
+                &slide_diag.global_predicate;
+        if (global->validation && zeroCtrlVshModuleRangeValid(helper,
+                global->counter_addr, 4))
+            global->hit_count =
+                    *(volatile unsigned int *)global->counter_addr;
+        snprintf(line, sizeof(line),
+                "[global6f84] validation=%d original_words=0x%08X,0x%08X "
+                "replacement_words=0x%08X,0x%08X patch_applied=%d "
+                "cache_sync=%d hit_count=%u\n",
+                global->validation, global->original_words[0],
+                global->original_words[1], global->replacement_words[0],
+                global->replacement_words[1], global->patch_applied,
+                global->cache_sync, global->hit_count);
+        zeroCtrlDiagnosticsText(line);
+    }
     zeroCtrlDiagnosticsEvent("vsh_code_capture_start",
             slide_diag.vsh_code_capture_start);
     zeroCtrlDiagnosticsEvent("vsh_code_capture_end",
@@ -1476,53 +1556,117 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
             slide_diag.vsh_initializer_references);
 }
 
+static unsigned int zeroCtrlReadTriggerHits(unsigned int index) {
+    SceModule2 *helper;
+    ZeroCtrlVshTriggerEvidence *evidence;
+
+    if (index >= VSH_TRIGGER_COUNT) return 0;
+    evidence = &slide_diag.triggers[index];
+    if (!evidence->validation || !evidence->counter_addr) return 0;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!zeroCtrlVshModuleRangeValid(helper, evidence->counter_addr, 4))
+        return 0;
+    return *(volatile unsigned int *)evidence->counter_addr;
+}
+
+static unsigned int zeroCtrlReadGlobalPredicateHits(void) {
+    SceModule2 *helper;
+    ZeroCtrlGlobalPredicateEvidence *global = &slide_diag.global_predicate;
+
+    if (!global->validation || !global->counter_addr) return 0;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!zeroCtrlVshModuleRangeValid(helper, global->counter_addr, 4)) return 0;
+    return *(volatile unsigned int *)global->counter_addr;
+}
+
+static void zeroCtrlWriteLateTransition(unsigned int elapsed,
+        const char *name, unsigned int value) {
+    char line[112];
+
+    snprintf(line, sizeof(line), "[late] elapsed_us=%u %s=%u\n",
+            elapsed, name, value);
+    zeroCtrlDiagnosticsText(line);
+}
+
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
-    int waited = 0;
+    unsigned int elapsed = 0;
     unsigned int written = 0;
+    unsigned int observed_hits[VSH_TRIGGER_COUNT] = { 0, 0, 0 };
+    int observed_request = 0;
+    int observed_rco_request = 0;
+    int observed_probe = 0;
+    int observed_start = 0;
+    unsigned int observed_global_hits = 0;
+    char line[160];
+    unsigned int i;
 
     slide_diag.writer_alive = 1;
     zeroCtrlDiagnosticsText("[checkpoint] slide_diag_writer_alive\n");
-    while (!slide_diag.saw_probe && waited < 3000000) {
+    while (elapsed < SLIDE_OBSERVATION_WINDOW_US) {
         zeroCtrlWriteSlideCheckpoints(&written);
-        sceKernelDelayThread(10000);
-        waited += 10000;
+        for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
+            unsigned int hits = zeroCtrlReadTriggerHits(i);
+            if (hits != observed_hits[i]) {
+                static const char *names[VSH_TRIGGER_COUNT] = {
+                    "caller_58d4_hit_count", "caller_13f6c_hit_count",
+                    "caller_14020_hit_count"
+                };
+                observed_hits[i] = hits;
+                zeroCtrlWriteLateTransition(elapsed, names[i], hits);
+            }
+        }
+        if (slide_diag.global_predicate_enabled) {
+            unsigned int hits = zeroCtrlReadGlobalPredicateHits();
+            if (hits != observed_global_hits) {
+                observed_global_hits = hits;
+                zeroCtrlWriteLateTransition(elapsed,
+                        "global_6f84_hit_count", hits);
+            }
+        }
+#define WRITE_LATE_FLAG(field, observed, name) \
+        if ((field) != (observed)) { \
+            (observed) = (field); \
+            zeroCtrlWriteLateTransition(elapsed, (name), (unsigned int)(observed)); \
+        }
+        WRITE_LATE_FLAG(slide_diag.saw_request, observed_request, "request");
+        WRITE_LATE_FLAG(slide_diag.saw_rco_request, observed_rco_request,
+                "rco_request");
+        WRITE_LATE_FLAG(slide_diag.saw_probe, observed_probe, "probe");
+        WRITE_LATE_FLAG(slide_diag.saw_start, observed_start, "start");
+#undef WRITE_LATE_FLAG
+        sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);
+        elapsed += SLIDE_OBSERVATION_POLL_US;
     }
     zeroCtrlWriteSlideCheckpoints(&written);
-    if (!slide_diag.saw_probe) {
-        char line[128];
-        snprintf(line, sizeof(line),
-                "[state] request=%d rco_request=%d probe=%d start=%d\n",
-                slide_diag.saw_request, slide_diag.saw_rco_request,
-                slide_diag.saw_probe, slide_diag.saw_start);
-        zeroCtrlDiagnosticsText(line);
-        zeroCtrlWriteVshSlideEvidence();
-        zeroCtrlDiagnosticsText("[event] slide_probe_not_seen timeout_us=3000000\n");
-        slide_diag.deferred_thread_started = 0;
-        sceKernelExitDeleteThread(0);
-        return 0;
-    }
+    zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
 
-    waited = 0;
-    while (!slide_diag.saw_start && waited < 2000000) {
-        zeroCtrlWriteSlideCheckpoints(&written);
-        sceKernelDelayThread(10000);
-        waited += 10000;
-    }
-    zeroCtrlWriteSlideCheckpoints(&written);
-    if (slide_diag.saw_start) {
-        /* Delay is measured from the observed pre-entrypoint callback. */
-        sceKernelDelayThread(750000);
-        zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
-    } else {
-        zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
-    }
+    for (i = 0; i < VSH_TRIGGER_COUNT; i++)
+        observed_hits[i] = zeroCtrlReadTriggerHits(i);
+    observed_global_hits = zeroCtrlReadGlobalPredicateHits();
+    snprintf(line, sizeof(line),
+            "[final] observation_window_us=%u\n"
+            "[final] caller_58d4_hit_count=%u caller_13f6c_hit_count=%u "
+            "caller_14020_hit_count=%u\n"
+            "[final] global_6f84_hit_count=%u\n"
+            "[final] request=%d rco_request=%d probe=%d start=%d\n",
+            SLIDE_OBSERVATION_WINDOW_US, observed_hits[0], observed_hits[1],
+            observed_hits[2], observed_global_hits, slide_diag.saw_request,
+            slide_diag.saw_rco_request, slide_diag.saw_probe,
+            slide_diag.saw_start);
+    zeroCtrlDiagnosticsText(line);
 
     zeroCtrlWriteVshSlideEvidence();
     if (slide_diag.saw_request) zeroCtrlDiagnosticsText("[event] slide_request_seen\n");
     if (slide_diag.saw_rco_request) zeroCtrlDiagnosticsText("[event] slide_rco_request_seen\n");
-    zeroCtrlDiagnosticsText("[event] slide_probe_seen\n");
-    zeroCtrlDiagnosticsEvent("slide_probe_result", slide_diag.probe_result);
-    zeroCtrlDiagnosticsWritePartitions("at_slide_plugin_probe", &slide_diag.at_probe);
+    if (slide_diag.saw_probe) {
+        zeroCtrlDiagnosticsText("[event] slide_probe_seen\n");
+        zeroCtrlDiagnosticsEvent("slide_probe_result", slide_diag.probe_result);
+        zeroCtrlDiagnosticsWritePartitions("at_slide_plugin_probe",
+                &slide_diag.at_probe);
+    } else {
+        zeroCtrlDiagnosticsText(
+                "[event] slide_probe_not_seen timeout_us=12000000\n");
+    }
     if (slide_diag.saw_start) {
         zeroCtrlDiagnosticsText("[event] slide_module_start_seen\n");
         zeroCtrlDiagnosticsEvent("slide_module_modid", slide_diag.module.modid);
@@ -1535,7 +1679,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         zeroCtrlDiagnosticsWritePartitions("slide_plugin_delayed",
                 &slide_diag.delayed_or_timeout);
     } else {
-        zeroCtrlDiagnosticsText("[event] slide_module_start_not_seen timeout_us=2000000\n");
+        zeroCtrlDiagnosticsText(
+                "[event] slide_module_start_not_seen timeout_us=12000000\n");
         zeroCtrlDiagnosticsWritePartitions("slide_plugin_start_timeout",
                 &slide_diag.delayed_or_timeout);
     }
@@ -1888,7 +2033,13 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			strcmp(useSlide, "Disabled") == 0) {
 		memset(&slide_diag, 0, sizeof(slide_diag));
 		slide_diag.armed = 1;
-		slide_diag.trigger_mode = devkit == 0x06060110 ?
+		slide_diag.global_predicate_enabled =
+			devkit == 0x06060110 &&
+			strcmp(psp1000SlideTriggerMode,
+				"DangerousGlobalPredicate6F84") == 0;
+		slide_diag.trigger_mode =
+			devkit == 0x06060110 &&
+			!slide_diag.global_predicate_enabled ?
 			zeroCtrlParseTriggerMode(psp1000SlideTriggerMode) :
 			ZERO_TRIGGER_DISABLED;
 	}
@@ -1900,19 +2051,26 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		zeroCtrlDiagnosticsText("[phase] psp1000_slide_phase3\n"
 				"[experiment] psp1000_slide_optin=enabled\n"
 				"[experiment] clock_and_calendar=disabled\n"
-				"[experiment] global_predicate_6f84_patch=disabled\n"
 				"[experiment] vsh_reference_scan=read_only\n"
 				"[experiment] vsh_direct_windows=predicate_6f84_only\n"
 				"[experiment] vsh_state_import_resolution=read_only\n"
 				"[experiment] button_thread=disabled\n");
-		if (slide_diag.trigger_mode != ZERO_TRIGGER_DISABLED) {
+		if (slide_diag.global_predicate_enabled) {
+			zeroCtrlDiagnosticsText(
+					"[experiment] global_predicate_6f84_patch=enabled_dangerous\n"
+					"[experiment] psp1000_vsh_slide_trigger="
+					"DangerousGlobalPredicate6F84\n");
+		} else if (slide_diag.trigger_mode != ZERO_TRIGGER_DISABLED) {
 			char line[96];
+			zeroCtrlDiagnosticsText(
+					"[experiment] global_predicate_6f84_patch=disabled\n");
 			snprintf(line, sizeof(line),
 					"[experiment] psp1000_vsh_slide_trigger=%s mask=0x%X\n",
 					psp1000SlideTriggerMode, slide_diag.trigger_mode);
 			zeroCtrlDiagnosticsText(line);
 		} else {
 			zeroCtrlDiagnosticsText(
+					"[experiment] global_predicate_6f84_patch=disabled\n"
 					"[experiment] psp1000_vsh_slide_trigger=disabled_control\n");
 		}
 	}

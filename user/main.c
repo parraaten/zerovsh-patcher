@@ -89,7 +89,8 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int elf_entry_addr, unsigned int target,
         unsigned int stub_58d4, unsigned int stub_13f6c,
         unsigned int stub_14020, unsigned int counter_58d4,
-        unsigned int counter_13f6c, unsigned int counter_14020);
+        unsigned int counter_13f6c, unsigned int counter_14020,
+        unsigned int global_stub, unsigned int global_counter);
 void zeroCtrlSetLEDState(void);
 void zeroCtrlSetBrightness(void);
 void zeroCtrlSetClockSpeed(void);
@@ -128,6 +129,8 @@ extern int zeroCtrlTrigger14020(void);
 extern volatile unsigned int zeroCtrlTrigger58D4Hits;
 extern volatile unsigned int zeroCtrlTrigger13F6CHits;
 extern volatile unsigned int zeroCtrlTrigger14020Hits;
+extern int zeroCtrlGlobalPredicate6F84True(void);
+extern volatile unsigned int zeroCtrlGlobalPredicate6F84Hits;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -168,7 +171,9 @@ int OnModuleStart(SceModule2 *mod) {
 							(unsigned int)zeroCtrlTrigger14020,
 							(unsigned int)&zeroCtrlTrigger58D4Hits,
 							(unsigned int)&zeroCtrlTrigger13F6CHits,
-							(unsigned int)&zeroCtrlTrigger14020Hits);
+							(unsigned int)&zeroCtrlTrigger14020Hits,
+							(unsigned int)zeroCtrlGlobalPredicate6F84True,
+							(unsigned int)&zeroCtrlGlobalPredicate6F84Hits);
 				}
 			} else if(devkit == 0x06020010) {								
 				zeroCtrlRedir2Stub(mod->text_addr+0x6D78, slide_check_stub, zeroCtrlDummyFunc);			

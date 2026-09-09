@@ -414,3 +414,22 @@ return assignment may occupy the branch delay slot).  In `main.o`, a displayed
 `jal 0 <zeroCtrlDummyFunc>` at offset `0x228` is only the unresolved pre-link
 placeholder: its `R_MIPS_26 zeroCtrlRecordVshSlideTarget` relocation identifies
 the actual link target and must not be interpreted as a dummy-function call.
+
+## Phase 3.3: late observation and controlled global reproduction
+
+Real 6.61 PSP-1000 T1, T2, and T3 runs proved that `+0x13F6C`, `+0x14020`,
+and their combination each executed but did not cause a PRX/RCO request, probe,
+or start in the observed startup window. Modern T4 proved that the `+0x58D4`
+callsite patch installed, but its hit count remained zero in that window.
+Whether it executes later is still **HYPOTHESIS**; the older late crash does not
+prove execution. The writer now polls fixed state every 200 ms for 12 seconds,
+persists only transitions, and emits a final snapshot.
+
+`DangerousGlobalPredicate6F84` is a separate, explicit reproduction mode. It
+validates the hardware-captured first two predicate words and redirects only the
+predicate entry to a dedicated counted strict-true assembly leaf. It does not
+modify the shared model or any known direct caller. `DangerousAllCallers` is
+**not proven equivalent**: it changes three known direct JALs, whereas the global
+mode affects every path reaching the predicate, including unidentified indirect
+or tail paths. The expected request/probe/freeze sequence remains historical
+evidence until the new mode is run on hardware.

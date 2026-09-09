@@ -8,7 +8,9 @@ user-supplied files under the configured Memory Stick redirection tree. Keep a
 recovery method which can disable `zerovsh_patcher.prx` before every run.
 Never enable `ClockAndCalendar` during Phase 3 trigger classification.
 
-The same PRX supports all rows below. Change only `ms0:/seplugins/zerovsh.ini`,
+The same PRX supports all rows below. The diagnostic writer observes transitions
+for 12 seconds at 200 ms intervals and writes only changed values plus a final
+snapshot. Change only `ms0:/seplugins/zerovsh.ini`,
 fully restart VSH, retain the entire `ms0:/zerovsh_psp1000.log`, and record the
 wall-clock time and visual result. A missing marker means only that the marker
 was not persisted; it is not proof that the corresponding code did not run.
@@ -52,8 +54,10 @@ recovery. Unknown selector strings safely behave as `Disabled`.
   `hit_count > 0` proves execution before the deferred read.
 * **Observe:** request/probe/start markers, XMB flags or layout changes, and five
   minutes idle.
-* **Success:** stable XMB; retain the log whether or not Sony assets are
-  requested.
+* **Hardware result:** the caller validated, was patched and cache-synchronized,
+  executed once, and produced no request/RCO/probe/start transition during the
+  former three-second window. **PROVEN:** this caller alone was insufficient in
+  that observed startup path. Repeat under the 12-second observer as T5.
 * **Crash interpretation:** if T0 passed with the identical PRX, this is strong
   evidence that this capability callsite is unsafe alone; it does not identify
   the downstream function.
@@ -68,6 +72,9 @@ recovery. Unknown selector strings safely behave as `Disabled`.
 * **Observe/success/recovery:** same as T1.
 * **Crash interpretation:** isolates the capability-mask `0x40` consumer only
   relative to T0; do not infer that bit `0x40` means “slider.”
+* **Hardware result:** the caller validated, executed once, and produced no
+  request/RCO/probe/start transition in the former window. **PROVEN:** this
+  caller alone was insufficient in that observed startup path. Repeat as T6.
 * **Next:** T3 only if T1 and T2 each boot safely.
 
 ### T3 — callers `+0x13F6C` and `+0x14020`
@@ -85,17 +92,40 @@ recovery. Unknown selector strings safely behave as `Disabled`.
 * **Recovery:** selector `Disabled`; do not proceed to behavior enablement.
 * **Next:** M0 if native start/delayed-alive is reached, otherwise return logs
   for call-graph analysis. Do not manually load the Sony module.
+* **Hardware result:** both callers validated and each executed once, with no
+  request/RCO/probe/start transition in the former window. **PROVEN:** this pair
+  was insufficient during the observed startup path. Repeat as T7.
 
 ### D1 — known-dangerous caller `+0x58D4` (not routine testing)
 
 * **Config:** `PSP1000SlideTriggerMode = DangerousCaller58D4`.
-* **Known evidence:** installation and no early request were proven; an enabled
-  run later crashed while the identical disabled PRX remained stable.
+* **Known evidence:** modern T4 validated and installed the callsite, but its
+  hit count remained zero and no pipeline state changed in the former
+  three-second window. An older build later crashed after initially booting.
+  Whether `+0x58D4` executed after the old logging window is **HYPOTHESIS**, not
+  proven; repeat T4 with the 12-second observer before interpreting the crash.
 * **Use:** only if a later analysis has a specific reason to repeat it.
 * **Recovery:** mandatory recovery access; return selector to `Disabled`.
 * **Never use:** `DangerousCaller58D4_13F6C`,
   `DangerousCaller58D4_14020`, and `DangerousAllCallers` unless a reviewed
   hypothesis explicitly requires the combination.
+
+### D2 — controlled historical global predicate reproduction
+
+* **Config:** `PSP1000SlideTriggerMode = DangerousGlobalPredicate6F84`, with
+  PSP-1000 SlidePlugin and diagnostics enabled and ClockAndCalendar disabled.
+* **Expected markers:**
+  `global_predicate_6f84_patch=enabled_dangerous`, a `[global6f84]` record with
+  validation/patch/cache fields equal to one, changed-only `[late]` counter and
+  pipeline transitions, and the 12-second `[final]` snapshot if VSH survives.
+* **Observe:** exact ordering of global predicate hits, PRX request, RCO request,
+  LoadCore probe, pre-start/start, XMB freeze, or power-off.
+* **Recovery:** use recovery mode and restore all three experimental settings to
+  `Disabled`; never alter `flash0`.
+* **Semantic limit:** `DangerousAllCallers` changes only the three verified
+  direct JAL callsites. It is **not proven equivalent** to this mode, which
+  redirects the predicate entry and therefore also affects unidentified
+  indirect, tail, or otherwise unclassified runtime paths.
 
 ### M0 — native Sony memory baseline
 
@@ -128,3 +158,20 @@ PSP1000Diagnostics = Disabled
 
 Success is a normal XMB with no diagnostic writer and no PSP-1000 VSH write.
 This is the shipping-safe configuration until hardware promotes a tested mode.
+
+## Twelve-second repeat labels
+
+Use the common configuration above and change only the selector:
+
+* **T4:** `DangerousCaller58D4`
+* **T5:** `Caller13F6C`
+* **T6:** `Caller14020`
+* **T7:** `Caller13F6C_14020`
+* **D2/global reproduction:** `DangerousGlobalPredicate6F84`
+
+For each run expect changed-only `[late] elapsed_us=...` records and, if the XMB
+survives the complete interval, `[final] observation_window_us=12000000`, all
+four final hit counts, and final request/RCO/probe/start state. D2 additionally
+requires `[global6f84] validation=1 ... patch_applied=1 cache_sync=1`; a failed
+validation must leave `patch_applied=0`. Do not infer execution from patch
+application alone.
