@@ -180,6 +180,11 @@ application alone.
 
 Use only after the proven extended T4 path and retain recovery access:
 
+The preceding direct-return-site build recognized the three-word prologue but
+found no unique bounded `jr ra`, so it failed closed with `validation=0` and
+`install=0`; its subsequent crash is not attributed to that tracer. T8 now uses
+only the validated entry and saved-RA interposition.
+
 ```ini
 [SlidePlugin]
 ClockAndCalendar = Disabled
@@ -194,16 +199,19 @@ PSP1000SelectiveSlideTrigger58D4 = Disabled
 
 Expected installation evidence is
 `[experiment] psp1000_sony_start_trace=enabled_natural`, followed by
-`[sony-start-direct] attempted=1 validation=1 install=1 cache_sync=1`, plus
-`[sony-start-entry]` and `[sony-start-return]` original/replacement evidence. The ordinary
+`[sony-start-ra] attempted=1 validation=1 install=1 cache_sync=1`, plus
+`[sony-start-entry]` evidence for all three validated originals and the two
+replacement words. The ordinary
 `caller_58d4_hit_count`, request, probe, pre-start `start`, and RCO breadcrumbs
 remain enabled. `start=1` still means only that the pre-start handler observed
 the module.
 
-The entry stub preserves `a0`, `a1`, `gp`, and `ra`, reproduces both displaced
-prologue instructions, and resumes at original `module_start + 8`. The exit
-stub records `v0` without changing it and returns through Sony's original `ra`.
-Neither stub performs file I/O or a memory query.
+The entry stub preserves `a0`, `a1`, and `gp`, saves the incoming ModuleMgr
+`ra`, substitutes the exit stub address, reproduces both displaced prologue
+instructions, and resumes at original `module_start + 8`. Sony's validated and
+untouched `sw ra,4(sp)` saves that interposed address naturally. The exit stub
+records `v0` without changing it and jumps through the saved caller address.
+Neither stub performs file I/O or a memory query; no Sony return is patched.
 
 Interpret results as follows:
 

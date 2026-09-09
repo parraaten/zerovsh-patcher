@@ -87,7 +87,7 @@ def check_sources(root):
         '"DangerousCaller58D4") == 0',
         'strcmp(psp1000Diagnostics, "Enabled") == 0',
         'strcmp(useSlide, "Disabled") == 0',
-        'trace->return_replacement[1] = trace->return_original[1]',
+        '(trace->entry_original[2] >> 26) != 0x2B',
     ):
         if required not in kernel:
             fail("Sony start trace safety gate is missing " + required)
@@ -107,23 +107,35 @@ def check_sources(root):
     for displaced in ("addiu   $sp, $sp, -16", "sw      $s0, 0($sp)"):
         if displaced not in entry:
             fail("entry trace does not reproduce displaced instruction " + displaced)
-    if "jr      $t9" not in entry or "jr      $ra" not in exit_stub:
-        fail("Sony direct trace stubs do not resume/return without changing ra")
+    if "jr      $t9" not in entry or "jr      $t9" not in exit_stub:
+        fail("Sony RA trace stubs do not resume through validated addresses")
+    save_ra = entry.find("sw      $ra, %lo(zeroCtrlSonyModuleStartCallerRA)")
+    replace_ra = entry.find("lui     $ra, %hi(zeroCtrlSonyModuleStartExitTrace)")
+    if save_ra < 0 or replace_ra <= save_ra:
+        fail("Sony entry trace does not save caller ra before interposition")
+    if "lw      $t9, %lo(zeroCtrlSonyModuleStartCallerRA)" not in exit_stub:
+        fail("Sony exit trace does not resume at the saved caller ra")
     if "sw      $v0, %lo(zeroCtrlSonyModuleStartResult)" not in exit_stub:
         fail("Sony exit trace does not preserve the original result")
     if re.search(r"(?:addiu|addu|or|move|li)\s+\$v0", exit_stub):
         fail("Sony exit trace replaces the original result")
-    transaction = kernel.find("Transaction commit: all code sites")
+    transaction = kernel.find("Transaction commit: the complete entry interposition")
     install_end = kernel.find("trace->install = 1", transaction)
     if transaction < 0 or install_end <= transaction:
         fail("Sony direct trace transactional commit is missing")
-    if kernel[:transaction].count("_sw(trace->entry_replacement") != 0 or \
-            kernel[:transaction].count("_sw(trace->return_replacement") != 0:
-        fail("Sony direct trace writes code before all sites validate")
+    if kernel[:transaction].count("_sw(trace->entry_replacement") != 0:
+        fail("Sony RA trace writes entry code before all validation completes")
     commit = kernel[transaction:install_end]
-    if commit.count("_sw(trace->entry_replacement") != 2 or \
-            commit.count("_sw(trace->return_replacement") != 1:
-        fail("Sony direct trace does not commit exactly two entry and one return words")
+    if commit.count("_sw(trace->entry_replacement") != 2:
+        fail("Sony RA trace does not commit exactly two entry words")
+    if "return_replacement" in kernel or "return_addr" in kernel:
+        fail("obsolete Sony return-site patching remains enabled")
+    if "sceKernelDcacheWritebackInvalidateRange((const void *)start, 8)" not in commit or \
+            "sceKernelIcacheInvalidateRange((const void *)start, 8)" not in commit:
+        fail("Sony RA trace does not synchronize exactly its 8-byte entry patch")
+    if commit.count("sceKernelDcacheWritebackInvalidateRange") != 1 or \
+            commit.count("sceKernelIcacheInvalidateRange") != 1:
+        fail("Sony RA trace performs unexpected code-cache synchronization")
     if "mod->module_start_func =" in kernel:
         fail("Sony start trace still relies on metadata-pointer redirection")
     for stub, counter in zip(STUBS, COUNTERS):
@@ -209,12 +221,13 @@ def check_stub_object(stub_object):
     entry = function_body(disassembly, SONY_ENTRY_STUB)
     exit_stub = function_body(disassembly, SONY_EXIT_STUB)
     for symbol in ("zeroCtrlSonyModuleStartEntrySeen",
-            "zeroCtrlSonyModuleStartResume"):
+            "zeroCtrlSonyModuleStartResume", "zeroCtrlSonyModuleStartCallerRA",
+            "zeroCtrlSonyModuleStartExitTrace"):
         if not re.search(r"R_MIPS_HI16\s+" + symbol + r"\b", entry) or \
                 not re.search(r"R_MIPS_LO16\s+" + symbol + r"\b", entry):
             fail("Sony entry trace lacks relocations for " + symbol)
     for symbol in ("zeroCtrlSonyModuleStartResult",
-            "zeroCtrlSonyModuleStartReturnSeen"):
+            "zeroCtrlSonyModuleStartReturnSeen", "zeroCtrlSonyModuleStartCallerRA"):
         if not re.search(r"R_MIPS_HI16\s+" + symbol + r"\b", exit_stub) or \
                 not re.search(r"R_MIPS_LO16\s+" + symbol + r"\b", exit_stub):
             fail("Sony exit trace lacks relocations for " + symbol)

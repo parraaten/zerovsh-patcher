@@ -150,13 +150,13 @@ typedef struct {
 
 typedef struct {
     int enabled, registered, attempted, validation, install, cache_sync;
-    unsigned int original_addr, return_addr;
+    unsigned int original_addr;
     unsigned int entry_stub_addr, entry_stub_size;
     unsigned int exit_stub_addr, exit_stub_size;
-    unsigned int resume_slot_addr, entry_seen_addr, return_seen_addr;
+    unsigned int resume_slot_addr, caller_ra_slot_addr;
+    unsigned int entry_seen_addr, return_seen_addr;
     unsigned int result_addr;
-    unsigned int entry_original[2], entry_replacement[2];
-    unsigned int return_original[2], return_replacement[2];
+    unsigned int entry_original[3], entry_replacement[2];
     volatile int entry_seen, return_seen;
     int result;
     int return_snapshot_captured;
@@ -667,6 +667,7 @@ int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
 void zeroCtrlRegisterSonyStartTrace(unsigned int entry_addr,
         unsigned int entry_end_addr, unsigned int exit_addr,
         unsigned int exit_end_addr, unsigned int resume_slot_addr,
+        unsigned int caller_ra_slot_addr,
         unsigned int entry_seen_addr, unsigned int return_seen_addr,
         unsigned int result_addr) {
     SceModule2 *helper;
@@ -680,6 +681,7 @@ void zeroCtrlRegisterSonyStartTrace(unsigned int entry_addr,
             !zeroCtrlVshModuleRangeValid(helper, exit_addr,
                     exit_end_addr - exit_addr) ||
             !zeroCtrlVshModuleRangeValid(helper, resume_slot_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, caller_ra_slot_addr, 4) ||
             !zeroCtrlVshModuleRangeValid(helper, entry_seen_addr, 4) ||
             !zeroCtrlVshModuleRangeValid(helper, return_seen_addr, 4) ||
             !zeroCtrlVshModuleRangeValid(helper, result_addr, 4) ||
@@ -689,6 +691,7 @@ void zeroCtrlRegisterSonyStartTrace(unsigned int entry_addr,
     trace->exit_stub_addr = exit_addr;
     trace->exit_stub_size = exit_end_addr - exit_addr;
     trace->resume_slot_addr = resume_slot_addr;
+    trace->caller_ra_slot_addr = caller_ra_slot_addr;
     trace->entry_seen_addr = entry_seen_addr;
     trace->return_seen_addr = return_seen_addr;
     trace->result_addr = result_addr;
@@ -1733,24 +1736,19 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     trace->validation != observed_trace_validation ||
                     trace->install != observed_trace_install) {
                 snprintf(line, sizeof(line),
-                        "[sony-start-direct] attempted=%d validation=%d "
+                        "[sony-start-ra] attempted=%d validation=%d "
                         "install=%d cache_sync=%d original=0x%08X\n",
                         trace->attempted, trace->validation, trace->install,
                         trace->cache_sync, trace->original_addr);
                 zeroCtrlDiagnosticsText(line);
                 snprintf(line, sizeof(line),
-                        "[sony-start-entry] original_words=0x%08X,0x%08X "
-                        "replacement_words=0x%08X,0x%08X\n",
+                        "[sony-start-entry] original_words=0x%08X,0x%08X,0x%08X "
+                        "replacement_words=0x%08X,0x%08X resume=0x%08X "
+                        "exit_stub=0x%08X\n",
                         trace->entry_original[0], trace->entry_original[1],
-                        trace->entry_replacement[0], trace->entry_replacement[1]);
-                zeroCtrlDiagnosticsText(line);
-                snprintf(line, sizeof(line),
-                        "[sony-start-return] address=0x%08X "
-                        "original_words=0x%08X,0x%08X "
-                        "replacement_words=0x%08X,0x%08X\n",
-                        trace->return_addr, trace->return_original[0],
-                        trace->return_original[1], trace->return_replacement[0],
-                        trace->return_replacement[1]);
+                        trace->entry_original[2], trace->entry_replacement[0],
+                        trace->entry_replacement[1], trace->original_addr + 8,
+                        trace->exit_stub_addr);
                 zeroCtrlDiagnosticsText(line);
                 observed_trace_attempt = trace->attempted;
                 observed_trace_validation = trace->validation;
@@ -1865,23 +1863,21 @@ static void zeroCtrlInstallSonyStartTrace(SceModule2 *mod) {
     ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
     SceModule2 *helper;
     unsigned int start;
-    unsigned int return_addr = 0;
-    unsigned int return_count = 0;
-    unsigned int i;
 
-    if (!trace->enabled || !trace->registered || !mod ||
+    if (!trace->enabled || !trace->registered || model != 0 || !mod ||
             strcmp(mod->modname, "slide_plugin_module") != 0 ||
             sceKernelDevkitVersion() != 0x06060110 ||
-            mod->text_size < 0xFF8 || mod->text_addr > 0xFFFFFFFFU - 0xF98)
+            mod->text_size < 0xFA4 || mod->text_addr > 0xFFFFFFFFU - 0xF98)
         return;
     trace->attempted = 1;
     start = mod->module_start_func;
     trace->original_addr = start;
     if (start != mod->text_addr + 0xF98 || (start & 3) != 0 ||
-            !zeroCtrlVshModuleRangeValid(mod, start, 0x60)) return;
+            !zeroCtrlVshModuleRangeValid(mod, start, 12)) return;
 
     trace->entry_original[0] = _lw(start);
     trace->entry_original[1] = _lw(start + 4);
+    trace->entry_original[2] = _lw(start + 8);
     if ((trace->entry_original[0] >> 26) != 9 ||
             ((trace->entry_original[0] >> 21) & 0x1F) != 29 ||
             ((trace->entry_original[0] >> 16) & 0x1F) != 29 ||
@@ -1889,19 +1885,11 @@ static void zeroCtrlInstallSonyStartTrace(SceModule2 *mod) {
             (trace->entry_original[1] >> 26) != 0x2B ||
             ((trace->entry_original[1] >> 21) & 0x1F) != 29 ||
             ((trace->entry_original[1] >> 16) & 0x1F) != 16 ||
-            (trace->entry_original[1] & 0xFFFF) != 0) return;
-
-    for (i = 8; i < 0x60; i += 4) {
-        if (_lw(start + i) == 0x03E00008) {
-            return_addr = start + i;
-            return_count++;
-        }
-    }
-    if (return_count != 1 ||
-            !zeroCtrlVshModuleRangeValid(mod, return_addr, 8)) return;
-    trace->return_addr = return_addr;
-    trace->return_original[0] = _lw(return_addr);
-    trace->return_original[1] = _lw(return_addr + 4);
+            (trace->entry_original[1] & 0xFFFF) != 0 ||
+            (trace->entry_original[2] >> 26) != 0x2B ||
+            ((trace->entry_original[2] >> 21) & 0x1F) != 29 ||
+            ((trace->entry_original[2] >> 16) & 0x1F) != 31 ||
+            (trace->entry_original[2] & 0xFFFF) != 4) return;
 
     helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     if (!zeroCtrlVshModuleRangeValid(helper, trace->entry_stub_addr,
@@ -1909,45 +1897,41 @@ static void zeroCtrlInstallSonyStartTrace(SceModule2 *mod) {
             !zeroCtrlVshModuleRangeValid(helper, trace->exit_stub_addr,
                 trace->exit_stub_size) ||
             !zeroCtrlVshModuleRangeValid(helper, trace->resume_slot_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->caller_ra_slot_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->entry_seen_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->return_seen_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->result_addr, 4) ||
             ((start + 4) & 0xF0000000) !=
-                (trace->entry_stub_addr & 0xF0000000) ||
-            ((return_addr + 4) & 0xF0000000) !=
-                (trace->exit_stub_addr & 0xF0000000)) return;
+                (trace->entry_stub_addr & 0xF0000000)) return;
 
     trace->entry_replacement[0] = 0x08000000 |
             ((trace->entry_stub_addr >> 2) & 0x03FFFFFF);
     trace->entry_replacement[1] = 0;
-    trace->return_replacement[0] = 0x08000000 |
-            ((trace->exit_stub_addr >> 2) & 0x03FFFFFF);
-    trace->return_replacement[1] = trace->return_original[1];
     if ((((start + 4) & 0xF0000000) |
                 ((trace->entry_replacement[0] & 0x03FFFFFF) << 2)) !=
-                    trace->entry_stub_addr ||
-            (((return_addr + 4) & 0xF0000000) |
-                ((trace->return_replacement[0] & 0x03FFFFFF) << 2)) !=
-                    trace->exit_stub_addr) return;
+                    trace->entry_stub_addr) return;
     trace->validation = 1;
 
     _sw(start + 8, trace->resume_slot_addr);
+    _sw(0, trace->caller_ra_slot_addr);
     _sw(0, trace->entry_seen_addr);
     _sw(0, trace->return_seen_addr);
     _sw(0, trace->result_addr);
     sceKernelDcacheWritebackInvalidateRange(
             (const void *)trace->resume_slot_addr, 4);
     sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trace->caller_ra_slot_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
             (const void *)trace->entry_seen_addr, 4);
     sceKernelDcacheWritebackInvalidateRange(
             (const void *)trace->return_seen_addr, 4);
     sceKernelDcacheWritebackInvalidateRange((const void *)trace->result_addr, 4);
 
-    /* Transaction commit: all code sites and helper ranges validated above. */
+    /* Transaction commit: the complete entry interposition validated above. */
     _sw(trace->entry_replacement[0], start);
     _sw(trace->entry_replacement[1], start + 4);
-    _sw(trace->return_replacement[0], return_addr);
     sceKernelDcacheWritebackInvalidateRange((const void *)start, 8);
     sceKernelIcacheInvalidateRange((const void *)start, 8);
-    sceKernelDcacheWritebackInvalidateRange((const void *)return_addr, 4);
-    sceKernelIcacheInvalidateRange((const void *)return_addr, 4);
     trace->install = 1;
     trace->cache_sync = 1;
 }

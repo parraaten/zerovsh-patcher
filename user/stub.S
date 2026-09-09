@@ -61,6 +61,10 @@ zeroCtrlSonyModuleStartEntryTrace:
     lui     $t0, %hi(zeroCtrlSonyModuleStartEntrySeen)
     addiu   $t1, $zero, 1
     sw      $t1, %lo(zeroCtrlSonyModuleStartEntrySeen)($t0)
+    lui     $t0, %hi(zeroCtrlSonyModuleStartCallerRA)
+    sw      $ra, %lo(zeroCtrlSonyModuleStartCallerRA)($t0)
+    lui     $ra, %hi(zeroCtrlSonyModuleStartExitTrace)
+    addiu   $ra, $ra, %lo(zeroCtrlSonyModuleStartExitTrace)
     addiu   $sp, $sp, -16
     sw      $s0, 0($sp)
     lui     $t0, %hi(zeroCtrlSonyModuleStartResume)
@@ -80,7 +84,9 @@ zeroCtrlSonyModuleStartExitTrace:
     lui     $t0, %hi(zeroCtrlSonyModuleStartReturnSeen)
     addiu   $t1, $zero, 1
     sw      $t1, %lo(zeroCtrlSonyModuleStartReturnSeen)($t0)
-    jr      $ra
+    lui     $t0, %hi(zeroCtrlSonyModuleStartCallerRA)
+    lw      $t9, %lo(zeroCtrlSonyModuleStartCallerRA)($t0)
+    jr      $t9
     nop
 .globl zeroCtrlSonyModuleStartExitTraceEnd
 zeroCtrlSonyModuleStartExitTraceEnd:
@@ -90,6 +96,8 @@ zeroCtrlSonyModuleStartExitTraceEnd:
 .align 2
 .globl zeroCtrlSonyModuleStartResume
 zeroCtrlSonyModuleStartResume: .space 4
+.globl zeroCtrlSonyModuleStartCallerRA
+zeroCtrlSonyModuleStartCallerRA: .space 4
 .globl zeroCtrlSonyModuleStartEntrySeen
 zeroCtrlSonyModuleStartEntrySeen: .space 4
 .globl zeroCtrlSonyModuleStartReturnSeen

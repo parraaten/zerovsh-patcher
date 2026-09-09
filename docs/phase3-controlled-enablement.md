@@ -418,12 +418,16 @@ The exact opt-in `PSP1000SonyStartTrace=Enabled` installs only when diagnostics,
 the PSP-1000 SlidePlugin experiment, ClockAndCalendar-disabled state, 6.61, and
 `DangerousCaller58D4` all match. Hardware proved the earlier metadata-pointer
 installation but did not persist an entry marker, so the current control uses a
-transactional direct trace. It replaces the validated entry pair with `J`/NOP;
-the entry stub records entry, reproduces `addiu sp,sp,-16` and `sw s0,0(sp)`,
-then jumps to the natural body at `+8` without changing `ra`. The single
-validated return `jr ra` becomes a jump to an exit stub while its original delay
-slot remains untouched. The exit stub records unchanged `v0` and returns via
-the original `ra`. Entry, return, and result are fixed BSS evidence. Only the
+return-address interposition trace. Hardware already proved the prior direct
+return scan failed closed (`validation=0`, `install=0`) after recognizing the
+entry pair, so that crash is not attributed to the tracer. The replacement
+validates three prologue instructions but patches only the first two with
+`J`/NOP. The entry stub saves the incoming ModuleMgr `ra`, substitutes the exit
+stub address, reproduces `addiu sp,sp,-16` and `sw s0,0(sp)`, then jumps to the
+natural body at `+8`. Sony's untouched `sw ra,4(sp)` saves the interposed return.
+If Sony naturally restores and uses it, the exit stub records unchanged `v0`
+and jumps to the saved ModuleMgr caller address. No Sony return site is located
+or patched. Entry, return, and result are fixed BSS evidence. Only the
 deferred writer persists them. No memory query is made in either stub. When
 that writer first observes a return,
 it captures the nearest safe USER-partition snapshot; this is not an exact

@@ -94,6 +94,7 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
 void zeroCtrlRegisterSonyStartTrace(unsigned int entry_addr,
         unsigned int entry_end_addr, unsigned int exit_addr,
         unsigned int exit_end_addr, unsigned int resume_slot_addr,
+        unsigned int caller_ra_slot_addr,
         unsigned int entry_seen_addr, unsigned int return_seen_addr,
         unsigned int result_addr);
 void zeroCtrlSetLEDState(void);
@@ -141,6 +142,7 @@ extern void zeroCtrlSonyModuleStartEntryTraceEnd(void);
 extern void zeroCtrlSonyModuleStartExitTrace(void);
 extern void zeroCtrlSonyModuleStartExitTraceEnd(void);
 extern volatile unsigned int zeroCtrlSonyModuleStartResume;
+extern volatile unsigned int zeroCtrlSonyModuleStartCallerRA;
 extern volatile unsigned int zeroCtrlSonyModuleStartEntrySeen;
 extern volatile unsigned int zeroCtrlSonyModuleStartReturnSeen;
 extern volatile unsigned int zeroCtrlSonyModuleStartResult;
@@ -226,6 +228,7 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(unsigned int)zeroCtrlSonyModuleStartExitTrace,
 			(unsigned int)zeroCtrlSonyModuleStartExitTraceEnd,
 			(unsigned int)&zeroCtrlSonyModuleStartResume,
+			(unsigned int)&zeroCtrlSonyModuleStartCallerRA,
 			(unsigned int)&zeroCtrlSonyModuleStartEntrySeen,
 			(unsigned int)&zeroCtrlSonyModuleStartReturnSeen,
 			(unsigned int)&zeroCtrlSonyModuleStartResult);
