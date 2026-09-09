@@ -419,11 +419,12 @@ the actual link target and must not be interpreted as a dummy-function call.
 
 Real 6.61 PSP-1000 T1, T2, and T3 runs proved that `+0x13F6C`, `+0x14020`,
 and their combination each executed but did not cause a PRX/RCO request, probe,
-or start in the observed startup window. Modern T4 proved that the `+0x58D4`
-callsite patch installed, but its hit count remained zero in that window.
-Whether it executes later is still **HYPOTHESIS**; the older late crash does not
-prove execution. The writer now polls fixed state every 200 ms for 12 seconds,
-persists only transitions, and emits a final snapshot.
+or start in the observed startup window. Extended T4 subsequently **PROVED**
+that `+0x58D4` executes at roughly 6.8 seconds and is the smallest presently
+proven selective trigger for PRX request, probe, pre-start observation, and RCO
+request before the later crash. The writer polls fixed state every 200 ms for
+12 seconds, persists only transitions, and emits a final snapshot when VSH
+survives long enough.
 
 `DangerousGlobalPredicate6F84` is a separate, explicit reproduction mode. It
 validates the hardware-captured first two predicate instructions semantically:

@@ -51,3 +51,42 @@ zeroCtrlTrigger13F6CHits: .space 4
 zeroCtrlTrigger14020Hits: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
+
+.section .text
+.set noreorder
+.globl zeroCtrlSonyModuleStartWrapper
+.type zeroCtrlSonyModuleStartWrapper @function
+.ent zeroCtrlSonyModuleStartWrapper, 0
+zeroCtrlSonyModuleStartWrapper:
+    addiu   $sp, $sp, -16
+    sw      $ra, 12($sp)
+    lui     $t0, %hi(zeroCtrlSonyModuleStartEntrySeen)
+    addiu   $t1, $zero, 1
+    sw      $t1, %lo(zeroCtrlSonyModuleStartEntrySeen)($t0)
+    lui     $t0, %hi(zeroCtrlSonyModuleStartOriginal)
+    lw      $t9, %lo(zeroCtrlSonyModuleStartOriginal)($t0)
+    jalr    $t9
+    nop
+    lui     $t0, %hi(zeroCtrlSonyModuleStartResult)
+    sw      $v0, %lo(zeroCtrlSonyModuleStartResult)($t0)
+    lui     $t0, %hi(zeroCtrlSonyModuleStartReturnSeen)
+    addiu   $t1, $zero, 1
+    sw      $t1, %lo(zeroCtrlSonyModuleStartReturnSeen)($t0)
+    lw      $ra, 12($sp)
+    addiu   $sp, $sp, 16
+    jr      $ra
+    nop
+.globl zeroCtrlSonyModuleStartWrapperEnd
+zeroCtrlSonyModuleStartWrapperEnd:
+.end zeroCtrlSonyModuleStartWrapper
+
+.section .bss
+.align 2
+.globl zeroCtrlSonyModuleStartOriginal
+zeroCtrlSonyModuleStartOriginal: .space 4
+.globl zeroCtrlSonyModuleStartEntrySeen
+zeroCtrlSonyModuleStartEntrySeen: .space 4
+.globl zeroCtrlSonyModuleStartReturnSeen
+zeroCtrlSonyModuleStartReturnSeen: .space 4
+.globl zeroCtrlSonyModuleStartResult
+zeroCtrlSonyModuleStartResult: .space 4

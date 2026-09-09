@@ -99,11 +99,11 @@ recovery. Unknown selector strings safely behave as `Disabled`.
 ### D1 — known-dangerous caller `+0x58D4` (not routine testing)
 
 * **Config:** `PSP1000SlideTriggerMode = DangerousCaller58D4`.
-* **Known evidence:** modern T4 validated and installed the callsite, but its
-  hit count remained zero and no pipeline state changed in the former
-  three-second window. An older build later crashed after initially booting.
-  Whether `+0x58D4` executed after the old logging window is **HYPOTHESIS**, not
-  proven; repeat T4 with the 12-second observer before interpreting the crash.
+* **Hardware result:** extended T4 **PROVED** a `+0x58D4` hit near 6.8 seconds,
+  followed by PRX request, probe, pre-start handler observation, and RCO request
+  near 7.2 seconds before a crash. This is the smallest currently proven
+  selective native-pipeline trigger. `start=1` proves only pre-start handler
+  observation, not entry into or return from Sony's natural `module_start`.
 * **Use:** only if a later analysis has a specific reason to repeat it.
 * **Recovery:** mandatory recovery access; return selector to `Disabled`.
 * **Never use:** `DangerousCaller58D4_13F6C`,
@@ -175,3 +175,45 @@ four final hit counts, and final request/RCO/probe/start state. D2 additionally
 requires `[global6f84] validation=1 ... patch_applied=1 cache_sync=1`; a failed
 validation must leave `patch_applied=0`. Do not infer execution from patch
 application alone.
+
+### T8 — natural Sony `module_start` boundary
+
+Use only after the proven extended T4 path and retain recovery access:
+
+```ini
+[SlidePlugin]
+ClockAndCalendar = Disabled
+
+[Experimental]
+PSP1000SlidePlugin = Enabled
+PSP1000SlideTriggerMode = DangerousCaller58D4
+PSP1000Diagnostics = Enabled
+PSP1000SonyStartTrace = Enabled
+PSP1000SelectiveSlideTrigger58D4 = Disabled
+```
+
+Expected installation evidence is
+`[experiment] psp1000_sony_start_trace=enabled_natural`, followed by
+`[sony-start] attempted=1 validation=1 install=1 cache_sync=1`. The ordinary
+`caller_58d4_hit_count`, request, probe, pre-start `start`, and RCO breadcrumbs
+remain enabled. `start=1` still means only that the pre-start handler observed
+the module.
+
+The wrapper preserves `a0`, `a1`, and Sony's `gp`, calls the original runtime
+`module_start` address through `t9`, records its unchanged `v0`, and returns
+that same value. It performs no file I/O or memory query.
+
+Interpret results as follows:
+
+* **A — entered=1, returned=0, crash:** failure lies within Sony
+  `module_start`, its imported registration call, the internal function near
+  static `+0xFE8`, or a synchronous callback before return. Instrument those
+  internal boundaries next.
+* **B — entered=1, returned=1, result=0, later crash:** Sony natural
+  `module_start` completed successfully. Only then should the next experiment
+  consider BSMan/impose, PAF/page activation, and memory boundaries.
+* **C — entered=1, returned=1, result!=0:** classify that exact startup or
+  registration failure before adding any shim.
+
+If validation or installation is zero, no Sony code is redirected. Return the
+complete log and runtime module metadata rather than weakening validation.

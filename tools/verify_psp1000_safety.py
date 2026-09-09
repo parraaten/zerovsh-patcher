@@ -20,6 +20,8 @@ COUNTERS = (
     "zeroCtrlTrigger14020Hits",
     "zeroCtrlGlobalPredicate6F84Hits",
 )
+SONY_START_WRAPPER = "zeroCtrlSonyModuleStartWrapper"
+SONY_START_WRAPPER_END = "zeroCtrlSonyModuleStartWrapperEnd"
 
 
 def fail(message):
@@ -35,6 +37,8 @@ def check_sources(root):
         fail("dangerous trigger selector does not default to Disabled")
     if '"PSP1000Diagnostics", "Disabled"' not in kernel:
         fail("production diagnostics do not default to Disabled")
+    if '"PSP1000SonyStartTrace", "Disabled"' not in kernel:
+        fail("Sony module_start tracing does not default to Disabled")
     validation_marker = "Validation pass: no VSH write may occur in this loop."
     commit_marker = "Commit pass: selected callsites are all valid or none are written."
     validation_start = kernel.find(validation_marker)
@@ -76,6 +80,31 @@ def check_sources(root):
         fail("global PSP Go predicate patch is not explicitly disabled")
     if "% 64" not in build:
         fail("embedded helper ELF alignment check is missing")
+    for required in (
+        'strcmp(psp1000SonyStartTrace, "Enabled") == 0',
+        '"DangerousCaller58D4") == 0',
+        'strcmp(psp1000Diagnostics, "Enabled") == 0',
+        'strcmp(useSlide, "Disabled") == 0',
+        'mod->module_start_func = trace->wrapper_addr',
+    ):
+        if required not in kernel:
+            fail("Sony start trace safety gate is missing " + required)
+    wrapper_start = assembly.find(SONY_START_WRAPPER + ":")
+    wrapper_end = assembly.find(SONY_START_WRAPPER_END + ":", wrapper_start)
+    if wrapper_start < 0 or wrapper_end <= wrapper_start:
+        fail("Sony module_start assembly wrapper is missing")
+    wrapper = assembly[wrapper_start:wrapper_end]
+    if "zeroCtrlDiagnostics" in wrapper or "sceIo" in wrapper:
+        fail("Sony module_start wrapper performs loader-sensitive file logging")
+    if "$gp" in wrapper or re.search(r"\$(?:a0|a1)\s*,", wrapper):
+        fail("Sony module_start wrapper modifies gp or its original arguments")
+    if "jalr    $t9" not in wrapper:
+        fail("Sony module_start wrapper does not call the original function")
+    after_call = wrapper.split("jalr    $t9", 1)[1]
+    if "sw      $v0, %lo(zeroCtrlSonyModuleStartResult)" not in after_call:
+        fail("Sony module_start wrapper does not preserve the original result")
+    if re.search(r"(?:addiu|addu|or|move|li)\s+\$v0", after_call):
+        fail("Sony module_start wrapper replaces the original result")
     for stub, counter in zip(STUBS, COUNTERS):
         invocation = "CREATE_TRIGGER_STUB " + stub + ", " + counter
         if invocation not in assembly:
@@ -129,6 +158,9 @@ def check_elf(elf):
     for symbol in STUBS:
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing helper trigger stub symbol " + symbol)
+    for symbol in (SONY_START_WRAPPER, SONY_START_WRAPPER_END):
+        if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
+            fail("missing Sony module_start wrapper symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
     for symbol in STUBS:
         body = function_body(disassembly, symbol)

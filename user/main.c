@@ -91,6 +91,10 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int stub_14020, unsigned int counter_58d4,
         unsigned int counter_13f6c, unsigned int counter_14020,
         unsigned int global_stub, unsigned int global_counter);
+void zeroCtrlRegisterSonyStartTrace(unsigned int wrapper_addr,
+        unsigned int wrapper_end_addr, unsigned int original_slot_addr,
+        unsigned int entry_seen_addr, unsigned int return_seen_addr,
+        unsigned int result_addr);
 void zeroCtrlSetLEDState(void);
 void zeroCtrlSetBrightness(void);
 void zeroCtrlSetClockSpeed(void);
@@ -131,6 +135,12 @@ extern volatile unsigned int zeroCtrlTrigger13F6CHits;
 extern volatile unsigned int zeroCtrlTrigger14020Hits;
 extern int zeroCtrlGlobalPredicate6F84True(void);
 extern volatile unsigned int zeroCtrlGlobalPredicate6F84Hits;
+extern int zeroCtrlSonyModuleStartWrapper(SceSize args, void *argp);
+extern void zeroCtrlSonyModuleStartWrapperEnd(void);
+extern volatile unsigned int zeroCtrlSonyModuleStartOriginal;
+extern volatile unsigned int zeroCtrlSonyModuleStartEntrySeen;
+extern volatile unsigned int zeroCtrlSonyModuleStartReturnSeen;
+extern volatile unsigned int zeroCtrlSonyModuleStartResult;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -204,9 +214,16 @@ int OnModuleStart(SceModule2 *mod) {
        return previous ? previous(mod) : 0;
 }
 //OK
-int module_start(SceSize args UNUSED, void *argp UNUSED) {  	
+int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	model = zeroCtrlGetModel();
-	devkit = sceKernelDevkitVersion();	
+	devkit = sceKernelDevkitVersion();
+	zeroCtrlRegisterSonyStartTrace(
+			(unsigned int)zeroCtrlSonyModuleStartWrapper,
+			(unsigned int)zeroCtrlSonyModuleStartWrapperEnd,
+			(unsigned int)&zeroCtrlSonyModuleStartOriginal,
+			(unsigned int)&zeroCtrlSonyModuleStartEntrySeen,
+			(unsigned int)&zeroCtrlSonyModuleStartReturnSeen,
+			(unsigned int)&zeroCtrlSonyModuleStartResult);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        
 	return 0;

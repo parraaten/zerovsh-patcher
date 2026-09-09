@@ -86,6 +86,7 @@ static char ledDisable[128];
 static char psp1000SlidePlugin[16];
 static char psp1000SlideTriggerMode[40];
 static char psp1000Diagnostics[16];
+static char psp1000SonyStartTrace[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -146,6 +147,17 @@ typedef struct {
     int patch_applied;
     int cache_sync;
 } ZeroCtrlGlobalPredicateEvidence;
+
+typedef struct {
+    int enabled, registered, attempted, validation, install, cache_sync;
+    unsigned int original_addr, wrapper_addr, wrapper_size;
+    unsigned int original_slot_addr, entry_seen_addr, return_seen_addr;
+    unsigned int result_addr, original_words[4];
+    volatile int entry_seen, return_seen;
+    int result;
+    int return_snapshot_captured;
+    ZeroCtrlPartitionSnapshot return_observed;
+} ZeroCtrlSonyStartTrace;
 
 static const unsigned int vsh_predicate_offsets[VSH_PREDICATE_COUNT] = {
     0x6F04, 0x6F44, 0x6F84, 0x6FC4,
@@ -212,6 +224,7 @@ typedef struct {
     ZeroCtrlVshTriggerEvidence triggers[VSH_TRIGGER_COUNT];
     int global_predicate_enabled;
     ZeroCtrlGlobalPredicateEvidence global_predicate;
+    ZeroCtrlSonyStartTrace sony_start_trace;
     int vsh_target_in_text;
     int vsh_modid;
     unsigned int vsh_text_addr;
@@ -645,6 +658,32 @@ static void zeroCtrlScanVshGlobalReferences(unsigned int text_addr,
 
 int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
     return slide_diag.armed;
+}
+
+void zeroCtrlRegisterSonyStartTrace(unsigned int wrapper_addr,
+        unsigned int wrapper_end_addr, unsigned int original_slot_addr,
+        unsigned int entry_seen_addr, unsigned int return_seen_addr,
+        unsigned int result_addr) {
+    SceModule2 *helper;
+    ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+    if (!trace->enabled || trace->registered) return;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!helper || wrapper_end_addr <= wrapper_addr ||
+            wrapper_end_addr - wrapper_addr > 256 ||
+            !zeroCtrlVshModuleRangeValid(helper, wrapper_addr,
+                    wrapper_end_addr - wrapper_addr) ||
+            !zeroCtrlVshModuleRangeValid(helper, original_slot_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, entry_seen_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, return_seen_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, result_addr, 4) ||
+            (wrapper_addr & 3) != 0) return;
+    trace->wrapper_addr = wrapper_addr;
+    trace->wrapper_size = wrapper_end_addr - wrapper_addr;
+    trace->original_slot_addr = original_slot_addr;
+    trace->entry_seen_addr = entry_seen_addr;
+    trace->return_seen_addr = return_seen_addr;
+    trace->result_addr = result_addr;
+    trace->registered = 1;
 }
 
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
@@ -1608,6 +1647,19 @@ static unsigned int zeroCtrlReadGlobalPredicateHits(void) {
     return *(volatile unsigned int *)global->counter_addr;
 }
 
+static void zeroCtrlRefreshSonyStartTrace(void) {
+    SceModule2 *helper;
+    ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+    if (!trace->registered) return;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!zeroCtrlVshModuleRangeValid(helper, trace->entry_seen_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->return_seen_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->result_addr, 4)) return;
+    trace->entry_seen = *(volatile int *)trace->entry_seen_addr;
+    trace->return_seen = *(volatile int *)trace->return_seen_addr;
+    trace->result = *(volatile int *)trace->result_addr;
+}
+
 static void zeroCtrlWriteLateTransition(unsigned int elapsed,
         const char *name, unsigned int value) {
     char line[112];
@@ -1626,6 +1678,9 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_probe = 0;
     int observed_start = 0;
     unsigned int observed_global_hits = 0;
+    int observed_trace_attempt = 0, observed_trace_validation = 0;
+    int observed_trace_install = 0, observed_start_entry = 0;
+    int observed_start_return = 0;
     char line[160];
     unsigned int i;
 
@@ -1662,6 +1717,49 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 "rco_request");
         WRITE_LATE_FLAG(slide_diag.saw_probe, observed_probe, "probe");
         WRITE_LATE_FLAG(slide_diag.saw_start, observed_start, "start");
+        if (slide_diag.sony_start_trace.enabled) {
+            ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+            zeroCtrlRefreshSonyStartTrace();
+            if (trace->attempted != observed_trace_attempt ||
+                    trace->validation != observed_trace_validation ||
+                    trace->install != observed_trace_install) {
+                snprintf(line, sizeof(line),
+                        "[sony-start] attempted=%d validation=%d install=%d "
+                        "cache_sync=%d original=0x%08X wrapper=0x%08X\n",
+                        trace->attempted, trace->validation, trace->install,
+                        trace->cache_sync, trace->original_addr,
+                        trace->wrapper_addr);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[sony-start-code] words=0x%08X,0x%08X,0x%08X,0x%08X\n",
+                        trace->original_words[0], trace->original_words[1],
+                        trace->original_words[2], trace->original_words[3]);
+                zeroCtrlDiagnosticsText(line);
+                observed_trace_attempt = trace->attempted;
+                observed_trace_validation = trace->validation;
+                observed_trace_install = trace->install;
+            }
+            WRITE_LATE_FLAG(trace->entry_seen, observed_start_entry,
+                    "sony_module_start_entered");
+            if (trace->return_seen != observed_start_return) {
+                observed_start_return = trace->return_seen;
+                zeroCtrlWriteLateTransition(elapsed,
+                        "sony_module_start_returned",
+                        (unsigned int)observed_start_return);
+                if (observed_start_return) {
+                    zeroCtrlDiagnosticsCapturePartitions(
+                            &trace->return_observed);
+                    trace->return_snapshot_captured = 1;
+                    snprintf(line, sizeof(line),
+                            "[sony-start] result=0x%08X\n",
+                            (unsigned int)trace->result);
+                    zeroCtrlDiagnosticsText(line);
+                    zeroCtrlDiagnosticsWritePartitions(
+                            "sony_module_start_return_observed",
+                            &trace->return_observed);
+                }
+            }
+        }
 #undef WRITE_LATE_FLAG
         sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);
         elapsed += SLIDE_OBSERVATION_POLL_US;
@@ -1683,6 +1781,17 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             slide_diag.saw_rco_request, slide_diag.saw_probe,
             slide_diag.saw_start);
     zeroCtrlDiagnosticsText(line);
+    if (slide_diag.sony_start_trace.enabled) {
+        ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+        zeroCtrlRefreshSonyStartTrace();
+        snprintf(line, sizeof(line),
+                "[sony-start] final attempted=%d validation=%d install=%d "
+                "cache_sync=%d entered=%d returned=%d result=0x%08X\n",
+                trace->attempted, trace->validation, trace->install,
+                trace->cache_sync, trace->entry_seen, trace->return_seen,
+                (unsigned int)trace->result);
+        zeroCtrlDiagnosticsText(line);
+    }
 
     zeroCtrlWriteVshSlideEvidence();
     if (slide_diag.saw_request) zeroCtrlDiagnosticsText("[event] slide_request_seen\n");
@@ -1735,6 +1844,50 @@ static int zeroCtrlCreateSlideDiagnosticsThread(void) {
     return result;
 }
 
+static void zeroCtrlInstallSonyStartTrace(SceModule2 *mod) {
+    ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+    unsigned int start, i, jal_count = 0, return_count = 0;
+    SceModule2 *helper;
+    if (!trace->enabled || !trace->registered || !mod ||
+            strcmp(mod->modname, "slide_plugin_module") != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            mod->text_size < 0xFF8 || mod->text_addr > 0xFFFFFFFFU - 0xF98)
+        return;
+    trace->attempted = 1;
+    start = mod->module_start_func;
+    trace->original_addr = start;
+    if (start != mod->text_addr + 0xF98 || (start & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(mod, start, 0x60)) return;
+    for (i = 0; i < 0x60; i += 4) {
+        unsigned int word = _lw(start + i);
+        if (i < sizeof(trace->original_words))
+            trace->original_words[i / 4] = word;
+        if ((word >> 26) == 3) jal_count++;
+        if (word == 0x03E00008) return_count++;
+    }
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (jal_count < 2 || return_count == 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, trace->wrapper_addr,
+                    trace->wrapper_size)) return;
+    trace->validation = 1;
+    _sw(start, trace->original_slot_addr);
+    _sw(0, trace->entry_seen_addr);
+    _sw(0, trace->return_seen_addr);
+    _sw(0, trace->result_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trace->original_slot_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trace->entry_seen_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trace->return_seen_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange((const void *)trace->result_addr, 4);
+    mod->module_start_func = trace->wrapper_addr;
+    sceKernelDcacheWritebackInvalidateRange(&mod->module_start_func,
+            sizeof(mod->module_start_func));
+    trace->install = 1;
+    trace->cache_sync = 1;
+}
+
 int OnModuleStart(SceModule2 *mod) {
         zeroCtrlWriteDebug("Module: %s\n", mod->modname);
 
@@ -1750,6 +1903,7 @@ int OnModuleStart(SceModule2 *mod) {
                 slide_diag.previous_handler_returned = 1;
                 slide_diag.module_start_addr = mod->module_start_func;
                 slide_diag.elf_entry_addr = mod->entry_addr;
+                zeroCtrlInstallSonyStartTrace(mod);
                 slide_diag.start_callback_returning = 1;
                 slide_diag.saw_start = 1;
                 return previous_result;
@@ -2053,6 +2207,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			psp1000SlideTriggerMode, sizeof(psp1000SlideTriggerMode), config);
 	ini_gets("Experimental", "PSP1000Diagnostics", "Disabled",
 			psp1000Diagnostics, sizeof(psp1000Diagnostics), config);
+	ini_gets("Experimental", "PSP1000SonyStartTrace", "Disabled",
+			psp1000SonyStartTrace, sizeof(psp1000SonyStartTrace), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -2071,6 +2227,12 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			!slide_diag.global_predicate_enabled ?
 			zeroCtrlParseTriggerMode(psp1000SlideTriggerMode) :
 			ZERO_TRIGGER_DISABLED;
+		slide_diag.sony_start_trace.enabled =
+			devkit == 0x06060110 &&
+			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
+			strcmp(psp1000SonyStartTrace, "Enabled") == 0 &&
+			strcmp(psp1000SlideTriggerMode,
+					"DangerousCaller58D4") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,
@@ -2102,6 +2264,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 					"[experiment] global_predicate_6f84_patch=disabled\n"
 					"[experiment] psp1000_vsh_slide_trigger=disabled_control\n");
 		}
+		if (slide_diag.sony_start_trace.enabled)
+			zeroCtrlDiagnosticsText(
+					"[experiment] psp1000_sony_start_trace=enabled_natural\n");
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");
 	
@@ -2117,7 +2282,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	zeroCtrlSetSlideState(ZERO_SLIDE_STOPPED);
 			
 	//Cool animation after reset vsh with no wallpaper enabled
-	set_registry_value("/CONFIG/SYSTEM", "slide_welcome", 1);	
+	if (!slide_diag.sony_start_trace.enabled)
+		set_registry_value("/CONFIG/SYSTEM", "slide_welcome", 1);
 	
 	if (slide_diag.armed && strcmp(psp1000Diagnostics, "Enabled") == 0) {
 		zeroCtrlDiagnosticsEvent("slide_diagnostic_thread_start",

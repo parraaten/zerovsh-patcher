@@ -405,3 +405,22 @@ trusted VSH segments, validates NID and function-stub arrays, and structurally
 matches runtime stub `+0x3F970` to its library and NID. It scans callers of
 `+0x66E0` with the existing relocation-safe algorithm so their `a0/a1` setup can
 be analyzed. No import is called and VSH code/state remains untouched.
+
+## Natural Sony module_start boundary trace
+
+Extended real PSP-1000 T4 evidence now proves the ordered native pipeline:
+`+0x58D4` forced true, PRX request, LoadCore probe, pre-start handler, RCO
+request, then a later crash. The `saw_start` breadcrumb is only **PROVEN**
+evidence that the pre-start handler observed `slide_plugin_module`; it does not
+prove Sony's natural body entered or returned.
+
+The exact opt-in `PSP1000SonyStartTrace=Enabled` installs only when diagnostics,
+the PSP-1000 SlidePlugin experiment, ClockAndCalendar-disabled state, 6.61, and
+`DangerousCaller58D4` all match. It changes the runtime module-start metadata to
+a validated helper assembly wrapper; no Sony instruction is overwritten. The
+wrapper preserves arguments and Sony `gp`, calls the original address through
+`t9`, and returns the original result unchanged. Entry, return, and result are
+fixed BSS evidence. Only the deferred writer persists them. No memory query is
+made in the loader-sensitive wrapper. When that writer first observes a return,
+it captures the nearest safe USER-partition snapshot; this is not an exact
+in-wrapper interval measurement.
