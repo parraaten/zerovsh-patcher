@@ -194,25 +194,30 @@ PSP1000SelectiveSlideTrigger58D4 = Disabled
 
 Expected installation evidence is
 `[experiment] psp1000_sony_start_trace=enabled_natural`, followed by
-`[sony-start] attempted=1 validation=1 install=1 cache_sync=1`. The ordinary
+`[sony-start-direct] attempted=1 validation=1 install=1 cache_sync=1`, plus
+`[sony-start-entry]` and `[sony-start-return]` original/replacement evidence. The ordinary
 `caller_58d4_hit_count`, request, probe, pre-start `start`, and RCO breadcrumbs
 remain enabled. `start=1` still means only that the pre-start handler observed
 the module.
 
-The wrapper preserves `a0`, `a1`, and Sony's `gp`, calls the original runtime
-`module_start` address through `t9`, records its unchanged `v0`, and returns
-that same value. It performs no file I/O or memory query.
+The entry stub preserves `a0`, `a1`, `gp`, and `ra`, reproduces both displaced
+prologue instructions, and resumes at original `module_start + 8`. The exit
+stub records `v0` without changing it and returns through Sony's original `ra`.
+Neither stub performs file I/O or a memory query.
 
 Interpret results as follows:
 
-* **A — entered=1, returned=0, crash:** failure lies within Sony
+* **A — entered=0, crash after validated installation:** determine whether
+  ModuleMgr invokes another entry path; do not infer that the traced function
+  ran.
+* **B — entered=1, returned=0, crash:** failure lies within Sony
   `module_start`, its imported registration call, the internal function near
   static `+0xFE8`, or a synchronous callback before return. Instrument those
   internal boundaries next.
-* **B — entered=1, returned=1, result=0, later crash:** Sony natural
+* **C — entered=1, returned=1, result=0, later crash:** Sony natural
   `module_start` completed successfully. Only then should the next experiment
   consider BSMan/impose, PAF/page activation, and memory boundaries.
-* **C — entered=1, returned=1, result!=0:** classify that exact startup or
+* **D — entered=1, returned=1, result!=0:** classify that exact startup or
   registration failure before adding any shim.
 
 If validation or installation is zero, no Sony code is redirected. Return the

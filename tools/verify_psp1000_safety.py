@@ -20,8 +20,10 @@ COUNTERS = (
     "zeroCtrlTrigger14020Hits",
     "zeroCtrlGlobalPredicate6F84Hits",
 )
-SONY_START_WRAPPER = "zeroCtrlSonyModuleStartWrapper"
-SONY_START_WRAPPER_END = "zeroCtrlSonyModuleStartWrapperEnd"
+SONY_ENTRY_STUB = "zeroCtrlSonyModuleStartEntryTrace"
+SONY_ENTRY_STUB_END = "zeroCtrlSonyModuleStartEntryTraceEnd"
+SONY_EXIT_STUB = "zeroCtrlSonyModuleStartExitTrace"
+SONY_EXIT_STUB_END = "zeroCtrlSonyModuleStartExitTraceEnd"
 
 
 def fail(message):
@@ -85,26 +87,45 @@ def check_sources(root):
         '"DangerousCaller58D4") == 0',
         'strcmp(psp1000Diagnostics, "Enabled") == 0',
         'strcmp(useSlide, "Disabled") == 0',
-        'mod->module_start_func = trace->wrapper_addr',
+        'trace->return_replacement[1] = trace->return_original[1]',
     ):
         if required not in kernel:
             fail("Sony start trace safety gate is missing " + required)
-    wrapper_start = assembly.find(SONY_START_WRAPPER + ":")
-    wrapper_end = assembly.find(SONY_START_WRAPPER_END + ":", wrapper_start)
-    if wrapper_start < 0 or wrapper_end <= wrapper_start:
-        fail("Sony module_start assembly wrapper is missing")
-    wrapper = assembly[wrapper_start:wrapper_end]
-    if "zeroCtrlDiagnostics" in wrapper or "sceIo" in wrapper:
-        fail("Sony module_start wrapper performs loader-sensitive file logging")
-    if "$gp" in wrapper or re.search(r"\$(?:a0|a1)\s*,", wrapper):
-        fail("Sony module_start wrapper modifies gp or its original arguments")
-    if "jalr    $t9" not in wrapper:
-        fail("Sony module_start wrapper does not call the original function")
-    after_call = wrapper.split("jalr    $t9", 1)[1]
-    if "sw      $v0, %lo(zeroCtrlSonyModuleStartResult)" not in after_call:
-        fail("Sony module_start wrapper does not preserve the original result")
-    if re.search(r"(?:addiu|addu|or|move|li)\s+\$v0", after_call):
-        fail("Sony module_start wrapper replaces the original result")
+    entry_start = assembly.find(SONY_ENTRY_STUB + ":")
+    entry_end = assembly.find(SONY_ENTRY_STUB_END + ":", entry_start)
+    exit_start = assembly.find(SONY_EXIT_STUB + ":")
+    exit_end = assembly.find(SONY_EXIT_STUB_END + ":", exit_start)
+    if min(entry_start, entry_end, exit_start, exit_end) < 0:
+        fail("Sony direct start trace assembly stubs are missing")
+    entry = assembly[entry_start:entry_end]
+    exit_stub = assembly[exit_start:exit_end]
+    if any(token in entry + exit_stub for token in
+            ("zeroCtrlDiagnostics", "sceIo", "$gp", "jal ", "jalr")):
+        fail("Sony direct start trace stubs use logging, gp, or calls")
+    if re.search(r"\$(?:a0|a1)\s*,", entry + exit_stub):
+        fail("Sony direct start trace stubs modify original arguments")
+    for displaced in ("addiu   $sp, $sp, -16", "sw      $s0, 0($sp)"):
+        if displaced not in entry:
+            fail("entry trace does not reproduce displaced instruction " + displaced)
+    if "jr      $t9" not in entry or "jr      $ra" not in exit_stub:
+        fail("Sony direct trace stubs do not resume/return without changing ra")
+    if "sw      $v0, %lo(zeroCtrlSonyModuleStartResult)" not in exit_stub:
+        fail("Sony exit trace does not preserve the original result")
+    if re.search(r"(?:addiu|addu|or|move|li)\s+\$v0", exit_stub):
+        fail("Sony exit trace replaces the original result")
+    transaction = kernel.find("Transaction commit: all code sites")
+    install_end = kernel.find("trace->install = 1", transaction)
+    if transaction < 0 or install_end <= transaction:
+        fail("Sony direct trace transactional commit is missing")
+    if kernel[:transaction].count("_sw(trace->entry_replacement") != 0 or \
+            kernel[:transaction].count("_sw(trace->return_replacement") != 0:
+        fail("Sony direct trace writes code before all sites validate")
+    commit = kernel[transaction:install_end]
+    if commit.count("_sw(trace->entry_replacement") != 2 or \
+            commit.count("_sw(trace->return_replacement") != 1:
+        fail("Sony direct trace does not commit exactly two entry and one return words")
+    if "mod->module_start_func =" in kernel:
+        fail("Sony start trace still relies on metadata-pointer redirection")
     for stub, counter in zip(STUBS, COUNTERS):
         invocation = "CREATE_TRIGGER_STUB " + stub + ", " + counter
         if invocation not in assembly:
@@ -158,7 +179,8 @@ def check_elf(elf):
     for symbol in STUBS:
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing helper trigger stub symbol " + symbol)
-    for symbol in (SONY_START_WRAPPER, SONY_START_WRAPPER_END):
+    for symbol in (SONY_ENTRY_STUB, SONY_ENTRY_STUB_END,
+            SONY_EXIT_STUB, SONY_EXIT_STUB_END):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing Sony module_start wrapper symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
@@ -184,6 +206,18 @@ def check_stub_object(stub_object):
             fail(symbol + " has no HI16 relocation to its dedicated counter")
         if len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
             fail(symbol + " does not have two LO16 counter relocations")
+    entry = function_body(disassembly, SONY_ENTRY_STUB)
+    exit_stub = function_body(disassembly, SONY_EXIT_STUB)
+    for symbol in ("zeroCtrlSonyModuleStartEntrySeen",
+            "zeroCtrlSonyModuleStartResume"):
+        if not re.search(r"R_MIPS_HI16\s+" + symbol + r"\b", entry) or \
+                not re.search(r"R_MIPS_LO16\s+" + symbol + r"\b", entry):
+            fail("Sony entry trace lacks relocations for " + symbol)
+    for symbol in ("zeroCtrlSonyModuleStartResult",
+            "zeroCtrlSonyModuleStartReturnSeen"):
+        if not re.search(r"R_MIPS_HI16\s+" + symbol + r"\b", exit_stub) or \
+                not re.search(r"R_MIPS_LO16\s+" + symbol + r"\b", exit_stub):
+            fail("Sony exit trace lacks relocations for " + symbol)
 
 
 def main():

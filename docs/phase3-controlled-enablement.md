@@ -416,11 +416,15 @@ prove Sony's natural body entered or returned.
 
 The exact opt-in `PSP1000SonyStartTrace=Enabled` installs only when diagnostics,
 the PSP-1000 SlidePlugin experiment, ClockAndCalendar-disabled state, 6.61, and
-`DangerousCaller58D4` all match. It changes the runtime module-start metadata to
-a validated helper assembly wrapper; no Sony instruction is overwritten. The
-wrapper preserves arguments and Sony `gp`, calls the original address through
-`t9`, and returns the original result unchanged. Entry, return, and result are
-fixed BSS evidence. Only the deferred writer persists them. No memory query is
-made in the loader-sensitive wrapper. When that writer first observes a return,
+`DangerousCaller58D4` all match. Hardware proved the earlier metadata-pointer
+installation but did not persist an entry marker, so the current control uses a
+transactional direct trace. It replaces the validated entry pair with `J`/NOP;
+the entry stub records entry, reproduces `addiu sp,sp,-16` and `sw s0,0(sp)`,
+then jumps to the natural body at `+8` without changing `ra`. The single
+validated return `jr ra` becomes a jump to an exit stub while its original delay
+slot remains untouched. The exit stub records unchanged `v0` and returns via
+the original `ra`. Entry, return, and result are fixed BSS evidence. Only the
+deferred writer persists them. No memory query is made in either stub. When
+that writer first observes a return,
 it captures the nearest safe USER-partition snapshot; this is not an exact
 in-wrapper interval measurement.
