@@ -189,6 +189,10 @@ extern void zeroCtrlSlidePrefixPafReturnTrace(void);
 extern void zeroCtrlSlidePrefixPafReturnTraceEnd(void);
 extern volatile unsigned int zeroCtrlSlidePrefixPafTarget;
 extern volatile unsigned int zeroCtrlSlidePrefixPafRA;
+extern volatile unsigned int zeroCtrlSlidePrefixPafCompatMode;
+extern volatile unsigned int zeroCtrlSlidePrefixPafNaturalResult;
+extern volatile unsigned int zeroCtrlSlidePrefixPafSubstitutionHits;
+extern volatile unsigned int zeroCtrlSlidePrefixPafReturnHits;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -361,6 +365,14 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlSlidePrefixPafTarget;
 	bsmanClosedRegistration.prefix_paf_ra_addr =
 			(u32)&zeroCtrlSlidePrefixPafRA;
+	bsmanClosedRegistration.prefix_paf_compat_mode_addr =
+			(u32)&zeroCtrlSlidePrefixPafCompatMode;
+	bsmanClosedRegistration.prefix_paf_natural_result_addr =
+			(u32)&zeroCtrlSlidePrefixPafNaturalResult;
+	bsmanClosedRegistration.prefix_paf_substitution_hits_addr =
+			(u32)&zeroCtrlSlidePrefixPafSubstitutionHits;
+	bsmanClosedRegistration.prefix_paf_return_hits_addr =
+			(u32)&zeroCtrlSlidePrefixPafReturnHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

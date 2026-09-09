@@ -91,6 +91,7 @@ static char psp1000Diagnostics[16];
 static char psp1000SonyStartTrace[16];
 static char psp1000BSManClosedShim[16];
 static char psp1000ActivationTrace[16];
+static char psp1000PafPresentCompat[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -221,6 +222,7 @@ typedef struct {
     unsigned int stub_form, syscall_code;
     int closed_value;
     int activation_enabled, activation_validation, activation_install;
+    int paf_compat_enabled;
     int activation_cache_sync;
     unsigned int activation_addr, activation_original[2];
     unsigned int activation_replacement[2];
@@ -241,6 +243,10 @@ typedef struct {
     unsigned int prefix_paf_call_leaf_addr, prefix_paf_call_leaf_size;
     unsigned int prefix_paf_return_leaf_addr, prefix_paf_return_leaf_size;
     unsigned int prefix_paf_target_addr, prefix_paf_ra_addr;
+    unsigned int prefix_paf_compat_mode_addr;
+    unsigned int prefix_paf_natural_result_addr;
+    unsigned int prefix_paf_substitution_hits_addr;
+    unsigned int prefix_paf_return_hits_addr;
     unsigned int prefix_original[8], prefix_replacement[4];
 } ZeroCtrlBSManEvidence;
 
@@ -961,7 +967,15 @@ void zeroCtrlRegisterBSManClosedShim(
                 copied.prefix_paf_return_leaf_end_addr -
                     copied.prefix_paf_return_leaf_addr) ||
             !zeroCtrlVshModuleRangeValid(helper, copied.prefix_paf_target_addr, 4) ||
-            !zeroCtrlVshModuleRangeValid(helper, copied.prefix_paf_ra_addr, 4))
+            !zeroCtrlVshModuleRangeValid(helper, copied.prefix_paf_ra_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                copied.prefix_paf_compat_mode_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                copied.prefix_paf_natural_result_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                copied.prefix_paf_substitution_hits_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                copied.prefix_paf_return_hits_addr, 4))
         return;
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -1010,6 +1024,12 @@ void zeroCtrlRegisterBSManClosedShim(
             copied.prefix_paf_return_leaf_addr;
     bsman->prefix_paf_target_addr = copied.prefix_paf_target_addr;
     bsman->prefix_paf_ra_addr = copied.prefix_paf_ra_addr;
+    bsman->prefix_paf_compat_mode_addr = copied.prefix_paf_compat_mode_addr;
+    bsman->prefix_paf_natural_result_addr =
+            copied.prefix_paf_natural_result_addr;
+    bsman->prefix_paf_substitution_hits_addr =
+            copied.prefix_paf_substitution_hits_addr;
+    bsman->prefix_paf_return_hits_addr = copied.prefix_paf_return_hits_addr;
     bsman->registered = 1;
 }
 
@@ -2062,6 +2082,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_activation_hits = 0, observed_bsman_call_hits = 0;
     unsigned int observed_trace_stage = 0, observed_prefix_mask = 0;
     unsigned int observed_prefix_counts[6] = { 0, 0, 0, 0, 0, 0 };
+    unsigned int observed_paf_returns = 0;
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
     char line[256];
@@ -2289,6 +2310,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     bsman->trace_stage_addr);
             unsigned int prefix_mask = zeroCtrlReadHelperCounter(
                     bsman->prefix_path_mask_addr);
+            unsigned int paf_substitutions = zeroCtrlReadHelperCounter(
+                    bsman->prefix_paf_substitution_hits_addr);
+            unsigned int paf_returns = zeroCtrlReadHelperCounter(
+                    bsman->prefix_paf_return_hits_addr);
             if (stage != observed_trace_stage) {
                 observed_trace_stage = stage;
                 zeroCtrlWriteLateTransition(elapsed,
@@ -2309,6 +2334,16 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 snprintf(line, sizeof(line),
                         "[late] elapsed_us=%u slide_prefix_path_mask=0x%03X\n",
                         elapsed, prefix_mask);
+                zeroCtrlDiagnosticsText(line);
+            }
+            if (paf_returns != observed_paf_returns) {
+                unsigned int natural_result = zeroCtrlReadHelperCounter(
+                        bsman->prefix_paf_natural_result_addr);
+                observed_paf_returns = paf_returns;
+                snprintf(line, sizeof(line),
+                        "[late] elapsed_us=%u paf_ed83bbcf_natural=0x%08X "
+                        "return_count=%u zero_to_one_count=%u\n",
+                        elapsed, natural_result, paf_returns, paf_substitutions);
                 zeroCtrlDiagnosticsText(line);
             }
             {
@@ -2766,6 +2801,11 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         _sw(0, bsman->prefix_path_mask_addr);
         _sw(prefix_paf_stub, bsman->prefix_paf_target_addr);
         _sw(0, bsman->prefix_paf_ra_addr);
+        _sw(bsman->paf_compat_enabled ? 1 : 0,
+                bsman->prefix_paf_compat_mode_addr);
+        _sw(0, bsman->prefix_paf_natural_result_addr);
+        _sw(0, bsman->prefix_paf_substitution_hits_addr);
+        _sw(0, bsman->prefix_paf_return_hits_addr);
         for (pc = 0; pc < 6; pc++)
             _sw(0, bsman->prefix_counter_addr[pc]);
         sceKernelDcacheWritebackInvalidateRange(
@@ -2792,6 +2832,14 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 (const void *)bsman->prefix_paf_target_addr, 4);
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)bsman->prefix_paf_ra_addr, 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->prefix_paf_compat_mode_addr, 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->prefix_paf_natural_result_addr, 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->prefix_paf_substitution_hits_addr, 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->prefix_paf_return_hits_addr, 4);
         for (pc = 0; pc < 6; pc++)
             sceKernelDcacheWritebackInvalidateRange(
                     (const void *)bsman->prefix_counter_addr[pc], 4);
@@ -3177,6 +3225,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			psp1000BSManClosedShim, sizeof(psp1000BSManClosedShim), config);
 	ini_gets("Experimental", "PSP1000ActivationTrace", "Disabled",
 			psp1000ActivationTrace, sizeof(psp1000ActivationTrace), config);
+	ini_gets("Experimental", "PSP1000PafPresentCompat", "Disabled",
+			psp1000PafPresentCompat, sizeof(psp1000PafPresentCompat), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -3214,6 +3264,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			strcmp(psp1000BSManClosedShim, "Disabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0;
+		slide_diag.bsman.paf_compat_enabled =
+			slide_diag.bsman.activation_enabled &&
+			strcmp(psp1000PafPresentCompat, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,
@@ -3254,6 +3307,10 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		if (slide_diag.bsman.activation_enabled)
 			zeroCtrlDiagnosticsText(
 					"[experiment] psp1000_activation_trace=enabled_natural\n");
+		if (slide_diag.bsman.paf_compat_enabled)
+			zeroCtrlDiagnosticsText(
+					"[experiment] psp1000_paf_present_compat="
+					"callsite_only_zero_to_one\n");
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");
 	

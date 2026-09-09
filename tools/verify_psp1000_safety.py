@@ -131,6 +131,7 @@ def check_sources(root):
     registration_header = (root / "kernel/sony_start_trace.h").read_text()
     assembly = (root / "user/stub.S").read_text()
     build = (root / "build_linux.sh").read_text()
+    sample_config = (root / "bin/zerovsh.ini").read_text()
     if "PSP_EXPORT_FUNC_NID(zeroCtrlRegisterBSManClosedShim, 0x1337357C)" \
             not in kernel_exports:
         fail("kernel BSMan registration export NID is missing or changed")
@@ -233,6 +234,11 @@ def check_sources(root):
         '"PSP1000ActivationTrace", "Disabled"',
         'strcmp(psp1000ActivationTrace, "Enabled") == 0',
         'strcmp(psp1000BSManClosedShim, "Disabled") == 0',
+        '"PSP1000PafPresentCompat", "Disabled"',
+        'slide_diag.bsman.activation_enabled &&',
+        'strcmp(psp1000PafPresentCompat, "Enabled") == 0',
+        '_sw(bsman->paf_compat_enabled ? 1 : 0,',
+        'psp1000_paf_present_compat=',
         '"slide_activation_entry_count"',
         '"slide_bsman_call_boundary_count"',
         '"slide_last_stage"',
@@ -286,16 +292,21 @@ def check_sources(root):
                 ("$gp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
             fail(symbol + " uses gp, calls, I/O, or allocation")
         if symbol == "zeroCtrlSlidePrefixPafReturnTrace" and \
-                ("$v0" in leaf or
+                ("sw      $v0, %lo(zeroCtrlSlidePrefixPafNaturalResult)" not in leaf or
+                 "beqz    $t2, 7f" not in leaf or
+                 "bnez    $v0, 7f" not in leaf or
+                 "addiu   $v0, $zero, 1" not in leaf or
                  "lw      $ra, %lo(zeroCtrlSlidePrefixPafRA)" not in leaf or
                  "jr      $ra" not in leaf):
-            fail("prefix PAF return trace does not preserve v0 and restore ra")
+            fail("prefix PAF return trace does not isolate zero-to-one and restore ra")
     fast_poll = kernel[kernel.find(
         "if (slide_diag.bsman.activation_enabled)"):kernel.find(
             "#undef WRITE_LATE_FLAG")]
     if "zeroCtrlDiagnosticsMemory" in fast_poll or \
             "zeroCtrlDiagnosticsCapturePartitions" in fast_poll:
         fail("activation fast-poll path performs a memory query")
+    if "PSP1000PafPresentCompat = Disabled" not in sample_config:
+        fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
     if stub_validation < 0 or caller_proof <= stub_validation or \
@@ -574,10 +585,14 @@ def check_elf(elf):
         if re.search(r"\bgp\b|\bjalr?\b", prefix_trace):
             fail(symbol + " uses gp or a call")
         if symbol == "zeroCtrlSlidePrefixPafReturnTrace" and \
-                (re.search(r"\bv0\b", prefix_trace) or
+                (not re.search(r"\bsw\s+v0,", prefix_trace) or
+                 not re.search(r"\bbnez\s+v0,", prefix_trace) or
+                 not re.search(
+                     r"\b(?:li\s+v0,\s*1|addiu\s+v0,\s*zero,\s*1)\b",
+                     prefix_trace) or
                  not re.search(r"\blw\s+ra,", prefix_trace) or
                  not re.search(r"\bjr\s+ra\b", prefix_trace)):
-            fail("prefix PAF return trace does not preserve v0 and restore ra")
+            fail("prefix PAF return trace does not isolate zero-to-one and restore ra")
 
 
 def check_stub_object(stub_object):

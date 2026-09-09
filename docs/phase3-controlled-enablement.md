@@ -759,3 +759,65 @@ The safety verifier independently checks the research PRX words and decodes
 all instructions in those continuation ranges to reject any read of the four
 scratch registers. This correction adds no breadcrumb or compatibility
 behavior; it only makes the existing T11 transaction match the proven Sony CFG.
+
+### T11 path result and callsite-only PAF boolean control
+
+The corrected T11 run **proved on PSP-1000 6.61** that validation and
+installation both succeed and that all four observed activations take exactly
+the same prefix path: entry, return from the `+0x16EC` global getter, entry and
+return of `scePaf` NID `0xED83BBCF`, natural result zero, then the immediate
+Sony epilogue. The cumulative mask was `0x007`; the relocated flag, second PAF
+call, BSMan, and later activation work were never observed.
+
+The callsite provides these semantic bounds:
+
+* the activation argument in `a0` is saved to `s1` at `+0x930C`; no argument
+  register is prepared between entry and the PAF JAL, so the call is not passed
+  the getter result as an ordinary argument;
+* the getter result is copied to saved register `s0` by the unchanged PAF JAL
+  delay slot, independently of the PAF return value;
+* the PAF return in `v0` is consumed immediately and solely by
+  `beq v0,zero,+0x9354`; no magnitude, sign, pointer, or error-code operation
+  occurs before the return path, proving boolean zero/nonzero consumption at
+  this callsite; and
+* import-table analysis finds exactly one call to this NID in the 6.60 image.
+  The equivalent location and identical boolean branch exist in the checked-in
+  6.20 and 6.3x images, although their firmware-specific PAF NIDs are
+  `0x521F9DBF` and `0x1ABAA558` respectively.
+
+The successful natural call and return on PSP-1000 prove this is not a missing
+import. The private PAF implementation is outside the repository, and neither
+its formal name nor whether it tests PAF readiness, object presence, or another
+global condition is proven. Its position as an argument-free boolean gate
+strongly supports an availability/readiness interpretation, but that remains
+an inference. No PSP-versus-Go implementation difference is claimed without a
+matching PAF binary or symbol evidence.
+
+The next isolated experiment adds default-disabled
+`PSP1000PafPresentCompat`. It is armed only with the existing PSP-1000 6.61
+master opt-in, diagnostics, `DangerousCaller58D4`, activation trace, disabled
+ClockAndCalendar, and disabled BSMan substitution. At the already validated
+SlidePlugin `+0x9330` callsite it still tail-calls the uniquely resolved natural
+PAF function. On return it records the unmodified `v0`; if and only if the new
+option is enabled and that value is zero, it returns strict boolean `1` to the
+original Sony branch. Every natural nonzero value passes through bit-for-bit.
+No PAF import stub or other caller is changed.
+
+Expected outcomes for the next hardware run are:
+
+* `paf_ed83bbcf_natural=0`, `zero_to_one_count>0`, followed by `flag_zero`:
+  the isolated gate worked and the relocated flag is the next natural exit;
+* the same natural/substitution evidence followed by `flag_nonzero` and no mask
+  or pre-BSMan evidence: execution entered the second PAF call but did not
+  return before persistence;
+* `mask_equal` or `mask_unequal`: the second PAF returned and selected the
+  corresponding already traced branch;
+* pre-BSMan/stage 2 or BSMan-return/stage 3: the natural downstream path reached
+  those established boundaries; or
+* a natural nonzero result: it remains unchanged and substitution count remains
+  zero, making this control behaviorally inert for that invocation.
+
+This is an experiment, not a final compatibility decision. If hardware proves
+the zero-to-one conversion is required, the optimized implementation should
+retain only this validated callsite-specific post-call conversion and remove
+the broad temporary masks, counters, writer polling, and analysis strings.

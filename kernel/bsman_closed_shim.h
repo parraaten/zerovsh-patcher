@@ -45,9 +45,13 @@ typedef struct {
     u32 prefix_paf_return_leaf_end_addr;
     u32 prefix_paf_target_addr;
     u32 prefix_paf_ra_addr;
+    u32 prefix_paf_compat_mode_addr;
+    u32 prefix_paf_natural_result_addr;
+    u32 prefix_paf_substitution_hits_addr;
+    u32 prefix_paf_return_hits_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 164 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 180 ? 1 : -1];
 
 #endif

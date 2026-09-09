@@ -355,3 +355,24 @@ PRX and the documented `v1 == 0x0101` test; the second is the relocated
 `beq v0,v0`. Repeat T11 with the corrected exact branch word, the structural
 `LUI v0` delay check, and unchanged configuration. Interpret no path evidence
 unless validation and installation both equal one.
+
+## T12 — isolated first-PAF boolean control
+
+T11 subsequently produced `validation=1 install=1` and four identical natural
+paths: the first PAF call entered and returned zero, `result_zero` incremented,
+all later counters remained zero, and the cumulative mask was `0x007`. This
+proves the immediate PAF-result epilogue is the active boundary.
+
+Repeat the same configuration with only:
+
+```ini
+PSP1000PafPresentCompat = Enabled
+```
+
+Keep `PSP1000BSManClosedShim=Disabled`. Require the validated PAF callsite/NID
+fingerprint and `paf_ed83bbcf_natural` record. The experiment executes the
+natural function, changes only a natural zero result to strict boolean one for
+this callsite, and leaves natural nonzero results unchanged. Interpret the
+existing flag, mask, pre-BSMan, and BSMan-return evidence as described in the
+Phase 3 report. Do not enable impose, OPEN-state, or any other compatibility
+control in this run.

@@ -253,6 +253,21 @@ zeroCtrlSlidePrefixPafReturnTrace:
     lw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
     ori     $t1, $t1, 0x0004
     sw      $t1, %lo(zeroCtrlSlidePrefixPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlSlidePrefixPafNaturalResult)
+    sw      $v0, %lo(zeroCtrlSlidePrefixPafNaturalResult)($t0)
+    RECORD_PREFIX_COUNTER zeroCtrlSlidePrefixPafReturnHits
+    lui     $t0, %hi(zeroCtrlSlidePrefixPafCompatMode)
+    lw      $t2, %lo(zeroCtrlSlidePrefixPafCompatMode)($t0)
+    beqz    $t2, 7f
+    nop
+    bnez    $v0, 7f
+    nop
+    lui     $t0, %hi(zeroCtrlSlidePrefixPafSubstitutionHits)
+    lw      $t2, %lo(zeroCtrlSlidePrefixPafSubstitutionHits)($t0)
+    addiu   $t2, $t2, 1
+    sw      $t2, %lo(zeroCtrlSlidePrefixPafSubstitutionHits)($t0)
+    addiu   $v0, $zero, 1
+7:
     lui     $t0, %hi(zeroCtrlSlidePrefixPafRA)
     lw      $ra, %lo(zeroCtrlSlidePrefixPafRA)($t0)
     jr      $ra
@@ -389,3 +404,11 @@ zeroCtrlSlidePrefixMaskUnequalHits: .space 4
 zeroCtrlSlidePrefixPafTarget: .space 4
 .globl zeroCtrlSlidePrefixPafRA
 zeroCtrlSlidePrefixPafRA: .space 4
+.globl zeroCtrlSlidePrefixPafCompatMode
+zeroCtrlSlidePrefixPafCompatMode: .space 4
+.globl zeroCtrlSlidePrefixPafNaturalResult
+zeroCtrlSlidePrefixPafNaturalResult: .space 4
+.globl zeroCtrlSlidePrefixPafSubstitutionHits
+zeroCtrlSlidePrefixPafSubstitutionHits: .space 4
+.globl zeroCtrlSlidePrefixPafReturnHits
+zeroCtrlSlidePrefixPafReturnHits: .space 4
