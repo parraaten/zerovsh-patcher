@@ -688,7 +688,7 @@ sites with call-free leaves. The PAF leaves preserve its natural result and
 return address; the branch leaves reproduce displaced branch/delay semantics
 and jump to the original basic blocks. Before any code write, installation checks
 the complete original pairs `0x10400006/0x8FBF001C`,
-`0x1460000B/0x00000000`, and `0x10420090/LUI-v0`, all helper ranges, and all
+`0x1460000B/0x00000000`, and `0x10620090/LUI-v0`, all helper ranges, and all
 pseudo-direct targets, and uniquely resolves `scePaf` NID `0xED83BBCF` through
 the loaded import descriptors. A mismatch installs none of the activation
 trace.
@@ -718,3 +718,44 @@ NIDs have comparable intent on PSP-1000 and that every relevant invocation is
 observed before freeze. Return the unedited T11 log and XMB behavior. The
 recommended next phase is to analyze those counters and isolate exactly one
 natural dependency; do not add compatibility behavior before that evidence.
+
+### First T11 fail-closed result and corrected comparison proof
+
+The first T11 PSP-1000 build correctly failed closed with activation
+`validation=0 install=0`. Hardware reported the expected first two branch
+pairs, but the third pair was `0x10620090,0x3C0209E5` rather than the
+installer's incorrect `0x10420090` fingerprint. No prefix trace site was
+written, so this run provides structural evidence only.
+
+Both the checked-in research PRX and the hardware word decode agree:
+
+```
++0x9390  andi  v1,v1,0x0101
++0x9394  addiu v0,zero,0x0101       # 0x24020101
++0x9398  beq   v1,v0,+0x95DC       # 0x10620090
++0x939C  lui   v0,<relocated-hi>    # hardware 0x3C0209E5, delay slot
+```
+
+The rejected `0x10420090` would decode as `beq v0,v0`, an unconditional
+branch, and was therefore not a valid description of this CFG. The tracer's
+comparison implementation was already semantically correct: it compares the
+masked `v1` against `0x0101`. It then loads the validated runtime LUI value into
+`v0` before resuming either target, reproducing the original delay-slot effect
+which occurs on both taken and untaken paths. The installer now requires the
+correct `0x10620090` word while retaining the structural `LUI v0` check rather
+than hard-coding its relocation-dependent immediate.
+
+Register liveness was reviewed from each patched instruction through every
+natural resume:
+
+| Trace | Natural continuation and scratch-register proof |
+| --- | --- |
+| first PAF call/return | The unchanged JAL delay slot saves the getter result in `s0`. No `t0/t1/t2/t9` value is an input to the imported call, and none is read from return at `+0x9338` through the result/flag paths before the next call or epilogue. |
+| first result branch | The zero target `+0x9354` is restore-only epilogue code. The nonzero target `+0x9340` uses only `v0/v1` before the next imported call. The tracer restores the displaced `lw ra,28(sp)` effect on both paths. |
+| relocated flag branch | The zero target `+0x9350` enters the restore-only epilogue. The nonzero target `+0x9378` is the next JAL. Neither continuation reads a tracer scratch register; the original delay slot is NOP. |
+| `0x0101` branch | The unequal continuation `+0x939C..+0x93AC` and equal state-machine continuation `+0x95DC..+0x9624` contain no read of `t0/t1/t2/t9` before converging on BSMan. The helper recreates both the displaced `addiu v0,zero,0x0101` comparison value and the relocation-derived `LUI v0` delay-slot result. |
+
+The safety verifier independently checks the research PRX words and decodes
+all instructions in those continuation ranges to reject any read of the four
+scratch registers. This correction adds no breadcrumb or compatibility
+behavior; it only makes the existing T11 transaction match the proven Sony CFG.

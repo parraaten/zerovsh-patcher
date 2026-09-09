@@ -2729,7 +2729,7 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 bsman->prefix_original[1] != 0x8FBF001C ||
                 bsman->prefix_original[2] != 0x1460000B ||
                 bsman->prefix_original[3] != 0 ||
-                bsman->prefix_original[4] != 0x10420090 ||
+                bsman->prefix_original[4] != 0x10620090 ||
                 (bsman->prefix_original[5] & 0xFFFF0000) != 0x3C020000 ||
                 (bsman->prefix_original[6] >> 26) != 3 ||
                 bsman->prefix_original[7] != 0x00408021 ||

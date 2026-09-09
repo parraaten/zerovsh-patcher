@@ -47,7 +47,83 @@ def fail(message):
     raise SystemExit(1)
 
 
+def mips_read_registers(word):
+    """Return GPRs read by the ordinary MIPS instructions used in the proof."""
+    opcode = word >> 26
+    rs = (word >> 21) & 0x1F
+    rt = (word >> 16) & 0x1F
+    if opcode in (2, 3, 15):
+        return set()
+    if opcode == 0:
+        function = word & 0x3F
+        if function in (0, 2, 3):
+            return {rt}
+        if function in (8, 9):
+            return {rs}
+        return {rs, rt}
+    if opcode == 1 or opcode in (6, 7):
+        return {rs}
+    if opcode in (4, 5):
+        return {rs, rt}
+    if 0x20 <= opcode <= 0x27 or 0x30 <= opcode <= 0x37:
+        return {rs}
+    if 0x28 <= opcode <= 0x2F or 0x38 <= opcode <= 0x3F:
+        return {rs, rt}
+    return {rs}
+
+
+def check_research_activation_prefix(root):
+    """Independently prove the checked-in PRX operands and tracer scratch liveness."""
+    image = (root / "bin/slide/slide_plugin_660.prx").read_bytes()
+
+    def u16(offset):
+        return int.from_bytes(image[offset:offset + 2], "little")
+
+    def u32(offset):
+        return int.from_bytes(image[offset:offset + 4], "little")
+
+    if image[:4] != b"\x7fELF" or image[4:6] != b"\x01\x01":
+        fail("research SlidePlugin is not a little-endian ELF32 image")
+    program_offset = u32(28)
+    program_size = u16(42)
+    program_count = u16(44)
+    load_segments = []
+    for index in range(program_count):
+        header = program_offset + index * program_size
+        if u32(header) == 1:
+            load_segments.append((u32(header + 8), u32(header + 4),
+                                  u32(header + 16)))
+
+    def word(address):
+        for virtual, file_offset, file_size in load_segments:
+            if virtual <= address and address + 4 <= virtual + file_size:
+                offset = file_offset + address - virtual
+                return int.from_bytes(image[offset:offset + 4], "little")
+        fail("research SlidePlugin prefix lies outside its load segments")
+
+    if word(0x9394) != 0x24020101:
+        fail("research prefix no longer loads v0 with 0x0101")
+    if word(0x9398) != 0x10620090:
+        fail("research prefix no longer compares v1 with v0")
+    if (word(0x939C) & 0xFFFF0000) != 0x3C020000:
+        fail("research prefix no longer executes LUI v0 in the branch delay slot")
+
+    scratch = {8, 9, 10, 25}  # t0, t1, t2, t9
+    live_ranges = (
+        (0x9338, 0x9378, "first PAF/result/flag resumes"),
+        (0x939C, 0x93B4, "0x0101 unequal resume"),
+        (0x95DC, 0x9628, "0x0101 equal resume"),
+    )
+    for start, end, description in live_ranges:
+        for address in range(start, end, 4):
+            used = mips_read_registers(word(address)) & scratch
+            if used:
+                fail("tracer scratch register is live at %s: +0x%X" %
+                     (description, address))
+
+
 def check_sources(root):
+    check_research_activation_prefix(root)
     kernel = (root / "kernel/main.c").read_text()
     user = (root / "user/main.c").read_text()
     kernel_exports = (root / "kernel/exports.exp").read_text()
@@ -167,7 +243,7 @@ def check_sources(root):
         'Transaction commit: all transparent trace sites validated above.',
         'bsman->prefix_original[0] != 0x10400006',
         'bsman->prefix_original[2] != 0x1460000B',
-        'bsman->prefix_original[4] != 0x10420090',
+        'bsman->prefix_original[4] != 0x10620090',
         'table->nidtable[i] != 0xED83BBCF',
         'paf_matches != 1',
         'slide_prefix_path_mask=0x%03X',

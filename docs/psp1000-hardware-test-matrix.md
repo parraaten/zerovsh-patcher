@@ -346,3 +346,12 @@ across repeated activations.
 
 This build changes no Sony result. Return the complete unedited log and normal
 XMB observations before selecting any compatibility behavior.
+
+The first T11 attempt is **fail-closed structural evidence**:
+`validation=0 install=0`. Hardware returned the third pair as
+`0x10620090,0x3C0209E5`. The first word is `beq v1,v0`, matching the research
+PRX and the documented `v1 == 0x0101` test; the second is the relocated
+`LUI v0` delay slot. The prior `0x10420090` expectation incorrectly encoded
+`beq v0,v0`. Repeat T11 with the corrected exact branch word, the structural
+`LUI v0` delay check, and unchanged configuration. Interpret no path evidence
+unless validation and installation both equal one.
