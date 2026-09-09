@@ -2,6 +2,7 @@
 """Fail the build when statically-verifiable PSP-1000 safety rules regress."""
 
 import argparse
+import hashlib
 import pathlib
 import re
 import subprocess
@@ -24,6 +25,11 @@ SONY_ENTRY_STUB = "zeroCtrlSonyModuleStartEntryTrace"
 SONY_ENTRY_STUB_END = "zeroCtrlSonyModuleStartEntryTraceEnd"
 SONY_EXIT_STUB = "zeroCtrlSonyModuleStartExitTrace"
 SONY_EXIT_STUB_END = "zeroCtrlSonyModuleStartExitTraceEnd"
+SONY_TRACE_BASELINE_SHA256 = \
+    "e670e353062f21147b3574350fdc47bdd3cc446fa9337f09b6ea7e0c7dc7828c"
+BSMAN_STUB = "zeroCtrlBSManClosedLeaf"
+BSMAN_STUB_END = "zeroCtrlBSManClosedLeafEnd"
+BSMAN_COUNTER = "zeroCtrlBSManClosedHits"
 
 
 def fail(message):
@@ -43,6 +49,48 @@ def check_sources(root):
         fail("production diagnostics do not default to Disabled")
     if '"PSP1000SonyStartTrace", "Disabled"' not in kernel:
         fail("Sony module_start tracing does not default to Disabled")
+    if '"PSP1000BSManClosedShim", "Disabled"' not in kernel:
+        fail("BSMan CLOSED shim does not default to Disabled")
+    for gate in (
+        'model == 0', 'devkit == 0x06060110',
+        'strcmp(psp1000SlidePlugin, "Enabled") == 0',
+        'strcmp(psp1000Diagnostics, "Enabled") == 0',
+        'strcmp(psp1000BSManClosedShim, "Enabled") == 0',
+        '"DangerousCaller58D4") == 0',
+        'strcmp(useSlide, "Disabled") == 0',
+    ):
+        if gate not in kernel:
+            fail("BSMan experiment safety gate is missing " + gate)
+    bsman_start = kernel.find("static void zeroCtrlInstallBSManClosedShim(")
+    bsman_end = kernel.find("int OnModuleStart(", bsman_start)
+    if bsman_start < 0 or bsman_end <= bsman_start:
+        fail("BSMan transactional installer is missing")
+    bsman = kernel[bsman_start:bsman_end]
+    for required in (
+        'strcmp(mod->modname, "slide_plugin_module")',
+        '0x23E3A9B6', 'mod->stub_top', 'table->nidtable',
+        'table->stubtable', 'bsman->match_count == 1',
+        'zeroCtrlVshModuleRangeValid', 'zeroCtrlBSManOriginalStubValid',
+        'caller_matches != 1', 'bsman->validation = 1',
+    ):
+        if required not in bsman:
+            fail("BSMan structural resolution is missing " + required)
+    if 'static const char expected[] = "sceBSMan"' not in kernel:
+        fail("BSMan import library is not checked exactly")
+    bsman_commit = bsman.find(
+        "Transaction commit: no BSMan code write occurs before every check.")
+    if bsman_commit < 0:
+        fail("BSMan transaction commit marker is missing")
+    if "_sw(bsman->replacement_words" in bsman[:bsman_commit]:
+        fail("BSMan code is written before validation completes")
+    commit = bsman[bsman_commit:]
+    if commit.count("_sw(bsman->replacement_words") != 2:
+        fail("BSMan transaction does not write exactly two intended words")
+    if "sceKernelDcacheWritebackInvalidateRange(\n            (const void *)bsman->import_stub_addr, 8)" not in commit or \
+            "sceKernelIcacheInvalidateRange((const void *)bsman->import_stub_addr, 8)" not in commit:
+        fail("BSMan transaction does not narrowly synchronize eight bytes")
+    if "0x639C3CB3" in bsman or "0x8000000D" in bsman or "scePaf" in bsman:
+        fail("BSMan experiment includes impose or PAF behavior")
     validation_marker = "Validation pass: no VSH write may occur in this loop."
     commit_marker = "Commit pass: selected callsites are all valid or none are written."
     validation_start = kernel.find(validation_marker)
@@ -101,6 +149,12 @@ def check_sources(root):
         fail("Sony direct start trace assembly stubs are missing")
     entry = assembly[entry_start:entry_end]
     exit_stub = assembly[exit_start:exit_end]
+    trace_end = assembly.find(".end " + SONY_EXIT_STUB, exit_start)
+    trace_end += len(".end " + SONY_EXIT_STUB)
+    trace_block = assembly[entry_start:trace_end]
+    if hashlib.sha256(trace_block.encode()).hexdigest() != \
+            SONY_TRACE_BASELINE_SHA256:
+        fail("hardware-validated Sony saved-RA assembly changed")
     if any(token in entry + exit_stub for token in
             ("zeroCtrlDiagnostics", "sceIo", "$gp", "jal ", "jalr")):
         fail("Sony direct start trace stubs use logging, gp, or calls")
@@ -121,6 +175,18 @@ def check_sources(root):
         fail("Sony exit trace does not preserve the original result")
     if re.search(r"(?:addiu|addu|or|move|li)\s+\$v0", exit_stub):
         fail("Sony exit trace replaces the original result")
+    bsman_leaf_start = assembly.find(BSMAN_STUB + ":")
+    bsman_leaf_end = assembly.find(BSMAN_STUB_END + ":", bsman_leaf_start)
+    if bsman_leaf_start < 0 or bsman_leaf_end <= bsman_leaf_start:
+        fail("BSMan assembly leaf is missing")
+    bsman_leaf = assembly[bsman_leaf_start:bsman_leaf_end]
+    if any(token in bsman_leaf for token in
+            ("$gp", "$sp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
+        fail("BSMan leaf uses gp, stack, calls, I/O, or allocation")
+    if "CREATE_TRIGGER_STUB" in bsman_leaf or \
+            "addu    $v0, $zero, $zero" not in bsman_leaf or \
+            "jr      $ra" not in bsman_leaf:
+        fail("BSMan leaf does not deterministically return CLOSED=0")
     transaction = kernel.find("Transaction commit: the complete entry interposition")
     install_end = kernel.find("trace->install = 1", transaction)
     if transaction < 0 or install_end <= transaction:
@@ -250,7 +316,7 @@ def check_elf(elf):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing helper trigger stub symbol " + symbol)
     for symbol in (SONY_ENTRY_STUB, SONY_ENTRY_STUB_END,
-            SONY_EXIT_STUB, SONY_EXIT_STUB_END):
+            SONY_EXIT_STUB, SONY_EXIT_STUB_END, BSMAN_STUB, BSMAN_STUB_END):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing Sony module_start wrapper symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
@@ -264,6 +330,12 @@ def check_elf(elf):
             r"\b(?:li\s+v0,\s*1|addiu\s+v0,\s*zero,\s*1)\b", body
         ):
             fail(symbol + " does not return strict boolean 1")
+    body = function_body(disassembly, BSMAN_STUB)
+    if re.search(r"\bgp\b|\bsp\b|\bjal\b", body):
+        fail("BSMan leaf uses gp, sp, or an imported/called function")
+    if not re.search(r"\bjr\s+ra\b", body) or not re.search(
+            r"\b(?:move\s+v0,\s*zero|addu\s+v0,\s*zero,\s*zero)\b", body):
+        fail("BSMan leaf does not return deterministic CLOSED=0")
 
 
 def check_stub_object(stub_object):
@@ -276,6 +348,11 @@ def check_stub_object(stub_object):
             fail(symbol + " has no HI16 relocation to its dedicated counter")
         if len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
             fail(symbol + " does not have two LO16 counter relocations")
+    bsman_leaf = function_body(disassembly, BSMAN_STUB)
+    if not re.search(r"R_MIPS_HI16\s+" + BSMAN_COUNTER + r"\b", bsman_leaf) or \
+            len(re.findall(r"R_MIPS_LO16\s+" + BSMAN_COUNTER + r"\b",
+                bsman_leaf)) != 2:
+        fail("BSMan leaf lacks the exact dedicated-counter relocations")
     entry = function_body(disassembly, SONY_ENTRY_STUB)
     exit_stub = function_body(disassembly, SONY_EXIT_STUB)
     for symbol in ("zeroCtrlSonyModuleStartEntrySeen",

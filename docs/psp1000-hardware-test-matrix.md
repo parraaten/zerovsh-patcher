@@ -247,3 +247,43 @@ If registration succeeds but installation exits before `attempted=1`, expect
 `[sony-start-guard] checked=1 reason=NAME(ID)`. Do not adjust a range or make the
 caller-RA slot optional from this log alone; return the complete evidence for
 analysis first.
+
+## T9 — BSMan-only CLOSED-state Strategy B experiment
+
+This row supersedes T8's former unknown-start interpretation. Hardware has now
+**PROVEN** the `+0x58D4` native request/probe path, natural Sony `module_start`
+entry and successful return, and the subsequent RCO request. The failure
+boundary is downstream runtime/RCO/activation/PAF.
+
+Use the exact configuration in `phase3-controlled-enablement.md`, retaining the
+validated Sony saved-RA trace and enabling only `PSP1000BSManClosedShim` as the
+new variable. The shim is **EXPERIMENT — NOT YET HARDWARE VERIFIED**.
+
+* **A — `install=1`, `hit_count=0`, unchanged freeze:** **PROVEN** installed and
+  not called before the last persisted observation; global irrelevance is not
+  proven. Investigate ordering, impose, or PAF evidence next without changing
+  BSMan.
+* **B — `install=1`, `hit_count>0`, unchanged freeze:** **PROVEN** Sony reached
+  BSMan and CLOSED-only substitution was insufficient. A later, separate
+  sceVshBridge `0x639C3CB3`/`0x8000000D` experiment may be proposed, but is not
+  part of this build.
+* **C — hit and farther progress:** **STRONG HARDWARE EVIDENCE** that BSMan state
+  participates. Capture the last breadcrumb, correlated (not attributed)
+  memory snapshot, RCO progress, and visible PAF state.
+* **D — hit and stable XMB:** very strong evidence that CLOSED compatibility
+  removes the immediate failure. Hold this as the sole shim while testing idle,
+  navigation, normal operations, and reboot; do not implement OPEN.
+* **E — `validation=0`, `install=0`:** inconclusive. Return exact import/caller
+  evidence; do not weaken validation.
+
+Safe reset:
+
+```ini
+PSP1000SlidePlugin = Disabled
+PSP1000SlideTriggerMode = Disabled
+PSP1000Diagnostics = Disabled
+PSP1000SonyStartTrace = Disabled
+PSP1000SelectiveSlideTrigger58D4 = Disabled
+PSP1000BSManClosedShim = Disabled
+ClockAndCalendar = Disabled
+```

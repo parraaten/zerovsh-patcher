@@ -36,6 +36,7 @@
 #include "../kernel/systemctrl.h"
 #include "../kernel/systemctrl_se.h"
 #include "../kernel/sony_start_trace.h"
+#include "../kernel/bsman_closed_shim.h"
 
 PSP_MODULE_INFO("ZeroVSH_Patcher_User", 0x0007, 0, 1);
 
@@ -94,12 +95,15 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int global_stub, unsigned int global_counter);
 void zeroCtrlRegisterSonyStartTrace(
         const ZeroCtrlSonyStartTraceRegistration *registration);
+void zeroCtrlRegisterBSManClosedShim(
+        const ZeroCtrlBSManClosedRegistration *registration);
 void zeroCtrlSetLEDState(void);
 void zeroCtrlSetBrightness(void);
 void zeroCtrlSetClockSpeed(void);
 
 int model;
 static ZeroCtrlSonyStartTraceRegistration sonyStartTraceRegistration;
+static ZeroCtrlBSManClosedRegistration bsmanClosedRegistration;
 
 //OK
 void *zeroCtrlRedir2Stub(u32 address, void *stub, void *func) {
@@ -144,6 +148,9 @@ extern volatile unsigned int zeroCtrlSonyModuleStartCallerRA;
 extern volatile unsigned int zeroCtrlSonyModuleStartEntrySeen;
 extern volatile unsigned int zeroCtrlSonyModuleStartReturnSeen;
 extern volatile unsigned int zeroCtrlSonyModuleStartResult;
+extern int zeroCtrlBSManClosedLeaf(void);
+extern void zeroCtrlBSManClosedLeafEnd(void);
+extern volatile unsigned int zeroCtrlBSManClosedHits;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -239,6 +246,11 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	sonyStartTraceRegistration.result_addr =
 			(u32)&zeroCtrlSonyModuleStartResult;
 	zeroCtrlRegisterSonyStartTrace(&sonyStartTraceRegistration);
+	bsmanClosedRegistration.leaf_addr = (u32)zeroCtrlBSManClosedLeaf;
+	bsmanClosedRegistration.leaf_end_addr = (u32)zeroCtrlBSManClosedLeafEnd;
+	bsmanClosedRegistration.hit_count_addr =
+			(u32)&zeroCtrlBSManClosedHits;
+	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        
 	return 0;

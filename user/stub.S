@@ -104,3 +104,29 @@ zeroCtrlSonyModuleStartEntrySeen: .space 4
 zeroCtrlSonyModuleStartReturnSeen: .space 4
 .globl zeroCtrlSonyModuleStartResult
 zeroCtrlSonyModuleStartResult: .space 4
+
+/*
+ * Strategy-B BSMan leaf.  CLOSED=0 is a strong static inference from the
+ * Sony caller's beq v0,zero closed/non-open path.  This leaf has no stack,
+ * gp, calls, imports, I/O, allocation, or hardware access.
+ */
+.section .text
+.set noreorder
+.globl zeroCtrlBSManClosedLeaf
+.type zeroCtrlBSManClosedLeaf @function
+.ent zeroCtrlBSManClosedLeaf, 0
+zeroCtrlBSManClosedLeaf:
+    lui     $t0, %hi(zeroCtrlBSManClosedHits)
+    lw      $t1, %lo(zeroCtrlBSManClosedHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlBSManClosedHits)($t0)
+    jr      $ra
+    addu    $v0, $zero, $zero
+.globl zeroCtrlBSManClosedLeafEnd
+zeroCtrlBSManClosedLeafEnd:
+.end zeroCtrlBSManClosedLeaf
+
+.section .bss
+.align 2
+.globl zeroCtrlBSManClosedHits
+zeroCtrlBSManClosedHits: .space 4

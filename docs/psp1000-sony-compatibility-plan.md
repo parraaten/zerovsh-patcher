@@ -107,3 +107,20 @@ and trigger targets point into it.
 
 Stack reductions are deferred until real high-water measurements exist. A
 smaller guessed stack is not a memory optimization.
+
+## Current Strategy B decision: BSMan CLOSED only
+
+Hardware now **PROVES** that `DangerousCaller58D4` opens the native Sony
+pipeline, LoadCore probe returns zero, natural Sony `module_start` enters and
+returns success, and the RCO request follows. The active failure boundary is
+post-start runtime/RCO/activation/PAF. Memory is substantially lower at the
+deferred return observation, but its owner is **UNKNOWN**.
+
+The isolated `sceBSMan` / `0x23E3A9B6` CLOSED shim is an
+**EXPERIMENT — NOT YET HARDWARE VERIFIED**. Runtime import descriptors and a
+unique boolean caller are structurally resolved; static `+0x93AC` branches on
+`v0 == 0` into the non-open path, supporting `CLOSED=0` as a **STRONG
+INFERENCE**. The experiment changes only that resolved two-word import stub and
+returns virtual UI CLOSED. It does not implement impose, OPEN, PAF, allocation,
+model, physical-slider, power, display, LED, or brightness behavior. Hardware
+outcomes must be evaluated using T9 before selecting any next shim.

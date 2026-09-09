@@ -37,6 +37,7 @@
 #include "resolver.h"
 #include "hook.h"
 #include "sony_start_trace.h"
+#include "bsman_closed_shim.h"
 #include "minini/minIni.h"
 
 #include "zerovsh_upatcher.h"
@@ -88,6 +89,7 @@ static char psp1000SlidePlugin[16];
 static char psp1000SlideTriggerMode[40];
 static char psp1000Diagnostics[16];
 static char psp1000SonyStartTrace[16];
+static char psp1000BSManClosedShim[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -207,6 +209,17 @@ typedef struct {
     ZeroCtrlPartitionSnapshot return_observed;
 } ZeroCtrlSonyStartTrace;
 
+typedef struct {
+    int enabled, registration_called, registered;
+    int attempted, import_found, unique_match, validation, install, cache_sync;
+    unsigned int leaf_addr, leaf_size, hit_count_addr;
+    unsigned int import_stub_addr, nidtable_addr, stubtable_addr;
+    unsigned int original_words[2], replacement_words[2];
+    unsigned int caller_addr, caller_words[4];
+    unsigned int match_count;
+    int closed_value;
+} ZeroCtrlBSManEvidence;
+
 static const unsigned int vsh_predicate_offsets[VSH_PREDICATE_COUNT] = {
     0x6F04, 0x6F44, 0x6F84, 0x6FC4,
     0x7004, 0x701C, 0x7030, 0x7070
@@ -273,6 +286,7 @@ typedef struct {
     int global_predicate_enabled;
     ZeroCtrlGlobalPredicateEvidence global_predicate;
     ZeroCtrlSonyStartTrace sony_start_trace;
+    ZeroCtrlBSManEvidence bsman;
     int vsh_target_in_text;
     int vsh_modid;
     unsigned int vsh_text_addr;
@@ -833,6 +847,34 @@ void zeroCtrlRegisterSonyStartTrace(
     trace->registration_fail_reason = SONY_START_REGISTER_NONE;
     trace->registration_success = 1;
     trace->registered = 1;
+}
+
+void zeroCtrlRegisterBSManClosedShim(
+        const ZeroCtrlBSManClosedRegistration *registration) {
+    SceModule2 *helper;
+    ZeroCtrlBSManClosedRegistration copied;
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    int k1;
+
+    bsman->registration_called = 1;
+    if (!bsman->enabled || bsman->registered || !registration) return;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!helper || !zeroCtrlVshModuleRangeValid(helper,
+                (unsigned int)registration, sizeof(copied))) return;
+    k1 = pspSdkSetK1(0);
+    memcpy(&copied, registration, sizeof(copied));
+    pspSdkSetK1(k1);
+    if (copied.leaf_end_addr <= copied.leaf_addr ||
+            copied.leaf_end_addr - copied.leaf_addr > 64 ||
+            (copied.leaf_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.leaf_addr,
+                copied.leaf_end_addr - copied.leaf_addr) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.hit_count_addr, 4))
+        return;
+    bsman->leaf_addr = copied.leaf_addr;
+    bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
+    bsman->hit_count_addr = copied.hit_count_addr;
+    bsman->registered = 1;
 }
 
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
@@ -1809,6 +1851,15 @@ static void zeroCtrlRefreshSonyStartTrace(void) {
     trace->result = *(volatile int *)trace->result_addr;
 }
 
+static unsigned int zeroCtrlReadBSManHits(void) {
+    SceModule2 *helper;
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    if (!bsman->registered || !bsman->hit_count_addr) return 0;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!zeroCtrlVshModuleRangeValid(helper, bsman->hit_count_addr, 4)) return 0;
+    return *(volatile unsigned int *)bsman->hit_count_addr;
+}
+
 static const char *zeroCtrlSonyRegisterReasonName(int reason) {
     static const char *names[] = {
         "NONE", "TRACE_DISABLED", "ALREADY_REGISTERED", "HELPER_NOT_FOUND",
@@ -1858,7 +1909,9 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_trace_install = 0, observed_start_entry = 0;
     int observed_start_return = 0;
     int observed_registration_called = 0, observed_guard_checked = 0;
-    char line[160];
+    unsigned int observed_bsman_hits = 0;
+    int observed_bsman_attempted = 0;
+    char line[256];
     unsigned int i;
 
     slide_diag.writer_alive = 1;
@@ -1993,6 +2046,44 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 }
             }
         }
+        if (slide_diag.bsman.enabled) {
+            ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+            unsigned int hits = zeroCtrlReadBSManHits();
+            if (bsman->attempted && !observed_bsman_attempted) {
+                snprintf(line, sizeof(line),
+                        "[bsman] attempted=%d import_found=%d unique_match=%d "
+                        "validation=%d install=%d cache_sync=%d\n",
+                        bsman->attempted, bsman->import_found,
+                        bsman->unique_match, bsman->validation,
+                        bsman->install, bsman->cache_sync);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[bsman] library=sceBSMan nid=0x23E3A9B6 "
+                        "stub=0x%08X closed_value=%d\n",
+                        bsman->import_stub_addr, bsman->closed_value);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[bsman] original_words=0x%08X,0x%08X "
+                        "replacement_words=0x%08X,0x%08X\n",
+                        bsman->original_words[0], bsman->original_words[1],
+                        bsman->replacement_words[0],
+                        bsman->replacement_words[1]);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[bsman-caller] address=0x%08X "
+                        "words=0x%08X,0x%08X,0x%08X,0x%08X "
+                        "semantics=beq_v0_zero_closed confidence=STRONG_INFERENCE\n",
+                        bsman->caller_addr, bsman->caller_words[0],
+                        bsman->caller_words[1], bsman->caller_words[2],
+                        bsman->caller_words[3]);
+                zeroCtrlDiagnosticsText(line);
+                observed_bsman_attempted = 1;
+            }
+            if (hits != observed_bsman_hits) {
+                observed_bsman_hits = hits;
+                zeroCtrlWriteLateTransition(elapsed, "bsman_hit_count", hits);
+            }
+        }
 #undef WRITE_LATE_FLAG
         sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);
         elapsed += SLIDE_OBSERVATION_POLL_US;
@@ -2023,6 +2114,13 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 trace->attempted, trace->validation, trace->install,
                 trace->cache_sync, trace->entry_seen, trace->return_seen,
                 (unsigned int)trace->result);
+        zeroCtrlDiagnosticsText(line);
+    }
+    if (slide_diag.bsman.enabled) {
+        snprintf(line, sizeof(line),
+                "[bsman] final install=%d validation=%d hit_count=%u\n",
+                slide_diag.bsman.install, slide_diag.bsman.validation,
+                zeroCtrlReadBSManHits());
         zeroCtrlDiagnosticsText(line);
     }
 
@@ -2183,6 +2281,115 @@ static void zeroCtrlInstallSonyStartTrace(SceModule2 *mod) {
     trace->cache_sync = 1;
 }
 
+static int zeroCtrlBSManLibraryNameValid(SceModule2 *mod, const char *name) {
+    static const char expected[] = "sceBSMan";
+    unsigned int i;
+    if (!zeroCtrlVshModuleRangeValid(mod, (unsigned int)name,
+                sizeof(expected))) return 0;
+    for (i = 0; i < sizeof(expected); i++)
+        if (name[i] != expected[i]) return 0;
+    return 1;
+}
+
+static int zeroCtrlBSManOriginalStubValid(unsigned int word0,
+        unsigned int word1) {
+    unsigned int opcode = word0 >> 26;
+    if ((opcode == 2 || opcode == 3) && word1 == 0) return 1;
+    return word0 == 0x03E00008 && (word1 & 0xFC00003F) == 0x0000000C;
+}
+
+static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
+    const unsigned int target_nid = 0x23E3A9B6;
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    unsigned int cursor, end, offset, caller_matches = 0;
+
+    if (!bsman->enabled || !bsman->registered || model != 0 || !mod ||
+            strcmp(mod->modname, "slide_plugin_module") != 0 ||
+            sceKernelDevkitVersion() != 0x06060110) return;
+    bsman->attempted = 1;
+    cursor = (unsigned int)mod->stub_top;
+    end = cursor + mod->stub_size;
+    if (end < cursor || !zeroCtrlVshModuleRangeValid(mod, cursor,
+                mod->stub_size)) return;
+
+    while (cursor < end) {
+        SceLibraryStubTable *table = (SceLibraryStubTable *)cursor;
+        unsigned int bytes, i;
+        if ((cursor & 3) != 0 || end - cursor < 12) return;
+        bytes = (unsigned int)table->len * 4;
+        if (bytes < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                bytes > end - cursor ||
+                !zeroCtrlVshModuleRangeValid(mod, cursor, bytes)) return;
+        if (zeroCtrlBSManLibraryNameValid(mod, table->libname)) {
+            bsman->import_found = 1;
+            if (!zeroCtrlVshModuleRangeValid(mod, (unsigned int)table->nidtable,
+                        (unsigned int)table->stubcount * 4) ||
+                    !zeroCtrlVshModuleRangeValid(mod,
+                        (unsigned int)table->stubtable,
+                        (unsigned int)table->stubcount * 8)) return;
+            for (i = 0; i < table->stubcount; i++) {
+                if (table->nidtable[i] != target_nid) continue;
+                bsman->match_count++;
+                bsman->nidtable_addr = (unsigned int)&table->nidtable[i];
+                bsman->stubtable_addr = (unsigned int)table->stubtable;
+                bsman->import_stub_addr =
+                        (unsigned int)table->stubtable + i * 8;
+            }
+        }
+        cursor += bytes;
+    }
+    bsman->unique_match = bsman->match_count == 1;
+    if (!bsman->unique_match || (bsman->import_stub_addr & 7) != 0 ||
+            !zeroCtrlVshModuleRangeValid(mod, bsman->import_stub_addr, 8) ||
+            ((bsman->import_stub_addr + 4) & 0xF0000000) !=
+                (bsman->leaf_addr & 0xF0000000)) return;
+
+    bsman->original_words[0] = _lw(bsman->import_stub_addr);
+    bsman->original_words[1] = _lw(bsman->import_stub_addr + 4);
+    if (!zeroCtrlBSManOriginalStubValid(bsman->original_words[0],
+                bsman->original_words[1])) return;
+
+    /* Runtime caller proof: require one direct call and a strict zero test. */
+    for (offset = 0; offset + 12 <= mod->text_size; offset += 4) {
+        unsigned int pc = mod->text_addr + offset;
+        unsigned int instruction = _lw(pc);
+        unsigned int branch;
+        if ((instruction >> 26) != 3 ||
+                zeroCtrlMipsJumpTarget(pc, instruction) !=
+                    bsman->import_stub_addr) continue;
+        bsman->caller_addr = pc;
+        bsman->caller_words[0] = offset >= 4 ? _lw(pc - 4) : 0;
+        bsman->caller_words[1] = instruction;
+        bsman->caller_words[2] = _lw(pc + 4);
+        bsman->caller_words[3] = _lw(pc + 8);
+        branch = bsman->caller_words[3];
+        if ((branch >> 26) == 4 && ((branch >> 21) & 0x1F) == 2 &&
+                ((branch >> 16) & 0x1F) == 0)
+            bsman->closed_value = 0;
+        else
+            return;
+        caller_matches++;
+    }
+    if (caller_matches != 1 || !bsman->caller_addr) return;
+
+    bsman->replacement_words[0] = 0x08000000 |
+            ((bsman->leaf_addr >> 2) & 0x03FFFFFF);
+    bsman->replacement_words[1] = 0;
+    if ((((bsman->import_stub_addr + 4) & 0xF0000000) |
+                ((bsman->replacement_words[0] & 0x03FFFFFF) << 2)) !=
+                    bsman->leaf_addr) return;
+    bsman->validation = 1;
+
+    /* Transaction commit: no BSMan code write occurs before every check. */
+    _sw(bsman->replacement_words[0], bsman->import_stub_addr);
+    _sw(bsman->replacement_words[1], bsman->import_stub_addr + 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->import_stub_addr, 8);
+    sceKernelIcacheInvalidateRange((const void *)bsman->import_stub_addr, 8);
+    bsman->install = 1;
+    bsman->cache_sync = 1;
+}
+
 int OnModuleStart(SceModule2 *mod) {
         zeroCtrlWriteDebug("Module: %s\n", mod->modname);
 
@@ -2199,6 +2406,7 @@ int OnModuleStart(SceModule2 *mod) {
                 slide_diag.module_start_addr = mod->module_start_func;
                 slide_diag.elf_entry_addr = mod->entry_addr;
                 zeroCtrlInstallSonyStartTrace(mod);
+                zeroCtrlInstallBSManClosedShim(mod);
                 slide_diag.start_callback_returning = 1;
                 slide_diag.saw_start = 1;
                 return previous_result;
@@ -2504,6 +2712,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			psp1000Diagnostics, sizeof(psp1000Diagnostics), config);
 	ini_gets("Experimental", "PSP1000SonyStartTrace", "Disabled",
 			psp1000SonyStartTrace, sizeof(psp1000SonyStartTrace), config);
+	ini_gets("Experimental", "PSP1000BSManClosedShim", "Disabled",
+			psp1000BSManClosedShim, sizeof(psp1000BSManClosedShim), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -2526,6 +2736,12 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000SonyStartTrace, "Enabled") == 0 &&
+			strcmp(psp1000SlideTriggerMode,
+					"DangerousCaller58D4") == 0;
+		slide_diag.bsman.enabled =
+			devkit == 0x06060110 &&
+			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
+			strcmp(psp1000BSManClosedShim, "Enabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0;
 	}
@@ -2562,6 +2778,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		if (slide_diag.sony_start_trace.enabled)
 			zeroCtrlDiagnosticsText(
 					"[experiment] psp1000_sony_start_trace=enabled_natural\n");
+		if (slide_diag.bsman.enabled)
+			zeroCtrlDiagnosticsText(
+					"[experiment] psp1000_bsman_closed_shim=enabled_unverified\n");
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");
 	
