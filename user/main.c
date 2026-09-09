@@ -86,7 +86,8 @@ int zeroCtrlGetModel(void);
 int zeroCtrlIsPsp1000SlideExperimentEnabled(void);
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int text_size, unsigned int module_start_addr,
-        unsigned int elf_entry_addr, unsigned int target);
+        unsigned int elf_entry_addr, unsigned int target,
+        unsigned int return_true_addr);
 void zeroCtrlSetLEDState(void);
 void zeroCtrlSetBrightness(void);
 void zeroCtrlSetClockSpeed(void);
@@ -118,6 +119,11 @@ int zeroCtrlDummyFunc(void) {
 //OK
 int zeroCtrlDummyFunc2(void) {
 	return 0;
+}
+// Strict boolean result for the selective PSP-1000 VSH callsite experiment.
+__attribute__((noipa, used))
+int zeroCtrlReturnTrue(void) {
+	return 1;
 }
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
@@ -153,7 +159,8 @@ int OnModuleStart(SceModule2 *mod) {
 				if(devkit == 0x06060110) {
 					zeroCtrlRecordVshSlideTarget(mod->modid, mod->text_addr,
 							mod->text_size, mod->module_start_func,
-							mod->entry_addr, target);
+							mod->entry_addr, target,
+							(unsigned int)zeroCtrlReturnTrue);
 				}
 			} else if(devkit == 0x06020010) {								
 				zeroCtrlRedir2Stub(mod->text_addr+0x6D78, slide_check_stub, zeroCtrlDummyFunc);			
