@@ -9,6 +9,11 @@ import sys
 
 
 STUBS = ("zeroCtrlTrigger58D4", "zeroCtrlTrigger13F6C", "zeroCtrlTrigger14020")
+COUNTERS = (
+    "zeroCtrlTrigger58D4Hits",
+    "zeroCtrlTrigger13F6CHits",
+    "zeroCtrlTrigger14020Hits",
+)
 
 
 def fail(message):
@@ -18,17 +23,34 @@ def fail(message):
 
 def check_sources(root):
     kernel = (root / "kernel/main.c").read_text()
+    assembly = (root / "user/stub.S").read_text()
     build = (root / "build_linux.sh").read_text()
     if '"PSP1000SlideTriggerMode", "Disabled"' not in kernel:
         fail("dangerous trigger selector does not default to Disabled")
     if '"PSP1000Diagnostics", "Disabled"' not in kernel:
         fail("production diagnostics do not default to Disabled")
-    if kernel.count("_sw(patched, callsite)") != 1:
+    validation_marker = "Validation pass: no VSH write may occur in this loop."
+    commit_marker = "Commit pass: selected callsites are all valid or none are written."
+    validation_start = kernel.find(validation_marker)
+    commit_start = kernel.find(commit_marker)
+    if validation_start < 0 or commit_start <= validation_start:
+        fail("transactional validation/commit passes are missing or reordered")
+    if "_sw(" in kernel[validation_start:commit_start]:
+        fail("combined trigger path writes before all validations complete")
+    if kernel.count("_sw(evidence->replacement_word, evidence->callsite)") != 1:
         fail("selective framework must have exactly one VSH write primitive")
+    if "if (all_selected_valid)" not in kernel[commit_start:]:
+        fail("selective commit pass is not gated by aggregate validation")
     if "global_predicate_6f84_patch=disabled" not in kernel:
         fail("global PSP Go predicate patch is not explicitly disabled")
     if "% 64" not in build:
         fail("embedded helper ELF alignment check is missing")
+    for stub, counter in zip(STUBS, COUNTERS):
+        invocation = "CREATE_TRIGGER_STUB " + stub + ", " + counter
+        if invocation not in assembly:
+            fail(stub + " does not reference its dedicated counter")
+    if "addiu   $v0, $zero, 1" not in assembly:
+        fail("trigger stubs do not return strict boolean 1")
     for path in root.rglob("*"):
         if path.is_file() and path.suffix in {".c", ".h", ".S", ".sh"}:
             text = path.read_text(errors="ignore")
@@ -50,7 +72,7 @@ def check_elf(elf):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing helper trigger stub symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
-    for index, symbol in enumerate(STUBS):
+    for symbol, counter in zip(STUBS, COUNTERS):
         start = disassembly.find("<" + symbol + ">:")
         end = disassembly.find("\n\n", start)
         if start < 0:
@@ -60,6 +82,12 @@ def check_elf(elf):
             fail(symbol + " uses gp, sp, or an imported/called function")
         if not re.search(r"\bjr\s+ra\b", body):
             fail(symbol + " is not a leaf returning through ra")
+        if not re.search(
+            r"\b(?:li\s+v0,\s*1|addiu\s+v0,\s*zero,\s*1)\b", body
+        ):
+            fail(symbol + " does not return strict boolean 1")
+        if counter not in body:
+            fail(symbol + " has no relocation to its dedicated counter")
 
 
 def main():

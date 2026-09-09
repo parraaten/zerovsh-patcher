@@ -18,8 +18,9 @@ next decision requires T1–T3 and M0 hardware logs from
 
 ### PROVEN on hardware
 
-* PSP-1000 VSH model state is zero and is populated by the structurally
-  resolved `sceVshBridge` NID `0x21C243FE` (`vshKernelGetModel`).
+* PSP-1000 VSH model state is zero and is populated through the structurally
+  resolved `sceVshBridge` NID `0x21C243FE` (`vshKernelGetModel`). This VSH
+  wrapper identity is distinct from a direct `sceKernelGetModel` import.
 * Predicate `+0x6F84` reads that state and has three direct callers:
   `+0x58D4`, `+0x13F6C`, and `+0x14020`.
 * Replacing the predicate globally freezes VSH. Selectively replacing the

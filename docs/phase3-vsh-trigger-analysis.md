@@ -311,11 +311,12 @@ fixed 32-byte kernel buffer; absence of a terminator or leaving a segment marks
 the name invalid. No arbitrary-memory structure scan is performed.
 
 A match records raw library, index, NID, stub/NID table addresses, and both stub
-words. It separately reports whether the validated tuple is exactly
-`SysMemForKernel` plus known historical/resolved `sceKernelGetModel` NID
-`0x6373995D` or `0x07C586A1`. Until hardware returns that structural match, the
-model interpretation remains a strong hypothesis rather than proof. The import
-stub is never called or modified.
+words. Real PSP-1000 hardware subsequently proved that the validated tuple is
+`sceVshBridge:0x21C243FE`, publicly identified as the VSH wrapper
+`vshKernelGetModel`. This is distinct from importing `sceKernelGetModel`
+directly from a system-memory library. The diagnostic exact-match flag now
+recognizes the proven VSH wrapper tuple. The import stub is never called or
+modified.
 
 ### Initializer caller scan and concise output
 
@@ -340,15 +341,14 @@ Expected new records are:
 [vshimport] stub=... offset=0x3F970 library=... index=... nid=... stubtable=... nidtable=...
 ```
 
-### Current hypothesis, unknowns, and safety
+### Current evidence, unknowns, and safety
 
-If structural traversal returns `SysMemForKernel` and `0x07C586A1`, then the
-source is proven to be the firmware-resolved `sceKernelGetModel`, and the
-observed PSP-1000 value 0 plus predicate true set `{4,5,7,9}` strongly supports
-a Go/platform capability classifier. It is not yet proven: the import tuple has
-not been returned, `+0x66E0` callers and their exact arguments are unknown,
-indirect references have not been excluded, and supported-model semantics have
-not been compared.
+**PROVEN:** structural traversal returned `sceVshBridge:0x21C243FE`, the public
+`vshKernelGetModel` wrapper identity; the initializer's verified caller passes
+`a0=1, a1=0xFFFF`; and the resulting PSP-1000 VSH model state is 0.
+**INFERENCE:** the wrapper ultimately obtains the hardware model represented by
+that state. **HYPOTHESIS:** meanings of the downstream capability bits and the
+minimum caller combination needed to request SlidePlugin remain unresolved.
 
 This change performs zero VSH writes, zero shared-state writes, zero import-stub
 calls, and no Sony request. `vsh_slide_patch=disabled` and
@@ -376,8 +376,9 @@ caller argument preparation offline before proposing any behavioral experiment.
   run above.
 - **Hardware result available:** the prior read-only run booted normally,
   validated the shared-state segment, and read value 0.
-- **Unresolved questions:** the raw library/NID, proof of `sceKernelGetModel`,
-  `+0x66E0` callers/arguments, and cross-model semantics.
+- **Unresolved questions:** downstream capability semantics, indirect users,
+  and cross-model behavior; this evidence does not claim a direct
+  `sceKernelGetModel` import.
 - **Recommended next phase:** analyze only the returned import tuple and
   initializer caller windows before designing any behavioral control.
 

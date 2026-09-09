@@ -118,6 +118,7 @@ static const unsigned int vsh_trigger_offsets[VSH_TRIGGER_COUNT] = {
 };
 
 typedef struct {
+    unsigned int callsite;
     unsigned int original_word;
     unsigned int original_target;
     unsigned int replacement_word;
@@ -524,9 +525,8 @@ static void zeroCtrlResolveVshStateImport(SceModule2 *mod) {
                             sizeof(slide_diag.vsh_state_import_library));
             if (slide_diag.vsh_state_import_library_valid &&
                     strcmp(slide_diag.vsh_state_import_library,
-                        "SysMemForKernel") == 0 &&
-                    (slide_diag.vsh_state_import_nid == 0x07C586A1 ||
-                     slide_diag.vsh_state_import_nid == 0x6373995D))
+                        "sceVshBridge") == 0 &&
+                    slide_diag.vsh_state_import_nid == 0x21C243FE)
                 slide_diag.vsh_state_import_get_model_match = 1;
             slide_diag.vsh_state_import_match = 1;
             return;
@@ -641,6 +641,7 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         counter_58d4, counter_13f6c, counter_14020
     };
     SceModule2 *helper;
+    int all_selected_valid;
     unsigned int target_offset;
     unsigned int start_offset;
     unsigned int end_offset;
@@ -692,6 +693,10 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
             slide_diag.vsh_code_capture_result = 0;
 
             helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+            all_selected_valid =
+                    slide_diag.trigger_mode != ZERO_TRIGGER_DISABLED &&
+                    target_offset == 0x6F84;
+            /* Validation pass: no VSH write may occur in this loop. */
             for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
                 ZeroCtrlVshTriggerEvidence *evidence = &slide_diag.triggers[i];
                 unsigned int callsite;
@@ -700,16 +705,21 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
 
                 evidence->stub_addr = stubs[i];
                 evidence->counter_addr = counters[i];
-                if (!(slide_diag.trigger_mode & (1U << i)) ||
-                        text_size < 4 || vsh_trigger_offsets[i] > text_size - 4)
+                if (!(slide_diag.trigger_mode & (1U << i))) continue;
+                if (text_size < 4 ||
+                        vsh_trigger_offsets[i] > text_size - 4 ||
+                        text_addr > 0xFFFFFFFFU - vsh_trigger_offsets[i]) {
+                    all_selected_valid = 0;
                     continue;
+                }
                 callsite = text_addr + vsh_trigger_offsets[i];
+                evidence->callsite = callsite;
                 word = _lw(callsite);
                 original_target = ((callsite + 4) & 0xF0000000) |
                         ((word & 0x03FFFFFF) << 2);
                 evidence->original_word = word;
                 evidence->original_target = original_target;
-                if ((word >> 26) == 3 && original_target == text_addr + 0x6F84 &&
+                if ((word >> 26) == 3 && original_target == target &&
                         zeroCtrlVshModuleRangeValid(helper, stubs[i], 24) &&
                         zeroCtrlVshModuleRangeValid(helper, counters[i], 4) &&
                         (stubs[i] & 3) == 0 &&
@@ -719,12 +729,25 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                             ((stubs[i] >> 2) & 0x03FFFFFF);
                     evidence->validation = 1;
                     evidence->replacement_word = patched;
-                    _sw(patched, callsite); /* Central selective-write primitive. */
+                } else {
+                    all_selected_valid = 0;
+                }
+            }
+
+            /* Commit pass: selected callsites are all valid or none are written. */
+            if (all_selected_valid) {
+                for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
+                    ZeroCtrlVshTriggerEvidence *evidence =
+                            &slide_diag.triggers[i];
+                    if (!(slide_diag.trigger_mode & (1U << i))) continue;
+                    _sw(evidence->replacement_word, evidence->callsite);
                     evidence->patch_applied = 1;
                     sceKernelDcacheWritebackInvalidateRange(
-                            (const void *)callsite, sizeof(unsigned int));
+                            (const void *)evidence->callsite,
+                            sizeof(unsigned int));
                     sceKernelIcacheInvalidateRange(
-                            (const void *)callsite, sizeof(unsigned int));
+                            (const void *)evidence->callsite,
+                            sizeof(unsigned int));
                     evidence->cache_sync = 1;
                 }
             }
