@@ -136,10 +136,13 @@ typedef struct {
     unsigned int target_addr;
     unsigned int original_words[2];
     unsigned int replacement_words[2];
+    unsigned int decoded_global_addr;
+    unsigned int expected_global_addr;
     unsigned int stub_addr;
     unsigned int counter_addr;
     unsigned int hit_count;
     int validation;
+    int structure_valid;
     int patch_applied;
     int cache_sync;
 } ZeroCtrlGlobalPredicateEvidence;
@@ -775,6 +778,10 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                 ZeroCtrlGlobalPredicateEvidence *global =
                         &slide_diag.global_predicate;
                 unsigned int predicate = target;
+                unsigned int lui;
+                unsigned int load;
+                unsigned int upper;
+                int displacement;
 
                 global->stub_addr = global_stub;
                 global->counter_addr = global_counter;
@@ -784,25 +791,43 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                         vsh->text_size == text_size &&
                         target_offset == 0x6F84 && text_size >= 0x6F8C &&
                         text_addr <= 0xFFFFFFFFU - 0x6F8B &&
-                        zeroCtrlVshModuleRangeValid(vsh, predicate, 8) &&
+                        zeroCtrlVshModuleRangeValid(vsh, predicate, 8)) {
+                    global->target_addr = predicate;
+                    global->original_words[0] = _lw(predicate);
+                    global->original_words[1] = _lw(predicate + 4);
+                    lui = global->original_words[0];
+                    load = global->original_words[1];
+                    upper = (lui & 0xFFFF) << 16;
+                    displacement = (short)(load & 0xFFFF);
+                    global->decoded_global_addr =
+                            upper + (unsigned int)displacement;
+                    global->expected_global_addr =
+                            slide_diag.vsh_shared_global_addr;
+                    if ((lui >> 26) == 0x0F && ((lui >> 16) & 0x1F) == 2 &&
+                            (load >> 26) == 0x23 &&
+                            ((load >> 21) & 0x1F) == 2 &&
+                            ((load >> 16) & 0x1F) == 4)
+                        global->structure_valid = 1;
+                }
+                if (global->structure_valid &&
+                        slide_diag.vsh_shared_global_decode_valid &&
+                        slide_diag.vsh_shared_global_segment_valid &&
+                        slide_diag.vsh_shared_global_addr >= text_addr &&
+                        slide_diag.vsh_shared_global_addr - text_addr == 0x56CE0 &&
+                        global->decoded_global_addr ==
+                                slide_diag.vsh_shared_global_addr &&
                         zeroCtrlVshModuleRangeValid(helper, global_stub, 24) &&
                         zeroCtrlVshModuleRangeValid(helper, global_counter, 4) &&
                         (global_stub & 3) == 0 &&
                         ((predicate + 4) & 0xF0000000) ==
                                 (global_stub & 0xF0000000)) {
-                    global->target_addr = predicate;
-                    global->original_words[0] = _lw(predicate);
-                    global->original_words[1] = _lw(predicate + 4);
-                    if (global->original_words[0] == 0x3C0209C8 &&
-                            global->original_words[1] == 0x8C44DAE0) {
-                        global->replacement_words[0] = 0x08000000 |
-                                ((global_stub >> 2) & 0x03FFFFFF);
-                        global->replacement_words[1] = 0;
-                        if ((((predicate + 4) & 0xF0000000) |
-                                ((global->replacement_words[0] & 0x03FFFFFF)
-                                << 2)) == global_stub)
-                            global->validation = 1;
-                    }
+                    global->replacement_words[0] = 0x08000000 |
+                            ((global_stub >> 2) & 0x03FFFFFF);
+                    global->replacement_words[1] = 0;
+                    if ((((predicate + 4) & 0xF0000000) |
+                            ((global->replacement_words[0] & 0x03FFFFFF)
+                            << 2)) == global_stub)
+                        global->validation = 1;
                 }
                 if (global->validation) {
                     _sw(global->replacement_words[0], predicate);
@@ -1419,10 +1444,14 @@ static void zeroCtrlWriteVshSlideEvidence(void) {
             global->hit_count =
                     *(volatile unsigned int *)global->counter_addr;
         snprintf(line, sizeof(line),
-                "[global6f84] validation=%d original_words=0x%08X,0x%08X "
+                "[global6f84] validation=%d structure_valid=%d "
+                "decoded_global_addr=0x%08X expected_global_addr=0x%08X "
+                "original_words=0x%08X,0x%08X "
                 "replacement_words=0x%08X,0x%08X patch_applied=%d "
                 "cache_sync=%d hit_count=%u\n",
-                global->validation, global->original_words[0],
+                global->validation, global->structure_valid,
+                global->decoded_global_addr, global->expected_global_addr,
+                global->original_words[0],
                 global->original_words[1], global->replacement_words[0],
                 global->replacement_words[1], global->patch_applied,
                 global->cache_sync, global->hit_count);

@@ -53,6 +53,17 @@ def check_sources(root):
     if global_start < 0 or global_end <= global_start:
         fail("controlled global predicate patch block is missing")
     global_block = kernel[global_start:global_end]
+    if "0x8C44DAE0" in global_block:
+        fail("global predicate validation uses a relocation-specific LW word")
+    for required in (
+        "(lui >> 26) == 0x0F",
+        "(load >> 26) == 0x23",
+        "global->decoded_global_addr",
+        "slide_diag.vsh_shared_global_addr",
+        "0x56CE0",
+    ):
+        if required not in global_block:
+            fail("global predicate semantic validation is missing " + required)
     if global_block.count("_sw(global->replacement_words") != 2:
         fail("global predicate mode must write exactly its two entry words")
     if "vsh_trigger_offsets" in global_block or "evidence->callsite" in global_block:
@@ -84,6 +95,25 @@ def check_sources(root):
         rebuilt = ((pc + 4) & 0xF0000000) | ((word & 0x03FFFFFF) << 2)
         if rebuilt != target:
             fail("JAL semantic reconstruction self-test failed")
+
+    # Hardware-style relocation variants of LUI v0 / LW a0,disp(v0).
+    for lui, load, expected in (
+        (0x3C0209C8, 0x8C44D7E0, 0x09C7D7E0),
+        (0x3C0209C8, 0x8C44D9E0, 0x09C7D9E0),
+        (0x3C0209C8, 0x8C44DAE0, 0x09C7DAE0),
+    ):
+        if lui >> 26 != 0x0F or (lui >> 16) & 0x1F != 2:
+            fail("global predicate LUI semantic self-test failed")
+        if load >> 26 != 0x23 or (load >> 21) & 0x1F != 2:
+            fail("global predicate LW base semantic self-test failed")
+        if (load >> 16) & 0x1F != 4:
+            fail("global predicate LW destination semantic self-test failed")
+        displacement = load & 0xFFFF
+        if displacement & 0x8000:
+            displacement -= 0x10000
+        effective = ((lui & 0xFFFF) << 16) + displacement
+        if effective != expected:
+            fail("global predicate effective-address self-test failed")
 
 
 def function_body(disassembly, symbol):

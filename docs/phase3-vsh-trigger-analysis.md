@@ -426,8 +426,12 @@ prove execution. The writer now polls fixed state every 200 ms for 12 seconds,
 persists only transitions, and emits a final snapshot.
 
 `DangerousGlobalPredicate6F84` is a separate, explicit reproduction mode. It
-validates the hardware-captured first two predicate words and redirects only the
-predicate entry to a dedicated counted strict-true assembly leaf. It does not
+validates the hardware-captured first two predicate instructions semantically:
+`LUI v0,upper` followed by `LW a0,signed_disp(v0)` must reconstruct the
+independently derived, segment-validated shared global at text `+0x56CE0`.
+The runtime words remain logged because the load displacement changes when VSH
+relocates. The mode then redirects only the predicate entry to a dedicated
+counted strict-true assembly leaf. It does not
 modify the shared model or any known direct caller. `DangerousAllCallers` is
 **not proven equivalent**: it changes three known direct JALs, whereas the global
 mode affects every path reaching the predicate, including unidentified indirect
