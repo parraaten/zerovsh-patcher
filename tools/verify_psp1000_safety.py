@@ -138,6 +138,36 @@ def check_sources(root):
         fail("Sony RA trace performs unexpected code-cache synchronization")
     if "mod->module_start_func =" in kernel:
         fail("Sony start trace still relies on metadata-pointer redirection")
+    register_start = kernel.find("void zeroCtrlRegisterSonyStartTrace(")
+    register_end = kernel.find("void zeroCtrlRecordVshSlideTarget(", register_start)
+    installer_start = kernel.find("static void zeroCtrlInstallSonyStartTrace(")
+    installer_end = kernel.find("int OnModuleStart(", installer_start)
+    if min(register_start, register_end, installer_start, installer_end) < 0:
+        fail("Sony registration/installer diagnostic functions are missing")
+    register = kernel[register_start:register_end]
+    installer = kernel[installer_start:installer_end]
+    if any(token in register + installer for token in
+            ("zeroCtrlDiagnosticsText", "sceIoOpen", "sceIoWrite")):
+        fail("Sony registration diagnostics perform loader-sensitive file I/O")
+    if register.count("trace->registered = 1") != 1 or \
+            register.find("trace->registration_success = 1") > \
+            register.find("trace->registered = 1"):
+        fail("Sony registration success does not exclusively gate registered=1")
+    for reason in (
+        "HELPER_NOT_FOUND", "ENTRY_END_ORDER", "EXIT_END_ORDER",
+        "ENTRY_STUB_TOO_LARGE", "EXIT_STUB_TOO_LARGE",
+        "ENTRY_STUB_OUT_OF_RANGE", "EXIT_STUB_OUT_OF_RANGE",
+        "RESUME_SLOT_OUT_OF_RANGE", "CALLER_RA_SLOT_OUT_OF_RANGE",
+        "ENTRY_FLAG_OUT_OF_RANGE", "RETURN_FLAG_OUT_OF_RANGE",
+        "RESULT_SLOT_OUT_OF_RANGE", "ENTRY_MISALIGNED", "EXIT_MISALIGNED",
+    ):
+        if "SONY_START_REGISTER_" + reason not in register:
+            fail("Sony registration lost validation reason " + reason)
+    for reason in ("TRACE_DISABLED", "TRACE_NOT_REGISTERED", "MODEL_MISMATCH",
+            "NULL_MODULE", "MODULE_NAME_MISMATCH", "DEVKIT_MISMATCH",
+            "TEXT_TOO_SMALL", "ADDRESS_OVERFLOW"):
+        if "SONY_START_GUARD_" + reason not in installer:
+            fail("Sony installer lost initial guard reason " + reason)
     for stub, counter in zip(STUBS, COUNTERS):
         invocation = "CREATE_TRIGGER_STUB " + stub + ", " + counter
         if invocation not in assembly:

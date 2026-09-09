@@ -432,3 +432,15 @@ deferred writer persists them. No memory query is made in either stub. When
 that writer first observes a return,
 it captures the nearest safe USER-partition snapshot; this is not an exact
 in-wrapper interval measurement.
+
+### Saved-RA registration failure localization
+
+The first saved-RA hardware run retained the native `+0x58D4` pipeline but
+persisted no `[sony-start-ra]` record even though its exact config marker was
+present. This proves neither entry nor non-entry: the installer sets
+`attempted=1` only after its initial guards, and `registered=0` is the leading
+hypothesis. Registration now records each supplied helper address, helper module
+metadata and four bounded segment ranges, and one stable failure reason without
+changing any acceptance condition. The installer similarly records the exact
+initial guard that precedes `attempted=1`. All persistence remains in the
+existing deferred writer.

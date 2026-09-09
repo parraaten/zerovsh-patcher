@@ -230,3 +230,20 @@ Interpret results as follows:
 
 If validation or installation is zero, no Sony code is redirected. Return the
 complete log and runtime module metadata rather than weakening validation.
+
+#### T8 registration-localization markers
+
+Before interpreting entry behavior, require one deferred registration record:
+
+```text
+[sony-start-register] called=1 success=... fail_reason=NAME(ID)
+[sony-start-register-addresses] entry=... entry_end=... exit=... exit_end=...
+[sony-start-register-slots] resume=... caller_ra=... entry_seen=... return_seen=... result=...
+[sony-start-register-helper] text=... text_size=... data_size=... bss_size=... segments=...
+[sony-start-register-segment] index=... start=... size=...
+```
+
+If registration succeeds but installation exits before `attempted=1`, expect
+`[sony-start-guard] checked=1 reason=NAME(ID)`. Do not adjust a range or make the
+caller-RA slot optional from this log alone; return the complete evidence for
+analysis first.

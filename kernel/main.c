@@ -148,8 +148,47 @@ typedef struct {
     int cache_sync;
 } ZeroCtrlGlobalPredicateEvidence;
 
+enum zeroCtrlSonyStartRegisterReason {
+    SONY_START_REGISTER_NONE = 0,
+    SONY_START_REGISTER_TRACE_DISABLED = 1,
+    SONY_START_REGISTER_ALREADY_REGISTERED = 2,
+    SONY_START_REGISTER_HELPER_NOT_FOUND = 3,
+    SONY_START_REGISTER_ENTRY_END_ORDER = 4,
+    SONY_START_REGISTER_EXIT_END_ORDER = 5,
+    SONY_START_REGISTER_ENTRY_STUB_TOO_LARGE = 6,
+    SONY_START_REGISTER_EXIT_STUB_TOO_LARGE = 7,
+    SONY_START_REGISTER_ENTRY_STUB_OUT_OF_RANGE = 8,
+    SONY_START_REGISTER_EXIT_STUB_OUT_OF_RANGE = 9,
+    SONY_START_REGISTER_RESUME_SLOT_OUT_OF_RANGE = 10,
+    SONY_START_REGISTER_CALLER_RA_SLOT_OUT_OF_RANGE = 11,
+    SONY_START_REGISTER_ENTRY_FLAG_OUT_OF_RANGE = 12,
+    SONY_START_REGISTER_RETURN_FLAG_OUT_OF_RANGE = 13,
+    SONY_START_REGISTER_RESULT_SLOT_OUT_OF_RANGE = 14,
+    SONY_START_REGISTER_ENTRY_MISALIGNED = 15,
+    SONY_START_REGISTER_EXIT_MISALIGNED = 16
+};
+
+enum zeroCtrlSonyStartGuardReason {
+    SONY_START_GUARD_NONE = 0,
+    SONY_START_GUARD_TRACE_DISABLED = 1,
+    SONY_START_GUARD_TRACE_NOT_REGISTERED = 2,
+    SONY_START_GUARD_MODEL_MISMATCH = 3,
+    SONY_START_GUARD_NULL_MODULE = 4,
+    SONY_START_GUARD_MODULE_NAME_MISMATCH = 5,
+    SONY_START_GUARD_DEVKIT_MISMATCH = 6,
+    SONY_START_GUARD_TEXT_TOO_SMALL = 7,
+    SONY_START_GUARD_ADDRESS_OVERFLOW = 8
+};
+
 typedef struct {
     int enabled, registered, attempted, validation, install, cache_sync;
+    volatile int registration_called, registration_success;
+    volatile int initial_guard_checked;
+    int registration_fail_reason, initial_guard_reason;
+    unsigned int supplied_addrs[9];
+    unsigned int helper_text_addr, helper_text_size;
+    unsigned int helper_data_size, helper_bss_size, helper_segment_count;
+    unsigned int helper_segment_addr[4], helper_segment_size[4];
     unsigned int original_addr;
     unsigned int entry_stub_addr, entry_stub_size;
     unsigned int exit_stub_addr, exit_stub_size;
@@ -672,20 +711,95 @@ void zeroCtrlRegisterSonyStartTrace(unsigned int entry_addr,
         unsigned int result_addr) {
     SceModule2 *helper;
     ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
-    if (!trace->enabled || trace->registered) return;
+    unsigned int i;
+
+    trace->registration_called = 1;
+    trace->supplied_addrs[0] = entry_addr;
+    trace->supplied_addrs[1] = entry_end_addr;
+    trace->supplied_addrs[2] = exit_addr;
+    trace->supplied_addrs[3] = exit_end_addr;
+    trace->supplied_addrs[4] = resume_slot_addr;
+    trace->supplied_addrs[5] = caller_ra_slot_addr;
+    trace->supplied_addrs[6] = entry_seen_addr;
+    trace->supplied_addrs[7] = return_seen_addr;
+    trace->supplied_addrs[8] = result_addr;
+    if (!trace->enabled) {
+        trace->registration_fail_reason = SONY_START_REGISTER_TRACE_DISABLED;
+        return;
+    }
+    if (trace->registered) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ALREADY_REGISTERED;
+        return;
+    }
+    trace->registration_success = 0;
     helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-    if (!helper || entry_end_addr <= entry_addr || exit_end_addr <= exit_addr ||
-            entry_end_addr - entry_addr > 256 || exit_end_addr - exit_addr > 256 ||
-            !zeroCtrlVshModuleRangeValid(helper, entry_addr,
-                    entry_end_addr - entry_addr) ||
-            !zeroCtrlVshModuleRangeValid(helper, exit_addr,
-                    exit_end_addr - exit_addr) ||
-            !zeroCtrlVshModuleRangeValid(helper, resume_slot_addr, 4) ||
-            !zeroCtrlVshModuleRangeValid(helper, caller_ra_slot_addr, 4) ||
-            !zeroCtrlVshModuleRangeValid(helper, entry_seen_addr, 4) ||
-            !zeroCtrlVshModuleRangeValid(helper, return_seen_addr, 4) ||
-            !zeroCtrlVshModuleRangeValid(helper, result_addr, 4) ||
-            (entry_addr & 3) != 0 || (exit_addr & 3) != 0) return;
+    if (!helper) {
+        trace->registration_fail_reason = SONY_START_REGISTER_HELPER_NOT_FOUND;
+        return;
+    }
+    trace->helper_text_addr = helper->text_addr;
+    trace->helper_text_size = helper->text_size;
+    trace->helper_data_size = helper->data_size;
+    trace->helper_bss_size = helper->bss_size;
+    trace->helper_segment_count = helper->nsegment;
+    for (i = 0; i < helper->nsegment && i < 4; i++) {
+        trace->helper_segment_addr[i] = helper->segmentaddr[i];
+        trace->helper_segment_size[i] = helper->segmentsize[i];
+    }
+    if (entry_end_addr <= entry_addr) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_END_ORDER;
+        return;
+    }
+    if (exit_end_addr <= exit_addr) {
+        trace->registration_fail_reason = SONY_START_REGISTER_EXIT_END_ORDER;
+        return;
+    }
+    if (entry_end_addr - entry_addr > 256) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_STUB_TOO_LARGE;
+        return;
+    }
+    if (exit_end_addr - exit_addr > 256) {
+        trace->registration_fail_reason = SONY_START_REGISTER_EXIT_STUB_TOO_LARGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, entry_addr,
+            entry_end_addr - entry_addr)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_STUB_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, exit_addr,
+            exit_end_addr - exit_addr)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_EXIT_STUB_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, resume_slot_addr, 4)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_RESUME_SLOT_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, caller_ra_slot_addr, 4)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_CALLER_RA_SLOT_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, entry_seen_addr, 4)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_FLAG_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, return_seen_addr, 4)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_RETURN_FLAG_OUT_OF_RANGE;
+        return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper, result_addr, 4)) {
+        trace->registration_fail_reason = SONY_START_REGISTER_RESULT_SLOT_OUT_OF_RANGE;
+        return;
+    }
+    if ((entry_addr & 3) != 0) {
+        trace->registration_fail_reason = SONY_START_REGISTER_ENTRY_MISALIGNED;
+        return;
+    }
+    if ((exit_addr & 3) != 0) {
+        trace->registration_fail_reason = SONY_START_REGISTER_EXIT_MISALIGNED;
+        return;
+    }
     trace->entry_stub_addr = entry_addr;
     trace->entry_stub_size = entry_end_addr - entry_addr;
     trace->exit_stub_addr = exit_addr;
@@ -695,6 +809,8 @@ void zeroCtrlRegisterSonyStartTrace(unsigned int entry_addr,
     trace->entry_seen_addr = entry_seen_addr;
     trace->return_seen_addr = return_seen_addr;
     trace->result_addr = result_addr;
+    trace->registration_fail_reason = SONY_START_REGISTER_NONE;
+    trace->registration_success = 1;
     trace->registered = 1;
 }
 
@@ -1672,6 +1788,32 @@ static void zeroCtrlRefreshSonyStartTrace(void) {
     trace->result = *(volatile int *)trace->result_addr;
 }
 
+static const char *zeroCtrlSonyRegisterReasonName(int reason) {
+    static const char *names[] = {
+        "NONE", "TRACE_DISABLED", "ALREADY_REGISTERED", "HELPER_NOT_FOUND",
+        "ENTRY_END_ORDER", "EXIT_END_ORDER", "ENTRY_STUB_TOO_LARGE",
+        "EXIT_STUB_TOO_LARGE", "ENTRY_STUB_OUT_OF_RANGE",
+        "EXIT_STUB_OUT_OF_RANGE", "RESUME_SLOT_OUT_OF_RANGE",
+        "CALLER_RA_SLOT_OUT_OF_RANGE", "ENTRY_FLAG_OUT_OF_RANGE",
+        "RETURN_FLAG_OUT_OF_RANGE", "RESULT_SLOT_OUT_OF_RANGE",
+        "ENTRY_MISALIGNED", "EXIT_MISALIGNED"
+    };
+    if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
+        return "UNKNOWN";
+    return names[reason];
+}
+
+static const char *zeroCtrlSonyGuardReasonName(int reason) {
+    static const char *names[] = {
+        "NONE", "TRACE_DISABLED", "TRACE_NOT_REGISTERED", "MODEL_MISMATCH",
+        "NULL_MODULE", "MODULE_NAME_MISMATCH", "DEVKIT_MISMATCH",
+        "TEXT_TOO_SMALL", "ADDRESS_OVERFLOW"
+    };
+    if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
+        return "UNKNOWN";
+    return names[reason];
+}
+
 static void zeroCtrlWriteLateTransition(unsigned int elapsed,
         const char *name, unsigned int value) {
     char line[112];
@@ -1693,6 +1835,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_trace_attempt = 0, observed_trace_validation = 0;
     int observed_trace_install = 0, observed_start_entry = 0;
     int observed_start_return = 0;
+    int observed_registration_called = 0, observed_guard_checked = 0;
     char line[160];
     unsigned int i;
 
@@ -1732,6 +1875,53 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         if (slide_diag.sony_start_trace.enabled) {
             ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
             zeroCtrlRefreshSonyStartTrace();
+            if (trace->registration_called && !observed_registration_called) {
+                snprintf(line, sizeof(line),
+                        "[sony-start-register] called=1 success=%d "
+                        "fail_reason=%s(%d)\n",
+                        trace->registration_success,
+                        zeroCtrlSonyRegisterReasonName(
+                            trace->registration_fail_reason),
+                        trace->registration_fail_reason);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[sony-start-register-addresses] entry=0x%08X "
+                        "entry_end=0x%08X exit=0x%08X exit_end=0x%08X\n",
+                        trace->supplied_addrs[0], trace->supplied_addrs[1],
+                        trace->supplied_addrs[2], trace->supplied_addrs[3]);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[sony-start-register-slots] resume=0x%08X caller_ra=0x%08X "
+                        "entry_seen=0x%08X return_seen=0x%08X result=0x%08X\n",
+                        trace->supplied_addrs[4], trace->supplied_addrs[5],
+                        trace->supplied_addrs[6], trace->supplied_addrs[7],
+                        trace->supplied_addrs[8]);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[sony-start-register-helper] text=0x%08X text_size=0x%X "
+                        "data_size=0x%X bss_size=0x%X segments=%u\n",
+                        trace->helper_text_addr, trace->helper_text_size,
+                        trace->helper_data_size, trace->helper_bss_size,
+                        trace->helper_segment_count);
+                zeroCtrlDiagnosticsText(line);
+                for (i = 0; i < trace->helper_segment_count && i < 4; i++) {
+                    snprintf(line, sizeof(line),
+                            "[sony-start-register-segment] index=%u "
+                            "start=0x%08X size=0x%X\n", i,
+                            trace->helper_segment_addr[i],
+                            trace->helper_segment_size[i]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                observed_registration_called = 1;
+            }
+            if (trace->initial_guard_checked && !observed_guard_checked) {
+                snprintf(line, sizeof(line),
+                        "[sony-start-guard] checked=1 reason=%s(%d)\n",
+                        zeroCtrlSonyGuardReasonName(trace->initial_guard_reason),
+                        trace->initial_guard_reason);
+                zeroCtrlDiagnosticsText(line);
+                observed_guard_checked = 1;
+            }
             if (trace->attempted != observed_trace_attempt ||
                     trace->validation != observed_trace_validation ||
                     trace->install != observed_trace_install) {
@@ -1864,11 +2054,40 @@ static void zeroCtrlInstallSonyStartTrace(SceModule2 *mod) {
     SceModule2 *helper;
     unsigned int start;
 
-    if (!trace->enabled || !trace->registered || model != 0 || !mod ||
-            strcmp(mod->modname, "slide_plugin_module") != 0 ||
-            sceKernelDevkitVersion() != 0x06060110 ||
-            mod->text_size < 0xFA4 || mod->text_addr > 0xFFFFFFFFU - 0xF98)
+    trace->initial_guard_checked = 1;
+    if (!trace->enabled) {
+        trace->initial_guard_reason = SONY_START_GUARD_TRACE_DISABLED;
         return;
+    }
+    if (!trace->registered) {
+        trace->initial_guard_reason = SONY_START_GUARD_TRACE_NOT_REGISTERED;
+        return;
+    }
+    if (model != 0) {
+        trace->initial_guard_reason = SONY_START_GUARD_MODEL_MISMATCH;
+        return;
+    }
+    if (!mod) {
+        trace->initial_guard_reason = SONY_START_GUARD_NULL_MODULE;
+        return;
+    }
+    if (strcmp(mod->modname, "slide_plugin_module") != 0) {
+        trace->initial_guard_reason = SONY_START_GUARD_MODULE_NAME_MISMATCH;
+        return;
+    }
+    if (sceKernelDevkitVersion() != 0x06060110) {
+        trace->initial_guard_reason = SONY_START_GUARD_DEVKIT_MISMATCH;
+        return;
+    }
+    if (mod->text_size < 0xFA4) {
+        trace->initial_guard_reason = SONY_START_GUARD_TEXT_TOO_SMALL;
+        return;
+    }
+    if (mod->text_addr > 0xFFFFFFFFU - 0xF98) {
+        trace->initial_guard_reason = SONY_START_GUARD_ADDRESS_OVERFLOW;
+        return;
+    }
+    trace->initial_guard_reason = SONY_START_GUARD_NONE;
     trace->attempted = 1;
     start = mod->module_start_func;
     trace->original_addr = start;
