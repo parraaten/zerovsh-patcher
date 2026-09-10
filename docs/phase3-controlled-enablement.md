@@ -1328,3 +1328,49 @@ Whether this writer executes, what value it stores, and whether any other
 writer changes `field_12C` remain unresolved. The recommended next phase is to
 interpret that single run and inspect the upstream natural branch if hits are
 zero; do not change `+0x6F84` or add compatibility behavior in T18.
+
+
+### T18 hardware observation and T18.1 observability
+
+The latest real PSP-1000 run again reached the validated state-zero virtual
+call path. **PROVEN BY HARDWARE:** model 0 / devkit 0x06060110 loaded and
+started SlidePlugin, requested its RCO, observed the callsite-only PAF
+zero-to-one compatibility and exact BSMan not-linked substitution, resolved the
+virtual target to `vsh_module+0x1E2B0`, and observed
+`field_128=0`, `field_12C=15`, and `field_150=0`. Four natural virtual
+returns were 15 and Sony did not reach the downstream PAF/VshBridge path.
+
+The log stopped after the approximately 8.51-second live activation records and
+contained neither the deferred `[final]` record nor the existing
+`[topmenu-field12c-write]` / `[topmenu-state-final]` records. This does **not**
+prove that the T18 writer had zero hits. The T18 scalars existed but were only
+reported after the observation loop and final partition capture.
+
+T18.1 changes diagnostics only. The existing deferred writer now emits one
+`[topmenu-field12c-write-install]` record after it first observes that the T18
+installation attempt has completed. At the same one-shot TopMenu observation
+that emits `[topmenu-state]`, it immediately emits
+`[topmenu-field12c-write-live]` from the already-existing five helper scalars.
+The natural VSH patch site, original `0xAC53012C` delay-slot store, helper leaf,
+and all compatibility behavior remain unchanged.
+
+After the observation loop, T18.1 emits
+`[checkpoint] slide_observation_window_complete` before the existing final
+checkpoint flush, then `[checkpoint] final_partition_capture_begin`
+immediately before the final partition capture and
+`[checkpoint] final_partition_capture_end` immediately after it returns. The
+interpretation is intentionally precise:
+
+- no `slide_observation_window_complete`: the diagnostic writer did not prove
+  that it exited the observation loop;
+- `slide_observation_window_complete` but no
+  `final_partition_capture_begin`: progression stopped in the existing final
+  slide-checkpoint flush or before the capture-begin record could be emitted;
+- capture begin without capture end: the final partition-capture call is the
+  observed blocking/failing boundary;
+- capture end present: finalization progressed beyond partition capture and any
+  later missing output must be localized separately.
+
+The observation window remains 12,000,000 microseconds. T18.1 adds no new
+thread, no per-hit logging, no new polling path, no Sony state write, and no
+compatibility conversion.
