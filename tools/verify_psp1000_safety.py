@@ -30,6 +30,24 @@ SONY_TRACE_BASELINE_SHA256 = \
 BSMAN_STUB = "zeroCtrlBSManClosedLeaf"
 BSMAN_STUB_END = "zeroCtrlBSManClosedLeafEnd"
 BSMAN_COUNTER = "zeroCtrlBSManClosedHits"
+BSMAN_RETURN_TRACE = "zeroCtrlBSManReturnTrace"
+BSMAN_RETURN_TRACE_END = "zeroCtrlBSManReturnTraceEnd"
+BSMAN_CALL_RA = "zeroCtrlBSManCallRA"
+PREFIX_TRACE_STUBS = (
+    "zeroCtrlSlidePrefixPafCallTrace",
+    "zeroCtrlSlidePrefixPafReturnTrace",
+    "zeroCtrlSlidePrefixResultTrace",
+    "zeroCtrlSlidePrefixFlagTrace",
+    "zeroCtrlSlidePrefixMaskTrace",
+)
+POST_TRACE_STUBS = (
+    "zeroCtrlPostBSManBranchTrace",
+    "zeroCtrlPostStateBranchTrace",
+    "zeroCtrlPostPafCallTrace",
+    "zeroCtrlPostPafReturnTrace",
+    "zeroCtrlPostVshCallTrace",
+    "zeroCtrlPostVshReturnTrace",
+)
 
 
 def fail(message):
@@ -37,7 +55,100 @@ def fail(message):
     raise SystemExit(1)
 
 
+def mips_read_registers(word):
+    """Return GPRs read by the ordinary MIPS instructions used in the proof."""
+    opcode = word >> 26
+    rs = (word >> 21) & 0x1F
+    rt = (word >> 16) & 0x1F
+    if opcode in (2, 3, 15):
+        return set()
+    if opcode == 0:
+        function = word & 0x3F
+        if function in (0, 2, 3):
+            return {rt}
+        if function in (8, 9):
+            return {rs}
+        return {rs, rt}
+    if opcode == 1 or opcode in (6, 7):
+        return {rs}
+    if opcode in (4, 5):
+        return {rs, rt}
+    if 0x20 <= opcode <= 0x27 or 0x30 <= opcode <= 0x37:
+        return {rs}
+    if 0x28 <= opcode <= 0x2F or 0x38 <= opcode <= 0x3F:
+        return {rs, rt}
+    return {rs}
+
+
+def check_research_activation_prefix(root):
+    """Independently prove the checked-in PRX operands and tracer scratch liveness."""
+    image = (root / "bin/slide/slide_plugin_660.prx").read_bytes()
+
+    def u16(offset):
+        return int.from_bytes(image[offset:offset + 2], "little")
+
+    def u32(offset):
+        return int.from_bytes(image[offset:offset + 4], "little")
+
+    if image[:4] != b"\x7fELF" or image[4:6] != b"\x01\x01":
+        fail("research SlidePlugin is not a little-endian ELF32 image")
+    program_offset = u32(28)
+    program_size = u16(42)
+    program_count = u16(44)
+    load_segments = []
+    for index in range(program_count):
+        header = program_offset + index * program_size
+        if u32(header) == 1:
+            load_segments.append((u32(header + 8), u32(header + 4),
+                                  u32(header + 16)))
+
+    def word(address):
+        for virtual, file_offset, file_size in load_segments:
+            if virtual <= address and address + 4 <= virtual + file_size:
+                offset = file_offset + address - virtual
+                return int.from_bytes(image[offset:offset + 4], "little")
+        fail("research SlidePlugin prefix lies outside its load segments")
+
+    if word(0x9394) != 0x24020101:
+        fail("research prefix no longer loads v0 with 0x0101")
+    if word(0x9398) != 0x10620090:
+        fail("research prefix no longer compares v1 with v0")
+    if (word(0x939C) & 0xFFFF0000) != 0x3C020000:
+        fail("research prefix no longer executes LUI v0 in the branch delay slot")
+    post_words = {
+        0x93B4: 0x1040000A, 0x93B8: 0x92620DCD,
+        0x93E0: 0x10400066, 0x93F0: 0x00002021,
+        0x9400: 0x24040001, 0x940C: 0x3C048000,
+        0x9414: 0x3484000D, 0x9418: 0x1440FFCE,
+        0x941C: 0x8FBF001C,
+    }
+    for address, expected in post_words.items():
+        if word(address) != expected:
+            fail("research post-BSMan word changed at +0x%X" % address)
+    if (word(0x93E4) & 0xFFFF0000) != 0x3C020000:
+        fail("post-BSMan state branch delay is not LUI v0")
+
+    scratch = {8, 9, 10, 25}  # t0, t1, t2, t9
+    live_ranges = (
+        (0x9338, 0x9378, "first PAF/result/flag resumes"),
+        (0x939C, 0x93B4, "0x0101 unequal resume"),
+        (0x95DC, 0x9628, "0x0101 equal resume"),
+        (0x93BC, 0x93EC, "BSMan nonzero resume"),
+        (0x93F4, 0x93FC, "first post-BSMan PAF return"),
+        (0x9404, 0x9410, "second post-BSMan PAF return"),
+        (0x9418, 0x9424, "VshBridge return"),
+        (0x957C, 0x9628, "post-BSMan state-zero resume"),
+    )
+    for start, end, description in live_ranges:
+        for address in range(start, end, 4):
+            used = mips_read_registers(word(address)) & scratch
+            if used:
+                fail("tracer scratch register is live at %s: +0x%X" %
+                     (description, address))
+
+
 def check_sources(root):
+    check_research_activation_prefix(root)
     kernel = (root / "kernel/main.c").read_text()
     user = (root / "user/main.c").read_text()
     kernel_exports = (root / "kernel/exports.exp").read_text()
@@ -45,6 +156,7 @@ def check_sources(root):
     registration_header = (root / "kernel/sony_start_trace.h").read_text()
     assembly = (root / "user/stub.S").read_text()
     build = (root / "build_linux.sh").read_text()
+    sample_config = (root / "bin/zerovsh.ini").read_text()
     if "PSP_EXPORT_FUNC_NID(zeroCtrlRegisterBSManClosedShim, 0x1337357C)" \
             not in kernel_exports:
         fail("kernel BSMan registration export NID is missing or changed")
@@ -147,6 +259,11 @@ def check_sources(root):
         '"PSP1000ActivationTrace", "Disabled"',
         'strcmp(psp1000ActivationTrace, "Enabled") == 0',
         'strcmp(psp1000BSManClosedShim, "Disabled") == 0',
+        '"PSP1000PafPresentCompat", "Disabled"',
+        'slide_diag.bsman.activation_enabled &&',
+        'strcmp(psp1000PafPresentCompat, "Enabled") == 0',
+        '_sw(bsman->paf_compat_enabled ? 1 : 0,',
+        'psp1000_paf_present_compat=',
         '"slide_activation_entry_count"',
         '"slide_bsman_call_boundary_count"',
         '"slide_last_stage"',
@@ -154,7 +271,22 @@ def check_sources(root):
         'elapsed < fast_poll_until ?\n                    10000',
         'candidates != 1',
         'bsman->caller_addr',
-        'Transaction commit: both transparent trace sites validated above.',
+        'Transaction commit: all transparent trace sites validated above.',
+        'bsman->prefix_original[0] != 0x10400006',
+        'bsman->prefix_original[2] != 0x1460000B',
+        'bsman->prefix_original[4] != 0x10620090',
+        'table->nidtable[i] != 0xED83BBCF',
+        'paf_matches != 1',
+        'slide_prefix_path_mask=0x%03X',
+        'paf_call_words=0x%08X,0x%08X',
+        'table->nidtable[i] != 0xFF03BCD5',
+        'table->nidtable[i] != 0x639C3CB3',
+        'bsman->post_original[0] != 0x1040000A',
+        'bsman->post_original[2] != 0x10400066',
+        '_lw(bsman->activation_addr + 0x108) != 0x3C048000',
+        'bsman->post_original[9] != 0x3484000D',
+        'post_bsman_path_mask=0x%03X',
+        'results=bs:0x%08X',
     ):
         if required not in kernel:
             fail("activation localization trace is missing " + required)
@@ -168,15 +300,80 @@ def check_sources(root):
     if min(activation_start, activation_end, call_start, call_end,
             return_start, return_end) < 0:
         fail("activation localization assembly leaves are missing")
+    if "ori     $t1, $t1, 0x0001" not in assembly[activation_start:activation_end] or \
+            "bnez    $t2, 1f" not in assembly[activation_start:activation_end] or \
+            "sltiu   $t2, $t2, 2" not in assembly[call_start:call_end]:
+        fail("activation stage/mask evidence is not monotonic")
     localization_leaves = assembly[activation_start:activation_end] + \
         assembly[call_start:call_end] + assembly[return_start:return_end]
     if any(token in localization_leaves for token in
             ("$gp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
         fail("activation localization leaves use gp, calls, I/O, or allocation")
     return_leaf = assembly[return_start:return_end]
-    if "$v0" in return_leaf or "zeroCtrlSlideTraceStage" not in return_leaf or \
-            "zeroCtrlBSManCallRA" not in return_leaf:
+    natural_result_store = return_leaf.find(
+        "sw      $v0, %lo(zeroCtrlPostBSManNaturalResult)")
+    first_other_record = return_leaf.find("zeroCtrlPostBSManReturnHits")
+    if natural_result_store < 0 or first_other_record <= natural_result_store or \
+            "$sp" in return_leaf or \
+            "zeroCtrlSlideTraceStage" not in return_leaf or \
+            "lw      $ra, %lo(zeroCtrlBSManCallRA)($t0)" not in return_leaf or \
+            "jr      $ra" not in return_leaf:
         fail("BSMan return trace does not preserve the natural result")
+    if re.search(r"(?:addiu|addu|or|move|lw|lbu)\s+\$v0", return_leaf):
+        fail("BSMan return trace modifies the natural result")
+    for symbol in PREFIX_TRACE_STUBS + POST_TRACE_STUBS:
+        start = assembly.find(symbol + ":")
+        end = assembly.find(symbol + "End:", start)
+        if start < 0 or end < 0:
+            fail("activation-prefix trace leaf is missing " + symbol)
+        leaf = assembly[start:end]
+        if any(token in leaf for token in
+                ("$gp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
+            fail(symbol + " uses gp, calls, I/O, or allocation")
+        if symbol == "zeroCtrlSlidePrefixPafReturnTrace" and \
+                ("sw      $v0, %lo(zeroCtrlSlidePrefixPafNaturalResult)" not in leaf or
+                 "beqz    $t2, 7f" not in leaf or
+                 "bnez    $v0, 7f" not in leaf or
+                 "addiu   $v0, $zero, 1" not in leaf or
+                 "lw      $ra, %lo(zeroCtrlSlidePrefixPafRA)" not in leaf or
+                 "jr      $ra" not in leaf):
+            fail("prefix PAF return trace does not isolate zero-to-one and restore ra")
+    post_bs = assembly[assembly.find("zeroCtrlPostBSManBranchTrace:"):
+        assembly.find("zeroCtrlPostBSManBranchTraceEnd:")]
+    post_state = assembly[assembly.find("zeroCtrlPostStateBranchTrace:"):
+        assembly.find("zeroCtrlPostStateBranchTraceEnd:")]
+    if "lw      $t2, %lo(zeroCtrlPostBSManNaturalResult)($t0)" not in post_bs or \
+            "beqz    $t2, 8f" not in post_bs:
+        fail("post-BSMan result branch does not use the saved natural result")
+    if "$v0" in post_bs or "lbu" in post_bs:
+        fail("post-BSMan result branch modifies or reconstructs the state byte")
+    if "lw      $v0, %lo(zeroCtrlPostStateDelayValue)" not in post_state:
+        fail("post-BSMan state branch does not reproduce its LUI delay value")
+    for symbol in ("zeroCtrlPostPafReturnTrace", "zeroCtrlPostVshReturnTrace"):
+        start = assembly.find(symbol + ":")
+        end = assembly.find(symbol + "End:", start)
+        leaf = assembly[start:end]
+        if re.search(r"(?:addiu|addu|or|move|lw|lbu)\s+\$v0", leaf):
+            fail(symbol + " modifies a natural imported result")
+        v0_lines = [line for line in leaf.splitlines() if "$v0" in line]
+        expected_count = 2 if symbol == "zeroCtrlPostPafReturnTrace" else 1
+        if len(v0_lines) != expected_count or any(
+                "sw      $v0," not in line for line in v0_lines):
+            fail(symbol + " has unexpected natural-result uses")
+    post_paf_source = assembly[assembly.find("zeroCtrlPostPafReturnTrace:"):
+        assembly.find("zeroCtrlPostPafReturnTraceEnd:")]
+    for result_symbol in ("zeroCtrlPostPafResult0", "zeroCtrlPostPafResult1"):
+        if post_paf_source.count(
+                "sw      $v0, %lo(" + result_symbol + ")($t0)") != 1:
+            fail("post-BSMan PAF return trace lacks exact store to " + result_symbol)
+    fast_poll = kernel[kernel.find(
+        "if (slide_diag.bsman.activation_enabled)"):kernel.find(
+            "#undef WRITE_LATE_FLAG")]
+    if "zeroCtrlDiagnosticsMemory" in fast_poll or \
+            "zeroCtrlDiagnosticsCapturePartitions" in fast_poll:
+        fail("activation fast-poll path performs a memory query")
+    if "PSP1000PafPresentCompat = Disabled" not in sample_config:
+        fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
     if stub_validation < 0 or caller_proof <= stub_validation or \
@@ -194,8 +391,25 @@ def check_sources(root):
     if "sceKernelDcacheWritebackInvalidateRange(\n            (const void *)bsman->import_stub_addr, 8)" not in commit or \
             "sceKernelIcacheInvalidateRange((const void *)bsman->import_stub_addr, 8)" not in commit:
         fail("BSMan transaction does not narrowly synchronize eight bytes")
-    if "0x639C3CB3" in bsman or "0x8000000D" in bsman or "scePaf" in bsman:
-        fail("BSMan experiment includes impose or PAF behavior")
+    if "_sw(vshbridge_stub, bsman->post_vsh_target_addr)" not in bsman:
+        fail("post-BSMan trace does not retain the natural VshBridge target")
+    if "_sw(prefix_paf_stub, bsman->prefix_paf_target_addr)" not in bsman:
+        fail("activation prefix trace does not retain the natural PAF target")
+    if "bsman->caller_addr != bsman->activation_addr + 0xA8" not in bsman:
+        fail("post-BSMan trace is not tied to the validated BSMan caller")
+    if "(bsman->post_original[1] & 0xFFFF0000) != 0x92620000" not in bsman:
+        fail("runtime BSMan delay slot is not structurally validated as LBU v0(s3)")
+    if re.search(r"_sw\([^;\n]*bsman->activation_addr \+ 0xB4", bsman):
+        fail("runtime BSMan LBU delay slot is overwritten")
+    for sync in (
+            "(const void *)(bsman->activation_addr + 0xB0), 4",):
+        if bsman.count(sync) != 2:
+            fail("post-BSMan branch patch does not narrowly synchronize one word")
+    for required in (
+            "_sw(bsman->activation_addr + 0xDC, bsman->post_bs_target_addr[0])",
+            "_sw(bsman->activation_addr + 0xB8, bsman->post_bs_target_addr[1])"):
+        if required not in bsman:
+            fail("post-BSMan natural branch destination is missing " + required)
     validation_marker = "Validation pass: no VSH write may occur in this loop."
     commit_marker = "Commit pass: selected callsites are all valid or none are written."
     validation_start = kernel.find(validation_marker)
@@ -415,13 +629,36 @@ def function_body(disassembly, symbol):
     return disassembly[start:end if end >= 0 else None]
 
 
+def require_only_natural_result_stores(body, symbol, expected_count):
+    """Require every instruction use of v0 to be one untouched-result store."""
+    v0_lines = [line for line in body.splitlines()
+                if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != expected_count or any(
+            not re.search(r"\bsw\s+v0,", line) for line in v0_lines):
+        fail(symbol + " uses v0 other than for the expected natural-result stores")
+
+
+def require_result_store_relocation(body, function, result_symbol):
+    """Tie a natural-result SW to the exact fixed slot in the relocatable object."""
+    if len(re.findall(r"R_MIPS_HI16\s+" + result_symbol + r"\b", body)) != 1:
+        fail(function + " lacks the unique HI16 relocation for " + result_symbol)
+    store_relocation = (r"\bsw\s+v0,[^\n]*\n"
+                        r"[^\n]*R_MIPS_LO16\s+" + result_symbol + r"\b")
+    if len(re.findall(store_relocation, body)) != 1:
+        fail(function + " does not store natural v0 to " + result_symbol)
+
+
 def check_elf(elf):
     nm = subprocess.check_output(["psp-nm", "-n", str(elf)], text=True)
     for symbol in STUBS:
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing helper trigger stub symbol " + symbol)
     for symbol in (SONY_ENTRY_STUB, SONY_ENTRY_STUB_END,
-            SONY_EXIT_STUB, SONY_EXIT_STUB_END, BSMAN_STUB, BSMAN_STUB_END):
+            SONY_EXIT_STUB, SONY_EXIT_STUB_END, BSMAN_STUB, BSMAN_STUB_END,
+            BSMAN_RETURN_TRACE, BSMAN_RETURN_TRACE_END,
+            *PREFIX_TRACE_STUBS, *POST_TRACE_STUBS,
+            "zeroCtrlPostPafResult0", "zeroCtrlPostPafResult1",
+            "zeroCtrlPostVshNaturalResult"):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing Sony module_start wrapper symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
@@ -441,6 +678,48 @@ def check_elf(elf):
     if not re.search(r"\bjr\s+ra\b", body) or not re.search(
             r"\b(?:move\s+v0,\s*zero|addu\s+v0,\s*zero,\s*zero)\b", body):
         fail("BSMan leaf does not return deterministic CLOSED=0")
+    return_trace = function_body(disassembly, BSMAN_RETURN_TRACE)
+    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b", return_trace):
+        fail("BSMan return trace uses gp, sp, or a call")
+    v0_lines = [line for line in return_trace.splitlines() if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]):
+        fail("BSMan return trace does not only record the natural v0")
+    if not re.search(r"\blw\s+ra,", return_trace) or \
+            not re.search(r"\bjr\s+ra\b", return_trace):
+        fail("BSMan return trace does not restore and return through ra")
+    for symbol in PREFIX_TRACE_STUBS + POST_TRACE_STUBS:
+        prefix_trace = function_body(disassembly, symbol)
+        if re.search(r"\bgp\b|\bjalr?\b", prefix_trace):
+            fail(symbol + " uses gp or a call")
+        if symbol == "zeroCtrlPostBSManBranchTrace" and \
+                (re.search(r"\bv0\b|\blbu\b", prefix_trace) or
+                 not re.search(r"\blw\s+t2,", prefix_trace) or
+                 not re.search(r"\bbeqz\s+t2,", prefix_trace)):
+            fail("post-BSMan branch trace does not branch on the saved result "
+                 "while preserving the relocated state byte")
+        if symbol == "zeroCtrlSlidePrefixPafReturnTrace" and \
+                (not re.search(r"\bsw\s+v0,", prefix_trace) or
+                 not re.search(r"\bbnez\s+v0,", prefix_trace) or
+                 not re.search(
+                     r"\b(?:li\s+v0,\s*1|addiu\s+v0,\s*zero,\s*1)\b",
+                     prefix_trace) or
+                 not re.search(r"\blw\s+ra,", prefix_trace) or
+                 not re.search(r"\bjr\s+ra\b", prefix_trace)):
+            fail("prefix PAF return trace does not isolate zero-to-one and restore ra")
+        if symbol in ("zeroCtrlPostPafReturnTrace",
+                "zeroCtrlPostVshReturnTrace"):
+            expected_count = 2 if symbol == "zeroCtrlPostPafReturnTrace" else 1
+            require_only_natural_result_stores(
+                    prefix_trace, symbol, expected_count)
+        if symbol == "zeroCtrlPostPafReturnTrace" and \
+                (not re.search(r"\b(?:move\s+ra,\s*t9|"
+                               r"addu\s+ra,\s*t9,\s*zero)\b", prefix_trace) or
+                 not re.search(r"\bjr\s+ra\b", prefix_trace)):
+            fail("post-BSMan PAF return trace does not restore ra")
+        if symbol == "zeroCtrlPostVshReturnTrace" and \
+                (not re.search(r"\blw\s+ra,", prefix_trace) or
+                 not re.search(r"\bjr\s+ra\b", prefix_trace)):
+            fail("post-BSMan VshBridge return trace does not restore ra")
 
 
 def check_stub_object(stub_object):
@@ -458,6 +737,58 @@ def check_stub_object(stub_object):
             len(re.findall(r"R_MIPS_LO16\s+" + BSMAN_COUNTER + r"\b",
                 bsman_leaf)) != 2:
         fail("BSMan leaf lacks the exact dedicated-counter relocations")
+    return_trace = function_body(disassembly, BSMAN_RETURN_TRACE)
+    if not re.search(r"R_MIPS_HI16\s+" + BSMAN_CALL_RA + r"\b",
+            return_trace) or not re.search(
+                r"\blw\s+ra,.*R_MIPS_LO16\s+" + BSMAN_CALL_RA + r"\b",
+                return_trace, re.S) or not re.search(r"\bjr\s+ra\b", return_trace):
+        fail("BSMan return trace lacks the saved-ra restore relocations")
+    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b", return_trace):
+        fail("BSMan return trace uses gp, sp, or a call")
+    v0_lines = [line for line in return_trace.splitlines() if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]):
+        fail("BSMan return trace does not only record the natural v0")
+    post_bs_branch = function_body(
+            disassembly, "zeroCtrlPostBSManBranchTrace")
+    if re.search(r"\bv0\b|\blbu\b", post_bs_branch) or \
+            not re.search(
+                r"R_MIPS_HI16\s+zeroCtrlPostBSManNaturalResult\b",
+                post_bs_branch) or \
+            not re.search(
+                r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPostBSManNaturalResult\b", post_bs_branch) or \
+            not re.search(r"\bbeqz\s+t2,", post_bs_branch):
+        fail("post-BSMan branch trace lacks the exact saved-result decision "
+             "or modifies/reconstructs v0")
+    post_paf_return = function_body(disassembly, "zeroCtrlPostPafReturnTrace")
+    require_only_natural_result_stores(
+            post_paf_return, "zeroCtrlPostPafReturnTrace", 2)
+    require_result_store_relocation(post_paf_return,
+            "zeroCtrlPostPafReturnTrace", "zeroCtrlPostPafResult0")
+    require_result_store_relocation(post_paf_return,
+            "zeroCtrlPostPafReturnTrace", "zeroCtrlPostPafResult1")
+    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b", post_paf_return) or \
+            not re.search(r"R_MIPS_HI16\s+zeroCtrlPostPafSavedRA\b",
+                          post_paf_return) or \
+            not re.search(r"\blw\s+t9,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                          r"zeroCtrlPostPafSavedRA\b", post_paf_return) or \
+            not re.search(r"\b(?:move\s+ra,\s*t9|"
+                          r"addu\s+ra,\s*t9,\s*zero)\b", post_paf_return) or \
+            not re.search(r"\bjr\s+ra\b", post_paf_return):
+        fail("post-BSMan PAF return trace violates leaf/RA invariants")
+    post_vsh_return = function_body(disassembly, "zeroCtrlPostVshReturnTrace")
+    require_only_natural_result_stores(
+            post_vsh_return, "zeroCtrlPostVshReturnTrace", 1)
+    require_result_store_relocation(post_vsh_return,
+            "zeroCtrlPostVshReturnTrace", "zeroCtrlPostVshNaturalResult")
+    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b", post_vsh_return) or \
+            not re.search(r"R_MIPS_HI16\s+zeroCtrlPostVshSavedRA\b",
+                          post_vsh_return) or \
+            not re.search(r"\blw\s+ra,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                          r"zeroCtrlPostVshSavedRA\b", post_vsh_return) or \
+            not re.search(r"\blw\s+ra,", post_vsh_return) or \
+            not re.search(r"\bjr\s+ra\b", post_vsh_return):
+        fail("post-BSMan VshBridge return trace violates leaf/RA invariants")
     entry = function_body(disassembly, SONY_ENTRY_STUB)
     exit_stub = function_body(disassembly, SONY_EXIT_STUB)
     for symbol in ("zeroCtrlSonyModuleStartEntrySeen",

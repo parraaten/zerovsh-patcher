@@ -627,8 +627,8 @@ resolved BSMan stub. The return leaf records completion without modifying
 `v0`, then resumes at the original Sony return address. The trace does not
 replace BSMan. All leaves use fixed BSS state, no `gp`, no
 imports, no allocation, no file I/O, and no diagnostic API. Deferred writer
-records changed-only counts and captures correlated USER memory only on the
-first observed transition. These snapshots do not attribute memory to Sony.
+records changed-only counters and masks. It performs no memory query or
+partition capture in the temporary 10 ms fast-poll path.
 The leaves also update one monotonic volatile stage (`1=activation entry`,
 `2=before BSMan`, `3=after BSMan`). After the RCO breadcrumb, the existing
 writer temporarily polls this compact state every 10 ms for two seconds, then
@@ -646,5 +646,275 @@ PSP1000ActivationTrace = Enabled
 
 Expected records include `[activation-trace] validation=1 install=1`,
 `slide_last_stage`, `slide_activation_entry_count`,
-`slide_bsman_call_boundary_count`, and the two
-optional first-observed memory stages. Any structure mismatch fails closed.
+`slide_bsman_call_boundary_count`, and the prefix records described below. Any
+structure mismatch fails closed.
+
+### T10 hardware result and activation-prefix tracer
+
+The first T10 PSP-1000 run **proved** that the structurally resolved activation
+entry is runtime text `+0x9304`: installation succeeded, stage 1 was persisted,
+and the entry count advanced from one to three within 10 ms. No pre-BSMan
+boundary was persisted. The old entry leaf could replace a later stage with
+stage 1; stage updates are now monotonic, and the cumulative mask cannot lose
+evidence across repeated invocations.
+
+Static analysis of the repository's research PRX gives this prefix CFG:
+
+```
++0x9304  entry/prologue
++0x9328  jal +0x16EC              # relocated-global getter
++0x9330  jal +0x2A658             # scePaf NID 0xED83BBCF
++0x9338  beq v0,zero,+0x9354      # direct early epilogue
++0x9340  lbu v1,relocated_global
++0x9348  bne v1,zero,+0x9378      # otherwise epilogue at +0x9350
++0x9378  jal +0x2A1B0             # scePaf NID 0x0FBE2B67
++0x9388  and s2,v1,0x20000000
++0x938C  bne s2,zero,+0x93AC      # direct pre-BSMan path
++0x9390  andi v1,v1,0x0101
++0x9398  beq v1,0x0101,+0x95DC    # alternate state-machine path
++0x93A0  clear two relocated state fields
++0x93AC  jal sceBSMan/0x23E3A9B6
+```
+
+`+0x16EC` is a two-instruction global getter and cannot block. The other two
+targets are structurally resolved `scePaf` imports; their private semantics and
+model dependence remain unknown, but their results feed every early path before
+BSMan. The three following branches are therefore meaningful boundaries rather
+than evenly spaced probes.
+
+The next build interposes the first `scePaf` JAL to distinguish the preceding
+internal getter from the import, and replaces only the three proven branch
+sites with call-free leaves. The PAF leaves preserve its natural result and
+return address; the branch leaves reproduce displaced branch/delay semantics
+and jump to the original basic blocks. Before any code write, installation checks
+the complete original pairs `0x10400006/0x8FBF001C`,
+`0x1460000B/0x00000000`, and `0x10620090/LUI-v0`, all helper ranges, and all
+pseudo-direct targets, and uniquely resolves `scePaf` NID `0xED83BBCF` through
+the loaded import descriptors. A mismatch installs none of the activation
+trace.
+
+`slide_prefix_path_mask` is cumulative: `0x001` entry/internal getter entered;
+`0x002` internal getter returned/first PAF entered; `0x004` first PAF returned;
+`0x008` first result nonzero; `0x010` flag test; `0x020` flag nonzero;
+`0x040` second-call mask test; `0x080` masked result `0x0101`; `0x100`
+pre-BSMan; and `0x200` natural BSMan return. `slide_prefix_counts` separately
+counts both outcomes of the result, flag, and `0x0101` comparisons so repeated
+invocations cannot make the cumulative mask ambiguous.
+
+Interpretation is direct: `result_zero` selects the first imported call's
+epilogue; `result_nonzero` plus `flag_zero` selects the flag epilogue;
+`flag_nonzero` with neither a mask outcome nor pre-BSMan localizes inside the
+second import; `mask_equal` selects `+0x95DC`; and `mask_unequal` should proceed
+through the two state clears to pre-BSMan. This remains temporary research
+instrumentation and changes no BSMan, impose, VshBridge, or PAF result.
+
+Phase report: changed `user/stub.S`, `user/main.c`,
+`kernel/bsman_closed_shim.h`, `kernel/main.c`, the safety verifier, and the two
+Phase 3 test documents. Static source and host-assembler checks pass; the final
+PSPDEV build remains the required artifact validation. Hardware has proved only
+repeated entry and absence of a persisted pre-BSMan marker, not which prefix
+exit is taken. Assumptions still requiring hardware are that the private PAF
+NIDs have comparable intent on PSP-1000 and that every relevant invocation is
+observed before freeze. Return the unedited T11 log and XMB behavior. The
+recommended next phase is to analyze those counters and isolate exactly one
+natural dependency; do not add compatibility behavior before that evidence.
+
+### First T11 fail-closed result and corrected comparison proof
+
+The first T11 PSP-1000 build correctly failed closed with activation
+`validation=0 install=0`. Hardware reported the expected first two branch
+pairs, but the third pair was `0x10620090,0x3C0209E5` rather than the
+installer's incorrect `0x10420090` fingerprint. No prefix trace site was
+written, so this run provides structural evidence only.
+
+Both the checked-in research PRX and the hardware word decode agree:
+
+```
++0x9390  andi  v1,v1,0x0101
++0x9394  addiu v0,zero,0x0101       # 0x24020101
++0x9398  beq   v1,v0,+0x95DC       # 0x10620090
++0x939C  lui   v0,<relocated-hi>    # hardware 0x3C0209E5, delay slot
+```
+
+The rejected `0x10420090` would decode as `beq v0,v0`, an unconditional
+branch, and was therefore not a valid description of this CFG. The tracer's
+comparison implementation was already semantically correct: it compares the
+masked `v1` against `0x0101`. It then loads the validated runtime LUI value into
+`v0` before resuming either target, reproducing the original delay-slot effect
+which occurs on both taken and untaken paths. The installer now requires the
+correct `0x10620090` word while retaining the structural `LUI v0` check rather
+than hard-coding its relocation-dependent immediate.
+
+Register liveness was reviewed from each patched instruction through every
+natural resume:
+
+| Trace | Natural continuation and scratch-register proof |
+| --- | --- |
+| first PAF call/return | The unchanged JAL delay slot saves the getter result in `s0`. No `t0/t1/t2/t9` value is an input to the imported call, and none is read from return at `+0x9338` through the result/flag paths before the next call or epilogue. |
+| first result branch | The zero target `+0x9354` is restore-only epilogue code. The nonzero target `+0x9340` uses only `v0/v1` before the next imported call. The tracer restores the displaced `lw ra,28(sp)` effect on both paths. |
+| relocated flag branch | The zero target `+0x9350` enters the restore-only epilogue. The nonzero target `+0x9378` is the next JAL. Neither continuation reads a tracer scratch register; the original delay slot is NOP. |
+| `0x0101` branch | The unequal continuation `+0x939C..+0x93AC` and equal state-machine continuation `+0x95DC..+0x9624` contain no read of `t0/t1/t2/t9` before converging on BSMan. The helper recreates both the displaced `addiu v0,zero,0x0101` comparison value and the relocation-derived `LUI v0` delay-slot result. |
+
+The safety verifier independently checks the research PRX words and decodes
+all instructions in those continuation ranges to reject any read of the four
+scratch registers. This correction adds no breadcrumb or compatibility
+behavior; it only makes the existing T11 transaction match the proven Sony CFG.
+
+### T11 path result and callsite-only PAF boolean control
+
+The corrected T11 run **proved on PSP-1000 6.61** that validation and
+installation both succeed and that all four observed activations take exactly
+the same prefix path: entry, return from the `+0x16EC` global getter, entry and
+return of `scePaf` NID `0xED83BBCF`, natural result zero, then the immediate
+Sony epilogue. The cumulative mask was `0x007`; the relocated flag, second PAF
+call, BSMan, and later activation work were never observed.
+
+The callsite provides these semantic bounds:
+
+* the activation argument in `a0` is saved to `s1` at `+0x930C`; no argument
+  register is prepared between entry and the PAF JAL, so the call is not passed
+  the getter result as an ordinary argument;
+* the getter result is copied to saved register `s0` by the unchanged PAF JAL
+  delay slot, independently of the PAF return value;
+* the PAF return in `v0` is consumed immediately and solely by
+  `beq v0,zero,+0x9354`; no magnitude, sign, pointer, or error-code operation
+  occurs before the return path, proving boolean zero/nonzero consumption at
+  this callsite; and
+* import-table analysis finds exactly one call to this NID in the 6.60 image.
+  The equivalent location and identical boolean branch exist in the checked-in
+  6.20 and 6.3x images, although their firmware-specific PAF NIDs are
+  `0x521F9DBF` and `0x1ABAA558` respectively.
+
+The successful natural call and return on PSP-1000 prove this is not a missing
+import. The private PAF implementation is outside the repository, and neither
+its formal name nor whether it tests PAF readiness, object presence, or another
+global condition is proven. Its position as an argument-free boolean gate
+strongly supports an availability/readiness interpretation, but that remains
+an inference. No PSP-versus-Go implementation difference is claimed without a
+matching PAF binary or symbol evidence.
+
+The next isolated experiment adds default-disabled
+`PSP1000PafPresentCompat`. It is armed only with the existing PSP-1000 6.61
+master opt-in, diagnostics, `DangerousCaller58D4`, activation trace, disabled
+ClockAndCalendar, and disabled BSMan substitution. At the already validated
+SlidePlugin `+0x9330` callsite it still tail-calls the uniquely resolved natural
+PAF function. On return it records the unmodified `v0`; if and only if the new
+option is enabled and that value is zero, it returns strict boolean `1` to the
+original Sony branch. Every natural nonzero value passes through bit-for-bit.
+No PAF import stub or other caller is changed.
+
+Expected outcomes for the next hardware run are:
+
+* `paf_ed83bbcf_natural=0`, `zero_to_one_count>0`, followed by `flag_zero`:
+  the isolated gate worked and the relocated flag is the next natural exit;
+* the same natural/substitution evidence followed by `flag_nonzero` and no mask
+  or pre-BSMan evidence: execution entered the second PAF call but did not
+  return before persistence;
+* `mask_equal` or `mask_unequal`: the second PAF returned and selected the
+  corresponding already traced branch;
+* pre-BSMan/stage 2 or BSMan-return/stage 3: the natural downstream path reached
+  those established boundaries; or
+* a natural nonzero result: it remains unchanged and substitution count remains
+  zero, making this control behaviorally inert for that invocation.
+
+This is an experiment, not a final compatibility decision. If hardware proves
+the zero-to-one conversion is required, the optimized implementation should
+retain only this validated callsite-specific post-call conversion and remove
+the broad temporary masks, counters, writer polling, and analysis strings.
+
+### T12 result and post-BSMan natural-path tracer
+
+T12 **proved on PSP-1000 hardware** that the callsite conversion is effective:
+four natural `scePaf` returns were zero, four zero-to-one conversions occurred,
+and all four activations then produced `result_nonzero`, `flag_nonzero`,
+`mask_unequal`, and pre-BSMan counts. The cumulative prefix mask was `0x37F`.
+Stage 3 and bit `0x200` prove at least one natural BSMan return; they do not
+prove four returns because the former evidence had no dedicated return count.
+
+Static analysis gives the following post-BSMan CFG and raw tests:
+
+```
++0x93AC  jal  sceBSMan / 0x23E3A9B6
++0x93B4  beq  v0,zero,+0x93E0       # BSMan result: zero/nonzero
++0x93B8  lbu  v0,0xDCD(s3)          # pre-relocation PRX delay-slot word
++0x93BC  load relocated byte flag
++0x93C4  bne  flag,zero,epilogue
+          [zero flag sets two state bytes, then joins +0x93E0]
++0x93E0  beq  v0,zero,+0x957C       # byte from +0x93B8: zero/nonzero
++0x93E4  lui  v0,<relocated-hi>      # delay slot on both sides
++0x93EC  jal  scePaf / 0xFF03BCD5   # a0=0 in delay slot
++0x93F4  bgtz v0,epilogue            # positive exits; zero/negative continue
++0x93FC  jal  scePaf / 0xFF03BCD5   # a0=1 in delay slot
++0x9404  bgtz v0,epilogue            # positive exits; zero/negative continue
++0x940C  lui  a0,0x8000
++0x9410  jal  sceVshBridge / 0x639C3CB3
++0x9414  ori  a0,a0,0x000D           # exact argument 0x8000000D
++0x9418  bne  v0,zero,epilogue       # VshBridge result: zero/nonzero
++0x9420  load virtual target +0x50
++0x9424  jalr target                  # farther object/PAF activation work
+```
+
+The `0x8000000D` path is therefore not inferred merely from proximity. Runtime
+import traversal structurally requires exactly one `sceVshBridge` NID
+`0x639C3CB3`; the caller must construct `a0=0x8000000D`, call that exact stub,
+and immediately consume its natural result as zero/nonzero. Its private impose
+meaning remains unproven, so the tracer calls it naturally and never changes
+its argument or result. Likewise, `scePaf` NID `0xFF03BCD5` is uniquely
+resolved and both direct callers must target it with exact `a0=0` and `a0=1`
+delay slots.
+
+The new post-BSMan mask and counters are temporary fixed-scalar evidence:
+
+| Mask | Boundary |
+| --- | --- |
+| `0x001` | natural BSMan returned |
+| `0x002` / `0x004` | immediate BSMan-result branch reached / result nonzero |
+| `0x008` / `0x010` | state-byte branch reached / byte nonzero |
+| `0x020` / `0x040` | first `0xFF03BCD5` call entered / returned |
+| `0x080` / `0x100` | second `0xFF03BCD5` call entered / returned |
+| `0x200` / `0x400` | `sceVshBridge` call entered / returned |
+
+The checked-in research PRX encodes the `+0x93B8` delay slot as
+`0x92620DCD` (`lbu v0,0x0DCD(s3)`). The first T13 hardware attempt failed
+closed before any trace write because the relocated PSP-1000 image instead
+contained `0x926286FD` (`lbu v0,0x86FD(s3)`). This changes only the relocated
+16-bit operand; the opcode and `s3`/`v0` registers are identical. The runtime
+validator therefore proves the instruction structurally as an LBU with
+`rs=s3` and `rt=v0`, while the research-image verifier retains the separate
+exact pre-relocation-word proof.
+
+The replacement jump at `+0x93B4` changes only the original branch word. By
+MIPS jump-delay semantics, the untouched runtime LBU at `+0x93B8` still runs
+before control reaches the trace leaf and leaves the exact Sony state byte in
+`v0`. The leaf tests the natural BSMan result previously saved by the return
+trace, never reads or writes `v0`, and selects the unchanged natural targets
+`+0x93E0` (BSMan zero) or `+0x93BC` (BSMan nonzero). No reconstructed LBU or
+relocation-dependent immediate remains in that helper.
+
+Dedicated counters separately record BSMan returns, both immediate branch
+outcomes, both state-byte outcomes, entry/return for each PAF call, and
+VshBridge entry/return. Raw BSMan, PAF, and VshBridge results are captured
+before any tracer use or deferred serialization. The state-branch leaf derives
+its relocated `LUI v0` delay value from the validated runtime word and restores
+that exact value; it does not hardcode a relocated operand. Call leaves
+retain the original PAF `a0=0/1` and VshBridge `a0=0x8000000D` JAL delay slots,
+tail-call the validated natural imports, restore the Sony return addresses, and
+preserve every natural result.
+
+The next hardware run keeps `PSP1000PafPresentCompat=Enabled` and
+`PSP1000BSManClosedShim=Disabled`. A BSMan zero/nonzero counter selects the
+immediate branch. A state-zero count localizes to the `+0x957C` path; state
+nonzero proceeds toward the two PAF calls. For each PAF, entry without return
+localizes inside the import, while a returned positive raw value explains its
+immediate epilogue. Two nonpositive PAF results permit VshBridge entry;
+VshBridge entry without return localizes inside it, nonzero return selects its
+epilogue, and zero return reaches the farther virtual-call path. No downstream
+result is substituted in this experiment.
+
+Phase report: changed the shared helper registration, user assembly/registration,
+kernel validation/installation and deferred diagnostics, the safety verifier,
+and Phase 3 documentation. The static checks and host Allegrex-compatible
+assembly check pass; a PSPDEV build and PSP-1000 run remain required. The
+VshBridge call shape and raw tests are proven statically, but private PAF,
+VshBridge, and virtual-target semantics remain unresolved. Analyze the T13
+natural counters before considering any additional compatibility behavior.

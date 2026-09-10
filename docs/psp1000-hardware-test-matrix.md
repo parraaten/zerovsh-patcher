@@ -322,3 +322,88 @@ interpreting counters.
 
 This row performs no BSMan, impose, PAF, OPEN, or model substitution. Missing
 asynchronous output is not proof of non-execution.
+
+The first T10 run recorded successful installation, stage 1, and an activation
+entry count increasing from one to three within 10 ms, with no persisted
+pre-BSMan boundary. This strongly localizes the next question to the naturally
+executed `+0x9304..+0x93AC` prefix.
+
+## T11 — activation-prefix branch localization
+
+Retain the T10 configuration and natural BSMan stub. Require activation
+validation/installation and the exact `[activation-prefix] branch_words`
+fingerprint before interpreting `slide_prefix_path_mask` or
+`slide_prefix_counts`. The mask is cumulative; use counts to distinguish paths
+across repeated activations.
+
+* `result_zero>0`: the first `scePaf` import selected the direct epilogue.
+* `result_nonzero>0, flag_zero>0`: the relocated byte selected the epilogue.
+* `flag_nonzero>0` with no mask outcome and no pre-BSMan count: the second
+  `scePaf` import was entered but no return was persisted.
+* `mask_equal>0`: the alternate `+0x95DC` state-machine path was selected.
+* `mask_unequal>0` without pre-BSMan: localize to the two state clears.
+* A pre-BSMan count proves the prefix completed; interpret stage 2/3 as above.
+
+This build changes no Sony result. Return the complete unedited log and normal
+XMB observations before selecting any compatibility behavior.
+
+The first T11 attempt is **fail-closed structural evidence**:
+`validation=0 install=0`. Hardware returned the third pair as
+`0x10620090,0x3C0209E5`. The first word is `beq v1,v0`, matching the research
+PRX and the documented `v1 == 0x0101` test; the second is the relocated
+`LUI v0` delay slot. The prior `0x10420090` expectation incorrectly encoded
+`beq v0,v0`. Repeat T11 with the corrected exact branch word, the structural
+`LUI v0` delay check, and unchanged configuration. Interpret no path evidence
+unless validation and installation both equal one.
+
+## T12 — isolated first-PAF boolean control
+
+T11 subsequently produced `validation=1 install=1` and four identical natural
+paths: the first PAF call entered and returned zero, `result_zero` incremented,
+all later counters remained zero, and the cumulative mask was `0x007`. This
+proves the immediate PAF-result epilogue is the active boundary.
+
+Repeat the same configuration with only:
+
+```ini
+PSP1000PafPresentCompat = Enabled
+```
+
+Keep `PSP1000BSManClosedShim=Disabled`. Require the validated PAF callsite/NID
+fingerprint and `paf_ed83bbcf_natural` record. The experiment executes the
+natural function, changes only a natural zero result to strict boolean one for
+this callsite, and leaves natural nonzero results unchanged. Interpret the
+existing flag, mask, pre-BSMan, and BSMan-return evidence as described in the
+Phase 3 report. Do not enable impose, OPEN-state, or any other compatibility
+control in this run.
+
+## T13 — post-BSMan natural boundary localization
+
+T12 recorded four natural first-PAF zeros, four isolated conversions, and four
+paths through the prefix to pre-BSMan. Stage 3 proves at least one BSMan return,
+not four. Retain `PSP1000PafPresentCompat=Enabled`, keep
+`PSP1000BSManClosedShim=Disabled`, and change no other behavior.
+
+Require the exact `[post-bsman]` fingerprints, including uniquely resolved
+`scePaf/0xFF03BCD5`, `sceVshBridge/0x639C3CB3`, and VshBridge argument
+`0x8000000D`. Interpret dedicated entry/return counters and raw results:
+
+* BSMan return count plus zero/nonzero counters identifies its immediate path.
+* State zero selects `+0x957C`; state nonzero advances to the PAF pair.
+* A PAF entry without return localizes inside that import; a positive returned
+  value selects its `bgtz` epilogue, while zero or negative advances.
+* VshBridge entry proves the verified `0x8000000D` path is active. Entry without
+  return localizes inside it; nonzero return selects the epilogue; zero return
+  reaches the virtual-call sequence at `+0x9420`.
+
+Return the unedited log and XMB observations. This row substitutes no BSMan,
+second-PAF, VshBridge, impose, OPEN/CLOSE, or model result.
+
+The first T13 attempt is an inconclusive fail-closed result: validation and
+installation were both zero. Hardware reported `0x926286FD` at `+0x93B8`,
+where the research PRX contains pre-relocation `0x92620DCD`; both are
+`lbu v0,imm16(s3)`. The retry validates that structural identity without
+assuming the relocated immediate, replaces only the branch at `+0x93B4`, and
+leaves the runtime LBU in the jump delay slot. Its branch tracer decides from
+the separately saved natural BSMan result and preserves the LBU-produced `v0`.
+Require `validation=1 install=1` before interpreting any T13 counters.
