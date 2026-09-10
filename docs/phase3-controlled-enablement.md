@@ -1664,3 +1664,51 @@ evidence that both natural consumers returned false in this startup. Combined
 with the decrypted binary, that would establish the natural `0x28` selection
 at `+0x13F6C` and absence of the later `0x40` contribution at `+0x14020`, but
 would not itself justify compatibility. No consumer or predicate is forced.
+
+### T23 hardware result and T24 selective `+0x14020` compatibility
+
+**PROVEN BY HARDWARE:** T23 installed both transactional consumer wrappers,
+each natural consumer executed once, and both `+0x13F6C` and `+0x14020`
+observed an untouched natural `+0x6F84` result of zero.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** false at `+0x13F6C` selects argument
+`0x28` rather than `0x828`. False at `+0x14020` omits candidate mask bit
+`0x40`; Sony's unchanged `movn` at `+0x14030` contributes that bit when the
+effective result is nonzero. The surrounding mask is passed to the
+`scePaf/0xF48A9040` import. No unofficial semantic name is assigned to that
+NID.
+
+T24 adds the default-disabled `PSP1000Consumer14020Compat` control. It is armed
+only on PSP-1000 firmware 6.61 with the SlidePlugin master opt-in, disabled
+ClockAndCalendar, enabled diagnostics, and exact `DangerousCaller58D4` trigger
+mode. It does not select `ZERO_TRIGGER_14020` or use the legacy combined direct
+trigger.
+
+The `+0x13F6C` wrapper remains the pure T23 evidence wrapper: it calls Sony
+once, stores natural `$v0`, and returns it unchanged. The existing `+0x14020`
+wrapper still calls Sony once and stores natural `$v0` first. Only when its
+dedicated compatibility scalar is one and natural `$v0` is exactly zero does
+it substitute effective `$v0=1` and increment its dedicated substitution
+counter. Arbitrary nonzero values are returned exactly. The effective result
+is stored after that decision and returned to Sony, which consumes it through
+the original `+0x14030` instruction. The `+0x14024` delay slot remains
+`0x0062800B` and is not patched.
+
+All three new helper scalars are fixed storage, registered, range-validated,
+and initialized before either existing consumer JAL commit. Any validation
+failure prevents both callsite writes, preserving the T22 all-or-none
+transaction. No thread, allocation, polling, helper I/O, Sony global write,
+global predicate force, or additional VSH code write is introduced. Deferred
+pre-SlidePlugin diagnostics add:
+
+```text
+[vsh-6f84-14020-compat] enabled=1 hits=1 natural=0x00000000 effective=0x00000001 substitutions=1
+```
+
+**HYPOTHESIS / UNKNOWN:** Whether adding only the `+0x14020` candidate `0x40`
+capability is sufficient to advance Sony SlidePlugin state on PSP-1000. The
+hardware run must compare every existing downstream T23 record, especially
+`field_12C`, state-zero, dispatcher, and live topmenu state. Execution of the
+substitution alone is not success. If downstream behavior is unchanged,
+`+0x14020` alone is insufficient; if the XMB freezes or crashes, the isolated
+substitution is unsafe. Neither outcome authorizes a `+0x13F6C` compatibility.

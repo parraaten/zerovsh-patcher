@@ -729,7 +729,50 @@ zeroCtrlDispatchEntryTraceEnd:
 .endm
 
 CONSUMER_6F84_TRACE zeroCtrlConsumer13F6CTrace, zeroCtrlConsumer13F6CHits, zeroCtrlConsumer13F6CNaturalResult
-CONSUMER_6F84_TRACE zeroCtrlConsumer14020Trace, zeroCtrlConsumer14020Hits, zeroCtrlConsumer14020NaturalResult
+
+.globl zeroCtrlConsumer14020Trace
+.type zeroCtrlConsumer14020Trace @function
+.ent zeroCtrlConsumer14020Trace, 0
+zeroCtrlConsumer14020Trace:
+    addiu   $sp, $sp, -16
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t2, 8($sp)
+    sw      $ra, 12($sp)
+    lui     $t0, %hi(zeroCtrlConsumer14020Hits)
+    lw      $t1, %lo(zeroCtrlConsumer14020Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlConsumer14020Hits)($t0)
+    lui     $t0, %hi(zeroCtrlConsumer6F84Target)
+    lw      $t2, %lo(zeroCtrlConsumer6F84Target)($t0)
+    jalr    $t2
+    nop
+    lui     $t0, %hi(zeroCtrlConsumer14020NaturalResult)
+    sw      $v0, %lo(zeroCtrlConsumer14020NaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlConsumer14020CompatMode)
+    lw      $t1, %lo(zeroCtrlConsumer14020CompatMode)($t0)
+    beqz    $t1, 62f
+    nop
+    bnez    $v0, 62f
+    nop
+    addiu   $v0, $zero, 1
+    lui     $t0, %hi(zeroCtrlConsumer14020SubstitutionHits)
+    lw      $t1, %lo(zeroCtrlConsumer14020SubstitutionHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlConsumer14020SubstitutionHits)($t0)
+62:
+    lui     $t0, %hi(zeroCtrlConsumer14020EffectiveResult)
+    sw      $v0, %lo(zeroCtrlConsumer14020EffectiveResult)($t0)
+    lw      $t2, 8($sp)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    lw      $ra, 12($sp)
+    addiu   $sp, $sp, 16
+    jr      $ra
+    nop
+.globl zeroCtrlConsumer14020TraceEnd
+zeroCtrlConsumer14020TraceEnd:
+.end zeroCtrlConsumer14020Trace
 
 .macro STATE_ZERO_CLASS name, limit, bit_true, bit_false, true_slot, false_slot, rejoin
 .globl \name
@@ -1141,3 +1184,9 @@ zeroCtrlConsumer14020Hits: .space 4
 zeroCtrlConsumer13F6CNaturalResult: .space 4
 .globl zeroCtrlConsumer14020NaturalResult
 zeroCtrlConsumer14020NaturalResult: .space 4
+.globl zeroCtrlConsumer14020CompatMode
+zeroCtrlConsumer14020CompatMode: .space 4
+.globl zeroCtrlConsumer14020EffectiveResult
+zeroCtrlConsumer14020EffectiveResult: .space 4
+.globl zeroCtrlConsumer14020SubstitutionHits
+zeroCtrlConsumer14020SubstitutionHits: .space 4

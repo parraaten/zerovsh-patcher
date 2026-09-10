@@ -61,6 +61,11 @@ T22_CONSUMER_WRAPPERS = (
      "zeroCtrlConsumer14020Hits", "zeroCtrlConsumer14020NaturalResult"),
 )
 T22_CONSUMER_TARGET = "zeroCtrlConsumer6F84Target"
+T24_SCALARS = (
+    "zeroCtrlConsumer14020CompatMode",
+    "zeroCtrlConsumer14020EffectiveResult",
+    "zeroCtrlConsumer14020SubstitutionHits",
+)
 
 
 def fail(message):
@@ -838,8 +843,17 @@ def check_sources(root):
             consumer_stub.count("$v0") != 1 or any(token in consumer_stub for token in
             ("sceIo", "Alloc", "malloc")):
         fail("T23 wrapper has an extra call or transforms natural v0")
-    if assembly.count("CONSUMER_6F84_TRACE zeroCtrlConsumer") != 2:
-        fail("T22 must use exactly two dedicated consumer wrappers")
+    if assembly.count("CONSUMER_6F84_TRACE zeroCtrlConsumer13F6CTrace") != 1:
+        fail("T24 changed the pure T23 13F6C wrapper")
+    compat_stub = assembly[assembly.find("zeroCtrlConsumer14020Trace:"):
+        assembly.find("zeroCtrlConsumer14020TraceEnd:")]
+    for token in ("jalr    $t2", "zeroCtrlConsumer14020NaturalResult",
+            "zeroCtrlConsumer14020CompatMode", "beqz    $t1",
+            "bnez    $v0", "addiu   $v0, $zero, 1",
+            "zeroCtrlConsumer14020SubstitutionHits",
+            "zeroCtrlConsumer14020EffectiveResult"):
+        if token not in compat_stub:
+            fail("T24 14020 wrapper lacks " + token)
     if "sceKernelCreateThread" in consumers_install or \
             re.search(r"_sw\([^\n]*vsh_shared_global", consumers_install):
         fail("T22 creates a thread or writes the Sony shared global")
@@ -911,6 +925,11 @@ def check_sources(root):
     for field in ("consumer_13f6c_result_addr", "consumer_14020_result_addr"):
         if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
             fail("T23 registration does not validate " + field)
+    for field in ("consumer_14020_compat_mode_addr",
+            "consumer_14020_effective_result_addr",
+            "consumer_14020_substitution_hits_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T24 registration does not validate " + field)
     result_init = consumers_install.find(
         "_sw(0xFFFFFFFF, bsman->consumer_result_addr[i])")
     if result_init < 0 or result_init > consumer_commit or \
@@ -922,6 +941,11 @@ def check_sources(root):
         fail("T23 natural results are not snapshotted and deferred")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
+    if "PSP1000Consumer14020Compat = Disabled" not in sample_config or \
+            '"PSP1000Consumer14020Compat", "Disabled"' not in kernel:
+        fail("T24 compatibility is not default-disabled")
+    if "[vsh-6f84-14020-compat]" not in writer:
+        fail("T24 deferred compatibility diagnostic is missing")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
     if stub_validation < 0 or caller_proof <= stub_validation or \
@@ -1243,6 +1267,29 @@ def check_t22_consumer_semantics(body, symbol):
         fail(symbol + " transforms or uses natural v0 beyond one store")
 
 
+def check_t24_consumer_semantics(body):
+    """Prove 14020 preserves nonzero v0 and substitutes only exact zero."""
+    symbol = "zeroCtrlConsumer14020Trace"
+    if re.search(r"\bgp\b|\bjal\b", body) or len(re.findall(r"\bjalr\s+t2\b", body)) != 1:
+        fail(symbol + " uses gp, a direct call, or not exactly one natural JALR")
+    ordered = (
+        r"\bjalr\s+t2\b", r"\bsw\s+v0,", r"\blw\s+t1,",
+        r"\bbeqz\s+t1,", r"\bbnez\s+v0,",
+        r"\baddiu\s+v0,\s*zero,\s*1\b", r"\baddiu\s+t1,\s*t1,\s*1\b",
+        r"\bsw\s+t1,", r"\bsw\s+v0,", r"\blw\s+ra,\s*12\(sp\)",
+        r"\baddiu\s+sp,\s*sp,\s*16\b", r"\bjr\s+ra\b",
+    )
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail(symbol + " lacks ordered T24 operation " + pattern)
+        cursor += match.end()
+    if len(re.findall(r"\baddiu\s+v0,\s*zero,\s*1\b", body)) != 1 or \
+            len(re.findall(r"\baddiu\s+sp,\s*sp,", body)) != 2:
+        fail(symbol + " has an extra substitution or unbalanced frame")
+
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -1359,6 +1406,9 @@ def check_elf(elf):
             fail(start + " has an empty or reversed linked range")
     if T22_CONSUMER_TARGET not in symbol_addresses:
         fail("missing linked T22 natural-target symbol")
+    for symbol in T24_SCALARS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T24 scalar " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
     for symbol in STUBS:
         body = function_body(disassembly, symbol)
@@ -1410,8 +1460,10 @@ def check_elf(elf):
                 (not re.search(r"\blw\s+ra,", prefix_trace) or
                  not re.search(r"\bjr\s+ra\b", prefix_trace)):
             fail("post-BSMan VshBridge return trace does not restore ra")
-    for start, _end, _counter, _result in T22_CONSUMER_WRAPPERS:
-        check_t22_consumer_semantics(function_body(disassembly, start), start)
+    check_t22_consumer_semantics(function_body(disassembly,
+        "zeroCtrlConsumer13F6CTrace"), "zeroCtrlConsumer13F6CTrace")
+    check_t24_consumer_semantics(function_body(disassembly,
+        "zeroCtrlConsumer14020Trace"))
 
 
 def check_stub_object(stub_object):
@@ -1426,7 +1478,10 @@ def check_stub_object(stub_object):
             fail(symbol + " does not have two LO16 counter relocations")
     for symbol, _end, counter, result in T22_CONSUMER_WRAPPERS:
         body = function_body(disassembly, symbol)
-        check_t22_consumer_semantics(body, symbol)
+        if symbol.endswith("13F6CTrace"):
+            check_t22_consumer_semantics(body, symbol)
+        else:
+            check_t24_consumer_semantics(body)
         if len(re.findall(r"R_MIPS_HI16\s+" + counter + r"\b", body)) != 1 or \
                 len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
             fail(symbol + " lacks exact dedicated-counter relocations")
@@ -1442,6 +1497,11 @@ def check_stub_object(stub_object):
                 not re.search(r"\bsw\s+v0,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
                     result + r"\b", body):
             fail(symbol + " lacks the unique natural-result store relocation")
+        if symbol.endswith("14020Trace"):
+            for scalar in T24_SCALARS:
+                if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != 1 or \
+                        len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != 1:
+                    fail(symbol + " lacks exact relocation pair for " + scalar)
     bsman_leaf = function_body(disassembly, BSMAN_STUB)
     if not re.search(r"R_MIPS_HI16\s+" + BSMAN_COUNTER + r"\b", bsman_leaf) or \
             len(re.findall(r"R_MIPS_LO16\s+" + BSMAN_COUNTER + r"\b",

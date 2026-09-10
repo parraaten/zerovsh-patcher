@@ -463,3 +463,28 @@ virtual call enters and returns, and whether its untouched result follows the
 `+0x93EC`, interpret the unchanged post-PAF and VshBridge tracers immediately.
 Do not convert any newly observed value or enable any additional compatibility
 behavior during T15.
+
+## T24 — selective natural `+0x14020` consumer compatibility
+
+Retain the T23 trigger and existing exact PAF/BSMan controls, keep the broad
+closed shim disabled, and add only:
+
+```ini
+ClockAndCalendar = Disabled
+PSP1000SlidePlugin = Enabled
+PSP1000SlideTriggerMode = DangerousCaller58D4
+PSP1000Diagnostics = Enabled
+PSP1000PafPresentCompat = Enabled
+PSP1000BSManNotLinkedCompat = Enabled
+PSP1000BSManClosedShim = Disabled
+PSP1000Consumer14020Compat = Enabled
+```
+
+Require the compatibility record to show `natural=0`, `effective=1`, and one
+substitution before interpreting downstream behavior. Preserve and compare the
+complete T23 SlidePlugin, activation, exact PAF/BSMan, state-zero, topmenu,
+field-writer, and dispatcher records. A changed `field_12C` or newly reached
+downstream boundary supports the narrow capability hypothesis; unchanged
+`field_12C=15`, state-zero behavior, and zero dispatcher hits means this
+consumer alone is insufficient. Freeze or crash makes this isolated control
+unsafe. Do not combine it with `+0x13F6C` in this run.
