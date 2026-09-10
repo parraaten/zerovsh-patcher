@@ -449,6 +449,23 @@ def check_sources(root):
     if "zeroCtrlDiagnosticsMemory" in fast_poll or \
             "zeroCtrlDiagnosticsCapturePartitions" in fast_poll:
         fail("activation fast-poll path performs a memory query")
+    owner_capture = kernel[kernel.find(
+        "static void zeroCtrlCaptureStateZeroVCallOwner"):
+        kernel.find("static unsigned int zeroCtrlParseTriggerMode")]
+    if "sceKernelFindModuleByAddress(target)" not in owner_capture or \
+            "target - owner->text_addr > owner->text_size - bytes" not in owner_capture or \
+            "target - start <= size - bytes" not in owner_capture:
+        fail("T16 virtual target ownership lacks module/text/segment bounds checks")
+    first_read = owner_capture.find("_lw(target +")
+    segment_validation = owner_capture.find("target - start <= size - bytes")
+    if first_read < 0 or segment_validation < 0 or first_read <= segment_validation:
+        fail("T16 fingerprints the virtual target before range validation")
+    if "STATE_ZERO_VCALL_CODE_WORDS 10" not in kernel or \
+            "state_zero_vcall_owner_valid = 1" not in owner_capture:
+        fail("T16 virtual target fingerprint is not fixed and fail-closed")
+    if any(token in owner_capture for token in
+            ("_sw(", "sceKernelDcache", "sceKernelIcache", "sceIo")):
+        fail("T16 virtual target ownership is not read-only")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")

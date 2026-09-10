@@ -1088,3 +1088,50 @@ unedited log. No T15 hardware result is available yet. Unresolved questions are
 which early test or virtual-result class exits, whether `+0x93EC` is rejoined,
 and whether VshBridge is eventually reached. The recommended next phase is to
 review that single run before designing any further compatibility behavior.
+
+### T15 hardware result and T16 virtual-target ownership
+
+**PROVEN BY HARDWARE:** T15 installed and synchronized all activation tracing.
+The natural state-zero path was observed four times with comparison operands
+`0` and `0xFFFFFFFF`, relocated word and byte values of zero, and the same
+runtime-relocated virtual target on that boot. The call and return counters
+were both four. Its untouched natural result was exactly 15, so Sony's original
+classifiers selected `15 >= 15` followed by `15 < 17` and exited without
+rejoining `+0x93EC`. No downstream PAF or VshBridge boundary was reached. The
+absolute virtual address is not stable evidence across boots.
+
+T16 asks only which loaded executable module owns that natural virtual target.
+After the existing helper scalar becomes nonzero, the already-running deferred
+diagnostic writer passes it to `sceKernelFindModuleByAddress()`. It accepts the
+result only when the complete ten-word fingerprint lies in both the owner's
+text range and one of its at most four reported segments. All arithmetic uses
+subtraction-based bounds checks before the first target read. A successful
+capture writes compact owner metadata, the stable text-relative offset, the
+containing segment, and ten read-only instruction words:
+
+```text
+[state-zero-vcall-owner] target=0x........ module=........ text=0x........ text_size=0x........ offset=0x........ segment=... segment_start=0x........ segment_size=0x........
+[state-zero-vcall-code] offset=0x........ words=0x........,...
+```
+
+An unknown module or an invalid text/segment range emits only
+`validation=failed`; it never dereferences the captured address. T16 adds no
+thread, scanner, hook, patch, argument capture, result conversion, or cache
+operation. In particular, it does not interpret or change 15, and the T15
+virtual wrapper and downstream tracers are unchanged.
+
+Phase report: files changed are `kernel/main.c`, the safety verifier, and this
+Phase 3 record. The technical finding is limited to the hardware-proven T15
+natural result and exit described above; T16 has no hardware result yet.
+The implementation assumes only that LoadCore's existing address lookup and
+reported module ranges describe loaded executable text. Static verification
+and PSPDEV build status must be recorded with the change. The required hardware
+test is one recovery-protected PSP-1000 6.61 run with `ClockAndCalendar` and the
+broad BSMan shim disabled, the dangerous 58D4 trigger and diagnostics/activation
+trace enabled, and both proven narrow compatibility controls enabled. Do not
+load `660_plugins_on_661.prx`. Return the complete unedited log containing the
+owner, fingerprint, and unchanged T15 result/counts. The owner's module name,
+stable offset, function semantics, and whether an additional decrypted PRX is
+needed remain unresolved. The recommended next phase is offline correlation
+against the matching decrypted PSP-1000 PRX; no new compatibility behavior is
+justified before that result.
