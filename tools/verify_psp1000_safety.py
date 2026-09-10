@@ -56,9 +56,9 @@ STATE_ZERO_TRACE_STUBS = (
 )
 T22_CONSUMER_WRAPPERS = (
     ("zeroCtrlConsumer13F6CTrace", "zeroCtrlConsumer13F6CTraceEnd",
-     "zeroCtrlConsumer13F6CHits"),
+     "zeroCtrlConsumer13F6CHits", "zeroCtrlConsumer13F6CNaturalResult"),
     ("zeroCtrlConsumer14020Trace", "zeroCtrlConsumer14020TraceEnd",
-     "zeroCtrlConsumer14020Hits"),
+     "zeroCtrlConsumer14020Hits", "zeroCtrlConsumer14020NaturalResult"),
 )
 T22_CONSUMER_TARGET = "zeroCtrlConsumer6F84Target"
 
@@ -825,15 +825,19 @@ def check_sources(root):
             fail("T22.3 removed required shared-global guard " + guard)
     consumer_stub = assembly[assembly.find(".macro CONSUMER_6F84_TRACE"):
         assembly.find(".endm", assembly.find(".macro CONSUMER_6F84_TRACE"))]
-    for token in ("sw      $t0, 0($sp)", "sw      $t1, 4($sp)",
-            "sw      $t2, 8($sp)", "lw      $t2, %lo(zeroCtrlConsumer6F84Target)",
+    for token in ("addiu   $sp, $sp, -16", "sw      $t0, 0($sp)",
+            "sw      $t1, 4($sp)", "sw      $t2, 8($sp)",
+            "sw      $ra, 12($sp)",
+            "lw      $t2, %lo(zeroCtrlConsumer6F84Target)", "jalr    $t2",
+            "sw      $v0, %lo(\\result)($t0)", "lw      $t2, 8($sp)",
             "lw      $t1, 4($sp)", "lw      $t0, 0($sp)",
-            "addiu   $sp, $sp, 12", "jr      $t2", "lw      $t2, -4($sp)"):
+            "lw      $ra, 12($sp)", "addiu   $sp, $sp, 16", "jr      $ra"):
         if token not in consumer_stub:
             fail("T22 wrapper transparency is missing " + token)
-    if any(token in consumer_stub for token in
-            ("jal ", "jalr", "$ra", "$v0", "sceIo", "Alloc", "malloc")):
-        fail("T22 wrapper calls, changes RA/v0, performs I/O, or allocates")
+    if "jal " in consumer_stub or consumer_stub.count("jalr    $t2") != 1 or \
+            consumer_stub.count("$v0") != 1 or any(token in consumer_stub for token in
+            ("sceIo", "Alloc", "malloc")):
+        fail("T23 wrapper has an extra call or transforms natural v0")
     if assembly.count("CONSUMER_6F84_TRACE zeroCtrlConsumer") != 2:
         fail("T22 must use exactly two dedicated consumer wrappers")
     if "sceKernelCreateThread" in consumers_install or \
@@ -862,6 +866,8 @@ def check_sources(root):
         "CALLSITE_14020_COUNTER_RANGE_INVALID", "CALLSITE_14020_NOT_JAL",
         "CALLSITE_14020_TARGET_MISMATCH", "CALLSITE_14020_DELAY_MISMATCH",
         "CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID",
+        "CALLSITE_13F6C_RESULT_RANGE_INVALID",
+        "CALLSITE_14020_RESULT_RANGE_INVALID",
         "REPLACEMENT_TARGET_MISMATCH",
     )
     for reason in guard_reasons:
@@ -895,6 +901,25 @@ def check_sources(root):
             fail("T22.2 diagnostic record is missing " + record)
     if "i < bsman->consumer_segment_count && i < 4" not in writer:
         fail("T22.2 diagnostic segment iteration is not capped at four")
+    result_symbols = (
+        "zeroCtrlConsumer13F6CNaturalResult",
+        "zeroCtrlConsumer14020NaturalResult",
+    )
+    if any(assembly.count(symbol + ": .space 4") != 1
+            for symbol in result_symbols):
+        fail("T23 does not define exactly two natural-result scalars")
+    for field in ("consumer_13f6c_result_addr", "consumer_14020_result_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T23 registration does not validate " + field)
+    result_init = consumers_install.find(
+        "_sw(0xFFFFFFFF, bsman->consumer_result_addr[i])")
+    if result_init < 0 or result_init > consumer_commit or \
+            "zeroCtrlVshModuleRangeValid(helper,\n                    bsman->consumer_result_addr[i], 4)" not in consumers_install:
+        fail("T23 results are not validated and initialized before VSH commit")
+    if writer.find("[vsh-6f84-consumers-natural]") < 0 or \
+            "consumer_pre_slide_result[0]" not in bsman_install or \
+            "consumer_pre_slide_result[1]" not in bsman_install:
+        fail("T23 natural results are not snapshotted and deferred")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")
@@ -1172,26 +1197,33 @@ def require_result_store_relocation(body, function, result_symbol):
 
 
 def check_t22_consumer_semantics(body, symbol):
-    """Prove the assembled T22 wrapper preserves the caller and natural result."""
-    forbidden = r"\b(?:at|v[01]|a[0-3]|t[3-9]|s[0-7]|k[01]|gp|fp|ra)\b"
-    if re.search(forbidden, body) or re.search(r"\bjalr?\b", body):
-        fail(symbol + " uses a forbidden register or function call")
+    """Prove the assembled T23 wrapper captures but preserves natural v0."""
+    forbidden = r"\b(?:at|v1|a[0-3]|t[3-9]|s[0-7]|k[01]|gp|fp)\b"
+    if re.search(forbidden, body) or re.search(r"\bjal\b", body):
+        fail(symbol + " uses a forbidden register or direct function call")
     ordered = (
-        r"\baddiu\s+sp,\s*sp,\s*-12\b",
+        r"\baddiu\s+sp,\s*sp,\s*-16\b",
         r"\bsw\s+t0,\s*0\(sp\)",
         r"\bsw\s+t1,\s*4\(sp\)",
         r"\bsw\s+t2,\s*8\(sp\)",
+        r"\bsw\s+ra,\s*12\(sp\)",
         r"\blui\s+t0,",
         r"\blw\s+t1,",
         r"\baddiu\s+t1,\s*t1,\s*1\b",
         r"\bsw\s+t1,",
         r"\blui\s+t0,",
         r"\blw\s+t2,",
+        r"\bjalr\s+t2\b",
+        r"\bnop\b",
+        r"\blui\s+t0,",
+        r"\bsw\s+v0,",
+        r"\blw\s+t2,\s*8\(sp\)",
         r"\blw\s+t1,\s*4\(sp\)",
         r"\blw\s+t0,\s*0\(sp\)",
-        r"\baddiu\s+sp,\s*sp,\s*12\b",
-        r"\bjr\s+t2\b",
-        r"\blw\s+t2,\s*-4\(sp\)",
+        r"\blw\s+ra,\s*12\(sp\)",
+        r"\baddiu\s+sp,\s*sp,\s*16\b",
+        r"\bjr\s+ra\b",
+        r"\bnop\b",
     )
     cursor = 0
     for pattern in ordered:
@@ -1200,14 +1232,15 @@ def check_t22_consumer_semantics(body, symbol):
             fail(symbol + " lacks ordered transparent operation " + pattern)
         cursor += match.end()
     if len(re.findall(r"\baddiu\s+sp,\s*sp,", body)) != 2 or \
-            len(re.findall(r"\bjr\s+t2\b", body)) != 1:
+            len(re.findall(r"\bjalr\s+t2\b", body)) != 1 or \
+            len(re.findall(r"\bjr\s+ra\b", body)) != 1:
         fail(symbol + " has unexpected stack adjustment or control transfer")
-    if len(re.findall(r"\blw\s+", body)) != 5 or \
-            len(re.findall(r"\bsw\s+", body)) != 4:
+    if len(re.findall(r"\blw\s+", body)) != 6 or \
+            len(re.findall(r"\bsw\s+", body)) != 6:
         fail(symbol + " has unexpected memory accesses")
-    if not re.search(r"\bjr\s+t2\b[^\n]*\n\s*[0-9a-f]+:\s+[^\n]*"
-            r"\blw\s+t2,\s*-4\(sp\)", body, re.I):
-        fail(symbol + " does not restore S-4 in the JR delay slot")
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]):
+        fail(symbol + " transforms or uses natural v0 beyond one store")
 
 
 def check_post_bsman_branch_semantics(body, relocatable=False):
@@ -1318,8 +1351,8 @@ def check_elf(elf):
         match = re.match(r"^([0-9a-fA-F]+)\s+\w\s+(\S+)$", line)
         if match:
             symbol_addresses[match.group(2)] = int(match.group(1), 16)
-    for start, end, counter in T22_CONSUMER_WRAPPERS:
-        for symbol in (start, end, counter):
+    for start, end, counter, result in T22_CONSUMER_WRAPPERS:
+        for symbol in (start, end, counter, result):
             if symbol not in symbol_addresses:
                 fail("missing linked T22 symbol " + symbol)
         if symbol_addresses[end] <= symbol_addresses[start]:
@@ -1377,7 +1410,7 @@ def check_elf(elf):
                 (not re.search(r"\blw\s+ra,", prefix_trace) or
                  not re.search(r"\bjr\s+ra\b", prefix_trace)):
             fail("post-BSMan VshBridge return trace does not restore ra")
-    for start, _end, _counter in T22_CONSUMER_WRAPPERS:
+    for start, _end, _counter, _result in T22_CONSUMER_WRAPPERS:
         check_t22_consumer_semantics(function_body(disassembly, start), start)
 
 
@@ -1391,7 +1424,7 @@ def check_stub_object(stub_object):
             fail(symbol + " has no HI16 relocation to its dedicated counter")
         if len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
             fail(symbol + " does not have two LO16 counter relocations")
-    for symbol, _end, counter in T22_CONSUMER_WRAPPERS:
+    for symbol, _end, counter, result in T22_CONSUMER_WRAPPERS:
         body = function_body(disassembly, symbol)
         check_t22_consumer_semantics(body, symbol)
         if len(re.findall(r"R_MIPS_HI16\s+" + counter + r"\b", body)) != 1 or \
@@ -1404,6 +1437,11 @@ def check_stub_object(stub_object):
         if not re.search(r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
                 T22_CONSUMER_TARGET + r"\b", body):
             fail(symbol + " does not load the natural target into t2")
+        if len(re.findall(r"R_MIPS_HI16\s+" + result + r"\b", body)) != 1 or \
+                len(re.findall(r"R_MIPS_LO16\s+" + result + r"\b", body)) != 1 or \
+                not re.search(r"\bsw\s+v0,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                    result + r"\b", body):
+            fail(symbol + " lacks the unique natural-result store relocation")
     bsman_leaf = function_body(disassembly, BSMAN_STUB)
     if not re.search(r"R_MIPS_HI16\s+" + BSMAN_COUNTER + r"\b", bsman_leaf) or \
             len(re.findall(r"R_MIPS_LO16\s+" + BSMAN_COUNTER + r"\b",

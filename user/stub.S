@@ -696,33 +696,40 @@ zeroCtrlDispatchEntryTrace:
 zeroCtrlDispatchEntryTraceEnd:
 .end zeroCtrlDispatchEntryTrace
 
-.macro CONSUMER_6F84_TRACE name, counter
+.macro CONSUMER_6F84_TRACE name, counter, result
 .globl \name
 .type \name @function
 .ent \name, 0
 \name:
-    addiu   $sp, $sp, -12
+    addiu   $sp, $sp, -16
     sw      $t0, 0($sp)
     sw      $t1, 4($sp)
     sw      $t2, 8($sp)
+    sw      $ra, 12($sp)
     lui     $t0, %hi(\counter)
     lw      $t1, %lo(\counter)($t0)
     addiu   $t1, $t1, 1
     sw      $t1, %lo(\counter)($t0)
     lui     $t0, %hi(zeroCtrlConsumer6F84Target)
     lw      $t2, %lo(zeroCtrlConsumer6F84Target)($t0)
+    jalr    $t2
+    nop
+    lui     $t0, %hi(\result)
+    sw      $v0, %lo(\result)($t0)
+    lw      $t2, 8($sp)
     lw      $t1, 4($sp)
     lw      $t0, 0($sp)
-    addiu   $sp, $sp, 12
-    jr      $t2
-    lw      $t2, -4($sp)
+    lw      $ra, 12($sp)
+    addiu   $sp, $sp, 16
+    jr      $ra
+    nop
 .globl \name\()End
 \name\()End:
 .end \name
 .endm
 
-CONSUMER_6F84_TRACE zeroCtrlConsumer13F6CTrace, zeroCtrlConsumer13F6CHits
-CONSUMER_6F84_TRACE zeroCtrlConsumer14020Trace, zeroCtrlConsumer14020Hits
+CONSUMER_6F84_TRACE zeroCtrlConsumer13F6CTrace, zeroCtrlConsumer13F6CHits, zeroCtrlConsumer13F6CNaturalResult
+CONSUMER_6F84_TRACE zeroCtrlConsumer14020Trace, zeroCtrlConsumer14020Hits, zeroCtrlConsumer14020NaturalResult
 
 .macro STATE_ZERO_CLASS name, limit, bit_true, bit_false, true_slot, false_slot, rejoin
 .globl \name
@@ -1130,3 +1137,7 @@ zeroCtrlConsumer6F84Target: .space 4
 zeroCtrlConsumer13F6CHits: .space 4
 .globl zeroCtrlConsumer14020Hits
 zeroCtrlConsumer14020Hits: .space 4
+.globl zeroCtrlConsumer13F6CNaturalResult
+zeroCtrlConsumer13F6CNaturalResult: .space 4
+.globl zeroCtrlConsumer14020NaturalResult
+zeroCtrlConsumer14020NaturalResult: .space 4

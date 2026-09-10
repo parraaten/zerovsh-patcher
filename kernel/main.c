@@ -290,11 +290,12 @@ typedef struct {
     unsigned int dispatch_entry_pre_slide[5];
     int consumer_validation[2], consumer_install[2], consumer_cache_sync[2];
     unsigned int consumer_leaf_addr[2], consumer_leaf_size[2];
-    unsigned int consumer_target_addr, consumer_hits_addr[2];
+    unsigned int consumer_target_addr, consumer_hits_addr[2], consumer_result_addr[2];
     int consumer_early_attempted, shared_global_early_valid;
     unsigned int shared_global_early_value;
     int consumer_pre_slide_captured, shared_global_pre_slide_valid;
-    unsigned int consumer_pre_slide_hits[2], shared_global_pre_slide_value;
+    unsigned int consumer_pre_slide_hits[2], consumer_pre_slide_result[2];
+    unsigned int shared_global_pre_slide_value;
     int consumer_guard_reason;
     unsigned int consumer_vsh_text, consumer_vsh_text_size;
     unsigned int consumer_vsh_nsegment, consumer_segment_count;
@@ -335,6 +336,8 @@ enum zeroCtrlConsumerGuardReason {
     ZERO_CONSUMER_GUARD_CALLSITE_14020_TARGET_MISMATCH,
     ZERO_CONSUMER_GUARD_CALLSITE_14020_DELAY_MISMATCH,
     ZERO_CONSUMER_GUARD_CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_RESULT_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_RESULT_RANGE_INVALID,
     ZERO_CONSUMER_GUARD_REPLACEMENT_TARGET_MISMATCH
 };
 
@@ -352,7 +355,9 @@ static const char *zeroCtrlConsumerGuardReasonName(int reason) {
         "CALLSITE_14020_RANGE_INVALID", "CALLSITE_14020_HELPER_RANGE_INVALID",
         "CALLSITE_14020_COUNTER_RANGE_INVALID", "CALLSITE_14020_NOT_JAL",
         "CALLSITE_14020_TARGET_MISMATCH", "CALLSITE_14020_DELAY_MISMATCH",
-        "CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID", "REPLACEMENT_TARGET_MISMATCH"
+        "CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID",
+        "CALLSITE_13F6C_RESULT_RANGE_INVALID",
+        "CALLSITE_14020_RESULT_RANGE_INVALID", "REPLACEMENT_TARGET_MISMATCH"
     };
     if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
         return "UNKNOWN";
@@ -1470,6 +1475,8 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(consumer_6f84_target_addr);
     CHECK_POST_SCALAR(consumer_13f6c_hits_addr);
     CHECK_POST_SCALAR(consumer_14020_hits_addr);
+    CHECK_POST_SCALAR(consumer_13f6c_result_addr);
+    CHECK_POST_SCALAR(consumer_14020_result_addr);
 #undef CHECK_POST_SCALAR
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -1645,6 +1652,8 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->consumer_target_addr = copied.consumer_6f84_target_addr;
     bsman->consumer_hits_addr[0] = copied.consumer_13f6c_hits_addr;
     bsman->consumer_hits_addr[1] = copied.consumer_14020_hits_addr;
+    bsman->consumer_result_addr[0] = copied.consumer_13f6c_result_addr;
+    bsman->consumer_result_addr[1] = copied.consumer_14020_result_addr;
     bsman->registered = 1;
 }
 
@@ -2933,6 +2942,15 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->shared_global_pre_slide_valid,
                         bsman->shared_global_pre_slide_value);
                 zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-consumers-natural] caller_13f6c_hits=%u "
+                        "caller_13f6c_result=0x%08X caller_14020_hits=%u "
+                        "caller_14020_result=0x%08X\n",
+                        bsman->consumer_pre_slide_hits[0],
+                        bsman->consumer_pre_slide_result[0],
+                        bsman->consumer_pre_slide_hits[1],
+                        bsman->consumer_pre_slide_result[1]);
+                zeroCtrlDiagnosticsText(line);
                 observed_consumer_pre_slide = 1;
             }
             if (bsman->dispatch_entry_early_attempted &&
@@ -3822,6 +3840,9 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
     static const int region_reasons[2] = {
         ZERO_CONSUMER_GUARD_CALLSITE_13F6C_PSEUDODIRECT_RANGE_INVALID,
         ZERO_CONSUMER_GUARD_CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID };
+    static const int result_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_RESULT_RANGE_INVALID,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_RESULT_RANGE_INVALID };
     ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
     SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
@@ -3939,6 +3960,9 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
                 helper, bsman->consumer_hits_addr[i], 4);
         if (!bsman->consumer_counter_range_valid[i])
             CONSUMER_GUARD_FAIL(counter_reasons[i]);
+        if (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->consumer_result_addr[i], 4))
+            CONSUMER_GUARD_FAIL(result_reasons[i]);
         if ((bsman->consumer_callsite_words[i][0] >> 26) != 3)
             CONSUMER_GUARD_FAIL(jal_reasons[i]);
         bsman->consumer_callsite_target[i] = zeroCtrlMipsJumpTarget(
@@ -3961,11 +3985,15 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
     for (i = 0; i < 2; i++) bsman->consumer_validation[i] = 1;
     _sw(target, bsman->consumer_target_addr);
     for (i = 0; i < 2; i++) _sw(0, bsman->consumer_hits_addr[i]);
+    for (i = 0; i < 2; i++) _sw(0xFFFFFFFF, bsman->consumer_result_addr[i]);
     sceKernelDcacheWritebackInvalidateRange(
             (const void *)bsman->consumer_target_addr, 4);
     for (i = 0; i < 2; i++)
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)bsman->consumer_hits_addr[i], 4);
+    for (i = 0; i < 2; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->consumer_result_addr[i], 4);
     bsman->shared_global_early_valid = 1;
     bsman->shared_global_early_value = _lw(slide_diag.vsh_shared_global_addr);
     for (i = 0; i < 2; i++) {
@@ -4001,6 +4029,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             zeroCtrlReadHelperCounter(bsman->consumer_hits_addr[0]);
     bsman->consumer_pre_slide_hits[1] =
             zeroCtrlReadHelperCounter(bsman->consumer_hits_addr[1]);
+    bsman->consumer_pre_slide_result[0] =
+            zeroCtrlReadHelperCounter(bsman->consumer_result_addr[0]);
+    bsman->consumer_pre_slide_result[1] =
+            zeroCtrlReadHelperCounter(bsman->consumer_result_addr[1]);
     {
         SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
         if (bsman->shared_global_early_valid && vsh &&

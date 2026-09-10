@@ -162,9 +162,11 @@ typedef struct {
     u32 consumer_6f84_target_addr;
     u32 consumer_13f6c_hits_addr;
     u32 consumer_14020_hits_addr;
+    u32 consumer_13f6c_result_addr;
+    u32 consumer_14020_result_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 632 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 640 ? 1 : -1];
 
 #endif

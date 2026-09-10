@@ -1632,3 +1632,35 @@ remaining predicate words, the natural jump target, both callsites, both delay
 slots, transactional ordering, wrappers, and diagnostics remain unchanged.
 The bounded predicate record now also reports that reconstructed address so a
 structurally valid load with the wrong effective target is unambiguous.
+
+### T22.3 hardware result and T23 natural return capture
+
+**PROVEN BY HARDWARE:** Both T22 consumers installed and each executed once
+before SlidePlugin. The independently decoded shared global was zero at both
+bounded snapshots, but T22 did not exclude a transient value or directly
+capture either natural predicate result.
+
+T23 changes only the two existing evidence wrappers. Each now uses a private
+16-byte frame containing `t0`, `t1`, `t2`, and the original caller `$ra`.
+After incrementing its existing counter, it loads the already validated Sony
+`+0x6F84` target and performs the single intentional `jalr`. On return it stores
+natural `$v0` verbatim to its dedicated result scalar, restores every saved
+register and the stack, and returns through the original `$ra`. It performs no
+comparison, normalization, arithmetic, or branch on `$v0`.
+
+Registration range-validates both new result scalars. The T22 transaction
+initializes each to `0xFFFFFFFF` before either callsite commit, and failure of
+either range check prevents both patches. The same JAL words remain the only
+VSH writes and both original delay slots remain untouched.
+
+At the existing pre-SlidePlugin boundary the deferred writer adds:
+
+```text
+[vsh-6f84-consumers-natural] caller_13f6c_hits=... caller_13f6c_result=0x........ caller_14020_hits=... caller_14020_result=0x........
+```
+
+Results of zero at both one-hit consumers would be **PROVEN BY HARDWARE**
+evidence that both natural consumers returned false in this startup. Combined
+with the decrypted binary, that would establish the natural `0x28` selection
+at `+0x13F6C` and absence of the later `0x40` contribution at `+0x14020`, but
+would not itself justify compatibility. No consumer or predicate is forced.
