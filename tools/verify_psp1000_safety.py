@@ -54,6 +54,13 @@ STATE_ZERO_TRACE_STUBS = (
     "zeroCtrlStateZeroVReturnTrace", "zeroCtrlStateZeroClass15Trace",
     "zeroCtrlStateZeroClass17Trace", "zeroCtrlStateZeroClass18Trace",
 )
+T22_CONSUMER_WRAPPERS = (
+    ("zeroCtrlConsumer13F6CTrace", "zeroCtrlConsumer13F6CTraceEnd",
+     "zeroCtrlConsumer13F6CHits", "zeroCtrlConsumer13F6CNaturalResult"),
+    ("zeroCtrlConsumer14020Trace", "zeroCtrlConsumer14020TraceEnd",
+     "zeroCtrlConsumer14020Hits", "zeroCtrlConsumer14020NaturalResult"),
+)
+T22_CONSUMER_TARGET = "zeroCtrlConsumer6F84Target"
 
 
 def fail(message):
@@ -601,6 +608,318 @@ def check_sources(root):
         fail("T18.1 finalization checkpoints do not localize the final boundary")
     if "#define SLIDE_OBSERVATION_WINDOW_US 12000000" not in kernel:
         fail("T18.1 changed the 12-second observation window")
+    case14_install = kernel[kernel.find(
+        "static void zeroCtrlInstallCase14Trace"):
+        kernel.find("static void zeroCtrlInstallDispatchEntryTrace(void) {")]
+    for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
+            "vsh->text_addr + 0x1D7A4", "vsh->text_addr + 0x4FDA0",
+            "table + 14 * 4", "vsh->text_addr + 0x1DE18",
+            "_lw(entry) != natural", "case14_validation = 1",
+            "_sw(word, entry)", "case14_install = 1",
+            "case14_cache_sync = 1"):
+        if token not in case14_install:
+            fail("T19 case-14 transaction is missing " + token)
+    case14_commit = case14_install.find("_sw(word, entry)")
+    case14_validation = case14_install.find("case14_validation = 1")
+    if case14_commit <= case14_validation or \
+            case14_install.count("_sw(word, entry)") != 1:
+        fail("T19 does not transactionally patch exactly jump-table entry 14")
+    if any(token in case14_install[:case14_commit] for token in
+            ("_sw(word, entry)", "_sw(bsman->case14_leaf_addr, entry)")):
+        fail("T19 writes the VSH jump table before validation completes")
+    if "sceKernelDcacheWritebackInvalidateRange((const void *)entry, 4)" not in \
+            case14_install or "sceKernelIcache" in case14_install:
+        fail("T19 does not narrowly synchronize its single data word")
+    if "sceKernelCreateThread" in case14_install or \
+            "0x6F84" in case14_install:
+        fail("T19 creates a thread or enables the broad predicate")
+    case14_stub = assembly[assembly.find("zeroCtrlCase14Trace:"):
+        assembly.find("zeroCtrlCase14TraceEnd:")]
+    if not case14_stub or \
+            "sw      $ra, %lo(zeroCtrlCase14FirstRA)" not in case14_stub or \
+            "sw      $ra, %lo(zeroCtrlCase14LastRA)" not in case14_stub or \
+            "lw      $t2, %lo(zeroCtrlCase14Resume)" not in case14_stub or \
+            "jr      $t2" not in case14_stub or \
+            "lw      $t2, -4($sp)" not in case14_stub:
+        fail("T19 helper does not preserve RA/registers and natural continuation")
+    if any(token in case14_stub for token in
+            ("jal ", "jalr", "sceIo", "Alloc", "malloc", "sceKernel")):
+        fail("T19 helper calls code, performs I/O, or allocates")
+    if re.search(r"\b(?:li|addiu|ori|lw|move|addu)\s+\$(?:s3|ra)\b",
+            case14_stub):
+        fail("T19 helper modifies Sony's s3 argument or caller RA")
+    case14_install_record = writer.find("[topmenu-case14-install]")
+    case14_live_record = writer.find("[topmenu-case14-live]")
+    if min(case14_install_record, case14_live_record) < 0 or not (
+            live_record < case14_live_record < topmenu_owner_done):
+        fail("T19 records are missing or not at the T18.1 live boundary")
+    for scalar in range(4):
+        if ("bsman->case14_scalar_addr[%d]" % scalar) not in \
+                writer[case14_live_record:topmenu_owner_done]:
+            fail("T19 live result is missing case-14 scalar %d" % scalar)
+    dispatch_install = kernel[kernel.find(
+        "static void zeroCtrlInstallDispatchEntryTrace(void) {"):
+        kernel.find("static void zeroCtrlInstall6F84ConsumerTraces(void) {")]
+    for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
+            "vsh->text_size != 0x556C0", "vsh->text_addr + 0x1D7A4",
+            "_lw(site) != 0x27BDFFC0", "_lw(site + 4) != 0xAFB20018",
+            "_lw(site + 0x24) != 0x9062019D",
+            "_lw(site + 0x28) != 0x1440003D", "resume = site + 8",
+            "dispatch_entry_validation = 1", "_sw(replacement, site)",
+            "_sw(0, site + 4)", "dispatch_entry_install = 1",
+            "dispatch_entry_cache_sync = 1"):
+        if token not in dispatch_install:
+            fail("T20 dispatcher-entry transaction is missing " + token)
+    dispatch_commit = dispatch_install.find("_sw(replacement, site)")
+    dispatch_validation = dispatch_install.find("dispatch_entry_validation = 1")
+    if dispatch_commit <= dispatch_validation or \
+            dispatch_install.count("_sw(replacement, site)") != 1:
+        fail("T20 writes VSH before complete dispatcher validation")
+    if dispatch_install.count("_sw(0, site + 4)") != 1 or \
+            "(const void *)site, 8" not in dispatch_install:
+        fail("T20 does not replace and synchronize exactly two entry words")
+    if "sceKernelCreateThread" in dispatch_install or \
+            "0x6F84" in dispatch_install:
+        fail("T20 creates a thread or changes the broad predicate")
+    dispatch_stub = assembly[assembly.find("zeroCtrlDispatchEntryTrace:"):
+        assembly.find("zeroCtrlDispatchEntryTraceEnd:")]
+    for token in ("bne     $a0, $t2", "sw      $ra, %lo(zeroCtrlDispatchCase14FirstRA)",
+            "sw      $ra, %lo(zeroCtrlDispatchCase14LastRA)",
+            "addiu   $sp, $sp, -0x40", "sw      $s2, 0x18($sp)",
+            "lw      $t2, %lo(zeroCtrlDispatchEntryResume)",
+            "jr      $t2", "lw      $t2, 0x3C($sp)"):
+        if token not in dispatch_stub:
+            fail("T20 helper does not preserve displaced entry behavior: " + token)
+    dispatch_stack_sequence = (
+        "addiu   $sp, $sp, -12\n"
+        "    sw      $t0, 0($sp)\n"
+        "    sw      $t1, 4($sp)\n"
+        "    sw      $t2, 8($sp)")
+    dispatch_restore_sequence = (
+        "lw      $t1, 4($sp)\n"
+        "    lw      $t0, 0($sp)\n"
+        "    addiu   $sp, $sp, 12\n"
+        "    addiu   $sp, $sp, -0x40\n"
+        "    sw      $s2, 0x18($sp)\n"
+        "    jr      $t2\n"
+        "    lw      $t2, 0x3C($sp)")
+    if dispatch_stack_sequence not in dispatch_stub or \
+            dispatch_restore_sequence not in dispatch_stub or \
+            "lw      $t2, 0x24($sp)" in dispatch_stub:
+        fail("T20 stack proof must restore S-4 as (S-0x40)+0x3C")
+    if any(token in dispatch_stub for token in
+            ("jal ", "jalr", "sceIo", "Alloc", "malloc", "sceKernel")):
+        fail("T20 helper calls code, performs I/O, or allocates")
+    if re.search(r"\b(?:li|addiu|ori|lw|move|addu)\s+\$(?:a0|ra|s2|s3)\b",
+            dispatch_stub):
+        fail("T20 helper modifies Sony argument or preserved registers")
+    if any(token in dispatch_stub for token in ("0x19D", "0x12C")):
+        fail("T20 helper accesses Sony context state")
+    dispatch_install_record = writer.find("[topmenu-dispatch-entry-install]")
+    dispatch_live_record = writer.find("[topmenu-dispatch-entry-live]")
+    if min(dispatch_install_record, dispatch_live_record) < 0 or not (
+            case14_live_record < dispatch_live_record < topmenu_owner_done):
+        fail("T20 records are missing or not at the existing live boundary")
+    for scalar in range(5):
+        if ("bsman->dispatch_entry_scalar_addr[%d]" % scalar) not in \
+                writer[dispatch_live_record:topmenu_owner_done]:
+            fail("T20 live result is missing dispatcher scalar %d" % scalar)
+    idempotent_guard = dispatch_install.find(
+        "if (bsman->dispatch_entry_install) return;")
+    counter_clear = dispatch_install.find(
+        "_sw(0, bsman->dispatch_entry_scalar_addr[i])")
+    if idempotent_guard < 0 or counter_clear <= idempotent_guard:
+        fail("T21 later T20 invocation can clear an existing early trace")
+    vsh_record = kernel[kernel.find("void zeroCtrlRecordVshSlideTarget("):
+        kernel.find("int (*msIoOpen)")]
+    early_call = vsh_record.find("zeroCtrlInstallDispatchEntryTrace();")
+    original_scan = vsh_record.find("zeroCtrlScanVshStateTarget(")
+    selected_commit = vsh_record.find(
+        "Commit pass: selected callsites are all valid or none are written.")
+    global_capture = vsh_record.rfind(
+        "if (slide_diag.global_predicate_enabled)", 0, early_call)
+    if min(early_call, original_scan, selected_commit, global_capture) < 0 or \
+            not (original_scan < selected_commit < global_capture < early_call):
+        fail("T21 early install does not follow original VSH scans and setup")
+    if vsh_record.count("zeroCtrlInstallDispatchEntryTrace();") != 1 or \
+            "zeroCtrlInstallField12CWriteTrace();" in vsh_record or \
+            "zeroCtrlInstallCase14Trace();" in vsh_record:
+        fail("T21 moves T18/T19 early or creates another dispatcher install")
+    user_onstart = user[user.find("int OnModuleStart(SceModule2 *mod)"):
+        user.find("int module_start", user.find("int OnModuleStart(SceModule2 *mod)"))]
+    if user_onstart.find('strcmp(mod->modname, "vsh_module")') < 0 or \
+            user_onstart.find("zeroCtrlRecordVshSlideTarget(") < 0:
+        fail("T21 is not reached from the existing early VSH observation")
+    bsman_install = kernel[kernel.find("static void zeroCtrlInstallBSManClosedShim"):
+        kernel.find("int OnModuleStart(SceModule2 *mod)")]
+    pre_slide = bsman_install.find(
+        "bsman->dispatch_entry_pre_slide[snapshot_index]")
+    t18_later = bsman_install.find("zeroCtrlInstallField12CWriteTrace();")
+    t19_later = bsman_install.find("zeroCtrlInstallCase14Trace();")
+    t20_later = bsman_install.find("zeroCtrlInstallDispatchEntryTrace();")
+    if min(pre_slide, t18_later, t19_later, t20_later) < 0 or not (
+            pre_slide < t18_later < t19_later < t20_later):
+        fail("T21 pre-slide snapshot is not before the unchanged later installers")
+    if assembly.count("zeroCtrlDispatchEntryTrace:") != 1:
+        fail("T21 adds or removes the existing T20 dispatcher helper")
+    early_record = writer.find("[topmenu-dispatch-entry-early-install]")
+    pre_slide_record = writer.find("[topmenu-dispatch-entry-pre-slide]")
+    if min(early_record, pre_slide_record) < 0:
+        fail("T21 early-install or pre-slide diagnostics are missing")
+    for scalar in range(5):
+        if ("bsman->dispatch_entry_pre_slide[%d]" % scalar) not in \
+                writer[pre_slide_record:install_record]:
+            fail("T21 pre-slide record is missing snapshot scalar %d" % scalar)
+    consumers_install = kernel[kernel.find(
+        "static void zeroCtrlInstall6F84ConsumerTraces(void) {"):
+        kernel.find("static void zeroCtrlInstallBSManClosedShim")]
+    for token in ("0x13F6C, 0x14020", "0x00000000, 0x0062800B",
+            "vsh->text_addr + 0x6F84",
+            "consumer_callsite_words[i][1] != delays[i]",
+            "consumer_callsite_target[i] != target",
+            "replacement[i] = 0x0C000000", "_sw(replacement[i], callsite[i])",
+            "(const void *)callsite[i], 4", "shared_global_early_valid = 1",
+            "_lw(slide_diag.vsh_shared_global_addr)"):
+        if token not in consumers_install:
+            fail("T22 consumer transaction is missing " + token)
+    validation = consumers_install.find("consumer_validation[i] = 1")
+    consumer_commit = consumers_install.find("_sw(replacement[i], callsite[i])")
+    if validation < 0 or consumer_commit <= validation or \
+            consumers_install.count("_sw(replacement[i], callsite[i])") != 1:
+        fail("T22 consumer JAL writes are not transactional")
+    if re.search(r"_sw\([^\n]*callsite\[i\]\s*\+\s*4", consumers_install):
+        fail("T22 modifies a consumer delay slot")
+    for word in ("0x2483FFFC", "0x38820007",
+            "0x2C630002", "0x2C420001", "0x00621825", "0x14600006",
+            "0x50820001", "0x03E00008", "0x30A200FF"):
+        if word not in consumers_install:
+            fail("T22 does not validate natural +6F84 word " + word)
+    decode_helper = kernel[kernel.find(
+        "static unsigned int zeroCtrlDecodeLuiSignedLowAddress"):
+        kernel.find("static void zeroCtrlDeriveVshSharedGlobal")]
+    if "int displacement = (short)(low_instruction & 0xFFFF)" not in \
+            decode_helper or \
+            "((lui & 0xFFFF) << 16) + (unsigned int)displacement" not in \
+            decode_helper:
+        fail("T22.3 shared LUI/LO16 decoder lost signed-low semantics")
+    derive = kernel[kernel.find("static void zeroCtrlDeriveVshSharedGlobal"):
+        kernel.find("static int zeroCtrlVshModuleRangeValid")]
+    if "zeroCtrlDecodeLuiSignedLowAddress(lui, access)" not in derive or \
+            "zeroCtrlDecodeLuiSignedLowAddress(" not in consumers_install:
+        fail("T22.3 does not share address decoding with original derivation")
+    if "(_lw(target + 4) & 0xFFFF0000) != 0x8C440000" not in \
+            consumers_install or \
+            "predicate_global != slide_diag.vsh_shared_global_addr" not in \
+            consumers_install:
+        fail("T22.3 does not validate LW structure and effective address")
+    if "consumer_predicate_decoded_addr = predicate_global" not in \
+            consumers_install or "decoded=0x%08X" not in writer:
+        fail("T22.3 address mismatch diagnostics omit the decoded runtime address")
+    if re.search(r"_lw\(target \+ 4\)\s*(!=|==)\s*0x8C441620",
+            consumers_install):
+        fail("T22.3 reintroduced the pre-relocation LW immediate")
+    for guard in ("if (!slide_diag.vsh_shared_global_decode_valid)",
+            "if (!slide_diag.vsh_shared_global_segment_valid)",
+            "zeroCtrlVshModuleRangeValid(vsh, slide_diag.vsh_shared_global_addr, 4)"):
+        if guard not in consumers_install:
+            fail("T22.3 removed required shared-global guard " + guard)
+    consumer_stub = assembly[assembly.find(".macro CONSUMER_6F84_TRACE"):
+        assembly.find(".endm", assembly.find(".macro CONSUMER_6F84_TRACE"))]
+    for token in ("addiu   $sp, $sp, -16", "sw      $t0, 0($sp)",
+            "sw      $t1, 4($sp)", "sw      $t2, 8($sp)",
+            "sw      $ra, 12($sp)",
+            "lw      $t2, %lo(zeroCtrlConsumer6F84Target)", "jalr    $t2",
+            "sw      $v0, %lo(\\result)($t0)", "lw      $t2, 8($sp)",
+            "lw      $t1, 4($sp)", "lw      $t0, 0($sp)",
+            "lw      $ra, 12($sp)", "addiu   $sp, $sp, 16", "jr      $ra"):
+        if token not in consumer_stub:
+            fail("T22 wrapper transparency is missing " + token)
+    if "jal " in consumer_stub or consumer_stub.count("jalr    $t2") != 1 or \
+            consumer_stub.count("$v0") != 1 or any(token in consumer_stub for token in
+            ("sceIo", "Alloc", "malloc")):
+        fail("T23 wrapper has an extra call or transforms natural v0")
+    if assembly.count("CONSUMER_6F84_TRACE zeroCtrlConsumer") != 2:
+        fail("T22 must use exactly two dedicated consumer wrappers")
+    if "sceKernelCreateThread" in consumers_install or \
+            re.search(r"_sw\([^\n]*vsh_shared_global", consumers_install):
+        fail("T22 creates a thread or writes the Sony shared global")
+    consumer_early = vsh_record.find("zeroCtrlInstall6F84ConsumerTraces();")
+    if consumer_early < global_capture or consumer_early > early_call:
+        fail("T22 traces are not installed after scans and before early T20")
+    consumer_snapshot = bsman_install.find("consumer_pre_slide_hits[0]")
+    if consumer_snapshot < 0 or consumer_snapshot > t18_later:
+        fail("T22 pre-slide snapshot is not before later trace installation")
+    if writer.find("[vsh-6f84-consumers-install]") < 0 or \
+            writer.find("[vsh-6f84-consumers-pre-slide]") < 0:
+        fail("T22 deferred consumer diagnostics are missing")
+    guard_reasons = (
+        "MODEL_MISMATCH", "DEVKIT_MISMATCH", "VSH_NOT_FOUND",
+        "HELPER_NOT_FOUND", "VSH_TEXT_SIZE_MISMATCH",
+        "SHARED_GLOBAL_DECODE_INVALID", "SHARED_GLOBAL_SEGMENT_INVALID",
+        "PREDICATE_RANGE_INVALID", "SHARED_GLOBAL_RANGE_INVALID",
+        "TARGET_SCALAR_RANGE_INVALID", "PREDICATE_FINGERPRINT_MISMATCH",
+        "CALLSITE_13F6C_RANGE_INVALID", "CALLSITE_13F6C_HELPER_RANGE_INVALID",
+        "CALLSITE_13F6C_COUNTER_RANGE_INVALID", "CALLSITE_13F6C_NOT_JAL",
+        "CALLSITE_13F6C_TARGET_MISMATCH", "CALLSITE_13F6C_DELAY_MISMATCH",
+        "CALLSITE_13F6C_PSEUDODIRECT_RANGE_INVALID",
+        "CALLSITE_14020_RANGE_INVALID", "CALLSITE_14020_HELPER_RANGE_INVALID",
+        "CALLSITE_14020_COUNTER_RANGE_INVALID", "CALLSITE_14020_NOT_JAL",
+        "CALLSITE_14020_TARGET_MISMATCH", "CALLSITE_14020_DELAY_MISMATCH",
+        "CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID",
+        "CALLSITE_13F6C_RESULT_RANGE_INVALID",
+        "CALLSITE_14020_RESULT_RANGE_INVALID",
+        "REPLACEMENT_TARGET_MISMATCH",
+    )
+    for reason in guard_reasons:
+        if "ZERO_CONSUMER_GUARD_" + reason not in consumers_install:
+            fail("T22.2 installer does not record guard " + reason)
+    if consumers_install.count("return;") != 1 or \
+            "#define CONSUMER_GUARD_FAIL(value)" not in consumers_install:
+        fail("T22.2 has a consumer failure return outside the reason macro")
+    guard_success = consumers_install.find(
+        "consumer_guard_reason = ZERO_CONSUMER_GUARD_NONE")
+    validation = consumers_install.find("consumer_validation[i] = 1")
+    consumer_commit = consumers_install.find("_sw(replacement[i], callsite[i])")
+    if min(guard_success, validation, consumer_commit) < 0 or not (
+            guard_success < validation < consumer_commit):
+        fail("T22.2 success or VSH commit precedes complete guard validation")
+    if "_sw(replacement[i], callsite[i])" in consumers_install[:guard_success]:
+        fail("T22.2 writes a VSH callsite on a guard failure")
+    if "consumer_segment_count = vsh->nsegment < 4 ? vsh->nsegment : 4" not in \
+            consumers_install or \
+            "i < bsman->consumer_segment_count" not in consumers_install:
+        fail("T22.2 VSH segment capture is not bounded to four entries")
+    if "consumer_predicate_words[16]" not in kernel or \
+            consumers_install.count("i < 16") != 2:
+        fail("T22.2 predicate capture/validation is not bounded to 16 words")
+    if consumers_install.count("i < 2") < 4:
+        fail("T22.2 callsite/helper capture is not bounded to two consumers")
+    for record in ("[vsh-6f84-consumers-guard]", "[vsh-6f84-segment]",
+            "[vsh-6f84-callsite]", "[vsh-6f84-predicate]",
+            "[vsh-6f84-helper]"):
+        if writer.find(record) < 0:
+            fail("T22.2 diagnostic record is missing " + record)
+    if "i < bsman->consumer_segment_count && i < 4" not in writer:
+        fail("T22.2 diagnostic segment iteration is not capped at four")
+    result_symbols = (
+        "zeroCtrlConsumer13F6CNaturalResult",
+        "zeroCtrlConsumer14020NaturalResult",
+    )
+    if any(assembly.count(symbol + ": .space 4") != 1
+            for symbol in result_symbols):
+        fail("T23 does not define exactly two natural-result scalars")
+    for field in ("consumer_13f6c_result_addr", "consumer_14020_result_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T23 registration does not validate " + field)
+    result_init = consumers_install.find(
+        "_sw(0xFFFFFFFF, bsman->consumer_result_addr[i])")
+    if result_init < 0 or result_init > consumer_commit or \
+            "zeroCtrlVshModuleRangeValid(helper,\n                    bsman->consumer_result_addr[i], 4)" not in consumers_install:
+        fail("T23 results are not validated and initialized before VSH commit")
+    if writer.find("[vsh-6f84-consumers-natural]") < 0 or \
+            "consumer_pre_slide_result[0]" not in bsman_install or \
+            "consumer_pre_slide_result[1]" not in bsman_install:
+        fail("T23 natural results are not snapshotted and deferred")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")
@@ -877,6 +1196,53 @@ def require_result_store_relocation(body, function, result_symbol):
         fail(function + " does not store v0 to " + result_symbol)
 
 
+def check_t22_consumer_semantics(body, symbol):
+    """Prove the assembled T23 wrapper captures but preserves natural v0."""
+    forbidden = r"\b(?:at|v1|a[0-3]|t[3-9]|s[0-7]|k[01]|gp|fp)\b"
+    if re.search(forbidden, body) or re.search(r"\bjal\b", body):
+        fail(symbol + " uses a forbidden register or direct function call")
+    ordered = (
+        r"\baddiu\s+sp,\s*sp,\s*-16\b",
+        r"\bsw\s+t0,\s*0\(sp\)",
+        r"\bsw\s+t1,\s*4\(sp\)",
+        r"\bsw\s+t2,\s*8\(sp\)",
+        r"\bsw\s+ra,\s*12\(sp\)",
+        r"\blui\s+t0,",
+        r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b",
+        r"\bsw\s+t1,",
+        r"\blui\s+t0,",
+        r"\blw\s+t2,",
+        r"\bjalr\s+t2\b",
+        r"\bnop\b",
+        r"\blui\s+t0,",
+        r"\bsw\s+v0,",
+        r"\blw\s+t2,\s*8\(sp\)",
+        r"\blw\s+t1,\s*4\(sp\)",
+        r"\blw\s+t0,\s*0\(sp\)",
+        r"\blw\s+ra,\s*12\(sp\)",
+        r"\baddiu\s+sp,\s*sp,\s*16\b",
+        r"\bjr\s+ra\b",
+        r"\bnop\b",
+    )
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail(symbol + " lacks ordered transparent operation " + pattern)
+        cursor += match.end()
+    if len(re.findall(r"\baddiu\s+sp,\s*sp,", body)) != 2 or \
+            len(re.findall(r"\bjalr\s+t2\b", body)) != 1 or \
+            len(re.findall(r"\bjr\s+ra\b", body)) != 1:
+        fail(symbol + " has unexpected stack adjustment or control transfer")
+    if len(re.findall(r"\blw\s+", body)) != 6 or \
+            len(re.findall(r"\bsw\s+", body)) != 6:
+        fail(symbol + " has unexpected memory accesses")
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]):
+        fail(symbol + " transforms or uses natural v0 beyond one store")
+
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -980,6 +1346,19 @@ def check_elf(elf):
             "zeroCtrlPostVshNaturalResult"):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing Sony module_start wrapper symbol " + symbol)
+    symbol_addresses = {}
+    for line in nm.splitlines():
+        match = re.match(r"^([0-9a-fA-F]+)\s+\w\s+(\S+)$", line)
+        if match:
+            symbol_addresses[match.group(2)] = int(match.group(1), 16)
+    for start, end, counter, result in T22_CONSUMER_WRAPPERS:
+        for symbol in (start, end, counter, result):
+            if symbol not in symbol_addresses:
+                fail("missing linked T22 symbol " + symbol)
+        if symbol_addresses[end] <= symbol_addresses[start]:
+            fail(start + " has an empty or reversed linked range")
+    if T22_CONSUMER_TARGET not in symbol_addresses:
+        fail("missing linked T22 natural-target symbol")
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
     for symbol in STUBS:
         body = function_body(disassembly, symbol)
@@ -1031,6 +1410,8 @@ def check_elf(elf):
                 (not re.search(r"\blw\s+ra,", prefix_trace) or
                  not re.search(r"\bjr\s+ra\b", prefix_trace)):
             fail("post-BSMan VshBridge return trace does not restore ra")
+    for start, _end, _counter, _result in T22_CONSUMER_WRAPPERS:
+        check_t22_consumer_semantics(function_body(disassembly, start), start)
 
 
 def check_stub_object(stub_object):
@@ -1043,6 +1424,24 @@ def check_stub_object(stub_object):
             fail(symbol + " has no HI16 relocation to its dedicated counter")
         if len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
             fail(symbol + " does not have two LO16 counter relocations")
+    for symbol, _end, counter, result in T22_CONSUMER_WRAPPERS:
+        body = function_body(disassembly, symbol)
+        check_t22_consumer_semantics(body, symbol)
+        if len(re.findall(r"R_MIPS_HI16\s+" + counter + r"\b", body)) != 1 or \
+                len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
+            fail(symbol + " lacks exact dedicated-counter relocations")
+        if len(re.findall(r"R_MIPS_HI16\s+" + T22_CONSUMER_TARGET + r"\b",
+                body)) != 1 or len(re.findall(
+                    r"R_MIPS_LO16\s+" + T22_CONSUMER_TARGET + r"\b", body)) != 1:
+            fail(symbol + " lacks unique natural-target relocations")
+        if not re.search(r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                T22_CONSUMER_TARGET + r"\b", body):
+            fail(symbol + " does not load the natural target into t2")
+        if len(re.findall(r"R_MIPS_HI16\s+" + result + r"\b", body)) != 1 or \
+                len(re.findall(r"R_MIPS_LO16\s+" + result + r"\b", body)) != 1 or \
+                not re.search(r"\bsw\s+v0,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                    result + r"\b", body):
+            fail(symbol + " lacks the unique natural-result store relocation")
     bsman_leaf = function_body(disassembly, BSMAN_STUB)
     if not re.search(r"R_MIPS_HI16\s+" + BSMAN_COUNTER + r"\b", bsman_leaf) or \
             len(re.findall(r"R_MIPS_LO16\s+" + BSMAN_COUNTER + r"\b",

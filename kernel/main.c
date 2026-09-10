@@ -279,8 +279,93 @@ typedef struct {
     int field12c_write_cache_sync;
     unsigned int field12c_write_leaf_addr, field12c_write_leaf_size;
     unsigned int field12c_write_resume_addr, field12c_write_scalar_addr[5];
+    int case14_validation, case14_install, case14_cache_sync;
+    unsigned int case14_leaf_addr, case14_leaf_size;
+    unsigned int case14_resume_addr, case14_scalar_addr[4];
+    int dispatch_entry_validation, dispatch_entry_install;
+    int dispatch_entry_cache_sync;
+    unsigned int dispatch_entry_leaf_addr, dispatch_entry_leaf_size;
+    unsigned int dispatch_entry_resume_addr, dispatch_entry_scalar_addr[5];
+    int dispatch_entry_early_attempted, dispatch_entry_pre_slide_captured;
+    unsigned int dispatch_entry_pre_slide[5];
+    int consumer_validation[2], consumer_install[2], consumer_cache_sync[2];
+    unsigned int consumer_leaf_addr[2], consumer_leaf_size[2];
+    unsigned int consumer_target_addr, consumer_hits_addr[2], consumer_result_addr[2];
+    int consumer_early_attempted, shared_global_early_valid;
+    unsigned int shared_global_early_value;
+    int consumer_pre_slide_captured, shared_global_pre_slide_valid;
+    unsigned int consumer_pre_slide_hits[2], consumer_pre_slide_result[2];
+    unsigned int shared_global_pre_slide_value;
+    int consumer_guard_reason;
+    unsigned int consumer_vsh_text, consumer_vsh_text_size;
+    unsigned int consumer_vsh_nsegment, consumer_segment_count;
+    unsigned int consumer_segment_addr[4], consumer_segment_size[4];
+    unsigned int consumer_shared_global_addr;
+    int consumer_predicate_validation, consumer_predicate_first_bad;
+    unsigned int consumer_predicate_words[16];
+    unsigned int consumer_predicate_actual, consumer_predicate_expected;
+    unsigned int consumer_predicate_decoded_addr;
+    unsigned int consumer_callsite_words[2][2], consumer_callsite_target[2];
+    int consumer_leaf_range_valid[2], consumer_counter_range_valid[2];
+    int consumer_target_scalar_range_valid;
     unsigned int state_zero_original[14], state_zero_replacement[7];
 } ZeroCtrlBSManEvidence;
+
+enum zeroCtrlConsumerGuardReason {
+    ZERO_CONSUMER_GUARD_NOT_ATTEMPTED = 0, ZERO_CONSUMER_GUARD_NONE,
+    ZERO_CONSUMER_GUARD_MODEL_MISMATCH, ZERO_CONSUMER_GUARD_DEVKIT_MISMATCH,
+    ZERO_CONSUMER_GUARD_VSH_NOT_FOUND, ZERO_CONSUMER_GUARD_HELPER_NOT_FOUND,
+    ZERO_CONSUMER_GUARD_VSH_TEXT_SIZE_MISMATCH,
+    ZERO_CONSUMER_GUARD_SHARED_GLOBAL_DECODE_INVALID,
+    ZERO_CONSUMER_GUARD_SHARED_GLOBAL_SEGMENT_INVALID,
+    ZERO_CONSUMER_GUARD_PREDICATE_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_SHARED_GLOBAL_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_TARGET_SCALAR_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_PREDICATE_FINGERPRINT_MISMATCH,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_HELPER_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_COUNTER_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_NOT_JAL,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_TARGET_MISMATCH,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_DELAY_MISMATCH,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_PSEUDODIRECT_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_HELPER_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_COUNTER_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_NOT_JAL,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_TARGET_MISMATCH,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_DELAY_MISMATCH,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_RESULT_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_RESULT_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_REPLACEMENT_TARGET_MISMATCH
+};
+
+static const char *zeroCtrlConsumerGuardReasonName(int reason) {
+    static const char *names[] = {
+        "NOT_ATTEMPTED", "NONE", "MODEL_MISMATCH", "DEVKIT_MISMATCH",
+        "VSH_NOT_FOUND", "HELPER_NOT_FOUND", "VSH_TEXT_SIZE_MISMATCH",
+        "SHARED_GLOBAL_DECODE_INVALID", "SHARED_GLOBAL_SEGMENT_INVALID",
+        "PREDICATE_RANGE_INVALID", "SHARED_GLOBAL_RANGE_INVALID",
+        "TARGET_SCALAR_RANGE_INVALID", "PREDICATE_FINGERPRINT_MISMATCH",
+        "CALLSITE_13F6C_RANGE_INVALID", "CALLSITE_13F6C_HELPER_RANGE_INVALID",
+        "CALLSITE_13F6C_COUNTER_RANGE_INVALID", "CALLSITE_13F6C_NOT_JAL",
+        "CALLSITE_13F6C_TARGET_MISMATCH", "CALLSITE_13F6C_DELAY_MISMATCH",
+        "CALLSITE_13F6C_PSEUDODIRECT_RANGE_INVALID",
+        "CALLSITE_14020_RANGE_INVALID", "CALLSITE_14020_HELPER_RANGE_INVALID",
+        "CALLSITE_14020_COUNTER_RANGE_INVALID", "CALLSITE_14020_NOT_JAL",
+        "CALLSITE_14020_TARGET_MISMATCH", "CALLSITE_14020_DELAY_MISMATCH",
+        "CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID",
+        "CALLSITE_13F6C_RESULT_RANGE_INVALID",
+        "CALLSITE_14020_RESULT_RANGE_INVALID", "REPLACEMENT_TARGET_MISMATCH"
+    };
+    if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
+        return "UNKNOWN";
+    return names[reason];
+}
+
+static void zeroCtrlInstallDispatchEntryTrace(void);
+static void zeroCtrlInstall6F84ConsumerTraces(void);
 
 enum zeroCtrlBSManStubForm {
     ZERO_BSMAN_STUB_UNKNOWN = 0,
@@ -821,12 +906,17 @@ static int zeroCtrlInstructionWritesRegister(unsigned int instruction,
     return 0;
 }
 
+static unsigned int zeroCtrlDecodeLuiSignedLowAddress(unsigned int lui,
+        unsigned int low_instruction) {
+    int displacement = (short)(low_instruction & 0xFFFF);
+    return ((lui & 0xFFFF) << 16) + (unsigned int)displacement;
+}
+
 static void zeroCtrlDeriveVshSharedGlobal(unsigned int text_addr,
         unsigned int text_size, unsigned int target_offset) {
     unsigned int lui;
     unsigned int access;
     unsigned int base;
-    int displacement;
 
     slide_diag.vsh_shared_global_decode_valid = 0;
     if (target_offset > text_size || text_size - target_offset < 8) return;
@@ -837,9 +927,8 @@ static void zeroCtrlDeriveVshSharedGlobal(unsigned int text_addr,
             ((access >> 21) & 0x1F) != base)
         return;
 
-    displacement = (short)(access & 0xFFFF);
     slide_diag.vsh_shared_global_addr =
-            ((lui & 0xFFFF) << 16) + (unsigned int)displacement;
+            zeroCtrlDecodeLuiSignedLowAddress(lui, access);
     slide_diag.vsh_shared_global_offset =
             slide_diag.vsh_shared_global_addr - text_addr;
     slide_diag.vsh_shared_global_decode_valid = 1;
@@ -1364,6 +1453,30 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(field12c_write_last_addr);
     CHECK_POST_SCALAR(field12c_write_changes_addr);
     CHECK_POST_SCALAR(field12c_write_context_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.case14_leaf_addr,
+                copied.case14_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(case14_resume_addr);
+    CHECK_POST_SCALAR(case14_hits_addr);
+    CHECK_POST_SCALAR(case14_first_ra_addr);
+    CHECK_POST_SCALAR(case14_last_ra_addr);
+    CHECK_POST_SCALAR(case14_ra_changes_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.dispatch_entry_leaf_addr,
+                copied.dispatch_entry_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(dispatch_entry_resume_addr);
+    CHECK_POST_SCALAR(dispatch_entry_hits_addr);
+    CHECK_POST_SCALAR(dispatch_case14_hits_addr);
+    CHECK_POST_SCALAR(dispatch_case14_first_ra_addr);
+    CHECK_POST_SCALAR(dispatch_case14_last_ra_addr);
+    CHECK_POST_SCALAR(dispatch_case14_ra_changes_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.consumer_13f6c_leaf_addr,
+                copied.consumer_13f6c_leaf_end_addr) ||
+            !zeroCtrlRegistrationLeafValid(helper, copied.consumer_14020_leaf_addr,
+                copied.consumer_14020_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(consumer_6f84_target_addr);
+    CHECK_POST_SCALAR(consumer_13f6c_hits_addr);
+    CHECK_POST_SCALAR(consumer_14020_hits_addr);
+    CHECK_POST_SCALAR(consumer_13f6c_result_addr);
+    CHECK_POST_SCALAR(consumer_14020_result_addr);
 #undef CHECK_POST_SCALAR
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -1514,6 +1627,33 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->field12c_write_scalar_addr[2] = copied.field12c_write_last_addr;
     bsman->field12c_write_scalar_addr[3] = copied.field12c_write_changes_addr;
     bsman->field12c_write_scalar_addr[4] = copied.field12c_write_context_addr;
+    bsman->case14_leaf_addr = copied.case14_leaf_addr;
+    bsman->case14_leaf_size = copied.case14_leaf_end_addr - copied.case14_leaf_addr;
+    bsman->case14_resume_addr = copied.case14_resume_addr;
+    bsman->case14_scalar_addr[0] = copied.case14_hits_addr;
+    bsman->case14_scalar_addr[1] = copied.case14_first_ra_addr;
+    bsman->case14_scalar_addr[2] = copied.case14_last_ra_addr;
+    bsman->case14_scalar_addr[3] = copied.case14_ra_changes_addr;
+    bsman->dispatch_entry_leaf_addr = copied.dispatch_entry_leaf_addr;
+    bsman->dispatch_entry_leaf_size = copied.dispatch_entry_leaf_end_addr -
+            copied.dispatch_entry_leaf_addr;
+    bsman->dispatch_entry_resume_addr = copied.dispatch_entry_resume_addr;
+    bsman->dispatch_entry_scalar_addr[0] = copied.dispatch_entry_hits_addr;
+    bsman->dispatch_entry_scalar_addr[1] = copied.dispatch_case14_hits_addr;
+    bsman->dispatch_entry_scalar_addr[2] = copied.dispatch_case14_first_ra_addr;
+    bsman->dispatch_entry_scalar_addr[3] = copied.dispatch_case14_last_ra_addr;
+    bsman->dispatch_entry_scalar_addr[4] = copied.dispatch_case14_ra_changes_addr;
+    bsman->consumer_leaf_addr[0] = copied.consumer_13f6c_leaf_addr;
+    bsman->consumer_leaf_size[0] = copied.consumer_13f6c_leaf_end_addr -
+            copied.consumer_13f6c_leaf_addr;
+    bsman->consumer_leaf_addr[1] = copied.consumer_14020_leaf_addr;
+    bsman->consumer_leaf_size[1] = copied.consumer_14020_leaf_end_addr -
+            copied.consumer_14020_leaf_addr;
+    bsman->consumer_target_addr = copied.consumer_6f84_target_addr;
+    bsman->consumer_hits_addr[0] = copied.consumer_13f6c_hits_addr;
+    bsman->consumer_hits_addr[1] = copied.consumer_14020_hits_addr;
+    bsman->consumer_result_addr[0] = copied.consumer_13f6c_result_addr;
+    bsman->consumer_result_addr[1] = copied.consumer_14020_result_addr;
     bsman->registered = 1;
 }
 
@@ -1711,6 +1851,10 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
             }
         }
     }
+    slide_diag.bsman.dispatch_entry_early_attempted = 1;
+    slide_diag.bsman.consumer_early_attempted = 1;
+    zeroCtrlInstall6F84ConsumerTraces();
+    zeroCtrlInstallDispatchEntryTrace();
     slide_diag.vsh_module_seen = 1;
 }
 
@@ -2577,6 +2721,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
     int observed_field12c_write_install_status = 0;
+    int observed_case14_install_status = 0;
+    int observed_dispatch_entry_install_status = 0;
+    int observed_dispatch_entry_early_status = 0;
+    int observed_dispatch_entry_pre_slide = 0;
+    int observed_consumer_install = 0, observed_consumer_pre_slide = 0;
     char line[256];
     unsigned int i;
 
@@ -2720,6 +2869,115 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled) {
             ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
             unsigned int hits = zeroCtrlReadBSManHits();
+            if (bsman->consumer_early_attempted && !observed_consumer_install) {
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-consumers-install] "
+                        "consumer_13f6c_validation=%d consumer_13f6c_install=%d "
+                        "consumer_13f6c_cache_sync=%d "
+                        "consumer_14020_validation=%d consumer_14020_install=%d "
+                        "consumer_14020_cache_sync=%d "
+                        "shared_global_early_valid=%d shared_global_early=0x%08X\n",
+                        bsman->consumer_validation[0], bsman->consumer_install[0],
+                        bsman->consumer_cache_sync[0], bsman->consumer_validation[1],
+                        bsman->consumer_install[1], bsman->consumer_cache_sync[1],
+                        bsman->shared_global_early_valid,
+                        bsman->shared_global_early_value);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-consumers-guard] reason=%s(%d) "
+                        "decode_valid=%d segment_valid=%d shared_global_addr=0x%08X "
+                        "vsh_text=0x%08X text_size=0x%X nsegment=%u\n",
+                        zeroCtrlConsumerGuardReasonName(bsman->consumer_guard_reason),
+                        bsman->consumer_guard_reason,
+                        slide_diag.vsh_shared_global_decode_valid,
+                        slide_diag.vsh_shared_global_segment_valid,
+                        bsman->consumer_shared_global_addr, bsman->consumer_vsh_text,
+                        bsman->consumer_vsh_text_size, bsman->consumer_vsh_nsegment);
+                zeroCtrlDiagnosticsText(line);
+                for (i = 0; i < bsman->consumer_segment_count && i < 4; i++) {
+                    snprintf(line, sizeof(line),
+                            "[vsh-6f84-segment] index=%u addr=0x%08X size=0x%X\n",
+                            i, bsman->consumer_segment_addr[i],
+                            bsman->consumer_segment_size[i]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                for (i = 0; i < 2; i++) {
+                    static const unsigned int offsets[2] = { 0x13F6C, 0x14020 };
+                    snprintf(line, sizeof(line),
+                            "[vsh-6f84-callsite] offset=0x%05X word=0x%08X "
+                            "delay=0x%08X decoded_target=0x%08X\n", offsets[i],
+                            bsman->consumer_callsite_words[i][0],
+                            bsman->consumer_callsite_words[i][1],
+                            bsman->consumer_callsite_target[i]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-predicate] validation=%d first_bad_index=%d "
+                        "actual=0x%08X expected=0x%08X decoded=0x%08X\n",
+                        bsman->consumer_predicate_validation,
+                        bsman->consumer_predicate_first_bad,
+                        bsman->consumer_predicate_actual,
+                        bsman->consumer_predicate_expected,
+                        bsman->consumer_predicate_decoded_addr);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-helper] target_scalar=%d leaf_13f6c=%d "
+                        "counter_13f6c=%d leaf_14020=%d counter_14020=%d\n",
+                        bsman->consumer_target_scalar_range_valid,
+                        bsman->consumer_leaf_range_valid[0],
+                        bsman->consumer_counter_range_valid[0],
+                        bsman->consumer_leaf_range_valid[1],
+                        bsman->consumer_counter_range_valid[1]);
+                zeroCtrlDiagnosticsText(line);
+                observed_consumer_install = 1;
+            }
+            if (bsman->consumer_pre_slide_captured &&
+                    !observed_consumer_pre_slide) {
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-consumers-pre-slide] caller_13f6c_hits=%u "
+                        "caller_14020_hits=%u shared_global_valid=%d "
+                        "shared_global=0x%08X\n",
+                        bsman->consumer_pre_slide_hits[0],
+                        bsman->consumer_pre_slide_hits[1],
+                        bsman->shared_global_pre_slide_valid,
+                        bsman->shared_global_pre_slide_value);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-consumers-natural] caller_13f6c_hits=%u "
+                        "caller_13f6c_result=0x%08X caller_14020_hits=%u "
+                        "caller_14020_result=0x%08X\n",
+                        bsman->consumer_pre_slide_hits[0],
+                        bsman->consumer_pre_slide_result[0],
+                        bsman->consumer_pre_slide_hits[1],
+                        bsman->consumer_pre_slide_result[1]);
+                zeroCtrlDiagnosticsText(line);
+                observed_consumer_pre_slide = 1;
+            }
+            if (bsman->dispatch_entry_early_attempted &&
+                    !observed_dispatch_entry_early_status) {
+                snprintf(line, sizeof(line),
+                        "[topmenu-dispatch-entry-early-install] attempted=1 "
+                        "validation=%d install=%d cache_sync=%d\n",
+                        bsman->dispatch_entry_validation,
+                        bsman->dispatch_entry_install,
+                        bsman->dispatch_entry_cache_sync);
+                zeroCtrlDiagnosticsText(line);
+                observed_dispatch_entry_early_status = 1;
+            }
+            if (bsman->dispatch_entry_pre_slide_captured &&
+                    !observed_dispatch_entry_pre_slide) {
+                snprintf(line, sizeof(line),
+                        "[topmenu-dispatch-entry-pre-slide] hits=%u "
+                        "case14_requests=%u first_ra=0x%08X "
+                        "last_ra=0x%08X ra_changes=%u\n",
+                        bsman->dispatch_entry_pre_slide[0],
+                        bsman->dispatch_entry_pre_slide[1],
+                        bsman->dispatch_entry_pre_slide[2],
+                        bsman->dispatch_entry_pre_slide[3],
+                        bsman->dispatch_entry_pre_slide[4]);
+                zeroCtrlDiagnosticsText(line);
+                observed_dispatch_entry_pre_slide = 1;
+            }
             if (bsman->attempted && !observed_field12c_write_install_status) {
                 snprintf(line, sizeof(line),
                         "[topmenu-field12c-write-install] validation=%d "
@@ -2729,6 +2987,24 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->field12c_write_cache_sync);
                 zeroCtrlDiagnosticsText(line);
                 observed_field12c_write_install_status = 1;
+            }
+            if (bsman->attempted && !observed_case14_install_status) {
+                snprintf(line, sizeof(line),
+                        "[topmenu-case14-install] validation=%d install=%d "
+                        "cache_sync=%d\n", bsman->case14_validation,
+                        bsman->case14_install, bsman->case14_cache_sync);
+                zeroCtrlDiagnosticsText(line);
+                observed_case14_install_status = 1;
+            }
+            if (bsman->attempted && !observed_dispatch_entry_install_status) {
+                snprintf(line, sizeof(line),
+                        "[topmenu-dispatch-entry-install] validation=%d "
+                        "install=%d cache_sync=%d\n",
+                        bsman->dispatch_entry_validation,
+                        bsman->dispatch_entry_install,
+                        bsman->dispatch_entry_cache_sync);
+                zeroCtrlDiagnosticsText(line);
+                observed_dispatch_entry_install_status = 1;
             }
             if (bsman->attempted && !observed_bsman_attempted) {
                 snprintf(line, sizeof(line),
@@ -3017,6 +3293,36 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                     bsman->field12c_write_scalar_addr[3]),
                                 zeroCtrlReadHelperCounter(
                                     bsman->field12c_write_scalar_addr[4]));
+                        zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[topmenu-case14-live] validation=%d install=%d "
+                                "cache_sync=%d hits=%u first_ra=0x%08X "
+                                "last_ra=0x%08X ra_changes=%u\n",
+                                bsman->case14_validation, bsman->case14_install,
+                                bsman->case14_cache_sync,
+                                zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[0]),
+                                zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[1]),
+                                zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[2]),
+                                zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[3]));
+                        zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[topmenu-dispatch-entry-live] validation=%d "
+                                "install=%d cache_sync=%d hits=%u "
+                                "case14_requests=%u first_ra=0x%08X "
+                                "last_ra=0x%08X ra_changes=%u\n",
+                                bsman->dispatch_entry_validation,
+                                bsman->dispatch_entry_install,
+                                bsman->dispatch_entry_cache_sync,
+                                zeroCtrlReadHelperCounter(
+                                    bsman->dispatch_entry_scalar_addr[0]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->dispatch_entry_scalar_addr[1]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->dispatch_entry_scalar_addr[2]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->dispatch_entry_scalar_addr[3]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->dispatch_entry_scalar_addr[4]));
                         zeroCtrlDiagnosticsText(line);
                         observed_state_zero_vcall_owner = 1;
                     }
@@ -3415,12 +3721,298 @@ static void zeroCtrlInstallField12CWriteTrace(void) {
     bsman->field12c_write_cache_sync = 1;
 }
 
+static void zeroCtrlInstallCase14Trace(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int dispatcher, table, entry, natural, word, i;
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 || !vsh || !helper ||
+            vsh->text_size < 0x4FDD8 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x1D7A4, 0x58) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->case14_leaf_addr,
+                bsman->case14_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->case14_resume_addr, 4)) return;
+    for (i = 0; i < 4; i++)
+        if (!zeroCtrlVshModuleRangeValid(helper, bsman->case14_scalar_addr[i], 4)) return;
+    dispatcher = vsh->text_addr + 0x1D7A4;
+    if (_lw(dispatcher) != 0x27BDFFC0 ||
+            _lw(dispatcher + 0x2C) != 0x00809821 ||
+            _lw(dispatcher + 0x30) != 0x2C820016 ||
+            (_lw(dispatcher + 0x3C) & 0xFFFF0000) != 0x3C030000 ||
+            _lw(dispatcher + 0x40) != 0x00041080 ||
+            (_lw(dispatcher + 0x44) & 0xFFFF0000) != 0x24630000 ||
+            _lw(dispatcher + 0x48) != 0x00431021 ||
+            _lw(dispatcher + 0x4C) != 0x8C440000 ||
+            _lw(dispatcher + 0x50) != 0x00800008) return;
+    table = ((_lw(dispatcher + 0x3C) & 0xFFFF) << 16) +
+            (short)(_lw(dispatcher + 0x44) & 0xFFFF);
+    if (table != vsh->text_addr + 0x4FDA0 || (table & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, table, 22 * 4)) return;
+    entry = table + 14 * 4;
+    natural = vsh->text_addr + 0x1DE18;
+    if (_lw(entry) != natural || (natural & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, natural, 4) ||
+            (bsman->case14_leaf_addr & 3) != 0) return;
+    bsman->case14_validation = 1;
+    _sw(natural, bsman->case14_resume_addr);
+    for (i = 0; i < 4; i++) _sw(0, bsman->case14_scalar_addr[i]);
+    sceKernelDcacheWritebackInvalidateRange((const void *)bsman->case14_resume_addr, 4);
+    for (i = 0; i < 4; i++)
+        sceKernelDcacheWritebackInvalidateRange((const void *)bsman->case14_scalar_addr[i], 4);
+    word = bsman->case14_leaf_addr;
+    _sw(word, entry);
+    sceKernelDcacheWritebackInvalidateRange((const void *)entry, 4);
+    bsman->case14_install = 1;
+    bsman->case14_cache_sync = 1;
+}
+
+static void zeroCtrlInstallDispatchEntryTrace(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int site, resume, replacement, i;
+
+    if (bsman->dispatch_entry_install) return;
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 || !vsh || !helper ||
+            vsh->text_size != 0x556C0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x1D7A4, 0x58) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->dispatch_entry_leaf_addr,
+                bsman->dispatch_entry_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                bsman->dispatch_entry_resume_addr, 4)) return;
+    for (i = 0; i < 5; i++)
+        if (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->dispatch_entry_scalar_addr[i], 4)) return;
+    site = vsh->text_addr + 0x1D7A4;
+    resume = site + 8;
+    if (_lw(site) != 0x27BDFFC0 || _lw(site + 4) != 0xAFB20018 ||
+            (_lw(site + 8) & 0xFFFF0000) != 0x3C120000 ||
+            (_lw(site + 0x20) & 0xFFFF0000) != 0x8E430000 ||
+            _lw(site + 0x24) != 0x9062019D ||
+            _lw(site + 0x28) != 0x1440003D ||
+            _lw(site + 0x2C) != 0x00809821 ||
+            _lw(site + 0x30) != 0x2C820016 ||
+            !zeroCtrlVshModuleRangeValid(vsh, resume, 4) ||
+            ((site + 4) & 0xF0000000) !=
+                (bsman->dispatch_entry_leaf_addr & 0xF0000000)) return;
+    replacement = 0x08000000 |
+            ((bsman->dispatch_entry_leaf_addr >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(site, replacement) !=
+            bsman->dispatch_entry_leaf_addr) return;
+    bsman->dispatch_entry_validation = 1;
+    _sw(resume, bsman->dispatch_entry_resume_addr);
+    for (i = 0; i < 5; i++) _sw(0, bsman->dispatch_entry_scalar_addr[i]);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->dispatch_entry_resume_addr, 4);
+    for (i = 0; i < 5; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->dispatch_entry_scalar_addr[i], 4);
+    _sw(replacement, site);
+    _sw(0, site + 4);
+    sceKernelDcacheWritebackInvalidateRange((const void *)site, 8);
+    sceKernelIcacheInvalidateRange((const void *)site, 8);
+    bsman->dispatch_entry_install = 1;
+    bsman->dispatch_entry_cache_sync = 1;
+}
+
+static void zeroCtrlInstall6F84ConsumerTraces(void) {
+    static const unsigned int offsets[2] = { 0x13F6C, 0x14020 };
+    static const unsigned int delays[2] = { 0x00000000, 0x0062800B };
+    static const int range_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_RANGE_INVALID,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_RANGE_INVALID };
+    static const int helper_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_HELPER_RANGE_INVALID,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_HELPER_RANGE_INVALID };
+    static const int counter_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_COUNTER_RANGE_INVALID,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_COUNTER_RANGE_INVALID };
+    static const int jal_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_NOT_JAL,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_NOT_JAL };
+    static const int target_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_TARGET_MISMATCH,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_TARGET_MISMATCH };
+    static const int delay_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_DELAY_MISMATCH,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_DELAY_MISMATCH };
+    static const int region_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_PSEUDODIRECT_RANGE_INVALID,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID };
+    static const int result_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_RESULT_RANGE_INVALID,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_RESULT_RANGE_INVALID };
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int target, callsite[2], replacement[2], predicate_global, i;
+#define CONSUMER_GUARD_FAIL(value) do { \
+    bsman->consumer_guard_reason = (value); \
+    return; \
+} while (0)
+
+    bsman->consumer_guard_reason = ZERO_CONSUMER_GUARD_NOT_ATTEMPTED;
+    bsman->consumer_predicate_first_bad = -1;
+    bsman->consumer_shared_global_addr = slide_diag.vsh_shared_global_addr;
+    if (model != 0) CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_MODEL_MISMATCH);
+    if (sceKernelDevkitVersion() != 0x06060110)
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_DEVKIT_MISMATCH);
+    if (!vsh) CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_VSH_NOT_FOUND);
+    bsman->consumer_vsh_text = vsh->text_addr;
+    bsman->consumer_vsh_text_size = vsh->text_size;
+    bsman->consumer_vsh_nsegment = vsh->nsegment;
+    bsman->consumer_segment_count = vsh->nsegment < 4 ? vsh->nsegment : 4;
+    for (i = 0; i < bsman->consumer_segment_count; i++) {
+        bsman->consumer_segment_addr[i] = vsh->segmentaddr[i];
+        bsman->consumer_segment_size[i] = vsh->segmentsize[i];
+    }
+    if (!helper) CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_HELPER_NOT_FOUND);
+    if (vsh->text_size != 0x556C0)
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_VSH_TEXT_SIZE_MISMATCH);
+    target = vsh->text_addr + 0x6F84;
+    if (!zeroCtrlVshModuleRangeValid(vsh, target, 0x40))
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_PREDICATE_RANGE_INVALID);
+    for (i = 0; i < 16; i++)
+        bsman->consumer_predicate_words[i] = _lw(target + i * 4);
+    for (i = 0; i < 2; i++) {
+        callsite[i] = vsh->text_addr + offsets[i];
+        if (zeroCtrlVshModuleRangeValid(vsh, callsite[i], 8)) {
+            bsman->consumer_callsite_words[i][0] = _lw(callsite[i]);
+            bsman->consumer_callsite_words[i][1] = _lw(callsite[i] + 4);
+            if ((bsman->consumer_callsite_words[i][0] >> 26) == 3)
+                bsman->consumer_callsite_target[i] = zeroCtrlMipsJumpTarget(
+                        callsite[i], bsman->consumer_callsite_words[i][0]);
+        }
+    }
+    if (!slide_diag.vsh_shared_global_decode_valid)
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_SHARED_GLOBAL_DECODE_INVALID);
+    if (!slide_diag.vsh_shared_global_segment_valid)
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_SHARED_GLOBAL_SEGMENT_INVALID);
+    if (!zeroCtrlVshModuleRangeValid(vsh, slide_diag.vsh_shared_global_addr, 4))
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_SHARED_GLOBAL_RANGE_INVALID);
+    bsman->consumer_target_scalar_range_valid = zeroCtrlVshModuleRangeValid(
+            helper, bsman->consumer_target_addr, 4);
+    if (!bsman->consumer_target_scalar_range_valid)
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_TARGET_SCALAR_RANGE_INVALID);
+    predicate_global = zeroCtrlDecodeLuiSignedLowAddress(
+            bsman->consumer_predicate_words[0],
+            bsman->consumer_predicate_words[1]);
+    bsman->consumer_predicate_decoded_addr = predicate_global;
+    if (
+            (_lw(target) & 0xFFFF0000) != 0x3C020000 ||
+            (_lw(target + 4) & 0xFFFF0000) != 0x8C440000 ||
+            predicate_global != slide_diag.vsh_shared_global_addr ||
+            _lw(target + 8) != 0x2483FFFC ||
+            _lw(target + 12) != 0x38820007 ||
+            _lw(target + 16) != 0x2C630002 ||
+            _lw(target + 20) != 0x2C420001 ||
+            _lw(target + 24) != 0x00621825 ||
+            _lw(target + 28) != 0x14600006 ||
+            _lw(target + 32) != 0x00002821 ||
+            _lw(target + 36) != 0x24020009 ||
+            _lw(target + 40) != 0x50820001 ||
+            _lw(target + 44) != 0x24050001 ||
+            _lw(target + 48) != 0x03E00008 ||
+            _lw(target + 52) != 0x30A200FF ||
+            (_lw(target + 56) >> 26) != 2 ||
+            zeroCtrlMipsJumpTarget(target + 56, _lw(target + 56)) !=
+                target + 48 ||
+            _lw(target + 60) != 0x24050001) {
+        static const unsigned int expected[16] = {
+            0x3C020000, 0x8C440000, 0x2483FFFC, 0x38820007,
+            0x2C630002, 0x2C420001, 0x00621825, 0x14600006,
+            0x00002821, 0x24020009, 0x50820001, 0x24050001,
+            0x03E00008, 0x30A200FF, 0, 0x24050001 };
+        for (i = 0; i < 16; i++) {
+            unsigned int actual = bsman->consumer_predicate_words[i];
+            unsigned int wanted = expected[i];
+            int match = i == 0 ? (actual & 0xFFFF0000) == wanted :
+                    (i == 1 ? ((actual & 0xFFFF0000) == wanted &&
+                    predicate_global == slide_diag.vsh_shared_global_addr) :
+                    (i == 14 ? ((actual >> 26) == 2 &&
+                    zeroCtrlMipsJumpTarget(target + 56, actual) == target + 48) :
+                    actual == wanted));
+            if (!match) {
+                if (i == 14) wanted = 0x08000000 |
+                        (((target + 48) >> 2) & 0x03FFFFFF);
+                bsman->consumer_predicate_first_bad = i;
+                bsman->consumer_predicate_actual = actual;
+                bsman->consumer_predicate_expected = wanted;
+                break;
+            }
+        }
+        CONSUMER_GUARD_FAIL(
+                ZERO_CONSUMER_GUARD_PREDICATE_FINGERPRINT_MISMATCH);
+    }
+    bsman->consumer_predicate_validation = 1;
+    for (i = 0; i < 2; i++) {
+        callsite[i] = vsh->text_addr + offsets[i];
+        if (!zeroCtrlVshModuleRangeValid(vsh, callsite[i], 8))
+            CONSUMER_GUARD_FAIL(range_reasons[i]);
+        bsman->consumer_callsite_words[i][0] = _lw(callsite[i]);
+        bsman->consumer_callsite_words[i][1] = _lw(callsite[i] + 4);
+        bsman->consumer_leaf_range_valid[i] = zeroCtrlVshModuleRangeValid(
+                helper, bsman->consumer_leaf_addr[i], bsman->consumer_leaf_size[i]);
+        if (!bsman->consumer_leaf_range_valid[i])
+            CONSUMER_GUARD_FAIL(helper_reasons[i]);
+        bsman->consumer_counter_range_valid[i] = zeroCtrlVshModuleRangeValid(
+                helper, bsman->consumer_hits_addr[i], 4);
+        if (!bsman->consumer_counter_range_valid[i])
+            CONSUMER_GUARD_FAIL(counter_reasons[i]);
+        if (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->consumer_result_addr[i], 4))
+            CONSUMER_GUARD_FAIL(result_reasons[i]);
+        if ((bsman->consumer_callsite_words[i][0] >> 26) != 3)
+            CONSUMER_GUARD_FAIL(jal_reasons[i]);
+        bsman->consumer_callsite_target[i] = zeroCtrlMipsJumpTarget(
+                callsite[i], bsman->consumer_callsite_words[i][0]);
+        if (bsman->consumer_callsite_target[i] != target)
+            CONSUMER_GUARD_FAIL(target_reasons[i]);
+        if (bsman->consumer_callsite_words[i][1] != delays[i])
+            CONSUMER_GUARD_FAIL(delay_reasons[i]);
+        if (((callsite[i] + 4) & 0xF0000000) !=
+                (bsman->consumer_leaf_addr[i] & 0xF0000000))
+            CONSUMER_GUARD_FAIL(region_reasons[i]);
+        replacement[i] = 0x0C000000 |
+                ((bsman->consumer_leaf_addr[i] >> 2) & 0x03FFFFFF);
+        if (zeroCtrlMipsJumpTarget(callsite[i], replacement[i]) !=
+                bsman->consumer_leaf_addr[i])
+            CONSUMER_GUARD_FAIL(
+                    ZERO_CONSUMER_GUARD_REPLACEMENT_TARGET_MISMATCH);
+    }
+    bsman->consumer_guard_reason = ZERO_CONSUMER_GUARD_NONE;
+    for (i = 0; i < 2; i++) bsman->consumer_validation[i] = 1;
+    _sw(target, bsman->consumer_target_addr);
+    for (i = 0; i < 2; i++) _sw(0, bsman->consumer_hits_addr[i]);
+    for (i = 0; i < 2; i++) _sw(0xFFFFFFFF, bsman->consumer_result_addr[i]);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->consumer_target_addr, 4);
+    for (i = 0; i < 2; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->consumer_hits_addr[i], 4);
+    for (i = 0; i < 2; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->consumer_result_addr[i], 4);
+    bsman->shared_global_early_valid = 1;
+    bsman->shared_global_early_value = _lw(slide_diag.vsh_shared_global_addr);
+    for (i = 0; i < 2; i++) {
+        _sw(replacement[i], callsite[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)callsite[i], 4);
+        sceKernelIcacheInvalidateRange((const void *)callsite[i], 4);
+        bsman->consumer_install[i] = 1;
+        bsman->consumer_cache_sync[i] = 1;
+    }
+#undef CONSUMER_GUARD_FAIL
+}
+
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     const unsigned int target_nid = 0x23E3A9B6;
     static const char paf_library[] = "scePaf";
     static const char vshbridge_library[] = "sceVshBridge";
     ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
-    unsigned int cursor, end, offset, caller_matches = 0, paf_matches = 0;
+    unsigned int cursor, end, offset, snapshot_index;
+    unsigned int caller_matches = 0, paf_matches = 0;
     unsigned int post_paf_matches = 0, vshbridge_matches = 0;
     unsigned int prefix_paf_stub = 0, post_paf_stub = 0, vshbridge_stub = 0;
 
@@ -3428,7 +4020,33 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             !bsman->registered || model != 0 || !mod ||
             strcmp(mod->modname, "slide_plugin_module") != 0 ||
             sceKernelDevkitVersion() != 0x06060110) return;
+    for (snapshot_index = 0; snapshot_index < 5; snapshot_index++)
+        bsman->dispatch_entry_pre_slide[snapshot_index] =
+                zeroCtrlReadHelperCounter(
+                    bsman->dispatch_entry_scalar_addr[snapshot_index]);
+    bsman->dispatch_entry_pre_slide_captured = 1;
+    bsman->consumer_pre_slide_hits[0] =
+            zeroCtrlReadHelperCounter(bsman->consumer_hits_addr[0]);
+    bsman->consumer_pre_slide_hits[1] =
+            zeroCtrlReadHelperCounter(bsman->consumer_hits_addr[1]);
+    bsman->consumer_pre_slide_result[0] =
+            zeroCtrlReadHelperCounter(bsman->consumer_result_addr[0]);
+    bsman->consumer_pre_slide_result[1] =
+            zeroCtrlReadHelperCounter(bsman->consumer_result_addr[1]);
+    {
+        SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+        if (bsman->shared_global_early_valid && vsh &&
+                zeroCtrlVshModuleRangeValid(vsh,
+                    slide_diag.vsh_shared_global_addr, 4)) {
+            bsman->shared_global_pre_slide_valid = 1;
+            bsman->shared_global_pre_slide_value =
+                    _lw(slide_diag.vsh_shared_global_addr);
+        }
+    }
+    bsman->consumer_pre_slide_captured = 1;
     zeroCtrlInstallField12CWriteTrace();
+    zeroCtrlInstallCase14Trace();
+    zeroCtrlInstallDispatchEntryTrace();
     bsman->attempted = 1;
     cursor = (unsigned int)mod->stub_top;
     end = cursor + mod->stub_size;

@@ -243,6 +243,20 @@ extern void zeroCtrlField12CWriteTrace(void), zeroCtrlField12CWriteTraceEnd(void
 extern volatile unsigned int zeroCtrlField12CWriteResume, zeroCtrlField12CWriteHits;
 extern volatile unsigned int zeroCtrlField12CWriteFirst, zeroCtrlField12CWriteLast;
 extern volatile unsigned int zeroCtrlField12CWriteChanges, zeroCtrlField12CWriteContext;
+extern void zeroCtrlCase14Trace(void), zeroCtrlCase14TraceEnd(void);
+extern volatile unsigned int zeroCtrlCase14Resume, zeroCtrlCase14Hits;
+extern volatile unsigned int zeroCtrlCase14FirstRA, zeroCtrlCase14LastRA;
+extern volatile unsigned int zeroCtrlCase14RAChanges;
+extern void zeroCtrlDispatchEntryTrace(void), zeroCtrlDispatchEntryTraceEnd(void);
+extern volatile unsigned int zeroCtrlDispatchEntryResume, zeroCtrlDispatchEntryHits;
+extern volatile unsigned int zeroCtrlDispatchCase14Hits, zeroCtrlDispatchCase14FirstRA;
+extern volatile unsigned int zeroCtrlDispatchCase14LastRA, zeroCtrlDispatchCase14RAChanges;
+extern void zeroCtrlConsumer13F6CTrace(void), zeroCtrlConsumer13F6CTraceEnd(void);
+extern void zeroCtrlConsumer14020Trace(void), zeroCtrlConsumer14020TraceEnd(void);
+extern volatile unsigned int zeroCtrlConsumer6F84Target;
+extern volatile unsigned int zeroCtrlConsumer13F6CHits, zeroCtrlConsumer14020Hits;
+extern volatile unsigned int zeroCtrlConsumer13F6CNaturalResult;
+extern volatile unsigned int zeroCtrlConsumer14020NaturalResult;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -542,6 +556,32 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.field12c_write_last_addr = (u32)&zeroCtrlField12CWriteLast;
 	bsmanClosedRegistration.field12c_write_changes_addr = (u32)&zeroCtrlField12CWriteChanges;
 	bsmanClosedRegistration.field12c_write_context_addr = (u32)&zeroCtrlField12CWriteContext;
+	bsmanClosedRegistration.case14_leaf_addr = (u32)zeroCtrlCase14Trace;
+	bsmanClosedRegistration.case14_leaf_end_addr = (u32)zeroCtrlCase14TraceEnd;
+	bsmanClosedRegistration.case14_resume_addr = (u32)&zeroCtrlCase14Resume;
+	bsmanClosedRegistration.case14_hits_addr = (u32)&zeroCtrlCase14Hits;
+	bsmanClosedRegistration.case14_first_ra_addr = (u32)&zeroCtrlCase14FirstRA;
+	bsmanClosedRegistration.case14_last_ra_addr = (u32)&zeroCtrlCase14LastRA;
+	bsmanClosedRegistration.case14_ra_changes_addr = (u32)&zeroCtrlCase14RAChanges;
+	bsmanClosedRegistration.dispatch_entry_leaf_addr = (u32)zeroCtrlDispatchEntryTrace;
+	bsmanClosedRegistration.dispatch_entry_leaf_end_addr = (u32)zeroCtrlDispatchEntryTraceEnd;
+	bsmanClosedRegistration.dispatch_entry_resume_addr = (u32)&zeroCtrlDispatchEntryResume;
+	bsmanClosedRegistration.dispatch_entry_hits_addr = (u32)&zeroCtrlDispatchEntryHits;
+	bsmanClosedRegistration.dispatch_case14_hits_addr = (u32)&zeroCtrlDispatchCase14Hits;
+	bsmanClosedRegistration.dispatch_case14_first_ra_addr = (u32)&zeroCtrlDispatchCase14FirstRA;
+	bsmanClosedRegistration.dispatch_case14_last_ra_addr = (u32)&zeroCtrlDispatchCase14LastRA;
+	bsmanClosedRegistration.dispatch_case14_ra_changes_addr = (u32)&zeroCtrlDispatchCase14RAChanges;
+	bsmanClosedRegistration.consumer_13f6c_leaf_addr = (u32)zeroCtrlConsumer13F6CTrace;
+	bsmanClosedRegistration.consumer_13f6c_leaf_end_addr = (u32)zeroCtrlConsumer13F6CTraceEnd;
+	bsmanClosedRegistration.consumer_14020_leaf_addr = (u32)zeroCtrlConsumer14020Trace;
+	bsmanClosedRegistration.consumer_14020_leaf_end_addr = (u32)zeroCtrlConsumer14020TraceEnd;
+	bsmanClosedRegistration.consumer_6f84_target_addr = (u32)&zeroCtrlConsumer6F84Target;
+	bsmanClosedRegistration.consumer_13f6c_hits_addr = (u32)&zeroCtrlConsumer13F6CHits;
+	bsmanClosedRegistration.consumer_14020_hits_addr = (u32)&zeroCtrlConsumer14020Hits;
+	bsmanClosedRegistration.consumer_13f6c_result_addr =
+			(u32)&zeroCtrlConsumer13F6CNaturalResult;
+	bsmanClosedRegistration.consumer_14020_result_addr =
+			(u32)&zeroCtrlConsumer14020NaturalResult;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

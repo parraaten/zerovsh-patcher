@@ -140,9 +140,33 @@ typedef struct {
     u32 field12c_write_last_addr;
     u32 field12c_write_changes_addr;
     u32 field12c_write_context_addr;
+    u32 case14_leaf_addr;
+    u32 case14_leaf_end_addr;
+    u32 case14_resume_addr;
+    u32 case14_hits_addr;
+    u32 case14_first_ra_addr;
+    u32 case14_last_ra_addr;
+    u32 case14_ra_changes_addr;
+    u32 dispatch_entry_leaf_addr;
+    u32 dispatch_entry_leaf_end_addr;
+    u32 dispatch_entry_resume_addr;
+    u32 dispatch_entry_hits_addr;
+    u32 dispatch_case14_hits_addr;
+    u32 dispatch_case14_first_ra_addr;
+    u32 dispatch_case14_last_ra_addr;
+    u32 dispatch_case14_ra_changes_addr;
+    u32 consumer_13f6c_leaf_addr;
+    u32 consumer_13f6c_leaf_end_addr;
+    u32 consumer_14020_leaf_addr;
+    u32 consumer_14020_leaf_end_addr;
+    u32 consumer_6f84_target_addr;
+    u32 consumer_13f6c_hits_addr;
+    u32 consumer_14020_hits_addr;
+    u32 consumer_13f6c_result_addr;
+    u32 consumer_14020_result_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 544 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 640 ? 1 : -1];
 
 #endif

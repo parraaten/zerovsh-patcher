@@ -1374,3 +1374,293 @@ interpretation is intentionally precise:
 The observation window remains 12,000,000 microseconds. T18.1 adds no new
 thread, no per-hit logging, no new polling path, no Sony state write, and no
 compatibility conversion.
+## T19: natural case-14 dispatch observation
+
+### Evidence entering T19
+
+**PROVEN BY HARDWARE:** T18 installed successfully, the known
+`vsh_module+0x1DEAC` writer had zero hits before the TopMenu observation, and
+the observed `field_12C` value remained 15. This does not show that Sony wrote
+15 at that site.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** `vsh_module+0x1D7A4` dispatches
+values 0 through 21. Its validated jump table is at `+0x4FDA0`, entry 14 begins
+at `+0x1DE18`, and the dispatcher preserves its argument in `s3`. If that
+natural case reaches `+0x1DEAC`, its unchanged delay-slot store writes the
+natural value 14 to `field_12C`. Neither 14 nor 15 is assigned an invented
+Sony state name.
+
+**HYPOTHESIS / UNKNOWN:** It is unknown whether activation naturally dispatches
+case 14, which caller would do so, why the transition is absent if no dispatch
+occurs, or whether another consumer of `+0x6F84` participates upstream.
+
+### Instrumentation and safety boundary
+
+T19 is evidence-only. On model 0 and devkit `0x06060110`, it transactionally
+validates the dispatcher fingerprint, derives and checks the jump-table address,
+checks all VSH/helper ranges, and confirms that aligned entry 14 naturally
+contains `vsh_module+0x1DE18`. Only after every check succeeds does it replace
+that one data word with a transparent helper address and synchronize those four
+data bytes. A mismatch leaves `validation=0 install=0` and performs no VSH
+write. T18's `+0x1DEA8`/`+0x1DEAC` trace remains unchanged.
+
+The leaf helper makes no calls, performs no I/O or allocation, creates no
+thread, preserves `s3`, `$ra`, and its temporary registers, records only
+`case14_hits`, `first_ra`, `last_ra`, and `ra_changes`, then jumps to the
+original `+0x1DE18` entry without skipping or emulating any Sony instruction.
+The caller `$ra` is valid here because the dispatcher reaches its case with
+`jr` and has made no intervening call.
+
+The existing diagnostic writer emits the once-only
+`[topmenu-case14-install]` record and emits `[topmenu-case14-live]` immediately
+after the T18.1 live writer record at the working TopMenu boundary. The broken
+12-second final block is neither required nor changed. Broad `+0x6F84`, its
+`+0x13F6C` and `+0x14020` consumers, forcing case 14, and any compatibility
+behavior remain disabled.
+
+### Required hardware test and interpretation
+
+Build and deploy through the existing Memory Stick recovery workflow without
+writing `flash0:` and preserve the specified configuration. Return the complete
+log and normal-use stability observations. Required records are
+`[topmenu-case14-install]`, `[topmenu-state]`,
+`[topmenu-field12c-write-live]`, and `[topmenu-case14-live]`.
+
+* With valid installations and both hit counts zero, **PROVEN BY HARDWARE**
+  would be limited to no natural case-14 dispatch before that boundary; research
+  should move upstream without forcing the field or case.
+* Case-14 hits with zero writer hits would prove entry without reaching the
+  known writer and identify a caller through `$ra`; the next experiment should
+  localize the existing case path.
+* Hits in both traces require correlation of caller RA, natural `s3`, writer
+  context, TopMenu context, ordering, and the later field value before any
+  conclusion or compatibility work.
+* Failed T19 validation invalidates all hit-counter interpretation and must be
+  investigated first.
+
+### T19 hardware result and T20 pre-dispatch entry trace
+
+**PROVEN BY HARDWARE:** T19 installed with `validation=1 install=1
+cache_sync=1`, but its working TopMenu-boundary record reported zero case-14
+hits and zero caller-RA evidence. Jump-table case 14 was therefore not reached
+during the observed post-installation interval. T19 remains installed and
+unchanged for the next control.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** Before dispatch, the function at
+`vsh_module+0x1D7A4` reads a byte at offset `+0x19D` in the active context and
+branches to the common `+0x1D8C4` epilogue when that byte is nonzero. Its exact
+official meaning is **HYPOTHESIS / UNKNOWN**. An incoming value of 14 passes
+the later unsigned `<22` range gate. The upper jump-table cases 14 through 21
+begin at `+0x1DE18`, `+0x1DF04`, `+0x1DFA4`, `+0x1E05C`, `+0x1E080`,
+`+0x1E0F0`, `+0x1E174`, and `+0x1E1E8`, respectively, and their natural paths
+converge on the common `+0x1DEA8/+0x1DEAC` tail. Consequently, that writer is
+not exclusive to case 14.
+
+T20 asks only whether the dispatcher is entered after instrumentation and
+whether any entry carries the unchanged incoming `a0=14` before the `+0x19D`
+gate. It does not inspect individual callers or change the context.
+
+The T20 installer is restricted to model 0, devkit `0x06060110`, and exact VSH
+text size `0x556C0`. It validates the dispatcher and pre-gate fingerprint,
+including original entry words `0x27BDFFC0` (`addiu sp,sp,-0x40`) and
+`0xAFB20018` (`sw s2,0x18(sp)`), every VSH/helper/scalar range, the natural
+`+0x1D7AC` resume, and pseudo-direct jump reachability before any VSH write.
+It then replaces only the first two entry words with a helper jump and NOP and
+synchronizes exactly those eight code bytes.
+
+The transparent leaf records bounded scalars only: total dispatcher entries,
+number of incoming case-14 requests, first and last case-14 caller `$ra`, and
+RA-change count. It modifies neither `a0` nor `$ra`, preserves all scratch
+registers, reproduces both displaced instructions exactly, and resumes at
+`+0x1D7AC`. It makes no calls, performs no I/O or allocation, creates no thread,
+and reads or writes no Sony context field.
+
+The existing diagnostic writer emits `[topmenu-dispatch-entry-install]` once
+and `[topmenu-dispatch-entry-live]` immediately after the retained T19 live
+record. Interpretation is limited to the requested distinctions: zero total
+hits moves research to callers/scheduling; total hits without case-14 requests
+moves research to constant-14 caller prerequisites; case-14 requests without
+T19 hits directs the next read-only investigation to the earlier `+0x19D` gate;
+case-14 and T19 hits without T18 hits directs later localization inside the
+natural case path. Invalid installation invalidates every T20 counter.
+
+Required hardware output is the existing TopMenu state, T18.1 live record,
+T19 live record, plus:
+
+```text
+[topmenu-dispatch-entry-install] validation=... install=... cache_sync=...
+[topmenu-dispatch-entry-live] validation=... install=... cache_sync=... hits=... case14_requests=... first_ra=0x........ last_ra=0x........ ra_changes=...
+```
+
+Broad `+0x6F84`, `+0x13F6C`, `+0x14020`, field `+0x19D`, `field_12C`, and all
+compatibility behavior remain unchanged. The deferred 12-second finalization
+problem is explicitly outside T20.
+
+### T20 hardware result and T21 early installation
+
+**PROVEN BY HARDWARE:** T20 installed successfully, but the live TopMenu
+record contained zero dispatcher hits and zero incoming case-14 requests.
+Thus `vsh_module+0x1D7A4` did not execute between the former SlidePlugin-time
+installation and that boundary. This result does not address earlier VSH
+initialization, and it does not make the `+0x19D` gate the current boundary.
+
+T21 reuses the unchanged T20 helper and patch. At the end of the existing
+`zeroCtrlRecordVshSlideTarget` path, after original VSH captures/scans and the
+selected `+0x58D4` setup, it attempts the same dispatcher-entry installation
+before returning to natural VSH startup. T18 and T19 remain installed only in
+the later SlidePlugin path.
+
+The installer is explicitly idempotent: if the early installation succeeded,
+the later call returns before validating patched instructions, rewriting the
+resume scalar, or clearing any of the five counters. On entry to the later
+SlidePlugin instrumentation path, kernel state snapshots those five counters
+before T18, T19, or the idempotent T20 call. No helper, patch site, polling,
+thread, allocation, I/O path, Sony state, or compatibility behavior is added.
+
+The existing deferred writer adds:
+
+```text
+[topmenu-dispatch-entry-early-install] attempted=... validation=... install=... cache_sync=...
+[topmenu-dispatch-entry-pre-slide] hits=... case14_requests=... first_ra=0x........ last_ra=0x........ ra_changes=...
+```
+
+The unchanged T20 live record remains the total since early installation.
+Interpretation is limited to timing: zero pre-slide and live hits moves research
+upstream; pre-slide hits without case-14 requests motivates caller-condition
+analysis; early case-14 requests require a later experiment moving existing
+T19/T18 observation earlier; and zero pre-slide with nonzero live hits localizes
+activity after the snapshot. Invalid early installation invalidates the early
+counters. No compatibility conclusion follows from T21 alone.
+
+### T21 hardware result and T22 natural `+0x6F84` consumers
+
+**PROVEN BY HARDWARE:** Early T20 installed successfully, while both its
+pre-SlidePlugin and live snapshots reported zero dispatcher entries and zero
+case-14 requests. Thus `vsh_module+0x1D7A4` did not execute from the early
+installation through the observed activation interval. The timing ambiguity is
+resolved, and the `+0x19D` gate is not yet implicated.
+
+T19's later validation failure is an instrumentation interaction, not Sony
+behavior: T20 has already replaced dispatcher words which T19 expects original.
+T22 neither uses nor changes T19.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** `vsh_module+0x6F84` returns true
+exactly when its shared global is 4, 5, 7, or 9. At `+0x13F6C`, that result
+selects `a0=0x828` when true and `a0=0x28` when false. At `+0x14020`, the JAL
+delay slot at `+0x14024` consumes the preceding `+0x6F44` result; the `+0x6F84`
+result is consumed at `+0x14030` and controls the later `0x40` candidate, not
+`0x20`.
+
+T22 replaces only the JAL words at `+0x13F6C` and `+0x14020` with calls to two
+dedicated transparent counters. Both natural targets must be `+0x6F84`; the
+exact delay slots (`NOP` and `movn s0,v1,v0`) remain untouched. Each wrapper
+restores its scratch registers and stack, leaves `$ra` and `$v0` untouched, and
+tail-jumps to Sony's natural predicate, which returns directly to the original
+`PC+8`. No result or bitmask choice is transformed.
+
+Installation follows all original VSH scans and selected `+0x58D4` setup and
+precedes retained early T20 and natural VSH startup. The existing decoded
+shared-global address must be valid in a VSH segment; it is read once at early
+installation and once at the pre-SlidePlugin snapshot and is never written.
+
+```text
+[vsh-6f84-consumers-install] consumer_13f6c_validation=... consumer_13f6c_install=... consumer_13f6c_cache_sync=... consumer_14020_validation=... consumer_14020_install=... consumer_14020_cache_sync=... shared_global_early_valid=... shared_global_early=0x........
+[vsh-6f84-consumers-pre-slide] caller_13f6c_hits=... caller_14020_hits=... shared_global_valid=... shared_global=0x........
+```
+
+Nonzero counts prove only natural execution. A validated observed global plus
+the decrypted predicate establishes the natural result for that snapshot but
+does not justify forcing either consumer. A changing global requires transition
+localization; zero counts move research to the enclosing initializer. T22 adds
+no compatibility and leaves the existing `+0x58D4` substitution unchanged.
+
+### T22.2 validation-failure diagnostics
+
+**PROVEN BY HARDWARE:** The first T22 run reported validation, installation,
+cache synchronization, and early shared-global validity all as zero. The hit
+counters from that run are not interpretable. T22.2 does not loosen or bypass
+the installer; it records which existing guard rejected the transaction.
+
+The bounded guard state distinguishes model/devkit/module/text failures,
+shared-global decode and segment validation, predicate/global/helper ranges,
+the predicate fingerprint, and every range/opcode/target/delay/pseudo-direct
+condition at each callsite. `NONE` is assigned only after all guards pass.
+Failure still occurs before either VSH callsite write, leaving both consumers
+uninstalled.
+
+T22.2 also captures the VSH text address and size, bounded `nsegment` metadata
+(at most four segment address/size pairs), the decoded shared-global address,
+the 16 predicate words, both callsite/delay pairs and decoded targets, and the
+installer-side helper/scalar range results. These are reads into fixed kernel
+diagnostic state; neither Sony data nor the wrappers are changed.
+
+The existing deferred writer retains both T22 records and adds:
+
+```text
+[vsh-6f84-consumers-guard] reason=... decode_valid=... segment_valid=... shared_global_addr=0x........ vsh_text=0x........ text_size=0x........ nsegment=...
+[vsh-6f84-segment] index=... addr=0x........ size=0x........
+[vsh-6f84-callsite] offset=... word=0x........ delay=0x........ decoded_target=0x........
+[vsh-6f84-predicate] validation=... first_bad_index=... actual=0x........ expected=0x........
+[vsh-6f84-helper] target_scalar=... leaf_13f6c=... counter_13f6c=... leaf_14020=... counter_14020=...
+```
+
+The required hardware test is one recovery-protected run with the unchanged
+configuration and complete log. The failing reason and captured metadata must
+be reviewed before any validator change. The VSH BSS/segment-size relationship,
+the actual failing guard, and whether T22 can install remain **HYPOTHESIS /
+UNKNOWN**. The recommended next phase is evidence review only.
+
+### T22.3 relocation-aware predicate validation
+
+**PROVEN BY HARDWARE:** T22.2 failed only at predicate word index 1. The loaded
+word was `0x8C44EEE0`, and together with the runtime `lui v0,0x09C8` it resolves
+to `0x09C7EEE0`, exactly the separately decoded shared-global address. That
+address lies within hardware-reported VSH segment 1 (`0x09C7D8C0` through
+`0x09C84EA0`), so the prior BSS/segment-range hypothesis is false. Both runtime
+consumer JALs decoded to natural `vsh_module+0x6F84`, with their expected delay
+slots intact.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** The pre-relocation word at `+0x6F88`
+is `0x8C441620`. Its `0x1620` immediate is not an invariant after relocation.
+
+T22.3 changes only that validator rule. Word 0 remains a structural
+`LUI v0,imm` check. Word 1 must structurally match `LW a0,imm(v0)`, and the
+actual HI16 plus signed LO16 are decoded with the same pure helper used by the
+existing shared-global derivation. The resulting runtime address must equal the
+already decoded, segment-validated, range-valid shared-global address. All
+remaining predicate words, the natural jump target, both callsites, both delay
+slots, transactional ordering, wrappers, and diagnostics remain unchanged.
+The bounded predicate record now also reports that reconstructed address so a
+structurally valid load with the wrong effective target is unambiguous.
+
+### T22.3 hardware result and T23 natural return capture
+
+**PROVEN BY HARDWARE:** Both T22 consumers installed and each executed once
+before SlidePlugin. The independently decoded shared global was zero at both
+bounded snapshots, but T22 did not exclude a transient value or directly
+capture either natural predicate result.
+
+T23 changes only the two existing evidence wrappers. Each now uses a private
+16-byte frame containing `t0`, `t1`, `t2`, and the original caller `$ra`.
+After incrementing its existing counter, it loads the already validated Sony
+`+0x6F84` target and performs the single intentional `jalr`. On return it stores
+natural `$v0` verbatim to its dedicated result scalar, restores every saved
+register and the stack, and returns through the original `$ra`. It performs no
+comparison, normalization, arithmetic, or branch on `$v0`.
+
+Registration range-validates both new result scalars. The T22 transaction
+initializes each to `0xFFFFFFFF` before either callsite commit, and failure of
+either range check prevents both patches. The same JAL words remain the only
+VSH writes and both original delay slots remain untouched.
+
+At the existing pre-SlidePlugin boundary the deferred writer adds:
+
+```text
+[vsh-6f84-consumers-natural] caller_13f6c_hits=... caller_13f6c_result=0x........ caller_14020_hits=... caller_14020_result=0x........
+```
+
+Results of zero at both one-hit consumers would be **PROVEN BY HARDWARE**
+evidence that both natural consumers returned false in this startup. Combined
+with the decrypted binary, that would establish the natural `0x28` selection
+at `+0x13F6C` and absence of the later `0x40` contribution at `+0x14020`, but
+would not itself justify compatibility. No consumer or predicate is forced.
