@@ -1374,3 +1374,66 @@ interpretation is intentionally precise:
 The observation window remains 12,000,000 microseconds. T18.1 adds no new
 thread, no per-hit logging, no new polling path, no Sony state write, and no
 compatibility conversion.
+## T19: natural case-14 dispatch observation
+
+### Evidence entering T19
+
+**PROVEN BY HARDWARE:** T18 installed successfully, the known
+`vsh_module+0x1DEAC` writer had zero hits before the TopMenu observation, and
+the observed `field_12C` value remained 15. This does not show that Sony wrote
+15 at that site.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** `vsh_module+0x1D7A4` dispatches
+values 0 through 21. Its validated jump table is at `+0x4FDA0`, entry 14 begins
+at `+0x1DE18`, and the dispatcher preserves its argument in `s3`. If that
+natural case reaches `+0x1DEAC`, its unchanged delay-slot store writes the
+natural value 14 to `field_12C`. Neither 14 nor 15 is assigned an invented
+Sony state name.
+
+**HYPOTHESIS / UNKNOWN:** It is unknown whether activation naturally dispatches
+case 14, which caller would do so, why the transition is absent if no dispatch
+occurs, or whether another consumer of `+0x6F84` participates upstream.
+
+### Instrumentation and safety boundary
+
+T19 is evidence-only. On model 0 and devkit `0x06060110`, it transactionally
+validates the dispatcher fingerprint, derives and checks the jump-table address,
+checks all VSH/helper ranges, and confirms that aligned entry 14 naturally
+contains `vsh_module+0x1DE18`. Only after every check succeeds does it replace
+that one data word with a transparent helper address and synchronize those four
+data bytes. A mismatch leaves `validation=0 install=0` and performs no VSH
+write. T18's `+0x1DEA8`/`+0x1DEAC` trace remains unchanged.
+
+The leaf helper makes no calls, performs no I/O or allocation, creates no
+thread, preserves `s3`, `$ra`, and its temporary registers, records only
+`case14_hits`, `first_ra`, `last_ra`, and `ra_changes`, then jumps to the
+original `+0x1DE18` entry without skipping or emulating any Sony instruction.
+The caller `$ra` is valid here because the dispatcher reaches its case with
+`jr` and has made no intervening call.
+
+The existing diagnostic writer emits the once-only
+`[topmenu-case14-install]` record and emits `[topmenu-case14-live]` immediately
+after the T18.1 live writer record at the working TopMenu boundary. The broken
+12-second final block is neither required nor changed. Broad `+0x6F84`, its
+`+0x13F6C` and `+0x14020` consumers, forcing case 14, and any compatibility
+behavior remain disabled.
+
+### Required hardware test and interpretation
+
+Build and deploy through the existing Memory Stick recovery workflow without
+writing `flash0:` and preserve the specified configuration. Return the complete
+log and normal-use stability observations. Required records are
+`[topmenu-case14-install]`, `[topmenu-state]`,
+`[topmenu-field12c-write-live]`, and `[topmenu-case14-live]`.
+
+* With valid installations and both hit counts zero, **PROVEN BY HARDWARE**
+  would be limited to no natural case-14 dispatch before that boundary; research
+  should move upstream without forcing the field or case.
+* Case-14 hits with zero writer hits would prove entry without reaching the
+  known writer and identify a caller through `$ra`; the next experiment should
+  localize the existing case path.
+* Hits in both traces require correlation of caller RA, natural `s3`, writer
+  context, TopMenu context, ordering, and the later field value before any
+  conclusion or compatibility work.
+* Failed T19 validation invalidates all hit-counter interpretation and must be
+  investigated first.

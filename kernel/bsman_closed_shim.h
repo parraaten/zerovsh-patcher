@@ -140,9 +140,16 @@ typedef struct {
     u32 field12c_write_last_addr;
     u32 field12c_write_changes_addr;
     u32 field12c_write_context_addr;
+    u32 case14_leaf_addr;
+    u32 case14_leaf_end_addr;
+    u32 case14_resume_addr;
+    u32 case14_hits_addr;
+    u32 case14_first_ra_addr;
+    u32 case14_last_ra_addr;
+    u32 case14_ra_changes_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 544 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 572 ? 1 : -1];
 
 #endif

@@ -601,6 +601,55 @@ def check_sources(root):
         fail("T18.1 finalization checkpoints do not localize the final boundary")
     if "#define SLIDE_OBSERVATION_WINDOW_US 12000000" not in kernel:
         fail("T18.1 changed the 12-second observation window")
+    case14_install = kernel[kernel.find(
+        "static void zeroCtrlInstallCase14Trace"):
+        kernel.find("static void zeroCtrlInstallBSManClosedShim")]
+    for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
+            "vsh->text_addr + 0x1D7A4", "vsh->text_addr + 0x4FDA0",
+            "table + 14 * 4", "vsh->text_addr + 0x1DE18",
+            "_lw(entry) != natural", "case14_validation = 1",
+            "_sw(word, entry)", "case14_install = 1",
+            "case14_cache_sync = 1"):
+        if token not in case14_install:
+            fail("T19 case-14 transaction is missing " + token)
+    case14_commit = case14_install.find("_sw(word, entry)")
+    case14_validation = case14_install.find("case14_validation = 1")
+    if case14_commit <= case14_validation or \
+            case14_install.count("_sw(word, entry)") != 1:
+        fail("T19 does not transactionally patch exactly jump-table entry 14")
+    if any(token in case14_install[:case14_commit] for token in
+            ("_sw(word, entry)", "_sw(bsman->case14_leaf_addr, entry)")):
+        fail("T19 writes the VSH jump table before validation completes")
+    if "sceKernelDcacheWritebackInvalidateRange((const void *)entry, 4)" not in \
+            case14_install or "sceKernelIcache" in case14_install:
+        fail("T19 does not narrowly synchronize its single data word")
+    if "sceKernelCreateThread" in case14_install or \
+            "0x6F84" in case14_install:
+        fail("T19 creates a thread or enables the broad predicate")
+    case14_stub = assembly[assembly.find("zeroCtrlCase14Trace:"):
+        assembly.find("zeroCtrlCase14TraceEnd:")]
+    if not case14_stub or \
+            "sw      $ra, %lo(zeroCtrlCase14FirstRA)" not in case14_stub or \
+            "sw      $ra, %lo(zeroCtrlCase14LastRA)" not in case14_stub or \
+            "lw      $t2, %lo(zeroCtrlCase14Resume)" not in case14_stub or \
+            "jr      $t2" not in case14_stub or \
+            "lw      $t2, -4($sp)" not in case14_stub:
+        fail("T19 helper does not preserve RA/registers and natural continuation")
+    if any(token in case14_stub for token in
+            ("jal ", "jalr", "sceIo", "Alloc", "malloc", "sceKernel")):
+        fail("T19 helper calls code, performs I/O, or allocates")
+    if re.search(r"\b(?:li|addiu|ori|lw|move|addu)\s+\$(?:s3|ra)\b",
+            case14_stub):
+        fail("T19 helper modifies Sony's s3 argument or caller RA")
+    case14_install_record = writer.find("[topmenu-case14-install]")
+    case14_live_record = writer.find("[topmenu-case14-live]")
+    if min(case14_install_record, case14_live_record) < 0 or not (
+            live_record < case14_live_record < topmenu_owner_done):
+        fail("T19 records are missing or not at the T18.1 live boundary")
+    for scalar in range(4):
+        if ("bsman->case14_scalar_addr[%d]" % scalar) not in \
+                writer[case14_live_record:topmenu_owner_done]:
+            fail("T19 live result is missing case-14 scalar %d" % scalar)
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")

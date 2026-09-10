@@ -279,6 +279,9 @@ typedef struct {
     int field12c_write_cache_sync;
     unsigned int field12c_write_leaf_addr, field12c_write_leaf_size;
     unsigned int field12c_write_resume_addr, field12c_write_scalar_addr[5];
+    int case14_validation, case14_install, case14_cache_sync;
+    unsigned int case14_leaf_addr, case14_leaf_size;
+    unsigned int case14_resume_addr, case14_scalar_addr[4];
     unsigned int state_zero_original[14], state_zero_replacement[7];
 } ZeroCtrlBSManEvidence;
 
@@ -1364,6 +1367,13 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(field12c_write_last_addr);
     CHECK_POST_SCALAR(field12c_write_changes_addr);
     CHECK_POST_SCALAR(field12c_write_context_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.case14_leaf_addr,
+                copied.case14_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(case14_resume_addr);
+    CHECK_POST_SCALAR(case14_hits_addr);
+    CHECK_POST_SCALAR(case14_first_ra_addr);
+    CHECK_POST_SCALAR(case14_last_ra_addr);
+    CHECK_POST_SCALAR(case14_ra_changes_addr);
 #undef CHECK_POST_SCALAR
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -1514,6 +1524,13 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->field12c_write_scalar_addr[2] = copied.field12c_write_last_addr;
     bsman->field12c_write_scalar_addr[3] = copied.field12c_write_changes_addr;
     bsman->field12c_write_scalar_addr[4] = copied.field12c_write_context_addr;
+    bsman->case14_leaf_addr = copied.case14_leaf_addr;
+    bsman->case14_leaf_size = copied.case14_leaf_end_addr - copied.case14_leaf_addr;
+    bsman->case14_resume_addr = copied.case14_resume_addr;
+    bsman->case14_scalar_addr[0] = copied.case14_hits_addr;
+    bsman->case14_scalar_addr[1] = copied.case14_first_ra_addr;
+    bsman->case14_scalar_addr[2] = copied.case14_last_ra_addr;
+    bsman->case14_scalar_addr[3] = copied.case14_ra_changes_addr;
     bsman->registered = 1;
 }
 
@@ -2577,6 +2594,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
     int observed_field12c_write_install_status = 0;
+    int observed_case14_install_status = 0;
     char line[256];
     unsigned int i;
 
@@ -2729,6 +2747,14 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->field12c_write_cache_sync);
                 zeroCtrlDiagnosticsText(line);
                 observed_field12c_write_install_status = 1;
+            }
+            if (bsman->attempted && !observed_case14_install_status) {
+                snprintf(line, sizeof(line),
+                        "[topmenu-case14-install] validation=%d install=%d "
+                        "cache_sync=%d\n", bsman->case14_validation,
+                        bsman->case14_install, bsman->case14_cache_sync);
+                zeroCtrlDiagnosticsText(line);
+                observed_case14_install_status = 1;
             }
             if (bsman->attempted && !observed_bsman_attempted) {
                 snprintf(line, sizeof(line),
@@ -3017,6 +3043,17 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                     bsman->field12c_write_scalar_addr[3]),
                                 zeroCtrlReadHelperCounter(
                                     bsman->field12c_write_scalar_addr[4]));
+                        zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[topmenu-case14-live] validation=%d install=%d "
+                                "cache_sync=%d hits=%u first_ra=0x%08X "
+                                "last_ra=0x%08X ra_changes=%u\n",
+                                bsman->case14_validation, bsman->case14_install,
+                                bsman->case14_cache_sync,
+                                zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[0]),
+                                zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[1]),
+                                zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[2]),
+                                zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[3]));
                         zeroCtrlDiagnosticsText(line);
                         observed_state_zero_vcall_owner = 1;
                     }
@@ -3415,6 +3452,52 @@ static void zeroCtrlInstallField12CWriteTrace(void) {
     bsman->field12c_write_cache_sync = 1;
 }
 
+static void zeroCtrlInstallCase14Trace(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int dispatcher, table, entry, natural, word, i;
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 || !vsh || !helper ||
+            vsh->text_size < 0x4FDD8 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x1D7A4, 0x58) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->case14_leaf_addr,
+                bsman->case14_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->case14_resume_addr, 4)) return;
+    for (i = 0; i < 4; i++)
+        if (!zeroCtrlVshModuleRangeValid(helper, bsman->case14_scalar_addr[i], 4)) return;
+    dispatcher = vsh->text_addr + 0x1D7A4;
+    if (_lw(dispatcher) != 0x27BDFFC0 ||
+            _lw(dispatcher + 0x2C) != 0x00809821 ||
+            _lw(dispatcher + 0x30) != 0x2C820016 ||
+            (_lw(dispatcher + 0x3C) & 0xFFFF0000) != 0x3C030000 ||
+            _lw(dispatcher + 0x40) != 0x00041080 ||
+            (_lw(dispatcher + 0x44) & 0xFFFF0000) != 0x24630000 ||
+            _lw(dispatcher + 0x48) != 0x00431021 ||
+            _lw(dispatcher + 0x4C) != 0x8C440000 ||
+            _lw(dispatcher + 0x50) != 0x00800008) return;
+    table = ((_lw(dispatcher + 0x3C) & 0xFFFF) << 16) +
+            (short)(_lw(dispatcher + 0x44) & 0xFFFF);
+    if (table != vsh->text_addr + 0x4FDA0 || (table & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, table, 22 * 4)) return;
+    entry = table + 14 * 4;
+    natural = vsh->text_addr + 0x1DE18;
+    if (_lw(entry) != natural || (natural & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, natural, 4) ||
+            (bsman->case14_leaf_addr & 3) != 0) return;
+    bsman->case14_validation = 1;
+    _sw(natural, bsman->case14_resume_addr);
+    for (i = 0; i < 4; i++) _sw(0, bsman->case14_scalar_addr[i]);
+    sceKernelDcacheWritebackInvalidateRange((const void *)bsman->case14_resume_addr, 4);
+    for (i = 0; i < 4; i++)
+        sceKernelDcacheWritebackInvalidateRange((const void *)bsman->case14_scalar_addr[i], 4);
+    word = bsman->case14_leaf_addr;
+    _sw(word, entry);
+    sceKernelDcacheWritebackInvalidateRange((const void *)entry, 4);
+    bsman->case14_install = 1;
+    bsman->case14_cache_sync = 1;
+}
+
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     const unsigned int target_nid = 0x23E3A9B6;
     static const char paf_library[] = "scePaf";
@@ -3429,6 +3512,7 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             strcmp(mod->modname, "slide_plugin_module") != 0 ||
             sceKernelDevkitVersion() != 0x06060110) return;
     zeroCtrlInstallField12CWriteTrace();
+    zeroCtrlInstallCase14Trace();
     bsman->attempted = 1;
     cursor = (unsigned int)mod->stub_top;
     end = cursor + mod->stub_size;

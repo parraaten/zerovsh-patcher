@@ -602,6 +602,48 @@ zeroCtrlField12CWriteTrace:
 zeroCtrlField12CWriteTraceEnd:
 .end zeroCtrlField12CWriteTrace
 
+.globl zeroCtrlCase14Trace
+.type zeroCtrlCase14Trace @function
+.ent zeroCtrlCase14Trace, 0
+zeroCtrlCase14Trace:
+    addiu   $sp, $sp, -12
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t2, 8($sp)
+    lui     $t0, %hi(zeroCtrlCase14Hits)
+    lw      $t1, %lo(zeroCtrlCase14Hits)($t0)
+    bnez    $t1, 50f
+    nop
+    lui     $t0, %hi(zeroCtrlCase14FirstRA)
+    sw      $ra, %lo(zeroCtrlCase14FirstRA)($t0)
+    b       51f
+    nop
+50:
+    lui     $t0, %hi(zeroCtrlCase14LastRA)
+    lw      $t2, %lo(zeroCtrlCase14LastRA)($t0)
+    beq     $t2, $ra, 51f
+    nop
+    lui     $t0, %hi(zeroCtrlCase14RAChanges)
+    lw      $t2, %lo(zeroCtrlCase14RAChanges)($t0)
+    addiu   $t2, $t2, 1
+    sw      $t2, %lo(zeroCtrlCase14RAChanges)($t0)
+51:
+    lui     $t0, %hi(zeroCtrlCase14LastRA)
+    sw      $ra, %lo(zeroCtrlCase14LastRA)($t0)
+    lui     $t0, %hi(zeroCtrlCase14Hits)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlCase14Hits)($t0)
+    lui     $t0, %hi(zeroCtrlCase14Resume)
+    lw      $t2, %lo(zeroCtrlCase14Resume)($t0)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 12
+    jr      $t2
+    lw      $t2, -4($sp)
+.globl zeroCtrlCase14TraceEnd
+zeroCtrlCase14TraceEnd:
+.end zeroCtrlCase14Trace
+
 .macro STATE_ZERO_CLASS name, limit, bit_true, bit_false, true_slot, false_slot, rejoin
 .globl \name
 .type \name @function
@@ -980,3 +1022,13 @@ zeroCtrlField12CWriteLast: .space 4
 zeroCtrlField12CWriteChanges: .space 4
 .globl zeroCtrlField12CWriteContext
 zeroCtrlField12CWriteContext: .space 4
+.globl zeroCtrlCase14Resume
+zeroCtrlCase14Resume: .space 4
+.globl zeroCtrlCase14Hits
+zeroCtrlCase14Hits: .space 4
+.globl zeroCtrlCase14FirstRA
+zeroCtrlCase14FirstRA: .space 4
+.globl zeroCtrlCase14LastRA
+zeroCtrlCase14LastRA: .space 4
+.globl zeroCtrlCase14RAChanges
+zeroCtrlCase14RAChanges: .space 4
