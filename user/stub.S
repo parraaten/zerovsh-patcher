@@ -201,6 +201,21 @@ zeroCtrlBSManCallTraceEnd:
 zeroCtrlBSManReturnTrace:
     lui     $t0, %hi(zeroCtrlPostBSManNaturalResult)
     sw      $v0, %lo(zeroCtrlPostBSManNaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlPostBSManCompatMode)
+    lw      $t1, %lo(zeroCtrlPostBSManCompatMode)($t0)
+    beqz    $t1, 20f
+    lui     $t2, 0x8002
+    ori     $t2, $t2, 0x013A
+    bne     $v0, $t2, 20f
+    nop
+    move    $v0, $zero
+    lui     $t0, %hi(zeroCtrlPostBSManSubstitutionHits)
+    lw      $t1, %lo(zeroCtrlPostBSManSubstitutionHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostBSManSubstitutionHits)($t0)
+20:
+    lui     $t0, %hi(zeroCtrlPostBSManEffectiveResult)
+    sw      $v0, %lo(zeroCtrlPostBSManEffectiveResult)($t0)
     lui     $t0, %hi(zeroCtrlPostBSManReturnHits)
     lw      $t1, %lo(zeroCtrlPostBSManReturnHits)($t0)
     addiu   $t1, $t1, 1
@@ -239,8 +254,8 @@ zeroCtrlBSManReturnTraceEnd:
 .type zeroCtrlPostBSManBranchTrace @function
 .ent zeroCtrlPostBSManBranchTrace, 0
 zeroCtrlPostBSManBranchTrace:
-    lui     $t0, %hi(zeroCtrlPostBSManNaturalResult)
-    lw      $t2, %lo(zeroCtrlPostBSManNaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlPostBSManEffectiveResult)
+    lw      $t2, %lo(zeroCtrlPostBSManEffectiveResult)($t0)
     lui     $t0, %hi(zeroCtrlPostPathMask)
     lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
     ori     $t1, $t1, 0x0002
@@ -589,6 +604,12 @@ zeroCtrlSlidePrefixPafReturnHits: .space 4
 zeroCtrlPostPathMask: .space 4
 .globl zeroCtrlPostBSManNaturalResult
 zeroCtrlPostBSManNaturalResult: .space 4
+.globl zeroCtrlPostBSManCompatMode
+zeroCtrlPostBSManCompatMode: .space 4
+.globl zeroCtrlPostBSManSubstitutionHits
+zeroCtrlPostBSManSubstitutionHits: .space 4
+.globl zeroCtrlPostBSManEffectiveResult
+zeroCtrlPostBSManEffectiveResult: .space 4
 .globl zeroCtrlPostBSManReturnHits
 zeroCtrlPostBSManReturnHits: .space 4
 .globl zeroCtrlPostBSManZero

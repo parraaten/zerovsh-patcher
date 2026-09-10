@@ -51,6 +51,9 @@ typedef struct {
     u32 prefix_paf_return_hits_addr;
     u32 post_path_mask_addr;
     u32 bsman_natural_result_addr;
+    u32 bsman_compat_mode_addr;
+    u32 bsman_substitution_hits_addr;
+    u32 bsman_effective_result_addr;
     u32 bsman_return_hits_addr;
     u32 post_bs_branch_leaf_addr;
     u32 post_bs_branch_leaf_end_addr;
@@ -91,6 +94,6 @@ typedef struct {
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 336 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 348 ? 1 : -1];
 
 #endif

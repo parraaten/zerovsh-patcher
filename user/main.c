@@ -201,6 +201,9 @@ extern void zeroCtrlPostVshCallTrace(void), zeroCtrlPostVshCallTraceEnd(void);
 extern void zeroCtrlPostVshReturnTrace(void), zeroCtrlPostVshReturnTraceEnd(void);
 extern volatile unsigned int zeroCtrlPostPathMask;
 extern volatile unsigned int zeroCtrlPostBSManNaturalResult, zeroCtrlPostBSManReturnHits;
+extern volatile unsigned int zeroCtrlPostBSManCompatMode;
+extern volatile unsigned int zeroCtrlPostBSManSubstitutionHits;
+extern volatile unsigned int zeroCtrlPostBSManEffectiveResult;
 extern volatile unsigned int zeroCtrlPostBSManZero, zeroCtrlPostBSManNonzero;
 extern volatile unsigned int zeroCtrlPostBSManZeroHits, zeroCtrlPostBSManNonzeroHits;
 extern volatile unsigned int zeroCtrlPostStateZero, zeroCtrlPostStateNonzero;
@@ -397,6 +400,12 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.post_path_mask_addr = (u32)&zeroCtrlPostPathMask;
 	bsmanClosedRegistration.bsman_natural_result_addr =
 			(u32)&zeroCtrlPostBSManNaturalResult;
+	bsmanClosedRegistration.bsman_compat_mode_addr =
+			(u32)&zeroCtrlPostBSManCompatMode;
+	bsmanClosedRegistration.bsman_substitution_hits_addr =
+			(u32)&zeroCtrlPostBSManSubstitutionHits;
+	bsmanClosedRegistration.bsman_effective_result_addr =
+			(u32)&zeroCtrlPostBSManEffectiveResult;
 	bsmanClosedRegistration.bsman_return_hits_addr =
 			(u32)&zeroCtrlPostBSManReturnHits;
 	bsmanClosedRegistration.post_bs_branch_leaf_addr =

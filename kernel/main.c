@@ -92,6 +92,7 @@ static char psp1000SonyStartTrace[16];
 static char psp1000BSManClosedShim[16];
 static char psp1000ActivationTrace[16];
 static char psp1000PafPresentCompat[16];
+static char psp1000BSManNotLinkedCompat[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -223,6 +224,7 @@ typedef struct {
     int closed_value;
     int activation_enabled, activation_validation, activation_install;
     int paf_compat_enabled;
+    int bsman_not_linked_compat_enabled;
     int activation_cache_sync;
     unsigned int activation_addr, activation_original[2];
     unsigned int activation_replacement[2];
@@ -249,6 +251,8 @@ typedef struct {
     unsigned int prefix_paf_return_hits_addr;
     unsigned int prefix_original[8], prefix_replacement[4];
     unsigned int post_path_mask_addr, bsman_natural_result_addr;
+    unsigned int bsman_compat_mode_addr, bsman_substitution_hits_addr;
+    unsigned int bsman_effective_result_addr;
     unsigned int bsman_return_hits_addr;
     unsigned int post_bs_leaf_addr, post_bs_leaf_size;
     unsigned int post_bs_target_addr[2], post_bs_counter_addr[2];
@@ -1020,6 +1024,9 @@ void zeroCtrlRegisterBSManClosedShim(
     if (!zeroCtrlVshModuleRangeValid(helper, copied.field, 4)) return
     CHECK_POST_SCALAR(post_path_mask_addr);
     CHECK_POST_SCALAR(bsman_natural_result_addr);
+    CHECK_POST_SCALAR(bsman_compat_mode_addr);
+    CHECK_POST_SCALAR(bsman_substitution_hits_addr);
+    CHECK_POST_SCALAR(bsman_effective_result_addr);
     CHECK_POST_SCALAR(bsman_return_hits_addr);
     CHECK_POST_SCALAR(post_bs_zero_addr);
     CHECK_POST_SCALAR(post_bs_nonzero_addr);
@@ -1101,6 +1108,9 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->prefix_paf_return_hits_addr = copied.prefix_paf_return_hits_addr;
     bsman->post_path_mask_addr = copied.post_path_mask_addr;
     bsman->bsman_natural_result_addr = copied.bsman_natural_result_addr;
+    bsman->bsman_compat_mode_addr = copied.bsman_compat_mode_addr;
+    bsman->bsman_substitution_hits_addr = copied.bsman_substitution_hits_addr;
+    bsman->bsman_effective_result_addr = copied.bsman_effective_result_addr;
     bsman->bsman_return_hits_addr = copied.bsman_return_hits_addr;
     bsman->post_bs_leaf_addr = copied.post_bs_branch_leaf_addr;
     bsman->post_bs_leaf_size = copied.post_bs_branch_leaf_end_addr -
@@ -2514,6 +2524,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 if (changed) {
                     unsigned int bs_result = zeroCtrlReadHelperCounter(
                             bsman->bsman_natural_result_addr);
+                    unsigned int bs_substitutions = zeroCtrlReadHelperCounter(
+                            bsman->bsman_substitution_hits_addr);
+                    unsigned int bs_effective = zeroCtrlReadHelperCounter(
+                            bsman->bsman_effective_result_addr);
                     unsigned int paf0 = zeroCtrlReadHelperCounter(
                             bsman->post_paf_result_addr[0]);
                     unsigned int paf1 = zeroCtrlReadHelperCounter(
@@ -2526,12 +2540,13 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             "return:%u,zero:%u,nonzero:%u,state_zero:%u,"
                             "state_nonzero:%u,paf0:%u/%u,paf1:%u/%u,"
                             "vsh:%u/%u "
-                            "results=bs:0x%08X,paf0:0x%08X,paf1:0x%08X,"
+                            "results=bs_natural:0x%08X,bs_exact_sub:%u,"
+                            "bs_effective:0x%08X,paf0:0x%08X,paf1:0x%08X,"
                             "vsh:0x%08X\n",
                             elapsed, counts[0], counts[1], counts[2], counts[3],
                             counts[4], counts[5], counts[6], counts[7], counts[8],
-                            counts[9], counts[10], bs_result, paf0, paf1,
-                            vsh_result);
+                            counts[9], counts[10], bs_result, bs_substitutions,
+                            bs_effective, paf0, paf1, vsh_result);
                     zeroCtrlDiagnosticsText(line);
                 }
             }
@@ -3091,6 +3106,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         _sw(0, bsman->prefix_paf_return_hits_addr);
         _sw(0, bsman->post_path_mask_addr);
         _sw(0, bsman->bsman_natural_result_addr);
+        _sw(bsman->bsman_not_linked_compat_enabled ? 1 : 0,
+                bsman->bsman_compat_mode_addr);
+        _sw(0, bsman->bsman_substitution_hits_addr);
+        _sw(0, bsman->bsman_effective_result_addr);
         _sw(0, bsman->bsman_return_hits_addr);
         _sw(bsman->activation_addr + 0xDC, bsman->post_bs_target_addr[0]);
         _sw(bsman->activation_addr + 0xB8, bsman->post_bs_target_addr[1]);
@@ -3158,6 +3177,9 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         sceKernelDcacheWritebackInvalidateRange((const void *)(address), 4)
         SYNC_POST_SCALAR(bsman->post_path_mask_addr);
         SYNC_POST_SCALAR(bsman->bsman_natural_result_addr);
+        SYNC_POST_SCALAR(bsman->bsman_compat_mode_addr);
+        SYNC_POST_SCALAR(bsman->bsman_substitution_hits_addr);
+        SYNC_POST_SCALAR(bsman->bsman_effective_result_addr);
         SYNC_POST_SCALAR(bsman->bsman_return_hits_addr);
         for (pc = 0; pc < 2; pc++) {
             SYNC_POST_SCALAR(bsman->post_bs_target_addr[pc]);
@@ -3588,6 +3610,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			psp1000ActivationTrace, sizeof(psp1000ActivationTrace), config);
 	ini_gets("Experimental", "PSP1000PafPresentCompat", "Disabled",
 			psp1000PafPresentCompat, sizeof(psp1000PafPresentCompat), config);
+	ini_gets("Experimental", "PSP1000BSManNotLinkedCompat", "Disabled",
+			psp1000BSManNotLinkedCompat,
+			sizeof(psp1000BSManNotLinkedCompat), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -3628,6 +3653,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		slide_diag.bsman.paf_compat_enabled =
 			slide_diag.bsman.activation_enabled &&
 			strcmp(psp1000PafPresentCompat, "Enabled") == 0;
+		slide_diag.bsman.bsman_not_linked_compat_enabled =
+			slide_diag.bsman.activation_enabled &&
+			strcmp(psp1000BSManNotLinkedCompat, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,
@@ -3672,6 +3700,10 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			zeroCtrlDiagnosticsText(
 					"[experiment] psp1000_paf_present_compat="
 					"callsite_only_zero_to_one\n");
+		if (slide_diag.bsman.bsman_not_linked_compat_enabled)
+			zeroCtrlDiagnosticsText(
+					"[experiment] psp1000_bsman_not_linked_compat="
+					"callsite_only_8002013a_to_zero\n");
 	}
 	zeroCtrlDiagnosticsMemory("after_nid_resolution_and_config");
 	

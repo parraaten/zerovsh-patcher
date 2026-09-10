@@ -407,3 +407,29 @@ assuming the relocated immediate, replaces only the branch at `+0x93B4`, and
 leaves the runtime LBU in the jump delay slot. Its branch tracer decides from
 the separately saved natural BSMan result and preserves the LBU-produced `v0`.
 Require `validation=1 install=1` before interpreting any T13 counters.
+
+The corrected T13 run passed both checks. All three natural BSMan returns were
+nonzero, the latest was `0x8002013A` (library not yet linked), and no downstream
+state, PAF, or VshBridge boundary was reached.
+
+## T14 — exact post-call BSMan not-linked control
+
+Retain the corrected T13 configuration and keep the broad
+`PSP1000BSManClosedShim=Disabled`. Enable only:
+
+```ini
+PSP1000BSManNotLinkedCompat = Enabled
+```
+
+The natural `sceBSMan/0x23E3A9B6` call still executes. The wrapper records its
+untouched result, converts only exact `0x8002013A` to effective zero, and leaves
+every other result unchanged. Zero is proven to select the callsite's boolean
+false continuation, but interpreting it as private BSMan CLOSED semantics
+remains an inference.
+
+Require `bs_natural:0x8002013A`, `bs_exact_sub` greater than zero, and
+`bs_effective:0x00000000`. Then interpret the unchanged state, post-PAF, and
+VshBridge counters exactly as in T13 to locate the next natural blocker. If the
+raw result differs, require zero substitutions and an effective result equal to
+the natural result. Do not enable the broad BSMan stub, or add any PAF,
+VshBridge, impose, OPEN/CLOSE, or model compatibility.

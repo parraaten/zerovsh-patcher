@@ -260,10 +260,14 @@ def check_sources(root):
         'strcmp(psp1000ActivationTrace, "Enabled") == 0',
         'strcmp(psp1000BSManClosedShim, "Disabled") == 0',
         '"PSP1000PafPresentCompat", "Disabled"',
+        '"PSP1000BSManNotLinkedCompat", "Disabled"',
         'slide_diag.bsman.activation_enabled &&',
         'strcmp(psp1000PafPresentCompat, "Enabled") == 0',
         '_sw(bsman->paf_compat_enabled ? 1 : 0,',
         'psp1000_paf_present_compat=',
+        'strcmp(psp1000BSManNotLinkedCompat, "Enabled") == 0',
+        '_sw(bsman->bsman_not_linked_compat_enabled ? 1 : 0,',
+        'psp1000_bsman_not_linked_compat=',
         '"slide_activation_entry_count"',
         '"slide_bsman_call_boundary_count"',
         '"slide_last_stage"',
@@ -286,7 +290,7 @@ def check_sources(root):
         '_lw(bsman->activation_addr + 0x108) != 0x3C048000',
         'bsman->post_original[9] != 0x3484000D',
         'post_bsman_path_mask=0x%03X',
-        'results=bs:0x%08X',
+        'results=bs_natural:0x%08X,bs_exact_sub:%u,',
     ):
         if required not in kernel:
             fail("activation localization trace is missing " + required)
@@ -319,8 +323,17 @@ def check_sources(root):
             "lw      $ra, %lo(zeroCtrlBSManCallRA)($t0)" not in return_leaf or \
             "jr      $ra" not in return_leaf:
         fail("BSMan return trace does not preserve the natural result")
-    if re.search(r"(?:addiu|addu|or|move|lw|lbu)\s+\$v0", return_leaf):
-        fail("BSMan return trace modifies the natural result")
+    for required in (
+            "lui     $t2, 0x8002",
+            "ori     $t2, $t2, 0x013A",
+            "bne     $v0, $t2, 20f",
+            "move    $v0, $zero",
+            "zeroCtrlPostBSManSubstitutionHits",
+            "sw      $v0, %lo(zeroCtrlPostBSManEffectiveResult)"):
+        if required not in return_leaf:
+            fail("BSMan return trace lacks exact not-linked conversion: " + required)
+    if return_leaf.find("zeroCtrlPostBSManCompatMode") < natural_result_store:
+        fail("BSMan compatibility is consulted before recording natural result")
     for symbol in PREFIX_TRACE_STUBS + POST_TRACE_STUBS:
         start = assembly.find(symbol + ":")
         end = assembly.find(symbol + "End:", start)
@@ -342,9 +355,9 @@ def check_sources(root):
         assembly.find("zeroCtrlPostBSManBranchTraceEnd:")]
     post_state = assembly[assembly.find("zeroCtrlPostStateBranchTrace:"):
         assembly.find("zeroCtrlPostStateBranchTraceEnd:")]
-    if "lw      $t2, %lo(zeroCtrlPostBSManNaturalResult)($t0)" not in post_bs or \
+    if "lw      $t2, %lo(zeroCtrlPostBSManEffectiveResult)($t0)" not in post_bs or \
             "beqz    $t2, 8f" not in post_bs:
-        fail("post-BSMan result branch does not use the saved natural result")
+        fail("post-BSMan result branch does not use the effective result")
     if "$v0" in post_bs or "lbu" in post_bs:
         fail("post-BSMan result branch modifies or reconstructs the state byte")
     if "lw      $v0, %lo(zeroCtrlPostStateDelayValue)" not in post_state:
