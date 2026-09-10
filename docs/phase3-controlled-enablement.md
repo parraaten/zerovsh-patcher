@@ -918,3 +918,173 @@ assembly check pass; a PSPDEV build and PSP-1000 run remain required. The
 VshBridge call shape and raw tests are proven statically, but private PAF,
 VshBridge, and virtual-target semantics remain unresolved. Analyze the T13
 natural counters before considering any additional compatibility behavior.
+
+### T13 result and exact BSMan-not-linked compatibility control
+
+The corrected T13 hardware run proved activation-trace validation and
+installation (`validation=1`, `install=1`). It recorded three natural BSMan
+returns, all nonzero, with the latest raw result `0x8002013A`
+(`SCE_KERNEL_ERROR_LIBRARY_NOT_YET_LINKED`). No state-byte, post-PAF, or
+VshBridge boundary was reached. The error and immediate nonzero exit are
+therefore hardware-proven; the private meaning of BSMan NID `0x23E3A9B6` is
+not.
+
+Zero is structurally the expected false/closed path at this callsite. The
+unchanged instruction at `+0x93B4` is `beq v0,zero,+0x93E0`: zero joins the
+same continuation used after the nonzero-result path clears two state bytes,
+while any nonzero value proceeds through a relocated flag and may exit. This
+proves boolean zero/nonzero consumption and makes zero the narrowest candidate
+for a closed/unavailable result. Calling that value **closed** remains an
+inference about private BSMan semantics; the available binaries do not provide
+its contract.
+
+The next default-disabled experiment is `PSP1000BSManNotLinkedCompat`. It is
+gated by the exact existing PSP-1000/6.61, `PSP1000SlidePlugin`, disabled
+`ClockAndCalendar`, diagnostics, `DangerousCaller58D4`, activation-trace, and
+disabled broad `PSP1000BSManClosedShim` environment. The trace leaf still
+calls the natural resolved BSMan import and stores its untouched result before
+any decision. Only when the new option is enabled and that result is exactly
+`0x8002013A` does it return zero to the original branch. Every other result,
+including every other nonzero error, remains bit-for-bit unchanged. A separate
+effective-result scalar and exact-substitution counter make all three facts
+directly observable.
+
+The conversion is post-call and callsite-only: it neither replaces the BSMan
+import stub nor affects another caller. The original BSMan call runs with its
+natural side effects; the existing wrapper restores the saved return address,
+and the untouched `+0x93B8` LBU remains the jump delay slot before the
+post-BSMan branch tracer. All current state, post-PAF, and VshBridge tracers
+remain unchanged. No PAF, VshBridge, impose, OPEN/CLOSE, model, or other
+compatibility behavior is added.
+
+For the next hardware run, enable `PSP1000BSManNotLinkedCompat` while retaining
+the proven T13 configuration. Require `bs_natural:0x8002013A`, a positive
+`bs_exact_sub` count, and `bs_effective:0x00000000`. The existing downstream
+counters must identify the next natural boundary. If the natural result differs,
+the substitution count must remain zero and the effective result must equal the
+natural result. This experiment must be hardware-reviewed before retaining it;
+the eventual stable implementation should remove the temporary masks, polling,
+and trace-only scalars and retain only compatibility behavior hardware proves
+necessary.
+
+### Decrypted PSP-1000 6.61 binary evidence for T14
+
+The following findings come from decrypted ELF PRXs obtained from the tested
+PSP-1000 firmware. They are research inputs only; no Sony binary is stored in
+this repository.
+
+* **PROVEN BY HARDWARE:** T13 naturally returned `0x8002013A` from
+  `sceBSMan/0x23E3A9B6`, and execution did not reach the downstream state, PAF,
+  or VshBridge boundaries. The real PSP-1000 installation has no
+  `flash0:/kd/bsman.prx`.
+* **PROVEN BY DECRYPTED PSP-1000 BINARY:** `scePaf/0xED83BBCF` is a small,
+  argument-independent getter for a PAF global value. This supports T12's
+  natural zero and successful callsite-only zero-to-one control, but the global
+  must not be named "ready", "present", or otherwise interpreted more narrowly
+  without further evidence.
+* **PROVEN BY DECRYPTED PSP-1000 BINARY:** `scePaf/0xFF03BCD5` exists in the
+  PSP-1000 PAF. SlidePlugin calls it with `a0=0` and `a0=1`; its private
+  semantic identity remains **HYPOTHESIS / UNKNOWN**.
+* **PROVEN BY DECRYPTED PSP-1000 BINARY:** the SlidePlugin CFG independently
+  confirms the complete `+0x93AC..+0x9424` sequence already used by the T13/T14
+  validators: the BSMan zero/nonzero branch, relocation-dependent state LBU,
+  two `0xFF03BCD5` calls and positive-result exits, VshBridge call with
+  `a0=0x8000000D`, nonzero-result exit, and the following virtual call.
+* **PROVEN BY DECRYPTED PSP-1000 BINARY:** VshBridge NID `0x639C3CB3` checks
+  user privilege and forwards its argument to
+  `sceImposeGetParam` (`sceImpose_driver/0xDC3BECFF`). Thus the observed Sony
+  call reaches `sceImposeGetParam(0x8000000D)` through VshBridge.
+* **PROVEN BY DECRYPTED PSP-1000 BINARY:** the PSP-1000 `impose_01g` dispatcher
+  handles several private `0x8000000X` parameters but has no implementation for
+  `0x8000000D`. **STRONG INFERENCE:** its static unsupported-parameter path will
+  return `0x80000107`. This is not hardware-proven until T14 reaches and records
+  the VshBridge return.
+* **STRONG INFERENCE:** the original ZeroVSH hooks for both BSMan
+  `0x23E3A9B6` and VshBridge `0x639C3CB3` identify PSP-Go-specific boundaries.
+  They do not justify enabling either broad hook. T14 changes only the exact
+  post-call BSMan error and must expose all later behavior naturally.
+
+Accordingly, no VshBridge/Impose conversion, model spoof, OPEN/CLOSE forcing,
+or other compatibility behavior belongs in T14. If hardware observes
+`0x80000107`, that result is evidence for a later separately reviewed control;
+if it observes zero, investigation follows Sony's natural `+0x9420` virtual-call
+sequence instead.
+
+### T14 hardware result and T15 state-zero localization
+
+**PROVEN BY HARDWARE:** the corrected T14 trace installed and synchronized
+successfully. Across four activations, PAF `0xED83BBCF` naturally returned zero
+and the existing compatibility converted all four calls to one. BSMan naturally
+returned exact `0x8002013A` four times, the exact-error control substituted all
+four, and the effective result was zero. Sony consequently selected its
+BSMan-zero continuation. The untouched relocated state byte was naturally zero
+on all four observations. The stable mask was `0x00B`; neither post-BSMan PAF
+call nor VshBridge was entered.
+
+Natural state zero is not itself identified as a blocker. The current blocker
+is **HYPOTHESIS / UNKNOWN** somewhere in Sony's alternate
+`+0x957C..+0x95D4` path. The decrypted SlidePlugin independently proves this
+path compares `s2` with a word loaded through the relocated LUI, tests a second
+relocated word, tests a relocated byte, optionally calls the virtual target at
+`0x78(s0)`, and classifies its untouched return around 15, 17, and 18 before
+either exiting or rejoining the existing PAF path at `+0x93EC`.
+
+T15 adds transparent fixed-scalar localization only. It replaces the seven
+natural branches/call at `+0x9580`, `+0x958C`, `+0x959C`, `+0x95A8`,
+`+0x95B8`, `+0x95C0`, and `+0x95CC` only after transactionally validating all
+fourteen runtime words. Every original delay-slot instruction remains in
+place, including both relocation-dependent LUI/load sequences and the Sony
+classification operations. The state-byte branch now saves the natural LBU
+value before its branch and leaves the original relocated LUI delay slot
+untouched rather than reconstructing its immediate.
+
+The cumulative `state_zero_mask` reports:
+
+| Bit | Natural observation |
+| --- | --- |
+| `0x0001` / `0x0002` | `+0x957C` entered / `s2 == loaded word` |
+| `0x0004` / `0x0008` | relocated word tested / nonzero |
+| `0x0010` / `0x0020` | relocated byte tested / nonzero |
+| `0x0040` / `0x0080` | virtual call entered / returned |
+| `0x0100` / `0x0200` | natural return `<15` / `>=15` |
+| `0x0400` / `0x0800` | natural return `<17` / `>=17` |
+| `0x1000` / `0x2000` | natural return `==18` / `!=18` |
+
+Dedicated scalars retain the exact comparison operands, relocated global word
+and byte, virtual target, and untouched virtual return. Counters record state
+path entry, virtual-call entry/return, and rejoin selection. The virtual wrapper
+temporarily saves and restores its scratch registers and stack pointer, changes
+no arguments, invokes the exact target Sony loaded from `0x78(s0)`, captures
+the unmodified return, restores Sony's original return address, and resumes the
+unaltered classification logic.
+
+T15 retains both hardware-proven compatibility controls and all existing
+post-PAF/VshBridge tracers. It performs no result conversion and adds no PAF,
+VshBridge, Impose, model, OPEN/CLOSE, state-byte, or ClockAndCalendar behavior.
+The required hardware configuration remains:
+
+```ini
+ClockAndCalendar = Disabled
+PSP1000ActivationTrace = Enabled
+PSP1000PafPresentCompat = Enabled
+PSP1000BSManNotLinkedCompat = Enabled
+PSP1000BSManClosedShim = Disabled
+```
+
+Return the complete log and observations. The next decision must follow the
+first natural exit proved by these counters; no additional compatibility shim
+is justified before that evidence.
+
+Phase report: changed the shared registration ABI, helper assembly and
+registration, kernel transactional installer/deferred scalar diagnostics,
+safety verifier, and Phase 3 hardware documentation. The technical finding is
+that T14's two narrow controls are hardware-proven to reach the natural
+state-zero alternate path; the location and nature of the next exit remain
+unknown. T15 assumes only the register liveness and destinations proven by the
+decrypted CFG and changes no natural result. Static source and host MIPS
+assembly checks pass; a PSPDEV build remains required. Required hardware work
+is one recovery-protected T15 run with the stated configuration and a complete,
+unedited log. No T15 hardware result is available yet. Unresolved questions are
+which early test or virtual-result class exits, whether `+0x93EC` is rejoined,
+and whether VshBridge is eventually reached. The recommended next phase is to
+review that single run before designing any further compatibility behavior.

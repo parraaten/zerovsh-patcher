@@ -201,6 +201,21 @@ zeroCtrlBSManCallTraceEnd:
 zeroCtrlBSManReturnTrace:
     lui     $t0, %hi(zeroCtrlPostBSManNaturalResult)
     sw      $v0, %lo(zeroCtrlPostBSManNaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlPostBSManCompatMode)
+    lw      $t1, %lo(zeroCtrlPostBSManCompatMode)($t0)
+    beqz    $t1, 20f
+    lui     $t2, 0x8002
+    ori     $t2, $t2, 0x013A
+    bne     $v0, $t2, 20f
+    nop
+    move    $v0, $zero
+    lui     $t0, %hi(zeroCtrlPostBSManSubstitutionHits)
+    lw      $t1, %lo(zeroCtrlPostBSManSubstitutionHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostBSManSubstitutionHits)($t0)
+20:
+    lui     $t0, %hi(zeroCtrlPostBSManEffectiveResult)
+    sw      $v0, %lo(zeroCtrlPostBSManEffectiveResult)($t0)
     lui     $t0, %hi(zeroCtrlPostBSManReturnHits)
     lw      $t1, %lo(zeroCtrlPostBSManReturnHits)($t0)
     addiu   $t1, $t1, 1
@@ -239,8 +254,10 @@ zeroCtrlBSManReturnTraceEnd:
 .type zeroCtrlPostBSManBranchTrace @function
 .ent zeroCtrlPostBSManBranchTrace, 0
 zeroCtrlPostBSManBranchTrace:
-    lui     $t0, %hi(zeroCtrlPostBSManNaturalResult)
-    lw      $t2, %lo(zeroCtrlPostBSManNaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlPostStateNaturalValue)
+    sw      $v0, %lo(zeroCtrlPostStateNaturalValue)($t0)
+    lui     $t0, %hi(zeroCtrlPostBSManEffectiveResult)
+    lw      $t2, %lo(zeroCtrlPostBSManEffectiveResult)($t0)
     lui     $t0, %hi(zeroCtrlPostPathMask)
     lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
     ori     $t1, $t1, 0x0002
@@ -268,10 +285,12 @@ zeroCtrlPostBSManBranchTraceEnd:
 .type zeroCtrlPostStateBranchTrace @function
 .ent zeroCtrlPostStateBranchTrace, 0
 zeroCtrlPostStateBranchTrace:
+    lui     $t0, %hi(zeroCtrlPostStateNaturalValue)
+    lw      $t2, %lo(zeroCtrlPostStateNaturalValue)($t0)
     lui     $t0, %hi(zeroCtrlPostPathMask)
     lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
     ori     $t1, $t1, 0x0008
-    beqz    $v0, 10f
+    beqz    $t2, 10f
     sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
     ori     $t1, $t1, 0x0010
     sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
@@ -285,8 +304,6 @@ zeroCtrlPostStateBranchTrace:
     lui     $t0, %hi(zeroCtrlPostStateZero)
     lw      $t9, %lo(zeroCtrlPostStateZero)($t0)
 11:
-    lui     $t0, %hi(zeroCtrlPostStateDelayValue)
-    lw      $v0, %lo(zeroCtrlPostStateDelayValue)($t0)
     jr      $t9
     nop
 .globl zeroCtrlPostStateBranchTraceEnd
@@ -397,6 +414,218 @@ zeroCtrlPostVshReturnTrace:
 .globl zeroCtrlPostVshReturnTraceEnd
 zeroCtrlPostVshReturnTraceEnd:
 .end zeroCtrlPostVshReturnTrace
+
+/* T15 state-zero path leaves preserve relocated delay slots at each patch. */
+.globl zeroCtrlStateZeroCompareTrace
+.type zeroCtrlStateZeroCompareTrace @function
+.ent zeroCtrlStateZeroCompareTrace, 0
+zeroCtrlStateZeroCompareTrace:
+    lui     $t0, %hi(zeroCtrlStateZeroCompareLeft)
+    sw      $s2, %lo(zeroCtrlStateZeroCompareLeft)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroCompareRight)
+    sw      $v1, %lo(zeroCtrlStateZeroCompareRight)($t0)
+    RECORD_PREFIX_COUNTER zeroCtrlStateZeroEntryHits
+    lui     $t0, %hi(zeroCtrlStateZeroPathMask)
+    lw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    ori     $t1, $t1, 0x0001
+    beq     $s2, $v1, 30f
+    sw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroCompareUnequal)
+    lw      $t9, %lo(zeroCtrlStateZeroCompareUnequal)($t0)
+    b       31f
+    nop
+30:
+    ori     $t1, $t1, 0x0002
+    sw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroCompareEqual)
+    lw      $t9, %lo(zeroCtrlStateZeroCompareEqual)($t0)
+31:
+    jr      $t9
+    nop
+.globl zeroCtrlStateZeroCompareTraceEnd
+zeroCtrlStateZeroCompareTraceEnd:
+.end zeroCtrlStateZeroCompareTrace
+
+.globl zeroCtrlStateZeroWordTrace
+.type zeroCtrlStateZeroWordTrace @function
+.ent zeroCtrlStateZeroWordTrace, 0
+zeroCtrlStateZeroWordTrace:
+    lui     $t0, %hi(zeroCtrlStateZeroWordValue)
+    sw      $v1, %lo(zeroCtrlStateZeroWordValue)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroPathMask)
+    lw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    ori     $t1, $t1, 0x0004
+    bnez    $v1, 32f
+    sw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroWordZero)
+    lw      $t9, %lo(zeroCtrlStateZeroWordZero)($t0)
+    b       33f
+    nop
+32:
+    ori     $t1, $t1, 0x0008
+    sw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroWordNonzero)
+    lw      $t9, %lo(zeroCtrlStateZeroWordNonzero)($t0)
+33:
+    jr      $t9
+    nop
+.globl zeroCtrlStateZeroWordTraceEnd
+zeroCtrlStateZeroWordTraceEnd:
+.end zeroCtrlStateZeroWordTrace
+
+.globl zeroCtrlStateZeroByteTrace
+.type zeroCtrlStateZeroByteTrace @function
+.ent zeroCtrlStateZeroByteTrace, 0
+zeroCtrlStateZeroByteTrace:
+    lui     $t0, %hi(zeroCtrlStateZeroByteValue)
+    sw      $v1, %lo(zeroCtrlStateZeroByteValue)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroPathMask)
+    lw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    ori     $t1, $t1, 0x0010
+    bnez    $v1, 34f
+    sw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroByteZero)
+    lw      $t9, %lo(zeroCtrlStateZeroByteZero)($t0)
+    b       35f
+    nop
+34:
+    ori     $t1, $t1, 0x0020
+    sw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroByteNonzero)
+    lw      $t9, %lo(zeroCtrlStateZeroByteNonzero)($t0)
+35:
+    jr      $t9
+    nop
+.globl zeroCtrlStateZeroByteTraceEnd
+zeroCtrlStateZeroByteTraceEnd:
+.end zeroCtrlStateZeroByteTrace
+
+.globl zeroCtrlStateZeroVCallTrace
+.type zeroCtrlStateZeroVCallTrace @function
+.ent zeroCtrlStateZeroVCallTrace, 0
+zeroCtrlStateZeroVCallTrace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlStateZeroVCallTarget)
+    sw      $v0, %lo(zeroCtrlStateZeroVCallTarget)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroVCallRA)
+    sw      $ra, %lo(zeroCtrlStateZeroVCallRA)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroVCallHits)
+    lw      $t1, %lo(zeroCtrlStateZeroVCallHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlStateZeroVCallHits)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroPathMask)
+    lw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    ori     $t1, $t1, 0x0040
+    sw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    lui     $ra, %hi(zeroCtrlStateZeroVReturnTrace)
+    addiu   $ra, $ra, %lo(zeroCtrlStateZeroVReturnTrace)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 8
+    jr      $v0
+    nop
+.globl zeroCtrlStateZeroVCallTraceEnd
+zeroCtrlStateZeroVCallTraceEnd:
+.end zeroCtrlStateZeroVCallTrace
+
+.globl zeroCtrlStateZeroVReturnTrace
+.type zeroCtrlStateZeroVReturnTrace @function
+.ent zeroCtrlStateZeroVReturnTrace, 0
+zeroCtrlStateZeroVReturnTrace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlStateZeroVCallResult)
+    sw      $v0, %lo(zeroCtrlStateZeroVCallResult)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroVReturnHits)
+    lw      $t1, %lo(zeroCtrlStateZeroVReturnHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlStateZeroVReturnHits)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroPathMask)
+    lw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    ori     $t1, $t1, 0x0080
+    sw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroVCallRA)
+    lw      $ra, %lo(zeroCtrlStateZeroVCallRA)($t0)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 8
+    jr      $ra
+    nop
+.globl zeroCtrlStateZeroVReturnTraceEnd
+zeroCtrlStateZeroVReturnTraceEnd:
+.end zeroCtrlStateZeroVReturnTrace
+
+.macro STATE_ZERO_CLASS name, limit, bit_true, bit_false, true_slot, false_slot, rejoin
+.globl \name
+.type \name @function
+.ent \name, 0
+\name:
+    lui     $t0, %hi(zeroCtrlStateZeroVCallResult)
+    lw      $t2, %lo(zeroCtrlStateZeroVCallResult)($t0)
+    lui     $t0, %hi(zeroCtrlStateZeroPathMask)
+    lw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    slti    $t2, $t2, \limit
+    beqz    $t2, 36f
+    nop
+    ori     $t1, $t1, \bit_true
+    .if \rejoin
+    RECORD_PREFIX_COUNTER zeroCtrlStateZeroRejoinHits
+    .endif
+    lui     $t0, %hi(\true_slot)
+    lw      $t9, %lo(\true_slot)($t0)
+    b       37f
+    nop
+36:
+    ori     $t1, $t1, \bit_false
+    lui     $t0, %hi(\false_slot)
+    lw      $t9, %lo(\false_slot)($t0)
+37:
+    lui     $t0, %hi(zeroCtrlStateZeroPathMask)
+    sw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    jr      $t9
+    nop
+.end \name
+.endm
+
+STATE_ZERO_CLASS zeroCtrlStateZeroClass15Trace, 15, 0x0100, 0x0200, \
+    zeroCtrlStateZeroClass15True, zeroCtrlStateZeroClass15False, 1
+.globl zeroCtrlStateZeroClass15TraceEnd
+zeroCtrlStateZeroClass15TraceEnd:
+STATE_ZERO_CLASS zeroCtrlStateZeroClass17Trace, 17, 0x0400, 0x0800, \
+    zeroCtrlStateZeroClass17True, zeroCtrlStateZeroClass17False, 0
+.globl zeroCtrlStateZeroClass17TraceEnd
+zeroCtrlStateZeroClass17TraceEnd:
+
+.globl zeroCtrlStateZeroClass18Trace
+.type zeroCtrlStateZeroClass18Trace @function
+.ent zeroCtrlStateZeroClass18Trace, 0
+zeroCtrlStateZeroClass18Trace:
+    lui     $t0, %hi(zeroCtrlStateZeroPathMask)
+    lw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    addiu   $t2, $zero, 18
+    bne     $v1, $t2, 38f
+    nop
+    ori     $t1, $t1, 0x1000
+    lui     $t0, %hi(zeroCtrlStateZeroClass18Equal)
+    lw      $t9, %lo(zeroCtrlStateZeroClass18Equal)($t0)
+    b       39f
+    nop
+38:
+    ori     $t1, $t1, 0x2000
+    RECORD_PREFIX_COUNTER zeroCtrlStateZeroRejoinHits
+    lui     $t0, %hi(zeroCtrlStateZeroClass18Unequal)
+    lw      $t9, %lo(zeroCtrlStateZeroClass18Unequal)($t0)
+39:
+    lui     $t0, %hi(zeroCtrlStateZeroPathMask)
+    sw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
+    jr      $t9
+    nop
+.globl zeroCtrlStateZeroClass18TraceEnd
+zeroCtrlStateZeroClass18TraceEnd:
+.end zeroCtrlStateZeroClass18Trace
 
 .globl zeroCtrlSlidePrefixPafCallTrace
 .type zeroCtrlSlidePrefixPafCallTrace @function
@@ -589,6 +818,12 @@ zeroCtrlSlidePrefixPafReturnHits: .space 4
 zeroCtrlPostPathMask: .space 4
 .globl zeroCtrlPostBSManNaturalResult
 zeroCtrlPostBSManNaturalResult: .space 4
+.globl zeroCtrlPostBSManCompatMode
+zeroCtrlPostBSManCompatMode: .space 4
+.globl zeroCtrlPostBSManSubstitutionHits
+zeroCtrlPostBSManSubstitutionHits: .space 4
+.globl zeroCtrlPostBSManEffectiveResult
+zeroCtrlPostBSManEffectiveResult: .space 4
 .globl zeroCtrlPostBSManReturnHits
 zeroCtrlPostBSManReturnHits: .space 4
 .globl zeroCtrlPostBSManZero
@@ -605,6 +840,8 @@ zeroCtrlPostStateZero: .space 4
 zeroCtrlPostStateNonzero: .space 4
 .globl zeroCtrlPostStateDelayValue
 zeroCtrlPostStateDelayValue: .space 4
+.globl zeroCtrlPostStateNaturalValue
+zeroCtrlPostStateNaturalValue: .space 4
 .globl zeroCtrlPostStateZeroHits
 zeroCtrlPostStateZeroHits: .space 4
 .globl zeroCtrlPostStateNonzeroHits
@@ -639,3 +876,51 @@ zeroCtrlPostPafEntry0Hits: .space 4
 zeroCtrlPostPafEntry1Hits: .space 4
 .globl zeroCtrlPostVshEntryHits
 zeroCtrlPostVshEntryHits: .space 4
+.globl zeroCtrlStateZeroPathMask
+zeroCtrlStateZeroPathMask: .space 4
+.globl zeroCtrlStateZeroCompareLeft
+zeroCtrlStateZeroCompareLeft: .space 4
+.globl zeroCtrlStateZeroCompareRight
+zeroCtrlStateZeroCompareRight: .space 4
+.globl zeroCtrlStateZeroWordValue
+zeroCtrlStateZeroWordValue: .space 4
+.globl zeroCtrlStateZeroByteValue
+zeroCtrlStateZeroByteValue: .space 4
+.globl zeroCtrlStateZeroVCallTarget
+zeroCtrlStateZeroVCallTarget: .space 4
+.globl zeroCtrlStateZeroVCallRA
+zeroCtrlStateZeroVCallRA: .space 4
+.globl zeroCtrlStateZeroVCallResult
+zeroCtrlStateZeroVCallResult: .space 4
+.globl zeroCtrlStateZeroEntryHits
+zeroCtrlStateZeroEntryHits: .space 4
+.globl zeroCtrlStateZeroVCallHits
+zeroCtrlStateZeroVCallHits: .space 4
+.globl zeroCtrlStateZeroVReturnHits
+zeroCtrlStateZeroVReturnHits: .space 4
+.globl zeroCtrlStateZeroRejoinHits
+zeroCtrlStateZeroRejoinHits: .space 4
+.globl zeroCtrlStateZeroCompareEqual
+zeroCtrlStateZeroCompareEqual: .space 4
+.globl zeroCtrlStateZeroCompareUnequal
+zeroCtrlStateZeroCompareUnequal: .space 4
+.globl zeroCtrlStateZeroWordZero
+zeroCtrlStateZeroWordZero: .space 4
+.globl zeroCtrlStateZeroWordNonzero
+zeroCtrlStateZeroWordNonzero: .space 4
+.globl zeroCtrlStateZeroByteZero
+zeroCtrlStateZeroByteZero: .space 4
+.globl zeroCtrlStateZeroByteNonzero
+zeroCtrlStateZeroByteNonzero: .space 4
+.globl zeroCtrlStateZeroClass15True
+zeroCtrlStateZeroClass15True: .space 4
+.globl zeroCtrlStateZeroClass15False
+zeroCtrlStateZeroClass15False: .space 4
+.globl zeroCtrlStateZeroClass17True
+zeroCtrlStateZeroClass17True: .space 4
+.globl zeroCtrlStateZeroClass17False
+zeroCtrlStateZeroClass17False: .space 4
+.globl zeroCtrlStateZeroClass18Equal
+zeroCtrlStateZeroClass18Equal: .space 4
+.globl zeroCtrlStateZeroClass18Unequal
+zeroCtrlStateZeroClass18Unequal: .space 4

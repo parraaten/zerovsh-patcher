@@ -51,6 +51,9 @@ typedef struct {
     u32 prefix_paf_return_hits_addr;
     u32 post_path_mask_addr;
     u32 bsman_natural_result_addr;
+    u32 bsman_compat_mode_addr;
+    u32 bsman_substitution_hits_addr;
+    u32 bsman_effective_result_addr;
     u32 bsman_return_hits_addr;
     u32 post_bs_branch_leaf_addr;
     u32 post_bs_branch_leaf_end_addr;
@@ -63,6 +66,7 @@ typedef struct {
     u32 post_state_zero_addr;
     u32 post_state_nonzero_addr;
     u32 post_state_delay_value_addr;
+    u32 post_state_natural_value_addr;
     u32 post_state_zero_hits_addr;
     u32 post_state_nonzero_hits_addr;
     u32 post_paf_call_leaf_addr;
@@ -88,9 +92,49 @@ typedef struct {
     u32 post_paf_entry0_hits_addr;
     u32 post_paf_entry1_hits_addr;
     u32 post_vsh_entry_hits_addr;
+    u32 state_zero_cmp_leaf_addr;
+    u32 state_zero_cmp_leaf_end_addr;
+    u32 state_zero_word_leaf_addr;
+    u32 state_zero_word_leaf_end_addr;
+    u32 state_zero_byte_leaf_addr;
+    u32 state_zero_byte_leaf_end_addr;
+    u32 state_zero_vcall_leaf_addr;
+    u32 state_zero_vcall_leaf_end_addr;
+    u32 state_zero_vreturn_leaf_addr;
+    u32 state_zero_vreturn_leaf_end_addr;
+    u32 state_zero_class15_leaf_addr;
+    u32 state_zero_class15_leaf_end_addr;
+    u32 state_zero_class17_leaf_addr;
+    u32 state_zero_class17_leaf_end_addr;
+    u32 state_zero_class18_leaf_addr;
+    u32 state_zero_class18_leaf_end_addr;
+    u32 state_zero_path_mask_addr;
+    u32 state_zero_cmp_left_addr;
+    u32 state_zero_cmp_right_addr;
+    u32 state_zero_word_value_addr;
+    u32 state_zero_byte_value_addr;
+    u32 state_zero_vcall_target_addr;
+    u32 state_zero_vcall_ra_addr;
+    u32 state_zero_vcall_result_addr;
+    u32 state_zero_entry_hits_addr;
+    u32 state_zero_vcall_hits_addr;
+    u32 state_zero_vreturn_hits_addr;
+    u32 state_zero_rejoin_hits_addr;
+    u32 state_zero_cmp_equal_addr;
+    u32 state_zero_cmp_unequal_addr;
+    u32 state_zero_word_zero_addr;
+    u32 state_zero_word_nonzero_addr;
+    u32 state_zero_byte_zero_addr;
+    u32 state_zero_byte_nonzero_addr;
+    u32 state_zero_class15_true_addr;
+    u32 state_zero_class15_false_addr;
+    u32 state_zero_class17_true_addr;
+    u32 state_zero_class17_false_addr;
+    u32 state_zero_class18_equal_addr;
+    u32 state_zero_class18_unequal_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 336 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 512 ? 1 : -1];
 
 #endif

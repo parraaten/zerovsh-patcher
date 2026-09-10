@@ -407,3 +407,59 @@ assuming the relocated immediate, replaces only the branch at `+0x93B4`, and
 leaves the runtime LBU in the jump delay slot. Its branch tracer decides from
 the separately saved natural BSMan result and preserves the LBU-produced `v0`.
 Require `validation=1 install=1` before interpreting any T13 counters.
+
+The corrected T13 run passed both checks. All three natural BSMan returns were
+nonzero, the latest was `0x8002013A` (library not yet linked), and no downstream
+state, PAF, or VshBridge boundary was reached.
+
+## T14 — exact post-call BSMan not-linked control
+
+Retain the corrected T13 configuration and keep the broad
+`PSP1000BSManClosedShim=Disabled`. Enable only:
+
+```ini
+PSP1000BSManNotLinkedCompat = Enabled
+```
+
+The natural `sceBSMan/0x23E3A9B6` call still executes. The wrapper records its
+untouched result, converts only exact `0x8002013A` to effective zero, and leaves
+every other result unchanged. Zero is proven to select the callsite's boolean
+false continuation, but interpreting it as private BSMan CLOSED semantics
+remains an inference.
+
+Require `bs_natural:0x8002013A`, `bs_exact_sub` greater than zero, and
+`bs_effective:0x00000000`. Then interpret the unchanged state, post-PAF, and
+VshBridge counters exactly as in T13 to locate the next natural blocker. If the
+raw result differs, require zero substitutions and an effective result equal to
+the natural result. Do not enable the broad BSMan stub, or add any PAF,
+VshBridge, impose, OPEN/CLOSE, or model compatibility.
+
+Decrypted PSP-1000 binaries make `0x80000107` the **STRONG INFERENCE** for an
+eventual VshBridge return: NID `0x639C3CB3` forwards `0x8000000D` to
+`sceImposeGetParam`, while the PSP-1000 impose dispatcher does not implement
+that private parameter. It remains unproven until the unchanged T14 tracer
+observes it on hardware. Record whether the state path, both `0xFF03BCD5`
+calls, VshBridge, and the `+0x9420` virtual call are reached; do not convert the
+predicted error in this test.
+
+T14 is **PROVEN BY HARDWARE**: all four natural BSMan results were
+`0x8002013A`, all four exact substitutions produced effective zero, Sony took
+the zero continuation, and the natural relocated state byte was zero four
+times. No post-BSMan PAF or VshBridge call was reached. State zero is not yet a
+proven blocker; the next boundary is unknown within the alternate Sony path.
+
+## T15 — transparent state-zero alternate-path localization
+
+Keep the complete T14 configuration unchanged. Require activation validation,
+installation, and cache synchronization to remain one. The `state_zero_mask`,
+exact comparison/global values, virtual target/result, and entry/call/return/
+rejoin counters localize the natural `+0x957C..+0x95D4` path. All seven patched
+sites are transactionally matched against the decrypted CFG, and every original
+relocated instruction and branch delay slot remains in place.
+
+Determine whether the two early word/byte tests exit, whether the natural
+virtual call enters and returns, and whether its untouched result follows the
+`<15`, `15/16`, `17`, `18`, or other classification route. If the path rejoins
+`+0x93EC`, interpret the unchanged post-PAF and VshBridge tracers immediately.
+Do not convert any newly observed value or enable any additional compatibility
+behavior during T15.
