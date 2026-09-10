@@ -1203,3 +1203,46 @@ either actionable raw enumeration failure values or the owner, stable offset,
 and ten-word fingerprint. After success, the recommended next phase remains
 offline correlation against the matching decrypted PSP-1000 PRX before any
 new compatibility experiment.
+
+### T16.2 hardware result and T16.3 fixed-candidate lookup
+
+**PROVEN BY HARDWARE:** T16.2 reached the resolver with the unchanged natural
+virtual result of 15, but `sceKernelModuleCount()` returned `0x8002013A`
+(`SCE_KERNEL_ERROR_LIBRARY_NOT_YET_LINKED`). The resolver exited immediately.
+The logged `capacity=0` was the untouched value before capacity calculation,
+and `list_result=0` was the untouched diagnostic value:
+`sceKernelGetModuleList()` was never called. This proves failure of the
+T16.2 module-count call on the tested hardware; it proves nothing about the
+target's owner. **STRONG INFERENCE:** the static ModuleCount import is not
+linked. Direct import-stub words have not been captured, so that interpretation
+is not promoted to hardware proof. The earlier address-lookup failure having
+the same cause remains **HYPOTHESIS / UNKNOWN**.
+
+T16.3 removes ModuleCount, module-list, UID, and address lookup from this
+resolver. It reuses only the `sceKernelFindModuleByName()` path already used by
+working PSP-1000 activation instrumentation, against exactly six fixed Sony UI
+candidates: `scePaf_Module`, `sceVshCommonGui_Module`, `vsh_module`,
+`slide_plugin_module`, `impose_plugin_module`, and
+`launcher_plugin_module`. Missing candidates are normal. A non-null result must
+be an aligned KSEG0 RAM pointer before any `SceModule2` field is read.
+
+The resolver counts present candidates and text-containing candidates, and
+requires exactly one containing range. Zero produces `NO_KNOWN_OWNER`; more
+than one produces `AMBIGUOUS_OWNER`; a suspicious returned pointer produces
+`INVALID_CANDIDATE_POINTER`. Only the unique owner proceeds through the
+existing segment and complete ten-word text/segment bounds checks. The compact
+result is now:
+
+```text
+[state-zero-vcall-resolve] attempted=1 target=0x........ candidates_found=... containing_candidates=... owner_found=... text_valid=... segment_valid=... fingerprint_valid=... reason=NAME(...)
+```
+
+On success the existing owner, stable offset, segment, and ten-word code
+records follow. T16.3 performs no general enumeration, arbitrary scan,
+target-derived read before full validation, import experiment, compatibility
+change, new thread, or hot-path modification. The required hardware test is
+one recovery-protected run with the unchanged configuration and complete log.
+If no fixed candidate owns the target, the next decision should use that result
+rather than expanding the runtime list speculatively. If ownership succeeds,
+the next phase is offline correlation with the matching decrypted PSP-1000 ELF;
+no new compatibility behavior is justified first.

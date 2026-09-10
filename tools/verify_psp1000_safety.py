@@ -452,17 +452,32 @@ def check_sources(root):
     owner_capture = kernel[kernel.find(
         "static void zeroCtrlCaptureStateZeroVCallOwner"):
         kernel.find("static unsigned int zeroCtrlParseTriggerMode")]
-    if "module_count = sceKernelModuleCount()" not in owner_capture or \
-            "sceKernelGetModuleList(capacity, module_ids)" not in owner_capture or \
-            "if (capacity > STATE_ZERO_VCALL_MODULE_LIMIT)" not in owner_capture or \
-            "sceKernelFindModuleByUID(module_ids[i])" not in owner_capture or \
+    expected_candidates = (
+        '"scePaf_Module"', '"sceVshCommonGui_Module"', '"vsh_module"',
+        '"slide_plugin_module"', '"impose_plugin_module"',
+        '"launcher_plugin_module"')
+    candidate_list = kernel[kernel.find(
+        "static const char *state_zero_vcall_candidates[]"):
+        kernel.find("};", kernel.find(
+            "static const char *state_zero_vcall_candidates[]"))]
+    if any(candidate_list.count(name) != 1 for name in expected_candidates) or \
+            candidate_list.count('"') != len(expected_candidates) * 2 or \
+            "sizeof(state_zero_vcall_candidates[0])" not in owner_capture or \
+            "sceKernelFindModuleByName(" not in owner_capture or \
             "target - candidate->text_addr <=" not in owner_capture or \
             "target - start <= size - sizeof(unsigned int)" not in owner_capture:
-        fail("T16.1 ownership lacks bounded module enumeration/text/segment checks")
-    if "list_result > 0" in owner_capture or \
-            "module_count * sizeof" in owner_capture or \
-            "for (i = 0; i < (unsigned int)capacity; i++)" not in owner_capture:
-        fail("T16.2 misinterprets module-list capacity or return semantics")
+        fail("T16.3 ownership lacks its fixed candidate/text/segment checks")
+    if any(call in owner_capture for call in (
+            "sceKernelModuleCount(", "sceKernelGetModuleList(",
+            "sceKernelFindModuleByUID(", "sceKernelFindModuleByAddress(")):
+        fail("T16.3 uses a prohibited module lookup")
+    pointer_validation = owner_capture.find("candidate_addr < 0x88000000")
+    first_metadata_read = owner_capture.find("candidate->text_size")
+    if pointer_validation < 0 or first_metadata_read <= pointer_validation:
+        fail("T16.3 dereferences candidate metadata before pointer validation")
+    if "state_zero_vcall_containing_candidates != 1" not in owner_capture or \
+            "ZERO_VCALL_RESOLVE_AMBIGUOUS_OWNER" not in owner_capture:
+        fail("T16.3 does not fail closed on ambiguous candidate ownership")
     first_read = owner_capture.find("_lw(target +")
     fingerprint_validation = owner_capture.find(
         "target - slide_diag.state_zero_vcall_segment_addr >")
@@ -482,9 +497,8 @@ def check_sources(root):
             "if (!observed_state_zero_vcall_owner)"))]
     if "if (target != 0 && returns != 0)" not in resolve_gate or \
             "[state-zero-vcall-resolve] attempted=1" not in resolve_gate or \
-            "state_zero_vcall_module_count" not in resolve_gate or \
-            "state_zero_vcall_module_capacity" not in resolve_gate or \
-            "state_zero_vcall_list_result" not in resolve_gate or \
+            "state_zero_vcall_candidates_found" not in resolve_gate or \
+            "state_zero_vcall_containing_candidates" not in resolve_gate or \
             "if (slide_diag.state_zero_vcall_fingerprint_valid)" not in resolve_gate:
         fail("T16.1 resolution is not gated by target/return or lacks status gating")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:

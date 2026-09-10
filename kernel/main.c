@@ -99,7 +99,6 @@ static long b_level;
 #define VSH_CODE_CAPTURE_BEFORE 0x80
 #define VSH_CODE_CAPTURE_AFTER  0x100
 #define STATE_ZERO_VCALL_CODE_WORDS 10
-#define STATE_ZERO_VCALL_MODULE_LIMIT 128
 #define VSH_CODE_CAPTURE_BYTES  (VSH_CODE_CAPTURE_BEFORE + VSH_CODE_CAPTURE_AFTER)
 #define VSH_CODE_CAPTURE_WORDS  (VSH_CODE_CAPTURE_BYTES / sizeof(unsigned int))
 #define VSH_REFERENCE_LIMIT     32
@@ -359,9 +358,8 @@ typedef struct {
     int state_zero_vcall_segment_valid;
     int state_zero_vcall_fingerprint_valid;
     int state_zero_vcall_resolve_reason;
-    int state_zero_vcall_module_count;
-    int state_zero_vcall_module_capacity;
-    int state_zero_vcall_list_result;
+    unsigned int state_zero_vcall_candidates_found;
+    unsigned int state_zero_vcall_containing_candidates;
     unsigned int state_zero_vcall_target;
     char state_zero_vcall_module[28];
     unsigned int state_zero_vcall_text_addr;
@@ -430,10 +428,20 @@ static int zeroCtrlCreateSlideDiagnosticsThread(void);
 
 enum ZeroCtrlStateZeroVCallResolveReason {
     ZERO_VCALL_RESOLVE_NONE = 0,
-    ZERO_VCALL_RESOLVE_MODULE_LIST_FAILED,
-    ZERO_VCALL_RESOLVE_OWNER_NOT_FOUND,
+    ZERO_VCALL_RESOLVE_NO_KNOWN_OWNER,
+    ZERO_VCALL_RESOLVE_AMBIGUOUS_OWNER,
+    ZERO_VCALL_RESOLVE_INVALID_CANDIDATE_POINTER,
     ZERO_VCALL_RESOLVE_SEGMENT_NOT_FOUND,
     ZERO_VCALL_RESOLVE_FINGERPRINT_RANGE_INVALID
+};
+
+static const char *state_zero_vcall_candidates[] = {
+    "scePaf_Module",
+    "sceVshCommonGui_Module",
+    "vsh_module",
+    "slide_plugin_module",
+    "impose_plugin_module",
+    "launcher_plugin_module"
 };
 
 /*
@@ -442,48 +450,44 @@ enum ZeroCtrlStateZeroVCallResolveReason {
  * until both the module text range and one reported segment contain it.
  */
 static void zeroCtrlCaptureStateZeroVCallOwner(unsigned int target) {
-    SceUID module_ids[STATE_ZERO_VCALL_MODULE_LIMIT];
     SceModule2 *owner = NULL;
     unsigned int bytes = sizeof(slide_diag.state_zero_vcall_code);
-    int module_count, capacity, list_result;
     unsigned int i, segment_index = 0;
 
     if (slide_diag.state_zero_vcall_resolve_attempted || target == 0) return;
     slide_diag.state_zero_vcall_resolve_attempted = 1;
     slide_diag.state_zero_vcall_target = target;
-    memset(module_ids, 0, sizeof(module_ids));
-    module_count = sceKernelModuleCount();
-    slide_diag.state_zero_vcall_module_count = module_count;
-    if (module_count <= 0) {
-        slide_diag.state_zero_vcall_resolve_reason =
-                ZERO_VCALL_RESOLVE_MODULE_LIST_FAILED;
-        return;
-    }
-    capacity = module_count;
-    if (capacity > STATE_ZERO_VCALL_MODULE_LIMIT)
-        capacity = STATE_ZERO_VCALL_MODULE_LIMIT;
-    slide_diag.state_zero_vcall_module_capacity = capacity;
-    list_result = sceKernelGetModuleList(capacity, module_ids);
-    slide_diag.state_zero_vcall_list_result = list_result;
-    if (list_result < 0) {
-        slide_diag.state_zero_vcall_resolve_reason =
-                ZERO_VCALL_RESOLVE_MODULE_LIST_FAILED;
-        return;
-    }
-    /* Select an owner only through a validated LoadCore UID lookup and text. */
-    for (i = 0; i < (unsigned int)capacity; i++) {
-        SceModule2 *candidate = sceKernelFindModuleByUID(module_ids[i]);
-        if (candidate && candidate->text_size >= sizeof(unsigned int) &&
+
+    for (i = 0; i < sizeof(state_zero_vcall_candidates) /
+            sizeof(state_zero_vcall_candidates[0]); i++) {
+        SceModule2 *candidate = sceKernelFindModuleByName(
+                state_zero_vcall_candidates[i]);
+        unsigned int candidate_addr = (unsigned int)candidate;
+        if (!candidate) continue;
+        slide_diag.state_zero_vcall_candidates_found++;
+        /* SceModule2 metadata returned by LoadCore must be aligned KSEG0 RAM. */
+        if ((candidate_addr & 3) != 0 || candidate_addr < 0x88000000 ||
+                candidate_addr >= 0x8C000000) {
+            slide_diag.state_zero_vcall_resolve_reason =
+                    ZERO_VCALL_RESOLVE_INVALID_CANDIDATE_POINTER;
+            return;
+        }
+        if (candidate->text_size >= sizeof(unsigned int) &&
                 target >= candidate->text_addr &&
                 target - candidate->text_addr <=
                         candidate->text_size - sizeof(unsigned int)) {
             owner = candidate;
-            break;
+            slide_diag.state_zero_vcall_containing_candidates++;
         }
     }
-    if (!owner) {
+    if (slide_diag.state_zero_vcall_containing_candidates == 0) {
         slide_diag.state_zero_vcall_resolve_reason =
-                ZERO_VCALL_RESOLVE_OWNER_NOT_FOUND;
+                ZERO_VCALL_RESOLVE_NO_KNOWN_OWNER;
+        return;
+    }
+    if (slide_diag.state_zero_vcall_containing_candidates != 1) {
+        slide_diag.state_zero_vcall_resolve_reason =
+                ZERO_VCALL_RESOLVE_AMBIGUOUS_OWNER;
         return;
     }
     slide_diag.state_zero_vcall_owner_found = 1;
@@ -537,7 +541,8 @@ static void zeroCtrlCaptureStateZeroVCallOwner(unsigned int target) {
 
 static const char *zeroCtrlStateZeroVCallReasonName(int reason) {
     static const char *names[] = {
-        "NONE", "MODULE_LIST_FAILED", "OWNER_NOT_FOUND",
+        "NONE", "NO_KNOWN_OWNER", "AMBIGUOUS_OWNER",
+        "INVALID_CANDIDATE_POINTER",
         "SEGMENT_NOT_FOUND", "FINGERPRINT_RANGE_INVALID"
     };
     if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
@@ -2773,14 +2778,14 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     if (slide_diag.state_zero_vcall_resolve_attempted) {
                         snprintf(line, sizeof(line),
                                 "[state-zero-vcall-resolve] attempted=1 "
-                                "target=0x%08X module_count=%d capacity=%d "
-                                "list_result=0x%08X owner_found=%d text_valid=%d "
+                                "target=0x%08X candidates_found=%u "
+                                "containing_candidates=%u owner_found=%d "
+                                "text_valid=%d "
                                 "segment_valid=%d fingerprint_valid=%d "
                                 "reason=%s(%d)\n",
                                 slide_diag.state_zero_vcall_target,
-                                slide_diag.state_zero_vcall_module_count,
-                                slide_diag.state_zero_vcall_module_capacity,
-                                (unsigned int)slide_diag.state_zero_vcall_list_result,
+                                slide_diag.state_zero_vcall_candidates_found,
+                                slide_diag.state_zero_vcall_containing_candidates,
                                 slide_diag.state_zero_vcall_owner_found,
                                 slide_diag.state_zero_vcall_text_valid,
                                 slide_diag.state_zero_vcall_segment_valid,
