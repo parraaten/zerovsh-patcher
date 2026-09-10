@@ -94,6 +94,7 @@ static char psp1000ActivationTrace[16];
 static char psp1000PafPresentCompat[16];
 static char psp1000BSManNotLinkedCompat[16];
 static char psp1000Consumer14020Compat[16];
+static char psp1000Consumer13F6CCompat[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -296,12 +297,18 @@ typedef struct {
     unsigned int consumer_14020_effective_result_addr;
     unsigned int consumer_14020_substitution_hits_addr;
     int consumer_14020_compat_enabled;
+    unsigned int consumer_13f6c_compat_mode_addr;
+    unsigned int consumer_13f6c_effective_result_addr;
+    unsigned int consumer_13f6c_substitution_hits_addr;
+    int consumer_13f6c_compat_enabled;
     int consumer_early_attempted, shared_global_early_valid;
     unsigned int shared_global_early_value;
     int consumer_pre_slide_captured, shared_global_pre_slide_valid;
     unsigned int consumer_pre_slide_hits[2], consumer_pre_slide_result[2];
     unsigned int consumer_14020_pre_slide_effective;
     unsigned int consumer_14020_pre_slide_substitutions;
+    unsigned int consumer_13f6c_pre_slide_effective;
+    unsigned int consumer_13f6c_pre_slide_substitutions;
     unsigned int shared_global_pre_slide_value;
     int consumer_guard_reason;
     unsigned int consumer_vsh_text, consumer_vsh_text_size;
@@ -348,6 +355,9 @@ enum zeroCtrlConsumerGuardReason {
     ZERO_CONSUMER_GUARD_CALLSITE_14020_COMPAT_MODE_RANGE_INVALID,
     ZERO_CONSUMER_GUARD_CALLSITE_14020_EFFECTIVE_RESULT_RANGE_INVALID,
     ZERO_CONSUMER_GUARD_CALLSITE_14020_SUBSTITUTION_HITS_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_COMPAT_MODE_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_EFFECTIVE_RESULT_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_SUBSTITUTION_HITS_RANGE_INVALID,
     ZERO_CONSUMER_GUARD_REPLACEMENT_TARGET_MISMATCH
 };
 
@@ -371,6 +381,9 @@ static const char *zeroCtrlConsumerGuardReasonName(int reason) {
         "CALLSITE_14020_COMPAT_MODE_RANGE_INVALID",
         "CALLSITE_14020_EFFECTIVE_RESULT_RANGE_INVALID",
         "CALLSITE_14020_SUBSTITUTION_HITS_RANGE_INVALID",
+        "CALLSITE_13F6C_COMPAT_MODE_RANGE_INVALID",
+        "CALLSITE_13F6C_EFFECTIVE_RESULT_RANGE_INVALID",
+        "CALLSITE_13F6C_SUBSTITUTION_HITS_RANGE_INVALID",
         "REPLACEMENT_TARGET_MISMATCH"
     };
     if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
@@ -1494,6 +1507,9 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(consumer_14020_compat_mode_addr);
     CHECK_POST_SCALAR(consumer_14020_effective_result_addr);
     CHECK_POST_SCALAR(consumer_14020_substitution_hits_addr);
+    CHECK_POST_SCALAR(consumer_13f6c_compat_mode_addr);
+    CHECK_POST_SCALAR(consumer_13f6c_effective_result_addr);
+    CHECK_POST_SCALAR(consumer_13f6c_substitution_hits_addr);
 #undef CHECK_POST_SCALAR
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -1676,6 +1692,11 @@ void zeroCtrlRegisterBSManClosedShim(
             copied.consumer_14020_effective_result_addr;
     bsman->consumer_14020_substitution_hits_addr =
             copied.consumer_14020_substitution_hits_addr;
+    bsman->consumer_13f6c_compat_mode_addr = copied.consumer_13f6c_compat_mode_addr;
+    bsman->consumer_13f6c_effective_result_addr =
+            copied.consumer_13f6c_effective_result_addr;
+    bsman->consumer_13f6c_substitution_hits_addr =
+            copied.consumer_13f6c_substitution_hits_addr;
     bsman->registered = 1;
 }
 
@@ -2974,6 +2995,15 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->consumer_pre_slide_result[1]);
                 zeroCtrlDiagnosticsText(line);
                 snprintf(line, sizeof(line),
+                        "[vsh-6f84-13f6c-compat] enabled=%d hits=%u "
+                        "natural=0x%08X effective=0x%08X substitutions=%u\n",
+                        bsman->consumer_13f6c_compat_enabled,
+                        bsman->consumer_pre_slide_hits[0],
+                        bsman->consumer_pre_slide_result[0],
+                        bsman->consumer_13f6c_pre_slide_effective,
+                        bsman->consumer_13f6c_pre_slide_substitutions);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
                         "[vsh-6f84-14020-compat] enabled=%d hits=%u "
                         "natural=0x%08X effective=0x%08X substitutions=%u\n",
                         bsman->consumer_14020_compat_enabled,
@@ -4024,6 +4054,18 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
                 bsman->consumer_14020_substitution_hits_addr, 4))
         CONSUMER_GUARD_FAIL(
                 ZERO_CONSUMER_GUARD_CALLSITE_14020_SUBSTITUTION_HITS_RANGE_INVALID);
+    if (!zeroCtrlVshModuleRangeValid(helper,
+                bsman->consumer_13f6c_compat_mode_addr, 4))
+        CONSUMER_GUARD_FAIL(
+                ZERO_CONSUMER_GUARD_CALLSITE_13F6C_COMPAT_MODE_RANGE_INVALID);
+    if (!zeroCtrlVshModuleRangeValid(helper,
+                bsman->consumer_13f6c_effective_result_addr, 4))
+        CONSUMER_GUARD_FAIL(
+                ZERO_CONSUMER_GUARD_CALLSITE_13F6C_EFFECTIVE_RESULT_RANGE_INVALID);
+    if (!zeroCtrlVshModuleRangeValid(helper,
+                bsman->consumer_13f6c_substitution_hits_addr, 4))
+        CONSUMER_GUARD_FAIL(
+                ZERO_CONSUMER_GUARD_CALLSITE_13F6C_SUBSTITUTION_HITS_RANGE_INVALID);
     bsman->consumer_guard_reason = ZERO_CONSUMER_GUARD_NONE;
     for (i = 0; i < 2; i++) bsman->consumer_validation[i] = 1;
     _sw(target, bsman->consumer_target_addr);
@@ -4033,6 +4075,10 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
             bsman->consumer_14020_compat_mode_addr);
     _sw(0xFFFFFFFF, bsman->consumer_14020_effective_result_addr);
     _sw(0, bsman->consumer_14020_substitution_hits_addr);
+    _sw(bsman->consumer_13f6c_compat_enabled ? 1 : 0,
+            bsman->consumer_13f6c_compat_mode_addr);
+    _sw(0xFFFFFFFF, bsman->consumer_13f6c_effective_result_addr);
+    _sw(0, bsman->consumer_13f6c_substitution_hits_addr);
     sceKernelDcacheWritebackInvalidateRange(
             (const void *)bsman->consumer_target_addr, 4);
     for (i = 0; i < 2; i++)
@@ -4047,6 +4093,12 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
             (const void *)bsman->consumer_14020_effective_result_addr, 4);
     sceKernelDcacheWritebackInvalidateRange(
             (const void *)bsman->consumer_14020_substitution_hits_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->consumer_13f6c_compat_mode_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->consumer_13f6c_effective_result_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->consumer_13f6c_substitution_hits_addr, 4);
     bsman->shared_global_early_valid = 1;
     bsman->shared_global_early_value = _lw(slide_diag.vsh_shared_global_addr);
     for (i = 0; i < 2; i++) {
@@ -4090,6 +4142,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             bsman->consumer_14020_effective_result_addr);
     bsman->consumer_14020_pre_slide_substitutions = zeroCtrlReadHelperCounter(
             bsman->consumer_14020_substitution_hits_addr);
+    bsman->consumer_13f6c_pre_slide_effective = zeroCtrlReadHelperCounter(
+            bsman->consumer_13f6c_effective_result_addr);
+    bsman->consumer_13f6c_pre_slide_substitutions = zeroCtrlReadHelperCounter(
+            bsman->consumer_13f6c_substitution_hits_addr);
     {
         SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
         if (bsman->shared_global_early_valid && vsh &&
@@ -4977,6 +5033,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	ini_gets("Experimental", "PSP1000Consumer14020Compat", "Disabled",
 			psp1000Consumer14020Compat,
 			sizeof(psp1000Consumer14020Compat), config);
+	ini_gets("Experimental", "PSP1000Consumer13F6CCompat", "Disabled",
+			psp1000Consumer13F6CCompat,
+			sizeof(psp1000Consumer13F6CCompat), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -5026,6 +5085,12 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0 &&
 			strcmp(psp1000Consumer14020Compat, "Enabled") == 0;
+		slide_diag.bsman.consumer_13f6c_compat_enabled =
+			devkit == 0x06060110 &&
+			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
+			strcmp(psp1000SlideTriggerMode,
+					"DangerousCaller58D4") == 0 &&
+			strcmp(psp1000Consumer13F6CCompat, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,

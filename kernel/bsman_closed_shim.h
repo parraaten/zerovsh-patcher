@@ -167,9 +167,12 @@ typedef struct {
     u32 consumer_14020_compat_mode_addr;
     u32 consumer_14020_effective_result_addr;
     u32 consumer_14020_substitution_hits_addr;
+    u32 consumer_13f6c_compat_mode_addr;
+    u32 consumer_13f6c_effective_result_addr;
+    u32 consumer_13f6c_substitution_hits_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 652 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 664 ? 1 : -1];
 
 #endif

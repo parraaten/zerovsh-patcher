@@ -1712,3 +1712,41 @@ hardware run must compare every existing downstream T23 record, especially
 substitution alone is not success. If downstream behavior is unchanged,
 `+0x14020` alone is insufficient; if the XMB freezes or crashes, the isolated
 substitution is unsafe. Neither outcome authorizes a `+0x13F6C` compatibility.
+
+### T24 hardware result and T25 selective `+0x13F6C` compatibility
+
+**PROVEN BY HARDWARE — T24:** the isolated `+0x14020` control observed natural
+zero, returned effective one, and recorded one substitution. Nevertheless,
+Sony's downstream state remained `field_12C=15`, the state-zero virtual call
+returned 15, and both the field writer and dispatcher recorded zero hits.
+Selective `+0x14020` compatibility is therefore insufficient by itself on the
+tested PSP-1000; execution of the substitution was not a compatibility success.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** the natural false result at
+`vsh_module+0x13F6C` selects argument `0x28`, while an effective true result
+selects `0x828` before the call through the `sceVshBridge/0xC949966C` import at
+`+0x3FAF8`. No unofficial semantic name is assigned to that NID.
+
+T25 adds default-disabled `PSP1000Consumer13F6CCompat`. Under the same PSP-1000
+6.61, SlidePlugin opt-in, disabled ClockAndCalendar, diagnostics, and exact
+`DangerousCaller58D4` gates, its wrapper records natural `$v0` and changes only
+exact zero to effective one. It records effective `$v0` and a dedicated
+substitution count, while arbitrary nonzero values remain exact. Sony's
+unchanged branch at `+0x13F74` selects the argument; neither the branch nor its
+arguments are patched.
+
+The new fixed helper scalars are registered and range-validated before the
+existing all-or-none two-consumer commit. The `+0x13F70` NOP delay slot remains
+untouched. T24's `+0x14020` implementation remains available and unchanged, but
+must be configured Disabled during the isolated T25 run. Deferred diagnostics
+add:
+
+```text
+[vsh-6f84-13f6c-compat] enabled=1 hits=1 natural=0x00000000 effective=0x00000001 substitutions=1
+[vsh-6f84-14020-compat] enabled=0 hits=1 natural=0x00000000 effective=0x00000000 substitutions=0
+```
+
+**HYPOTHESIS / UNKNOWN:** Whether isolated `+0x13F6C` false-to-true is
+sufficient to advance Sony SlidePlugin state on PSP-1000. Substitution alone is
+not success; every downstream T24 state, PAF/VshBridge, field-writer, and
+dispatcher record must be compared before considering any later combined test.

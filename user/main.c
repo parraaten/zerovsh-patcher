@@ -260,6 +260,9 @@ extern volatile unsigned int zeroCtrlConsumer14020NaturalResult;
 extern volatile unsigned int zeroCtrlConsumer14020CompatMode;
 extern volatile unsigned int zeroCtrlConsumer14020EffectiveResult;
 extern volatile unsigned int zeroCtrlConsumer14020SubstitutionHits;
+extern volatile unsigned int zeroCtrlConsumer13F6CCompatMode;
+extern volatile unsigned int zeroCtrlConsumer13F6CEffectiveResult;
+extern volatile unsigned int zeroCtrlConsumer13F6CSubstitutionHits;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -591,6 +594,12 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlConsumer14020EffectiveResult;
 	bsmanClosedRegistration.consumer_14020_substitution_hits_addr =
 			(u32)&zeroCtrlConsumer14020SubstitutionHits;
+	bsmanClosedRegistration.consumer_13f6c_compat_mode_addr =
+			(u32)&zeroCtrlConsumer13F6CCompatMode;
+	bsmanClosedRegistration.consumer_13f6c_effective_result_addr =
+			(u32)&zeroCtrlConsumer13F6CEffectiveResult;
+	bsmanClosedRegistration.consumer_13f6c_substitution_hits_addr =
+			(u32)&zeroCtrlConsumer13F6CSubstitutionHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

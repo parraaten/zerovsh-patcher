@@ -488,3 +488,32 @@ downstream boundary supports the narrow capability hypothesis; unchanged
 `field_12C=15`, state-zero behavior, and zero dispatcher hits means this
 consumer alone is insufficient. Freeze or crash makes this isolated control
 unsafe. Do not combine it with `+0x13F6C` in this run.
+
+## T25 — selective natural `+0x13F6C` consumer compatibility
+
+Use the complete existing T24 instrumentation and exact callsite controls, but
+isolate the consumer experiment with:
+
+```ini
+ClockAndCalendar = Disabled
+PSP1000SlidePlugin = Enabled
+PSP1000SlideTriggerMode = DangerousCaller58D4
+PSP1000Diagnostics = Enabled
+PSP1000SonyStartTrace = Enabled
+PSP1000SelectiveSlideTrigger58D4 = Disabled
+PSP1000BSManClosedShim = Disabled
+PSP1000ActivationTrace = Enabled
+PSP1000PafPresentCompat = Enabled
+PSP1000BSManNotLinkedCompat = Enabled
+PSP1000Consumer13F6CCompat = Enabled
+PSP1000Consumer14020Compat = Disabled
+```
+
+Require the 13F6C record to show natural zero, effective one, and one
+substitution. Simultaneously require the 14020 record to show disabled, natural
+zero, effective zero, and zero substitutions. Compare all prefix/post-BSMan,
+state-zero, topmenu, field-writer, dispatcher, post-PAF, and post-VshBridge
+records with T23/T24. State advancement is strong evidence only after the exact
+changed boundary is identified. Unchanged state proves isolated 13F6C is
+insufficient; freeze or crash makes it unsafe. Do not enable both consumer
+compatibilities in T25.

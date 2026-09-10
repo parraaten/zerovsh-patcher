@@ -66,6 +66,11 @@ T24_SCALARS = (
     "zeroCtrlConsumer14020EffectiveResult",
     "zeroCtrlConsumer14020SubstitutionHits",
 )
+T25_SCALARS = (
+    "zeroCtrlConsumer13F6CCompatMode",
+    "zeroCtrlConsumer13F6CEffectiveResult",
+    "zeroCtrlConsumer13F6CSubstitutionHits",
+)
 
 
 def fail(message):
@@ -843,8 +848,23 @@ def check_sources(root):
             consumer_stub.count("$v0") != 1 or any(token in consumer_stub for token in
             ("sceIo", "Alloc", "malloc")):
         fail("T23 wrapper has an extra call or transforms natural v0")
-    if assembly.count("CONSUMER_6F84_TRACE zeroCtrlConsumer13F6CTrace") != 1:
-        fail("T24 changed the pure T23 13F6C wrapper")
+    compat_13f6c = assembly[assembly.find("zeroCtrlConsumer13F6CTrace:"):
+        assembly.find("zeroCtrlConsumer13F6CTraceEnd:")]
+    for token in ("jalr    $t2", "zeroCtrlConsumer13F6CNaturalResult",
+            "zeroCtrlConsumer13F6CCompatMode", "beqz    $t1, 63f",
+            "bnez    $v0, 63f", "addiu   $v0, $zero, 1",
+            "zeroCtrlConsumer13F6CSubstitutionHits",
+            "zeroCtrlConsumer13F6CEffectiveResult"):
+        if token not in compat_13f6c:
+            fail("T25 13F6C wrapper lacks " + token)
+    mode_bypass_13 = compat_13f6c.find("beqz    $t1, 63f")
+    natural_bypass_13 = compat_13f6c.find("bnez    $v0, 63f")
+    substitution_13 = compat_13f6c.find("addiu   $v0, $zero, 1")
+    no_substitute_13 = compat_13f6c.find("\n63:")
+    if min(mode_bypass_13, natural_bypass_13, substitution_13,
+            no_substitute_13) < 0 or not (mode_bypass_13 < natural_bypass_13 <
+            substitution_13 < no_substitute_13):
+        fail("T25 source does not route both bypasses around substitution to 63")
     compat_stub = assembly[assembly.find("zeroCtrlConsumer14020Trace:"):
         assembly.find("zeroCtrlConsumer14020TraceEnd:")]
     for token in ("jalr    $t2", "zeroCtrlConsumer14020NaturalResult",
@@ -892,6 +912,9 @@ def check_sources(root):
         "CALLSITE_14020_COMPAT_MODE_RANGE_INVALID",
         "CALLSITE_14020_EFFECTIVE_RESULT_RANGE_INVALID",
         "CALLSITE_14020_SUBSTITUTION_HITS_RANGE_INVALID",
+        "CALLSITE_13F6C_COMPAT_MODE_RANGE_INVALID",
+        "CALLSITE_13F6C_EFFECTIVE_RESULT_RANGE_INVALID",
+        "CALLSITE_13F6C_SUBSTITUTION_HITS_RANGE_INVALID",
         "REPLACEMENT_TARGET_MISMATCH",
     )
     for reason in guard_reasons:
@@ -940,6 +963,11 @@ def check_sources(root):
             "consumer_14020_substitution_hits_addr"):
         if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
             fail("T24 registration does not validate " + field)
+    for field in ("consumer_13f6c_compat_mode_addr",
+            "consumer_13f6c_effective_result_addr",
+            "consumer_13f6c_substitution_hits_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T25 registration does not validate " + field)
     result_init = consumers_install.find(
         "_sw(0xFFFFFFFF, bsman->consumer_result_addr[i])")
     if result_init < 0 or result_init > consumer_commit or \
@@ -954,8 +982,38 @@ def check_sources(root):
     if "PSP1000Consumer14020Compat = Disabled" not in sample_config or \
             '"PSP1000Consumer14020Compat", "Disabled"' not in kernel:
         fail("T24 compatibility is not default-disabled")
+    if "PSP1000Consumer13F6CCompat = Disabled" not in sample_config or \
+            '"PSP1000Consumer13F6CCompat", "Disabled"' not in kernel:
+        fail("T25 compatibility is not default-disabled")
+    t25_gate = kernel[kernel.find("consumer_13f6c_compat_enabled ="):
+        kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
+            "consumer_13f6c_compat_enabled ="))]
+    for gate in ('devkit == 0x06060110',
+            'strcmp(psp1000Diagnostics, "Enabled") == 0',
+            '"DangerousCaller58D4"',
+            'strcmp(psp1000Consumer13F6CCompat, "Enabled") == 0'):
+        if gate not in t25_gate:
+            fail("T25 compatibility gating lacks " + gate)
+    if "ZERO_TRIGGER_13F6C" in t25_gate:
+        fail("T25 compatibility enables the legacy 13F6C direct trigger")
+    for scalar in T25_SCALARS:
+        if assembly.count(scalar + ": .space 4") != 1:
+            fail("T25 does not define exactly one fixed scalar " + scalar)
+    t25_validation = consumers_install.find(
+        "consumer_13f6c_compat_mode_addr, 4")
+    if t25_validation < 0 or t25_validation > guard_success:
+        fail("T25 scalar validation does not precede transaction success")
+    for initialization in (
+            "_sw(bsman->consumer_13f6c_compat_enabled ? 1 : 0,",
+            "_sw(0xFFFFFFFF, bsman->consumer_13f6c_effective_result_addr)",
+            "_sw(0, bsman->consumer_13f6c_substitution_hits_addr)"):
+        position = consumers_install.find(initialization)
+        if position < guard_success or position > consumer_commit:
+            fail("T25 scalar initialization is outside the guarded transaction")
     if "[vsh-6f84-14020-compat]" not in writer:
         fail("T24 deferred compatibility diagnostic is missing")
+    if "[vsh-6f84-13f6c-compat]" not in writer:
+        fail("T25 deferred compatibility diagnostic is missing")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
     if stub_validation < 0 or caller_proof <= stub_validation or \
@@ -1277,9 +1335,8 @@ def check_t22_consumer_semantics(body, symbol):
         fail(symbol + " transforms or uses natural v0 beyond one store")
 
 
-def check_t24_consumer_semantics(body):
-    """Prove 14020 preserves nonzero v0 and substitutes only exact zero."""
-    symbol = "zeroCtrlConsumer14020Trace"
+def check_selective_consumer_semantics(body, symbol):
+    """Prove a selective consumer preserves nonzero v0 and substitutes zero."""
     forbidden = r"\b(?:at|v1|a[0-3]|t[3-9]|s[0-7]|k[01]|gp|fp)\b"
     set_v0_one = r"\b(?:li\s+v0,\s*1|addiu\s+v0,\s*zero,\s*1)\b"
     if re.search(forbidden, body) or re.search(r"\bjal\b", body):
@@ -1438,7 +1495,7 @@ def check_elf(elf):
             fail(start + " has an empty or reversed linked range")
     if T22_CONSUMER_TARGET not in symbol_addresses:
         fail("missing linked T22 natural-target symbol")
-    for symbol in T24_SCALARS:
+    for symbol in T24_SCALARS + T25_SCALARS:
         if symbol not in symbol_addresses:
             fail("missing linked T24 scalar " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
@@ -1492,10 +1549,9 @@ def check_elf(elf):
                 (not re.search(r"\blw\s+ra,", prefix_trace) or
                  not re.search(r"\bjr\s+ra\b", prefix_trace)):
             fail("post-BSMan VshBridge return trace does not restore ra")
-    check_t22_consumer_semantics(function_body(disassembly,
-        "zeroCtrlConsumer13F6CTrace"), "zeroCtrlConsumer13F6CTrace")
-    check_t24_consumer_semantics(function_body(disassembly,
-        "zeroCtrlConsumer14020Trace"))
+    for symbol in ("zeroCtrlConsumer13F6CTrace",
+            "zeroCtrlConsumer14020Trace"):
+        check_selective_consumer_semantics(function_body(disassembly, symbol), symbol)
 
 
 def check_stub_object(stub_object):
@@ -1510,10 +1566,7 @@ def check_stub_object(stub_object):
             fail(symbol + " does not have two LO16 counter relocations")
     for symbol, _end, counter, result in T22_CONSUMER_WRAPPERS:
         body = function_body(disassembly, symbol)
-        if symbol.endswith("13F6CTrace"):
-            check_t22_consumer_semantics(body, symbol)
-        else:
-            check_t24_consumer_semantics(body)
+        check_selective_consumer_semantics(body, symbol)
         if len(re.findall(r"R_MIPS_HI16\s+" + counter + r"\b", body)) != 1 or \
                 len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
             fail(symbol + " lacks exact dedicated-counter relocations")
@@ -1530,20 +1583,24 @@ def check_stub_object(stub_object):
                     result + r"\b", body):
             fail(symbol + " lacks the unique natural-result store relocation")
         if symbol.endswith("14020Trace"):
+            scalar_prefix = "zeroCtrlConsumer14020"
+        else:
+            scalar_prefix = "zeroCtrlConsumer13F6C"
+        if symbol.endswith(("14020Trace", "13F6CTrace")):
             expected_relocations = {
-                "zeroCtrlConsumer14020CompatMode": (1, 1),
-                "zeroCtrlConsumer14020EffectiveResult": (1, 1),
-                "zeroCtrlConsumer14020SubstitutionHits": (1, 2),
+                scalar_prefix + "CompatMode": (1, 1),
+                scalar_prefix + "EffectiveResult": (1, 1),
+                scalar_prefix + "SubstitutionHits": (1, 2),
             }
             for scalar, (hi_count, lo_count) in expected_relocations.items():
                 if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi_count or \
                         len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo_count:
                     fail(symbol + " has wrong exact relocation counts for " + scalar)
             relocation_uses = (
-                (r"\blw\s+t1,", "zeroCtrlConsumer14020CompatMode", 1),
-                (r"\bsw\s+v0,", "zeroCtrlConsumer14020EffectiveResult", 1),
-                (r"\blw\s+t1,", "zeroCtrlConsumer14020SubstitutionHits", 1),
-                (r"\bsw\s+t1,", "zeroCtrlConsumer14020SubstitutionHits", 1),
+                (r"\blw\s+t1,", scalar_prefix + "CompatMode", 1),
+                (r"\bsw\s+v0,", scalar_prefix + "EffectiveResult", 1),
+                (r"\blw\s+t1,", scalar_prefix + "SubstitutionHits", 1),
+                (r"\bsw\s+t1,", scalar_prefix + "SubstitutionHits", 1),
             )
             for instruction, scalar, count in relocation_uses:
                 tied = instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" + scalar + r"\b"
