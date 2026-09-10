@@ -155,9 +155,16 @@ typedef struct {
     u32 dispatch_case14_first_ra_addr;
     u32 dispatch_case14_last_ra_addr;
     u32 dispatch_case14_ra_changes_addr;
+    u32 consumer_13f6c_leaf_addr;
+    u32 consumer_13f6c_leaf_end_addr;
+    u32 consumer_14020_leaf_addr;
+    u32 consumer_14020_leaf_end_addr;
+    u32 consumer_6f84_target_addr;
+    u32 consumer_13f6c_hits_addr;
+    u32 consumer_14020_hits_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 604 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 632 ? 1 : -1];
 
 #endif

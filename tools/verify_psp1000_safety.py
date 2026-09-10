@@ -652,7 +652,7 @@ def check_sources(root):
             fail("T19 live result is missing case-14 scalar %d" % scalar)
     dispatch_install = kernel[kernel.find(
         "static void zeroCtrlInstallDispatchEntryTrace(void) {"):
-        kernel.find("static void zeroCtrlInstallBSManClosedShim")]
+        kernel.find("static void zeroCtrlInstall6F84ConsumerTraces(void) {")]
     for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
             "vsh->text_size != 0x556C0", "vsh->text_addr + 0x1D7A4",
             "_lw(site) != 0x27BDFFC0", "_lw(site + 4) != 0xAFB20018",
@@ -763,6 +763,54 @@ def check_sources(root):
         if ("bsman->dispatch_entry_pre_slide[%d]" % scalar) not in \
                 writer[pre_slide_record:install_record]:
             fail("T21 pre-slide record is missing snapshot scalar %d" % scalar)
+    consumers_install = kernel[kernel.find(
+        "static void zeroCtrlInstall6F84ConsumerTraces(void) {"):
+        kernel.find("static void zeroCtrlInstallBSManClosedShim")]
+    for token in ("0x13F6C, 0x14020", "0x00000000, 0x0062800B",
+            "vsh->text_addr + 0x6F84", "_lw(callsite[i] + 4) != delays[i]",
+            "zeroCtrlMipsJumpTarget(callsite[i], _lw(callsite[i])) != target",
+            "replacement[i] = 0x0C000000", "_sw(replacement[i], callsite[i])",
+            "(const void *)callsite[i], 4", "shared_global_early_valid = 1",
+            "_lw(slide_diag.vsh_shared_global_addr)"):
+        if token not in consumers_install:
+            fail("T22 consumer transaction is missing " + token)
+    validation = consumers_install.find("consumer_validation[i] = 1")
+    consumer_commit = consumers_install.find("_sw(replacement[i], callsite[i])")
+    if validation < 0 or consumer_commit <= validation or \
+            consumers_install.count("_sw(replacement[i], callsite[i])") != 1:
+        fail("T22 consumer JAL writes are not transactional")
+    if re.search(r"_sw\([^\n]*callsite\[i\]\s*\+\s*4", consumers_install):
+        fail("T22 modifies a consumer delay slot")
+    for word in ("0x8C441620", "0x2483FFFC", "0x38820007",
+            "0x2C630002", "0x2C420001", "0x00621825", "0x14600006",
+            "0x50820001", "0x03E00008", "0x30A200FF"):
+        if word not in consumers_install:
+            fail("T22 does not validate natural +6F84 word " + word)
+    consumer_stub = assembly[assembly.find(".macro CONSUMER_6F84_TRACE"):
+        assembly.find(".endm", assembly.find(".macro CONSUMER_6F84_TRACE"))]
+    for token in ("sw      $t0, 0($sp)", "sw      $t1, 4($sp)",
+            "sw      $t2, 8($sp)", "lw      $t2, %lo(zeroCtrlConsumer6F84Target)",
+            "lw      $t1, 4($sp)", "lw      $t0, 0($sp)",
+            "addiu   $sp, $sp, 12", "jr      $t2", "lw      $t2, -4($sp)"):
+        if token not in consumer_stub:
+            fail("T22 wrapper transparency is missing " + token)
+    if any(token in consumer_stub for token in
+            ("jal ", "jalr", "$ra", "$v0", "sceIo", "Alloc", "malloc")):
+        fail("T22 wrapper calls, changes RA/v0, performs I/O, or allocates")
+    if assembly.count("CONSUMER_6F84_TRACE zeroCtrlConsumer") != 2:
+        fail("T22 must use exactly two dedicated consumer wrappers")
+    if "sceKernelCreateThread" in consumers_install or \
+            re.search(r"_sw\([^\n]*vsh_shared_global", consumers_install):
+        fail("T22 creates a thread or writes the Sony shared global")
+    consumer_early = vsh_record.find("zeroCtrlInstall6F84ConsumerTraces();")
+    if consumer_early < global_capture or consumer_early > early_call:
+        fail("T22 traces are not installed after scans and before early T20")
+    consumer_snapshot = bsman_install.find("consumer_pre_slide_hits[0]")
+    if consumer_snapshot < 0 or consumer_snapshot > t18_later:
+        fail("T22 pre-slide snapshot is not before later trace installation")
+    if writer.find("[vsh-6f84-consumers-install]") < 0 or \
+            writer.find("[vsh-6f84-consumers-pre-slide]") < 0:
+        fail("T22 deferred consumer diagnostics are missing")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")

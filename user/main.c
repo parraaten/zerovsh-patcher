@@ -251,6 +251,10 @@ extern void zeroCtrlDispatchEntryTrace(void), zeroCtrlDispatchEntryTraceEnd(void
 extern volatile unsigned int zeroCtrlDispatchEntryResume, zeroCtrlDispatchEntryHits;
 extern volatile unsigned int zeroCtrlDispatchCase14Hits, zeroCtrlDispatchCase14FirstRA;
 extern volatile unsigned int zeroCtrlDispatchCase14LastRA, zeroCtrlDispatchCase14RAChanges;
+extern void zeroCtrlConsumer13F6CTrace(void), zeroCtrlConsumer13F6CTraceEnd(void);
+extern void zeroCtrlConsumer14020Trace(void), zeroCtrlConsumer14020TraceEnd(void);
+extern volatile unsigned int zeroCtrlConsumer6F84Target;
+extern volatile unsigned int zeroCtrlConsumer13F6CHits, zeroCtrlConsumer14020Hits;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -565,6 +569,13 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.dispatch_case14_first_ra_addr = (u32)&zeroCtrlDispatchCase14FirstRA;
 	bsmanClosedRegistration.dispatch_case14_last_ra_addr = (u32)&zeroCtrlDispatchCase14LastRA;
 	bsmanClosedRegistration.dispatch_case14_ra_changes_addr = (u32)&zeroCtrlDispatchCase14RAChanges;
+	bsmanClosedRegistration.consumer_13f6c_leaf_addr = (u32)zeroCtrlConsumer13F6CTrace;
+	bsmanClosedRegistration.consumer_13f6c_leaf_end_addr = (u32)zeroCtrlConsumer13F6CTraceEnd;
+	bsmanClosedRegistration.consumer_14020_leaf_addr = (u32)zeroCtrlConsumer14020Trace;
+	bsmanClosedRegistration.consumer_14020_leaf_end_addr = (u32)zeroCtrlConsumer14020TraceEnd;
+	bsmanClosedRegistration.consumer_6f84_target_addr = (u32)&zeroCtrlConsumer6F84Target;
+	bsmanClosedRegistration.consumer_13f6c_hits_addr = (u32)&zeroCtrlConsumer13F6CHits;
+	bsmanClosedRegistration.consumer_14020_hits_addr = (u32)&zeroCtrlConsumer14020Hits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

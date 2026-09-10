@@ -696,6 +696,34 @@ zeroCtrlDispatchEntryTrace:
 zeroCtrlDispatchEntryTraceEnd:
 .end zeroCtrlDispatchEntryTrace
 
+.macro CONSUMER_6F84_TRACE name, counter
+.globl \name
+.type \name @function
+.ent \name, 0
+\name:
+    addiu   $sp, $sp, -12
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t2, 8($sp)
+    lui     $t0, %hi(\counter)
+    lw      $t1, %lo(\counter)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(\counter)($t0)
+    lui     $t0, %hi(zeroCtrlConsumer6F84Target)
+    lw      $t2, %lo(zeroCtrlConsumer6F84Target)($t0)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 12
+    jr      $t2
+    lw      $t2, -4($sp)
+.globl \name\()End
+\name\()End:
+.end \name
+.endm
+
+CONSUMER_6F84_TRACE zeroCtrlConsumer13F6CTrace, zeroCtrlConsumer13F6CHits
+CONSUMER_6F84_TRACE zeroCtrlConsumer14020Trace, zeroCtrlConsumer14020Hits
+
 .macro STATE_ZERO_CLASS name, limit, bit_true, bit_false, true_slot, false_slot, rejoin
 .globl \name
 .type \name @function
@@ -1096,3 +1124,9 @@ zeroCtrlDispatchCase14FirstRA: .space 4
 zeroCtrlDispatchCase14LastRA: .space 4
 .globl zeroCtrlDispatchCase14RAChanges
 zeroCtrlDispatchCase14RAChanges: .space 4
+.globl zeroCtrlConsumer6F84Target
+zeroCtrlConsumer6F84Target: .space 4
+.globl zeroCtrlConsumer13F6CHits
+zeroCtrlConsumer13F6CHits: .space 4
+.globl zeroCtrlConsumer14020Hits
+zeroCtrlConsumer14020Hits: .space 4

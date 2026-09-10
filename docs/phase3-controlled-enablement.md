@@ -1531,3 +1531,45 @@ analysis; early case-14 requests require a later experiment moving existing
 T19/T18 observation earlier; and zero pre-slide with nonzero live hits localizes
 activity after the snapshot. Invalid early installation invalidates the early
 counters. No compatibility conclusion follows from T21 alone.
+
+### T21 hardware result and T22 natural `+0x6F84` consumers
+
+**PROVEN BY HARDWARE:** Early T20 installed successfully, while both its
+pre-SlidePlugin and live snapshots reported zero dispatcher entries and zero
+case-14 requests. Thus `vsh_module+0x1D7A4` did not execute from the early
+installation through the observed activation interval. The timing ambiguity is
+resolved, and the `+0x19D` gate is not yet implicated.
+
+T19's later validation failure is an instrumentation interaction, not Sony
+behavior: T20 has already replaced dispatcher words which T19 expects original.
+T22 neither uses nor changes T19.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** `vsh_module+0x6F84` returns true
+exactly when its shared global is 4, 5, 7, or 9. At `+0x13F6C`, that result
+selects `a0=0x828` when true and `a0=0x28` when false. At `+0x14020`, the JAL
+delay slot at `+0x14024` consumes the preceding `+0x6F44` result; the `+0x6F84`
+result is consumed at `+0x14030` and controls the later `0x40` candidate, not
+`0x20`.
+
+T22 replaces only the JAL words at `+0x13F6C` and `+0x14020` with calls to two
+dedicated transparent counters. Both natural targets must be `+0x6F84`; the
+exact delay slots (`NOP` and `movn s0,v1,v0`) remain untouched. Each wrapper
+restores its scratch registers and stack, leaves `$ra` and `$v0` untouched, and
+tail-jumps to Sony's natural predicate, which returns directly to the original
+`PC+8`. No result or bitmask choice is transformed.
+
+Installation follows all original VSH scans and selected `+0x58D4` setup and
+precedes retained early T20 and natural VSH startup. The existing decoded
+shared-global address must be valid in a VSH segment; it is read once at early
+installation and once at the pre-SlidePlugin snapshot and is never written.
+
+```text
+[vsh-6f84-consumers-install] consumer_13f6c_validation=... consumer_13f6c_install=... consumer_13f6c_cache_sync=... consumer_14020_validation=... consumer_14020_install=... consumer_14020_cache_sync=... shared_global_early_valid=... shared_global_early=0x........
+[vsh-6f84-consumers-pre-slide] caller_13f6c_hits=... caller_14020_hits=... shared_global_valid=... shared_global=0x........
+```
+
+Nonzero counts prove only natural execution. A validated observed global plus
+the decrypted predicate establishes the natural result for that snapshot but
+does not justify forcing either consumer. A changing global requires transition
+localization; zero counts move research to the enclosing initializer. T22 adds
+no compatibility and leaves the existing `+0x58D4` substitution unchanged.

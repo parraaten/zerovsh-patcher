@@ -288,10 +288,18 @@ typedef struct {
     unsigned int dispatch_entry_resume_addr, dispatch_entry_scalar_addr[5];
     int dispatch_entry_early_attempted, dispatch_entry_pre_slide_captured;
     unsigned int dispatch_entry_pre_slide[5];
+    int consumer_validation[2], consumer_install[2], consumer_cache_sync[2];
+    unsigned int consumer_leaf_addr[2], consumer_leaf_size[2];
+    unsigned int consumer_target_addr, consumer_hits_addr[2];
+    int consumer_early_attempted, shared_global_early_valid;
+    unsigned int shared_global_early_value;
+    int consumer_pre_slide_captured, shared_global_pre_slide_valid;
+    unsigned int consumer_pre_slide_hits[2], shared_global_pre_slide_value;
     unsigned int state_zero_original[14], state_zero_replacement[7];
 } ZeroCtrlBSManEvidence;
 
 static void zeroCtrlInstallDispatchEntryTrace(void);
+static void zeroCtrlInstall6F84ConsumerTraces(void);
 
 enum zeroCtrlBSManStubForm {
     ZERO_BSMAN_STUB_UNKNOWN = 0,
@@ -1390,6 +1398,13 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(dispatch_case14_first_ra_addr);
     CHECK_POST_SCALAR(dispatch_case14_last_ra_addr);
     CHECK_POST_SCALAR(dispatch_case14_ra_changes_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.consumer_13f6c_leaf_addr,
+                copied.consumer_13f6c_leaf_end_addr) ||
+            !zeroCtrlRegistrationLeafValid(helper, copied.consumer_14020_leaf_addr,
+                copied.consumer_14020_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(consumer_6f84_target_addr);
+    CHECK_POST_SCALAR(consumer_13f6c_hits_addr);
+    CHECK_POST_SCALAR(consumer_14020_hits_addr);
 #undef CHECK_POST_SCALAR
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -1556,6 +1571,15 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->dispatch_entry_scalar_addr[2] = copied.dispatch_case14_first_ra_addr;
     bsman->dispatch_entry_scalar_addr[3] = copied.dispatch_case14_last_ra_addr;
     bsman->dispatch_entry_scalar_addr[4] = copied.dispatch_case14_ra_changes_addr;
+    bsman->consumer_leaf_addr[0] = copied.consumer_13f6c_leaf_addr;
+    bsman->consumer_leaf_size[0] = copied.consumer_13f6c_leaf_end_addr -
+            copied.consumer_13f6c_leaf_addr;
+    bsman->consumer_leaf_addr[1] = copied.consumer_14020_leaf_addr;
+    bsman->consumer_leaf_size[1] = copied.consumer_14020_leaf_end_addr -
+            copied.consumer_14020_leaf_addr;
+    bsman->consumer_target_addr = copied.consumer_6f84_target_addr;
+    bsman->consumer_hits_addr[0] = copied.consumer_13f6c_hits_addr;
+    bsman->consumer_hits_addr[1] = copied.consumer_14020_hits_addr;
     bsman->registered = 1;
 }
 
@@ -1754,6 +1778,8 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         }
     }
     slide_diag.bsman.dispatch_entry_early_attempted = 1;
+    slide_diag.bsman.consumer_early_attempted = 1;
+    zeroCtrlInstall6F84ConsumerTraces();
     zeroCtrlInstallDispatchEntryTrace();
     slide_diag.vsh_module_seen = 1;
 }
@@ -2625,6 +2651,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_dispatch_entry_install_status = 0;
     int observed_dispatch_entry_early_status = 0;
     int observed_dispatch_entry_pre_slide = 0;
+    int observed_consumer_install = 0, observed_consumer_pre_slide = 0;
     char line[256];
     unsigned int i;
 
@@ -2768,6 +2795,35 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled) {
             ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
             unsigned int hits = zeroCtrlReadBSManHits();
+            if (bsman->consumer_early_attempted && !observed_consumer_install) {
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-consumers-install] "
+                        "consumer_13f6c_validation=%d consumer_13f6c_install=%d "
+                        "consumer_13f6c_cache_sync=%d "
+                        "consumer_14020_validation=%d consumer_14020_install=%d "
+                        "consumer_14020_cache_sync=%d "
+                        "shared_global_early_valid=%d shared_global_early=0x%08X\n",
+                        bsman->consumer_validation[0], bsman->consumer_install[0],
+                        bsman->consumer_cache_sync[0], bsman->consumer_validation[1],
+                        bsman->consumer_install[1], bsman->consumer_cache_sync[1],
+                        bsman->shared_global_early_valid,
+                        bsman->shared_global_early_value);
+                zeroCtrlDiagnosticsText(line);
+                observed_consumer_install = 1;
+            }
+            if (bsman->consumer_pre_slide_captured &&
+                    !observed_consumer_pre_slide) {
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-consumers-pre-slide] caller_13f6c_hits=%u "
+                        "caller_14020_hits=%u shared_global_valid=%d "
+                        "shared_global=0x%08X\n",
+                        bsman->consumer_pre_slide_hits[0],
+                        bsman->consumer_pre_slide_hits[1],
+                        bsman->shared_global_pre_slide_valid,
+                        bsman->shared_global_pre_slide_value);
+                zeroCtrlDiagnosticsText(line);
+                observed_consumer_pre_slide = 1;
+            }
             if (bsman->dispatch_entry_early_attempted &&
                     !observed_dispatch_entry_early_status) {
                 snprintf(line, sizeof(line),
@@ -3631,6 +3687,76 @@ static void zeroCtrlInstallDispatchEntryTrace(void) {
     bsman->dispatch_entry_cache_sync = 1;
 }
 
+static void zeroCtrlInstall6F84ConsumerTraces(void) {
+    static const unsigned int offsets[2] = { 0x13F6C, 0x14020 };
+    static const unsigned int delays[2] = { 0x00000000, 0x0062800B };
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int target, callsite[2], replacement[2], i;
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 || !vsh || !helper ||
+            vsh->text_size != 0x556C0 ||
+            !slide_diag.vsh_shared_global_decode_valid ||
+            !slide_diag.vsh_shared_global_segment_valid) return;
+    target = vsh->text_addr + 0x6F84;
+    if (!zeroCtrlVshModuleRangeValid(vsh, target, 0x40) ||
+            !zeroCtrlVshModuleRangeValid(vsh,
+                slide_diag.vsh_shared_global_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->consumer_target_addr, 4) ||
+            (_lw(target) & 0xFFFF0000) != 0x3C020000 ||
+            _lw(target + 4) != 0x8C441620 ||
+            _lw(target + 8) != 0x2483FFFC ||
+            _lw(target + 12) != 0x38820007 ||
+            _lw(target + 16) != 0x2C630002 ||
+            _lw(target + 20) != 0x2C420001 ||
+            _lw(target + 24) != 0x00621825 ||
+            _lw(target + 28) != 0x14600006 ||
+            _lw(target + 32) != 0x00002821 ||
+            _lw(target + 36) != 0x24020009 ||
+            _lw(target + 40) != 0x50820001 ||
+            _lw(target + 44) != 0x24050001 ||
+            _lw(target + 48) != 0x03E00008 ||
+            _lw(target + 52) != 0x30A200FF ||
+            (_lw(target + 56) >> 26) != 2 ||
+            zeroCtrlMipsJumpTarget(target + 56, _lw(target + 56)) !=
+                target + 48 ||
+            _lw(target + 60) != 0x24050001) return;
+    for (i = 0; i < 2; i++) {
+        callsite[i] = vsh->text_addr + offsets[i];
+        if (!zeroCtrlVshModuleRangeValid(vsh, callsite[i], 8) ||
+                !zeroCtrlVshModuleRangeValid(helper, bsman->consumer_leaf_addr[i],
+                    bsman->consumer_leaf_size[i]) ||
+                !zeroCtrlVshModuleRangeValid(helper, bsman->consumer_hits_addr[i], 4) ||
+                (_lw(callsite[i]) >> 26) != 3 ||
+                zeroCtrlMipsJumpTarget(callsite[i], _lw(callsite[i])) != target ||
+                _lw(callsite[i] + 4) != delays[i] ||
+                ((callsite[i] + 4) & 0xF0000000) !=
+                    (bsman->consumer_leaf_addr[i] & 0xF0000000)) return;
+        replacement[i] = 0x0C000000 |
+                ((bsman->consumer_leaf_addr[i] >> 2) & 0x03FFFFFF);
+        if (zeroCtrlMipsJumpTarget(callsite[i], replacement[i]) !=
+                bsman->consumer_leaf_addr[i]) return;
+    }
+    for (i = 0; i < 2; i++) bsman->consumer_validation[i] = 1;
+    _sw(target, bsman->consumer_target_addr);
+    for (i = 0; i < 2; i++) _sw(0, bsman->consumer_hits_addr[i]);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->consumer_target_addr, 4);
+    for (i = 0; i < 2; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->consumer_hits_addr[i], 4);
+    bsman->shared_global_early_valid = 1;
+    bsman->shared_global_early_value = _lw(slide_diag.vsh_shared_global_addr);
+    for (i = 0; i < 2; i++) {
+        _sw(replacement[i], callsite[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)callsite[i], 4);
+        sceKernelIcacheInvalidateRange((const void *)callsite[i], 4);
+        bsman->consumer_install[i] = 1;
+        bsman->consumer_cache_sync[i] = 1;
+    }
+}
+
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     const unsigned int target_nid = 0x23E3A9B6;
     static const char paf_library[] = "scePaf";
@@ -3650,6 +3776,21 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 zeroCtrlReadHelperCounter(
                     bsman->dispatch_entry_scalar_addr[snapshot_index]);
     bsman->dispatch_entry_pre_slide_captured = 1;
+    bsman->consumer_pre_slide_hits[0] =
+            zeroCtrlReadHelperCounter(bsman->consumer_hits_addr[0]);
+    bsman->consumer_pre_slide_hits[1] =
+            zeroCtrlReadHelperCounter(bsman->consumer_hits_addr[1]);
+    {
+        SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+        if (bsman->shared_global_early_valid && vsh &&
+                zeroCtrlVshModuleRangeValid(vsh,
+                    slide_diag.vsh_shared_global_addr, 4)) {
+            bsman->shared_global_pre_slide_valid = 1;
+            bsman->shared_global_pre_slide_value =
+                    _lw(slide_diag.vsh_shared_global_addr);
+        }
+    }
+    bsman->consumer_pre_slide_captured = 1;
     zeroCtrlInstallField12CWriteTrace();
     zeroCtrlInstallCase14Trace();
     zeroCtrlInstallDispatchEntryTrace();
