@@ -453,11 +453,16 @@ def check_sources(root):
         "static void zeroCtrlCaptureStateZeroVCallOwner"):
         kernel.find("static unsigned int zeroCtrlParseTriggerMode")]
     if "module_count = sceKernelModuleCount()" not in owner_capture or \
-            "module_count * sizeof(module_ids[0]), module_ids" not in owner_capture or \
+            "sceKernelGetModuleList(capacity, module_ids)" not in owner_capture or \
+            "if (capacity > STATE_ZERO_VCALL_MODULE_LIMIT)" not in owner_capture or \
             "sceKernelFindModuleByUID(module_ids[i])" not in owner_capture or \
             "target - candidate->text_addr <=" not in owner_capture or \
             "target - start <= size - sizeof(unsigned int)" not in owner_capture:
         fail("T16.1 ownership lacks bounded module enumeration/text/segment checks")
+    if "list_result > 0" in owner_capture or \
+            "module_count * sizeof" in owner_capture or \
+            "for (i = 0; i < (unsigned int)capacity; i++)" not in owner_capture:
+        fail("T16.2 misinterprets module-list capacity or return semantics")
     first_read = owner_capture.find("_lw(target +")
     fingerprint_validation = owner_capture.find(
         "target - slide_diag.state_zero_vcall_segment_addr >")
@@ -477,6 +482,9 @@ def check_sources(root):
             "if (!observed_state_zero_vcall_owner)"))]
     if "if (target != 0 && returns != 0)" not in resolve_gate or \
             "[state-zero-vcall-resolve] attempted=1" not in resolve_gate or \
+            "state_zero_vcall_module_count" not in resolve_gate or \
+            "state_zero_vcall_module_capacity" not in resolve_gate or \
+            "state_zero_vcall_list_result" not in resolve_gate or \
             "if (slide_diag.state_zero_vcall_fingerprint_valid)" not in resolve_gate:
         fail("T16.1 resolution is not gated by target/return or lacks status gating")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:

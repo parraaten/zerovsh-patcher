@@ -359,6 +359,9 @@ typedef struct {
     int state_zero_vcall_segment_valid;
     int state_zero_vcall_fingerprint_valid;
     int state_zero_vcall_resolve_reason;
+    int state_zero_vcall_module_count;
+    int state_zero_vcall_module_capacity;
+    int state_zero_vcall_list_result;
     unsigned int state_zero_vcall_target;
     char state_zero_vcall_module[28];
     unsigned int state_zero_vcall_text_addr;
@@ -442,7 +445,7 @@ static void zeroCtrlCaptureStateZeroVCallOwner(unsigned int target) {
     SceUID module_ids[STATE_ZERO_VCALL_MODULE_LIMIT];
     SceModule2 *owner = NULL;
     unsigned int bytes = sizeof(slide_diag.state_zero_vcall_code);
-    int module_count, list_result;
+    int module_count, capacity, list_result;
     unsigned int i, segment_index = 0;
 
     if (slide_diag.state_zero_vcall_resolve_attempted || target == 0) return;
@@ -450,26 +453,25 @@ static void zeroCtrlCaptureStateZeroVCallOwner(unsigned int target) {
     slide_diag.state_zero_vcall_target = target;
     memset(module_ids, 0, sizeof(module_ids));
     module_count = sceKernelModuleCount();
+    slide_diag.state_zero_vcall_module_count = module_count;
     if (module_count <= 0) {
         slide_diag.state_zero_vcall_resolve_reason =
                 ZERO_VCALL_RESOLVE_MODULE_LIST_FAILED;
         return;
     }
-    if (module_count > STATE_ZERO_VCALL_MODULE_LIMIT)
-        module_count = STATE_ZERO_VCALL_MODULE_LIMIT;
-    list_result = sceKernelGetModuleList(
-            module_count * sizeof(module_ids[0]), module_ids);
+    capacity = module_count;
+    if (capacity > STATE_ZERO_VCALL_MODULE_LIMIT)
+        capacity = STATE_ZERO_VCALL_MODULE_LIMIT;
+    slide_diag.state_zero_vcall_module_capacity = capacity;
+    list_result = sceKernelGetModuleList(capacity, module_ids);
+    slide_diag.state_zero_vcall_list_result = list_result;
     if (list_result < 0) {
         slide_diag.state_zero_vcall_resolve_reason =
                 ZERO_VCALL_RESOLVE_MODULE_LIST_FAILED;
         return;
     }
-    /* Some LoadCore revisions return a count; others report success as zero. */
-    if (list_result > 0 && list_result < module_count)
-        module_count = list_result;
-
     /* Select an owner only through a validated LoadCore UID lookup and text. */
-    for (i = 0; i < (unsigned int)module_count; i++) {
+    for (i = 0; i < (unsigned int)capacity; i++) {
         SceModule2 *candidate = sceKernelFindModuleByUID(module_ids[i]);
         if (candidate && candidate->text_size >= sizeof(unsigned int) &&
                 target >= candidate->text_addr &&
@@ -2771,10 +2773,14 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     if (slide_diag.state_zero_vcall_resolve_attempted) {
                         snprintf(line, sizeof(line),
                                 "[state-zero-vcall-resolve] attempted=1 "
-                                "target=0x%08X owner_found=%d text_valid=%d "
+                                "target=0x%08X module_count=%d capacity=%d "
+                                "list_result=0x%08X owner_found=%d text_valid=%d "
                                 "segment_valid=%d fingerprint_valid=%d "
                                 "reason=%s(%d)\n",
                                 slide_diag.state_zero_vcall_target,
+                                slide_diag.state_zero_vcall_module_count,
+                                slide_diag.state_zero_vcall_module_capacity,
+                                (unsigned int)slide_diag.state_zero_vcall_list_result,
                                 slide_diag.state_zero_vcall_owner_found,
                                 slide_diag.state_zero_vcall_text_valid,
                                 slide_diag.state_zero_vcall_segment_valid,

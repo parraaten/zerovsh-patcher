@@ -1159,3 +1159,47 @@ stable offset, function semantics, and whether an additional decrypted PRX is
 needed remain unresolved. The recommended next phase is offline correlation
 against the matching decrypted PSP-1000 PRX; no new compatibility behavior is
 justified before that result.
+
+### T16.1 hardware result and T16.2 module-list correction
+
+**PROVEN BY HARDWARE:** T16.1 reached its resolver after the unchanged natural
+virtual method returned 15 four times, but stopped before ownership resolution
+with `MODULE_LIST_FAILED(1)`. The status reported `owner_found=0`,
+`text_valid=0`, `segment_valid=0`, and `fingerprint_valid=0`. This establishes
+only a module-list-path failure; it is not evidence about target ownership.
+
+Source review found that T16.1 passed
+`module_count * sizeof(SceUID)` as the first argument to
+`sceKernelGetModuleList()`. The repository declaration describes that argument
+as the list-buffer capacity, and PSPSDK's established helper converts a byte
+buffer size to an entry count before invoking this API. **PROVEN BY SOURCE:**
+T16.1 therefore advertised up to four times the fixed array's actual 128-entry
+capacity. No hardware conclusion can be drawn about what the erroneous call
+did internally.
+
+T16.2 keeps the fixed 128-entry, zero-initialized array, captures the raw
+`sceKernelModuleCount()` result, clamps that count to 128, and passes the
+clamped entry capacity directly to `sceKernelGetModuleList()`. A negative list
+result is failure. The return value is retained for diagnostics but is never
+reinterpreted as an entry count. Enumeration is bounded solely by the clamped
+capacity; zero initialization makes a module-list race that leaves fewer IDs
+conservatively resolve unused entries to no owner rather than exposing
+uninitialized UIDs.
+
+The single resolution record now includes the pre-clamp count, requested entry
+capacity, and raw list result:
+
+```text
+[state-zero-vcall-resolve] attempted=1 target=0x........ module_count=... capacity=... list_result=0x........ owner_found=... text_valid=... segment_valid=... fingerprint_valid=... reason=NAME(...)
+```
+
+All later owner/text/segment/fingerprint checks are unchanged and remain
+read-only. T16.2 changes no T15 wrapper, Sony value, compatibility behavior,
+thread, hook, or patch. Static verification must confirm entry-count capacity,
+the 128-entry iteration bound, raw return handling, and validation-before-read.
+The required hardware work is one recovery-protected run with the unchanged
+configuration and complete log. T16 remains incomplete until that log supplies
+either actionable raw enumeration failure values or the owner, stable offset,
+and ten-word fingerprint. After success, the recommended next phase remains
+offline correlation against the matching decrypted PSP-1000 PRX before any
+new compatibility experiment.
