@@ -433,3 +433,11 @@ VshBridge counters exactly as in T13 to locate the next natural blocker. If the
 raw result differs, require zero substitutions and an effective result equal to
 the natural result. Do not enable the broad BSMan stub, or add any PAF,
 VshBridge, impose, OPEN/CLOSE, or model compatibility.
+
+Decrypted PSP-1000 binaries make `0x80000107` the **STRONG INFERENCE** for an
+eventual VshBridge return: NID `0x639C3CB3` forwards `0x8000000D` to
+`sceImposeGetParam`, while the PSP-1000 impose dispatcher does not implement
+that private parameter. It remains unproven until the unchanged T14 tracer
+observes it on hardware. Record whether the state path, both `0xFF03BCD5`
+calls, VshBridge, and the `+0x9420` virtual call are reached; do not convert the
+predicted error in this test.

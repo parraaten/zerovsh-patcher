@@ -334,6 +334,19 @@ def check_sources(root):
             fail("BSMan return trace lacks exact not-linked conversion: " + required)
     if return_leaf.find("zeroCtrlPostBSManCompatMode") < natural_result_store:
         fail("BSMan compatibility is consulted before recording natural result")
+    exact_t14_flow = re.compile(
+        r"sw\s+\$v0, %lo\(zeroCtrlPostBSManNaturalResult\).*?"
+        r"lw\s+\$t1, %lo\(zeroCtrlPostBSManCompatMode\).*?"
+        r"beqz\s+\$t1, 20f.*?lui\s+\$t2, 0x8002.*?"
+        r"ori\s+\$t2, \$t2, 0x013A.*?bne\s+\$v0, \$t2, 20f.*?"
+        r"move\s+\$v0, \$zero.*?"
+        r"lw\s+\$t1, %lo\(zeroCtrlPostBSManSubstitutionHits\).*?"
+        r"addiu\s+\$t1, \$t1, 1.*?"
+        r"sw\s+\$t1, %lo\(zeroCtrlPostBSManSubstitutionHits\).*?"
+        r"20:.*?sw\s+\$v0, %lo\(zeroCtrlPostBSManEffectiveResult\)",
+        re.S)
+    if not exact_t14_flow.search(return_leaf):
+        fail("BSMan source flow does not isolate substitution to enabled exact match")
     for symbol in PREFIX_TRACE_STUBS + POST_TRACE_STUBS:
         start = assembly.find(symbol + ":")
         end = assembly.find(symbol + "End:", start)
@@ -658,7 +671,64 @@ def require_result_store_relocation(body, function, result_symbol):
     store_relocation = (r"\bsw\s+v0,[^\n]*\n"
                         r"[^\n]*R_MIPS_LO16\s+" + result_symbol + r"\b")
     if len(re.findall(store_relocation, body)) != 1:
-        fail(function + " does not store natural v0 to " + result_symbol)
+        fail(function + " does not store v0 to " + result_symbol)
+
+
+def check_bsman_return_semantics(body, relocatable=False):
+    """Verify the exact T14 post-call transformation, not a v0-use count."""
+    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
+        fail("BSMan return trace uses gp, sp, a call, I/O, or allocation")
+
+    patterns = (
+        r"\bsw\s+v0,",                         # untouched natural result
+        r"\blw\s+t1,",                         # dedicated mode
+        r"\bbeqz\s+t1,",
+        r"\blui\s+t2,\s*0x8002\b",
+        r"\b(?:ori|addiu)\s+t2,\s*t2,\s*0x13a\b",
+        r"\bbne\s+v0,\s*t2,",
+        r"\b(?:move\s+v0,\s*zero|addu\s+v0,\s*zero,\s*zero)\b",
+        r"\blw\s+t1,",                         # substitution counter
+        r"\baddiu\s+t1,\s*t1,\s*1\b",
+        r"\bsw\s+t1,",
+        r"\bsw\s+v0,",                         # effective result
+        r"\blw\s+ra,",
+        r"\bjr\s+ra\b",
+    )
+    cursor = 0
+    for pattern in patterns:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail("BSMan return trace lacks ordered T14 operation " + pattern)
+        cursor += match.end()
+
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    allowed_v0 = (
+        r"\bsw\s+v0,",
+        r"\bbne\s+v0,\s*t2,",
+        r"\b(?:move\s+v0,\s*zero|addu\s+v0,\s*zero,\s*zero)\b",
+    )
+    if any(not any(re.search(pattern, line, re.I) for pattern in allowed_v0)
+            for line in v0_lines):
+        fail("BSMan return trace has an unintended v0 transformation")
+    if sum(bool(re.search(allowed_v0[2], line, re.I)) for line in v0_lines) != 1:
+        fail("BSMan return trace does not have exactly the intended v0=0 operation")
+
+    if relocatable:
+        require_result_store_relocation(body, BSMAN_RETURN_TRACE,
+                "zeroCtrlPostBSManNaturalResult")
+        require_result_store_relocation(body, BSMAN_RETURN_TRACE,
+                "zeroCtrlPostBSManEffectiveResult")
+        if len(re.findall(r"R_MIPS_HI16\s+zeroCtrlPostBSManCompatMode\b",
+                          body)) != 1 or not re.search(
+                r"\blw\s+t1,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPostBSManCompatMode\b", body):
+            fail("BSMan return trace does not load the dedicated compat mode")
+        if len(re.findall(
+                r"R_MIPS_HI16\s+zeroCtrlPostBSManSubstitutionHits\b",
+                body)) != 1 or len(re.findall(
+                r"R_MIPS_LO16\s+zeroCtrlPostBSManSubstitutionHits\b",
+                body)) != 2:
+            fail("BSMan return trace lacks exact substitution-counter relocations")
 
 
 def check_elf(elf):
@@ -670,6 +740,9 @@ def check_elf(elf):
             SONY_EXIT_STUB, SONY_EXIT_STUB_END, BSMAN_STUB, BSMAN_STUB_END,
             BSMAN_RETURN_TRACE, BSMAN_RETURN_TRACE_END,
             *PREFIX_TRACE_STUBS, *POST_TRACE_STUBS,
+            "zeroCtrlPostBSManNaturalResult", "zeroCtrlPostBSManCompatMode",
+            "zeroCtrlPostBSManSubstitutionHits",
+            "zeroCtrlPostBSManEffectiveResult",
             "zeroCtrlPostPafResult0", "zeroCtrlPostPafResult1",
             "zeroCtrlPostVshNaturalResult"):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
@@ -692,11 +765,7 @@ def check_elf(elf):
             r"\b(?:move\s+v0,\s*zero|addu\s+v0,\s*zero,\s*zero)\b", body):
         fail("BSMan leaf does not return deterministic CLOSED=0")
     return_trace = function_body(disassembly, BSMAN_RETURN_TRACE)
-    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b", return_trace):
-        fail("BSMan return trace uses gp, sp, or a call")
-    v0_lines = [line for line in return_trace.splitlines() if re.search(r"\bv0\b", line)]
-    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]):
-        fail("BSMan return trace does not only record the natural v0")
+    check_bsman_return_semantics(return_trace)
     if not re.search(r"\blw\s+ra,", return_trace) or \
             not re.search(r"\bjr\s+ra\b", return_trace):
         fail("BSMan return trace does not restore and return through ra")
@@ -756,20 +825,16 @@ def check_stub_object(stub_object):
                 r"\blw\s+ra,.*R_MIPS_LO16\s+" + BSMAN_CALL_RA + r"\b",
                 return_trace, re.S) or not re.search(r"\bjr\s+ra\b", return_trace):
         fail("BSMan return trace lacks the saved-ra restore relocations")
-    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b", return_trace):
-        fail("BSMan return trace uses gp, sp, or a call")
-    v0_lines = [line for line in return_trace.splitlines() if re.search(r"\bv0\b", line)]
-    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]):
-        fail("BSMan return trace does not only record the natural v0")
+    check_bsman_return_semantics(return_trace, relocatable=True)
     post_bs_branch = function_body(
             disassembly, "zeroCtrlPostBSManBranchTrace")
     if re.search(r"\bv0\b|\blbu\b", post_bs_branch) or \
             not re.search(
-                r"R_MIPS_HI16\s+zeroCtrlPostBSManNaturalResult\b",
+                r"R_MIPS_HI16\s+zeroCtrlPostBSManEffectiveResult\b",
                 post_bs_branch) or \
             not re.search(
                 r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
-                r"zeroCtrlPostBSManNaturalResult\b", post_bs_branch) or \
+                r"zeroCtrlPostBSManEffectiveResult\b", post_bs_branch) or \
             not re.search(r"\bbeqz\s+t2,", post_bs_branch):
         fail("post-BSMan branch trace lacks the exact saved-result decision "
              "or modifies/reconstructs v0")

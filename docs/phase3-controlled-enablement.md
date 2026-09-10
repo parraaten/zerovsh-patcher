@@ -966,3 +966,46 @@ natural result. This experiment must be hardware-reviewed before retaining it;
 the eventual stable implementation should remove the temporary masks, polling,
 and trace-only scalars and retain only compatibility behavior hardware proves
 necessary.
+
+### Decrypted PSP-1000 6.61 binary evidence for T14
+
+The following findings come from decrypted ELF PRXs obtained from the tested
+PSP-1000 firmware. They are research inputs only; no Sony binary is stored in
+this repository.
+
+* **PROVEN BY HARDWARE:** T13 naturally returned `0x8002013A` from
+  `sceBSMan/0x23E3A9B6`, and execution did not reach the downstream state, PAF,
+  or VshBridge boundaries. The real PSP-1000 installation has no
+  `flash0:/kd/bsman.prx`.
+* **PROVEN BY DECRYPTED PSP-1000 BINARY:** `scePaf/0xED83BBCF` is a small,
+  argument-independent getter for a PAF global value. This supports T12's
+  natural zero and successful callsite-only zero-to-one control, but the global
+  must not be named "ready", "present", or otherwise interpreted more narrowly
+  without further evidence.
+* **PROVEN BY DECRYPTED PSP-1000 BINARY:** `scePaf/0xFF03BCD5` exists in the
+  PSP-1000 PAF. SlidePlugin calls it with `a0=0` and `a0=1`; its private
+  semantic identity remains **HYPOTHESIS / UNKNOWN**.
+* **PROVEN BY DECRYPTED PSP-1000 BINARY:** the SlidePlugin CFG independently
+  confirms the complete `+0x93AC..+0x9424` sequence already used by the T13/T14
+  validators: the BSMan zero/nonzero branch, relocation-dependent state LBU,
+  two `0xFF03BCD5` calls and positive-result exits, VshBridge call with
+  `a0=0x8000000D`, nonzero-result exit, and the following virtual call.
+* **PROVEN BY DECRYPTED PSP-1000 BINARY:** VshBridge NID `0x639C3CB3` checks
+  user privilege and forwards its argument to
+  `sceImposeGetParam` (`sceImpose_driver/0xDC3BECFF`). Thus the observed Sony
+  call reaches `sceImposeGetParam(0x8000000D)` through VshBridge.
+* **PROVEN BY DECRYPTED PSP-1000 BINARY:** the PSP-1000 `impose_01g` dispatcher
+  handles several private `0x8000000X` parameters but has no implementation for
+  `0x8000000D`. **STRONG INFERENCE:** its static unsupported-parameter path will
+  return `0x80000107`. This is not hardware-proven until T14 reaches and records
+  the VshBridge return.
+* **STRONG INFERENCE:** the original ZeroVSH hooks for both BSMan
+  `0x23E3A9B6` and VshBridge `0x639C3CB3` identify PSP-Go-specific boundaries.
+  They do not justify enabling either broad hook. T14 changes only the exact
+  post-call BSMan error and must expose all later behavior naturally.
+
+Accordingly, no VshBridge/Impose conversion, model spoof, OPEN/CLOSE forcing,
+or other compatibility behavior belongs in T14. If hardware observes
+`0x80000107`, that result is evidence for a later separately reviewed control;
+if it observes zero, investigation follows Sony's natural `+0x9420` virtual-call
+sequence instead.
