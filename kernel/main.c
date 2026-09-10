@@ -2576,6 +2576,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     };
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
+    int observed_field12c_write_install_status = 0;
     char line[256];
     unsigned int i;
 
@@ -2719,6 +2720,16 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled) {
             ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
             unsigned int hits = zeroCtrlReadBSManHits();
+            if (bsman->attempted && !observed_field12c_write_install_status) {
+                snprintf(line, sizeof(line),
+                        "[topmenu-field12c-write-install] validation=%d "
+                        "install=%d cache_sync=%d\n",
+                        bsman->field12c_write_validation,
+                        bsman->field12c_write_install,
+                        bsman->field12c_write_cache_sync);
+                zeroCtrlDiagnosticsText(line);
+                observed_field12c_write_install_status = 1;
+            }
             if (bsman->attempted && !observed_bsman_attempted) {
                 snprintf(line, sizeof(line),
                         "[bsman] attempted=%d import_found=%d unique_match=%d "
@@ -2988,6 +2999,25 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 slide_diag.topmenu_first[2] != 0 ?
                                     "FORCED_15" : "FIELD_12C");
                         zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[topmenu-field12c-write-live] validation=%d "
+                                "install=%d cache_sync=%d hits=%u "
+                                "first=0x%08X last=0x%08X changes=%u "
+                                "context=0x%08X\n",
+                                bsman->field12c_write_validation,
+                                bsman->field12c_write_install,
+                                bsman->field12c_write_cache_sync,
+                                zeroCtrlReadHelperCounter(
+                                    bsman->field12c_write_scalar_addr[0]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->field12c_write_scalar_addr[1]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->field12c_write_scalar_addr[2]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->field12c_write_scalar_addr[3]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->field12c_write_scalar_addr[4]));
+                        zeroCtrlDiagnosticsText(line);
                         observed_state_zero_vcall_owner = 1;
                     }
                 }
@@ -3079,8 +3109,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             elapsed += delay;
         }
     }
+    zeroCtrlDiagnosticsText("[checkpoint] slide_observation_window_complete\n");
     zeroCtrlWriteSlideCheckpoints(&written);
+    zeroCtrlDiagnosticsText("[checkpoint] final_partition_capture_begin\n");
     zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout);
+    zeroCtrlDiagnosticsText("[checkpoint] final_partition_capture_end\n");
 
     for (i = 0; i < VSH_TRIGGER_COUNT; i++)
         observed_hits[i] = zeroCtrlReadTriggerHits(i);

@@ -566,6 +566,41 @@ def check_sources(root):
         fail("T18 tracer modifies Sony's natural s3 value or v0 context")
     if "sceKernelCreateThread" in field12c_install:
         fail("T18 creates a new thread")
+    install_record = writer.find("[topmenu-field12c-write-install]")
+    bsman_attempt_record = writer.find(
+        "if (bsman->attempted && !observed_field12c_write_install_status)")
+    if min(install_record, bsman_attempt_record) < 0 or \
+            install_record <= bsman_attempt_record:
+        fail("T18.1 install status is not emitted once after the writer attempt")
+    topmenu_record = writer.find("[topmenu-state]")
+    live_record = writer.find("[topmenu-field12c-write-live]")
+    topmenu_owner_done = writer.find(
+        "observed_state_zero_vcall_owner = 1", topmenu_record)
+    if min(topmenu_record, live_record, topmenu_owner_done) < 0 or not (
+            topmenu_record < live_record < topmenu_owner_done):
+        fail("T18.1 live field_12C result is not adjacent to TopMenu observation")
+    for scalar in range(5):
+        if ("bsman->field12c_write_scalar_addr[%d]" % scalar) not in \
+                writer[live_record:topmenu_owner_done]:
+            fail("T18.1 live result is missing field_12C scalar %d" % scalar)
+    window_complete = writer.find(
+        "[checkpoint] slide_observation_window_complete")
+    final_checkpoint_flush = writer.find(
+        "zeroCtrlWriteSlideCheckpoints(&written);", window_complete)
+    capture_begin = writer.find(
+        "[checkpoint] final_partition_capture_begin", window_complete)
+    capture_call = writer.find(
+        "zeroCtrlDiagnosticsCapturePartitions(&slide_diag.delayed_or_timeout)",
+        capture_begin)
+    capture_end = writer.find(
+        "[checkpoint] final_partition_capture_end", capture_call)
+    if min(window_complete, final_checkpoint_flush, capture_begin,
+            capture_call, capture_end) < 0 or not (
+            window_complete < final_checkpoint_flush < capture_begin <
+            capture_call < capture_end):
+        fail("T18.1 finalization checkpoints do not localize the final boundary")
+    if "#define SLIDE_OBSERVATION_WINDOW_US 12000000" not in kernel:
+        fail("T18.1 changed the 12-second observation window")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")
