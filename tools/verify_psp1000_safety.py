@@ -400,9 +400,7 @@ def check_sources(root):
             "lw      $t2, %lo(zeroCtrlPostBSManEffectiveResult)($t0)" not in post_bs or \
             "beqz    $t2, 8f" not in post_bs:
         fail("post-BSMan result branch does not use the effective result")
-    v0_post_bs = [line for line in post_bs.splitlines() if "$v0" in line]
-    if len(v0_post_bs) != 1 or "sw      $v0," not in v0_post_bs[0] or "lbu" in post_bs:
-        fail("post-BSMan result branch modifies or reconstructs the state byte")
+    check_post_bsman_branch_semantics(post_bs)
     if "lw      $t2, %lo(zeroCtrlPostStateNaturalValue)" not in post_state or \
             "beqz    $t2, 10f" not in post_state or "$v0" in post_state:
         fail("post-BSMan state branch does not preserve the natural LUI delay slot")
@@ -727,6 +725,36 @@ def require_result_store_relocation(body, function, result_symbol):
         fail(function + " does not store v0 to " + result_symbol)
 
 
+def check_post_bsman_branch_semantics(body, relocatable=False):
+    """Verify transparent state capture followed by the saved BSMan decision."""
+    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
+        fail("post-BSMan branch trace uses gp, sp, a call, I/O, or allocation")
+    if re.search(r"\blbu\b", body):
+        fail("post-BSMan branch trace reconstructs the relocated state load")
+
+    v0_lines = [line for line in body.splitlines()
+                if re.search(r"\$?v0\b", line)]
+    if len(v0_lines) != 1 or not re.search(r"\bsw\s+\$?v0,", v0_lines[0]):
+        fail("post-BSMan branch trace does not only store the natural state v0")
+
+    natural_store = re.search(r"\bsw\s+\$?v0,", body)
+    effective_load = re.search(r"\blw\s+\$?t2,", body)
+    decision = re.search(r"\bbeqz\s+\$?t2,", body)
+    if not natural_store or not effective_load or not decision or not (
+            natural_store.start() < effective_load.start() < decision.start()):
+        fail("post-BSMan branch trace does not store state before the saved-result decision")
+
+    if relocatable:
+        require_result_store_relocation(body, "zeroCtrlPostBSManBranchTrace",
+                "zeroCtrlPostStateNaturalValue")
+        if len(re.findall(
+                r"R_MIPS_HI16\s+zeroCtrlPostBSManEffectiveResult\b",
+                body)) != 1 or not re.search(
+                r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPostBSManEffectiveResult\b", body):
+            fail("post-BSMan branch trace does not load the effective-result slot")
+
+
 def check_bsman_return_semantics(body, relocatable=False):
     """Verify the exact T14 post-call transformation, not a v0-use count."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -826,12 +854,8 @@ def check_elf(elf):
         prefix_trace = function_body(disassembly, symbol)
         if re.search(r"\bgp\b|\bjalr?\b", prefix_trace):
             fail(symbol + " uses gp or a call")
-        if symbol == "zeroCtrlPostBSManBranchTrace" and \
-                (re.search(r"\bv0\b|\blbu\b", prefix_trace) or
-                 not re.search(r"\blw\s+t2,", prefix_trace) or
-                 not re.search(r"\bbeqz\s+t2,", prefix_trace)):
-            fail("post-BSMan branch trace does not branch on the saved result "
-                 "while preserving the relocated state byte")
+        if symbol == "zeroCtrlPostBSManBranchTrace":
+            check_post_bsman_branch_semantics(prefix_trace)
         if symbol == "zeroCtrlSlidePrefixPafReturnTrace" and \
                 (not re.search(r"\bsw\s+v0,", prefix_trace) or
                  not re.search(r"\bbnez\s+v0,", prefix_trace) or
@@ -881,21 +905,7 @@ def check_stub_object(stub_object):
     check_bsman_return_semantics(return_trace, relocatable=True)
     post_bs_branch = function_body(
             disassembly, "zeroCtrlPostBSManBranchTrace")
-    require_result_store_relocation(post_bs_branch,
-            "zeroCtrlPostBSManBranchTrace", "zeroCtrlPostStateNaturalValue")
-    v0_lines = [line for line in post_bs_branch.splitlines()
-                if re.search(r"\bv0\b", line)]
-    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
-            re.search(r"\blbu\b", post_bs_branch) or \
-            not re.search(
-                r"R_MIPS_HI16\s+zeroCtrlPostBSManEffectiveResult\b",
-                post_bs_branch) or \
-            not re.search(
-                r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
-                r"zeroCtrlPostBSManEffectiveResult\b", post_bs_branch) or \
-            not re.search(r"\bbeqz\s+t2,", post_bs_branch):
-        fail("post-BSMan branch trace lacks the exact saved-result decision "
-             "or modifies/reconstructs v0")
+    check_post_bsman_branch_semantics(post_bs_branch, relocatable=True)
     post_state_branch = function_body(disassembly, "zeroCtrlPostStateBranchTrace")
     if re.search(r"\bv0\b", post_state_branch) or not re.search(
             r"R_MIPS_HI16\s+zeroCtrlPostStateNaturalValue\b",
