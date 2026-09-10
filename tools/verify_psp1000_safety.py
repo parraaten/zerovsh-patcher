@@ -603,7 +603,7 @@ def check_sources(root):
         fail("T18.1 changed the 12-second observation window")
     case14_install = kernel[kernel.find(
         "static void zeroCtrlInstallCase14Trace"):
-        kernel.find("static void zeroCtrlInstallDispatchEntryTrace")]
+        kernel.find("static void zeroCtrlInstallDispatchEntryTrace(void) {")]
     for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
             "vsh->text_addr + 0x1D7A4", "vsh->text_addr + 0x4FDA0",
             "table + 14 * 4", "vsh->text_addr + 0x1DE18",
@@ -651,7 +651,7 @@ def check_sources(root):
                 writer[case14_live_record:topmenu_owner_done]:
             fail("T19 live result is missing case-14 scalar %d" % scalar)
     dispatch_install = kernel[kernel.find(
-        "static void zeroCtrlInstallDispatchEntryTrace"):
+        "static void zeroCtrlInstallDispatchEntryTrace(void) {"):
         kernel.find("static void zeroCtrlInstallBSManClosedShim")]
     for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
             "vsh->text_size != 0x556C0", "vsh->text_addr + 0x1D7A4",
@@ -717,6 +717,52 @@ def check_sources(root):
         if ("bsman->dispatch_entry_scalar_addr[%d]" % scalar) not in \
                 writer[dispatch_live_record:topmenu_owner_done]:
             fail("T20 live result is missing dispatcher scalar %d" % scalar)
+    idempotent_guard = dispatch_install.find(
+        "if (bsman->dispatch_entry_install) return;")
+    counter_clear = dispatch_install.find(
+        "_sw(0, bsman->dispatch_entry_scalar_addr[i])")
+    if idempotent_guard < 0 or counter_clear <= idempotent_guard:
+        fail("T21 later T20 invocation can clear an existing early trace")
+    vsh_record = kernel[kernel.find("void zeroCtrlRecordVshSlideTarget("):
+        kernel.find("int (*msIoOpen)")]
+    early_call = vsh_record.find("zeroCtrlInstallDispatchEntryTrace();")
+    original_scan = vsh_record.find("zeroCtrlScanVshStateTarget(")
+    selected_commit = vsh_record.find(
+        "Commit pass: selected callsites are all valid or none are written.")
+    global_capture = vsh_record.rfind(
+        "if (slide_diag.global_predicate_enabled)", 0, early_call)
+    if min(early_call, original_scan, selected_commit, global_capture) < 0 or \
+            not (original_scan < selected_commit < global_capture < early_call):
+        fail("T21 early install does not follow original VSH scans and setup")
+    if vsh_record.count("zeroCtrlInstallDispatchEntryTrace();") != 1 or \
+            "zeroCtrlInstallField12CWriteTrace();" in vsh_record or \
+            "zeroCtrlInstallCase14Trace();" in vsh_record:
+        fail("T21 moves T18/T19 early or creates another dispatcher install")
+    user_onstart = user[user.find("int OnModuleStart(SceModule2 *mod)"):
+        user.find("int module_start", user.find("int OnModuleStart(SceModule2 *mod)"))]
+    if user_onstart.find('strcmp(mod->modname, "vsh_module")') < 0 or \
+            user_onstart.find("zeroCtrlRecordVshSlideTarget(") < 0:
+        fail("T21 is not reached from the existing early VSH observation")
+    bsman_install = kernel[kernel.find("static void zeroCtrlInstallBSManClosedShim"):
+        kernel.find("int OnModuleStart(SceModule2 *mod)")]
+    pre_slide = bsman_install.find(
+        "bsman->dispatch_entry_pre_slide[snapshot_index]")
+    t18_later = bsman_install.find("zeroCtrlInstallField12CWriteTrace();")
+    t19_later = bsman_install.find("zeroCtrlInstallCase14Trace();")
+    t20_later = bsman_install.find("zeroCtrlInstallDispatchEntryTrace();")
+    if min(pre_slide, t18_later, t19_later, t20_later) < 0 or not (
+            pre_slide < t18_later < t19_later < t20_later):
+        fail("T21 pre-slide snapshot is not before the unchanged later installers")
+    if assembly.count("zeroCtrlDispatchEntryTrace:") != 1:
+        fail("T21 adds or removes the existing T20 dispatcher helper")
+    early_record = writer.find("[topmenu-dispatch-entry-early-install]")
+    pre_slide_record = writer.find("[topmenu-dispatch-entry-pre-slide]")
+    if min(early_record, pre_slide_record) < 0:
+        fail("T21 early-install or pre-slide diagnostics are missing")
+    for scalar in range(5):
+        if ("bsman->dispatch_entry_pre_slide[%d]" % scalar) not in \
+                writer[pre_slide_record:install_record]:
+            fail("T21 pre-slide record is missing snapshot scalar %d" % scalar)
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")

@@ -286,8 +286,12 @@ typedef struct {
     int dispatch_entry_cache_sync;
     unsigned int dispatch_entry_leaf_addr, dispatch_entry_leaf_size;
     unsigned int dispatch_entry_resume_addr, dispatch_entry_scalar_addr[5];
+    int dispatch_entry_early_attempted, dispatch_entry_pre_slide_captured;
+    unsigned int dispatch_entry_pre_slide[5];
     unsigned int state_zero_original[14], state_zero_replacement[7];
 } ZeroCtrlBSManEvidence;
+
+static void zeroCtrlInstallDispatchEntryTrace(void);
 
 enum zeroCtrlBSManStubForm {
     ZERO_BSMAN_STUB_UNKNOWN = 0,
@@ -1749,6 +1753,8 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
             }
         }
     }
+    slide_diag.bsman.dispatch_entry_early_attempted = 1;
+    zeroCtrlInstallDispatchEntryTrace();
     slide_diag.vsh_module_seen = 1;
 }
 
@@ -2617,6 +2623,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_field12c_write_install_status = 0;
     int observed_case14_install_status = 0;
     int observed_dispatch_entry_install_status = 0;
+    int observed_dispatch_entry_early_status = 0;
+    int observed_dispatch_entry_pre_slide = 0;
     char line[256];
     unsigned int i;
 
@@ -2760,6 +2768,31 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled) {
             ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
             unsigned int hits = zeroCtrlReadBSManHits();
+            if (bsman->dispatch_entry_early_attempted &&
+                    !observed_dispatch_entry_early_status) {
+                snprintf(line, sizeof(line),
+                        "[topmenu-dispatch-entry-early-install] attempted=1 "
+                        "validation=%d install=%d cache_sync=%d\n",
+                        bsman->dispatch_entry_validation,
+                        bsman->dispatch_entry_install,
+                        bsman->dispatch_entry_cache_sync);
+                zeroCtrlDiagnosticsText(line);
+                observed_dispatch_entry_early_status = 1;
+            }
+            if (bsman->dispatch_entry_pre_slide_captured &&
+                    !observed_dispatch_entry_pre_slide) {
+                snprintf(line, sizeof(line),
+                        "[topmenu-dispatch-entry-pre-slide] hits=%u "
+                        "case14_requests=%u first_ra=0x%08X "
+                        "last_ra=0x%08X ra_changes=%u\n",
+                        bsman->dispatch_entry_pre_slide[0],
+                        bsman->dispatch_entry_pre_slide[1],
+                        bsman->dispatch_entry_pre_slide[2],
+                        bsman->dispatch_entry_pre_slide[3],
+                        bsman->dispatch_entry_pre_slide[4]);
+                zeroCtrlDiagnosticsText(line);
+                observed_dispatch_entry_pre_slide = 1;
+            }
             if (bsman->attempted && !observed_field12c_write_install_status) {
                 snprintf(line, sizeof(line),
                         "[topmenu-field12c-write-install] validation=%d "
@@ -3555,6 +3588,7 @@ static void zeroCtrlInstallDispatchEntryTrace(void) {
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     unsigned int site, resume, replacement, i;
 
+    if (bsman->dispatch_entry_install) return;
     if (model != 0 || sceKernelDevkitVersion() != 0x06060110 || !vsh || !helper ||
             vsh->text_size != 0x556C0 ||
             !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x1D7A4, 0x58) ||
@@ -3602,7 +3636,8 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     static const char paf_library[] = "scePaf";
     static const char vshbridge_library[] = "sceVshBridge";
     ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
-    unsigned int cursor, end, offset, caller_matches = 0, paf_matches = 0;
+    unsigned int cursor, end, offset, snapshot_index;
+    unsigned int caller_matches = 0, paf_matches = 0;
     unsigned int post_paf_matches = 0, vshbridge_matches = 0;
     unsigned int prefix_paf_stub = 0, post_paf_stub = 0, vshbridge_stub = 0;
 
@@ -3610,6 +3645,11 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             !bsman->registered || model != 0 || !mod ||
             strcmp(mod->modname, "slide_plugin_module") != 0 ||
             sceKernelDevkitVersion() != 0x06060110) return;
+    for (snapshot_index = 0; snapshot_index < 5; snapshot_index++)
+        bsman->dispatch_entry_pre_slide[snapshot_index] =
+                zeroCtrlReadHelperCounter(
+                    bsman->dispatch_entry_scalar_addr[snapshot_index]);
+    bsman->dispatch_entry_pre_slide_captured = 1;
     zeroCtrlInstallField12CWriteTrace();
     zeroCtrlInstallCase14Trace();
     zeroCtrlInstallDispatchEntryTrace();

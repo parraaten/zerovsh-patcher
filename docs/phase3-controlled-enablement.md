@@ -1495,3 +1495,39 @@ T19 live record, plus:
 Broad `+0x6F84`, `+0x13F6C`, `+0x14020`, field `+0x19D`, `field_12C`, and all
 compatibility behavior remain unchanged. The deferred 12-second finalization
 problem is explicitly outside T20.
+
+### T20 hardware result and T21 early installation
+
+**PROVEN BY HARDWARE:** T20 installed successfully, but the live TopMenu
+record contained zero dispatcher hits and zero incoming case-14 requests.
+Thus `vsh_module+0x1D7A4` did not execute between the former SlidePlugin-time
+installation and that boundary. This result does not address earlier VSH
+initialization, and it does not make the `+0x19D` gate the current boundary.
+
+T21 reuses the unchanged T20 helper and patch. At the end of the existing
+`zeroCtrlRecordVshSlideTarget` path, after original VSH captures/scans and the
+selected `+0x58D4` setup, it attempts the same dispatcher-entry installation
+before returning to natural VSH startup. T18 and T19 remain installed only in
+the later SlidePlugin path.
+
+The installer is explicitly idempotent: if the early installation succeeded,
+the later call returns before validating patched instructions, rewriting the
+resume scalar, or clearing any of the five counters. On entry to the later
+SlidePlugin instrumentation path, kernel state snapshots those five counters
+before T18, T19, or the idempotent T20 call. No helper, patch site, polling,
+thread, allocation, I/O path, Sony state, or compatibility behavior is added.
+
+The existing deferred writer adds:
+
+```text
+[topmenu-dispatch-entry-early-install] attempted=... validation=... install=... cache_sync=...
+[topmenu-dispatch-entry-pre-slide] hits=... case14_requests=... first_ra=0x........ last_ra=0x........ ra_changes=...
+```
+
+The unchanged T20 live record remains the total since early installation.
+Interpretation is limited to timing: zero pre-slide and live hits moves research
+upstream; pre-slide hits without case-14 requests motivates caller-condition
+analysis; early case-14 requests require a later experiment moving existing
+T19/T18 observation earlier; and zero pre-slide with nonzero live hits localizes
+activity after the snapshot. Invalid early installation invalidates the early
+counters. No compatibility conclusion follows from T21 alone.
