@@ -449,6 +449,123 @@ def check_sources(root):
     if "zeroCtrlDiagnosticsMemory" in fast_poll or \
             "zeroCtrlDiagnosticsCapturePartitions" in fast_poll:
         fail("activation fast-poll path performs a memory query")
+    owner_capture = kernel[kernel.find(
+        "static void zeroCtrlCaptureStateZeroVCallOwner"):
+        kernel.find("static unsigned int zeroCtrlParseTriggerMode")]
+    expected_candidates = (
+        '"scePaf_Module"', '"sceVshCommonGui_Module"', '"vsh_module"',
+        '"slide_plugin_module"', '"impose_plugin_module"',
+        '"launcher_plugin_module"')
+    candidate_list = kernel[kernel.find(
+        "static const char *state_zero_vcall_candidates[]"):
+        kernel.find("};", kernel.find(
+            "static const char *state_zero_vcall_candidates[]"))]
+    if any(candidate_list.count(name) != 1 for name in expected_candidates) or \
+            candidate_list.count('"') != len(expected_candidates) * 2 or \
+            "sizeof(state_zero_vcall_candidates[0])" not in owner_capture or \
+            "sceKernelFindModuleByName(" not in owner_capture or \
+            "target - candidate->text_addr <=" not in owner_capture or \
+            "target - start <= size - sizeof(unsigned int)" not in owner_capture:
+        fail("T16.3 ownership lacks its fixed candidate/text/segment checks")
+    if any(call in owner_capture for call in (
+            "sceKernelModuleCount(", "sceKernelGetModuleList(",
+            "sceKernelFindModuleByUID(", "sceKernelFindModuleByAddress(")):
+        fail("T16.3 uses a prohibited module lookup")
+    pointer_validation = owner_capture.find("candidate_addr < 0x88000000")
+    first_metadata_read = owner_capture.find("candidate->text_size")
+    if pointer_validation < 0 or first_metadata_read <= pointer_validation:
+        fail("T16.3 dereferences candidate metadata before pointer validation")
+    if "state_zero_vcall_containing_candidates != 1" not in owner_capture or \
+            "ZERO_VCALL_RESOLVE_AMBIGUOUS_OWNER" not in owner_capture:
+        fail("T16.3 does not fail closed on ambiguous candidate ownership")
+    first_read = owner_capture.find("_lw(target +")
+    fingerprint_validation = owner_capture.find(
+        "target - slide_diag.state_zero_vcall_segment_addr >")
+    if first_read < 0 or fingerprint_validation < 0 or \
+            first_read <= fingerprint_validation:
+        fail("T16.1 fingerprints the virtual target before complete range validation")
+    if "STATE_ZERO_VCALL_CODE_WORDS 10" not in kernel or \
+            "state_zero_vcall_fingerprint_valid = 1" not in owner_capture or \
+            "ZERO_VCALL_RESOLVE_FINGERPRINT_RANGE_INVALID" not in owner_capture:
+        fail("T16.1 virtual target fingerprint is not fixed and fail-closed")
+    if any(token in owner_capture for token in
+            ("_sw(", "sceKernelDcache", "sceKernelIcache", "sceIo")):
+        fail("T16.1 virtual target ownership is not read-only")
+    resolve_gate = kernel[kernel.find(
+        "if (!observed_state_zero_vcall_owner)"):
+        kernel.find("observed_state_zero_vcall_owner = 1", kernel.find(
+            "if (!observed_state_zero_vcall_owner)"))]
+    if "if (target != 0 && returns != 0)" not in resolve_gate or \
+            "[state-zero-vcall-resolve] attempted=1" not in resolve_gate or \
+            "state_zero_vcall_candidates_found" not in resolve_gate or \
+            "state_zero_vcall_containing_candidates" not in resolve_gate or \
+            "if (slide_diag.state_zero_vcall_fingerprint_valid)" not in resolve_gate:
+        fail("T16.1 resolution is not gated by target/return or lacks status gating")
+    topmenu_validate = kernel[kernel.find(
+        "static void zeroCtrlValidateTopMenuState"):
+        kernel.find("static void zeroCtrlCaptureTopMenuState")]
+    topmenu_capture = kernel[kernel.find(
+        "static void zeroCtrlCaptureTopMenuState"):
+        kernel.find("static const char *zeroCtrlTopMenuReasonName")]
+    for token in ("state_zero_vcall_offset != 0x1E2B0", "0x90620150",
+            "0x14400002", "0x2404000F", "0x8C64012C", "0x03E00008",
+            "0x00801021", "displacement = (short)(load & 0xFFFF)",
+            "sceKernelFindModuleByName(\"vsh_module\")",
+            "(unsigned int)vsh < 0x88000000",
+            "slot - start <= size - sizeof(unsigned int)"):
+        if token not in topmenu_validate:
+            fail("T17 TopMenu validation is missing " + token)
+    if topmenu_validate.find("(unsigned int)vsh < 0x88000000") > \
+            topmenu_validate.find("vsh->text_addr"):
+        fail("T17 dereferences VSH metadata before pointer validation")
+    slot_read = topmenu_capture.find("_lw(slide_diag.topmenu_global_slot)")
+    context_validation = topmenu_capture.find("zeroCtrlRangeInSnapshot(")
+    first_field_read = topmenu_capture.find("_lw(context + 0x128)")
+    if slot_read < 0 or context_validation <= slot_read or \
+            first_field_read <= context_validation or \
+            "context, 0x154" not in topmenu_capture or \
+            "if (!slide_diag.topmenu_validation) return" not in topmenu_capture:
+        fail("T17 reads TopMenu state before slot/context range validation")
+    t17_source = topmenu_validate + topmenu_capture
+    if any(token in t17_source for token in
+            ("_sw(", "_sb(", "sceKernelDcache", "sceKernelIcache",
+             "sceKernelCreateThread")):
+        fail("T17 TopMenu observation writes state or creates a thread")
+    if "returns != observed_topmenu_returns" not in fast_poll or \
+            "[topmenu-state]" not in resolve_gate:
+        fail("T17 state capture is not bounded by virtual-return transitions")
+    field12c_install = kernel[kernel.find(
+        "static void zeroCtrlInstallField12CWriteTrace"):
+        kernel.find("static void zeroCtrlInstallBSManClosedShim")]
+    for token in ("vsh->text_addr + 0x1DEA8",
+            "vsh->text_addr + 0x1D8C4", "store_word != 0xAC53012C",
+            "zeroCtrlMipsJumpTarget(site, jump_word) != continuation",
+            "_sw(replacement, site)", "_sw(store_word, site + 4)",
+            "field12c_write_validation = 1",
+            "field12c_write_install = 1", "field12c_write_cache_sync = 1"):
+        if token not in field12c_install:
+            fail("T18 field_12C writer validation is missing " + token)
+    commit = field12c_install.find("_sw(replacement, site)")
+    validation = field12c_install.find("field12c_write_validation = 1")
+    if commit <= validation or "0xAC53012C" not in field12c_install[:commit]:
+        fail("T18 patches the jump/store pair before transactional validation")
+    field12c_stub = assembly[assembly.find("zeroCtrlField12CWriteTrace:"):
+        assembly.find("zeroCtrlField12CWriteTraceEnd:")]
+    if not field12c_stub or "$s3" not in field12c_stub or \
+            "sw      $v0, %lo(zeroCtrlField12CWriteContext)" not in field12c_stub or \
+            "lw      $t2, %lo(zeroCtrlField12CWriteResume)" not in field12c_stub or \
+            "jr      $t2" not in field12c_stub or \
+            "lw      $t2, -4($sp)" not in field12c_stub:
+        fail("T18 tracer does not preserve the natural value/context/continuation")
+    if any(token in field12c_stub for token in
+            ("jal ", "jalr", "sceIo", "Alloc", "malloc")):
+        fail("T18 tracer calls code, performs I/O, or allocates")
+    if re.search(r"\b(?:li|addiu|ori)\s+\$s3\b|\b(?:lw|move|addu)\s+\$s3\b",
+            field12c_stub) or re.search(
+                r"\b(?:li|addiu|ori|lw|move|addu)\s+\$v0\b", field12c_stub):
+        fail("T18 tracer modifies Sony's natural s3 value or v0 context")
+    if "sceKernelCreateThread" in field12c_install:
+        fail("T18 creates a new thread")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")

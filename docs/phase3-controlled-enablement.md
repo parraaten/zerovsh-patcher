@@ -1088,3 +1088,243 @@ unedited log. No T15 hardware result is available yet. Unresolved questions are
 which early test or virtual-result class exits, whether `+0x93EC` is rejoined,
 and whether VshBridge is eventually reached. The recommended next phase is to
 review that single run before designing any further compatibility behavior.
+
+### T15 hardware result and T16 virtual-target ownership
+
+**PROVEN BY HARDWARE:** T15 installed and synchronized all activation tracing.
+The natural state-zero path was observed four times with comparison operands
+`0` and `0xFFFFFFFF`, relocated word and byte values of zero, and the same
+runtime-relocated virtual target on that boot. The call and return counters
+were both four. Its untouched natural result was exactly 15, so Sony's original
+classifiers selected `15 >= 15` followed by `15 < 17` and exited without
+rejoining `+0x93EC`. No downstream PAF or VshBridge boundary was reached. The
+absolute virtual address is not stable evidence across boots.
+
+The first T16 hardware run reproduced the complete T15 result with target
+`0x09C462B0`, but emitted neither ownership nor failure output. The earlier and
+newer activation entry and virtual target both shifted by exactly `0x100`,
+while their distance remained `0x52A54`; **STRONG INFERENCE:** both addresses
+are relocation-dependent. No absolute target is hardcoded.
+
+Source inspection proves that the old writer read the nonzero target in the
+same loop iteration that emitted the T15 state record, then called
+`sceKernelFindModuleByAddress()`, and emitted output only after that call
+returned. Consequently the hardware log cannot distinguish a lookup that did
+not return normally from interruption at that exact point. It also collapsed
+all normal validation failures into one generic record. T16 therefore did not
+produce an actionable result and is not complete.
+
+T16.1 removes that unsuitable address lookup. The deferred writer waits for
+both a nonzero captured target and a completed virtual return, obtains a
+bounded list of at most 128 loaded module UIDs with `sceKernelGetModuleList()`,
+and validates each candidate through `sceKernelFindModuleByUID()`. It selects
+an owner only when the target word lies in the candidate text range. It then
+separately validates reported segment metadata and the complete ten-word range
+in both text and segment before the first instruction read. The writer always
+emits one compact outcome after a resolution attempt:
+
+```text
+[state-zero-vcall-resolve] attempted=1 target=0x........ owner_found=... text_valid=... segment_valid=... fingerprint_valid=... reason=NAME(...)
+```
+
+Stable reasons distinguish module-list failure, no text owner, invalid module
+segment metadata, no containing segment, and an incomplete fingerprint range.
+A successful capture additionally writes compact owner metadata, the stable
+text-relative offset, the containing segment, and ten read-only words:
+
+```text
+[state-zero-vcall-owner] target=0x........ module=........ text=0x........ text_size=0x........ offset=0x........ segment=... segment_start=0x........ segment_size=0x........
+[state-zero-vcall-code] offset=0x........ words=0x........,...
+```
+
+Every failure exits before fingerprint reads and fabricates no module output.
+T16.1 adds no thread, RAM/flash scanner, hook, patch, argument capture, result
+conversion, or cache operation. In particular, it does not interpret or
+change 15, and the T15 virtual wrapper and downstream tracers are unchanged.
+
+Phase report: files changed are `kernel/main.c`, the safety verifier, and this
+Phase 3 record. The technical findings are the hardware-proven T15 natural
+result and exit, and that the original T16 outcome was unobservable after its
+address lookup; the precise API failure mode remains **HYPOTHESIS / UNKNOWN**.
+T16.1 assumes only that ModuleMgr's bounded loaded-UID list and LoadCore's UID
+lookup expose the metadata already used elsewhere in the project. Static
+verification and PSPDEV build status must be recorded. The required hardware
+test is one recovery-protected PSP-1000 6.61 run with `ClockAndCalendar` and the
+broad BSMan shim disabled, the dangerous 58D4 trigger and diagnostics/activation
+trace enabled, and both proven narrow compatibility controls enabled. Do not
+load `660_plugins_on_661.prx`. Return the complete unedited log containing the
+resolver status, owner/fingerprint if successful, and unchanged T15
+result/counts. The owner's module name,
+stable offset, function semantics, and whether an additional decrypted PRX is
+needed remain unresolved. The recommended next phase is offline correlation
+against the matching decrypted PSP-1000 PRX; no new compatibility behavior is
+justified before that result.
+
+### T16.1 hardware result and T16.2 module-list correction
+
+**PROVEN BY HARDWARE:** T16.1 reached its resolver after the unchanged natural
+virtual method returned 15 four times, but stopped before ownership resolution
+with `MODULE_LIST_FAILED(1)`. The status reported `owner_found=0`,
+`text_valid=0`, `segment_valid=0`, and `fingerprint_valid=0`. This establishes
+only a module-list-path failure; it is not evidence about target ownership.
+
+Source review found that T16.1 passed
+`module_count * sizeof(SceUID)` as the first argument to
+`sceKernelGetModuleList()`. The repository declaration describes that argument
+as the list-buffer capacity, and PSPSDK's established helper converts a byte
+buffer size to an entry count before invoking this API. **PROVEN BY SOURCE:**
+T16.1 therefore advertised up to four times the fixed array's actual 128-entry
+capacity. No hardware conclusion can be drawn about what the erroneous call
+did internally.
+
+T16.2 keeps the fixed 128-entry, zero-initialized array, captures the raw
+`sceKernelModuleCount()` result, clamps that count to 128, and passes the
+clamped entry capacity directly to `sceKernelGetModuleList()`. A negative list
+result is failure. The return value is retained for diagnostics but is never
+reinterpreted as an entry count. Enumeration is bounded solely by the clamped
+capacity; zero initialization makes a module-list race that leaves fewer IDs
+conservatively resolve unused entries to no owner rather than exposing
+uninitialized UIDs.
+
+The single resolution record now includes the pre-clamp count, requested entry
+capacity, and raw list result:
+
+```text
+[state-zero-vcall-resolve] attempted=1 target=0x........ module_count=... capacity=... list_result=0x........ owner_found=... text_valid=... segment_valid=... fingerprint_valid=... reason=NAME(...)
+```
+
+All later owner/text/segment/fingerprint checks are unchanged and remain
+read-only. T16.2 changes no T15 wrapper, Sony value, compatibility behavior,
+thread, hook, or patch. Static verification must confirm entry-count capacity,
+the 128-entry iteration bound, raw return handling, and validation-before-read.
+The required hardware work is one recovery-protected run with the unchanged
+configuration and complete log. T16 remains incomplete until that log supplies
+either actionable raw enumeration failure values or the owner, stable offset,
+and ten-word fingerprint. After success, the recommended next phase remains
+offline correlation against the matching decrypted PSP-1000 PRX before any
+new compatibility experiment.
+
+### T16.2 hardware result and T16.3 fixed-candidate lookup
+
+**PROVEN BY HARDWARE:** T16.2 reached the resolver with the unchanged natural
+virtual result of 15, but `sceKernelModuleCount()` returned `0x8002013A`
+(`SCE_KERNEL_ERROR_LIBRARY_NOT_YET_LINKED`). The resolver exited immediately.
+The logged `capacity=0` was the untouched value before capacity calculation,
+and `list_result=0` was the untouched diagnostic value:
+`sceKernelGetModuleList()` was never called. This proves failure of the
+T16.2 module-count call on the tested hardware; it proves nothing about the
+target's owner. **STRONG INFERENCE:** the static ModuleCount import is not
+linked. Direct import-stub words have not been captured, so that interpretation
+is not promoted to hardware proof. The earlier address-lookup failure having
+the same cause remains **HYPOTHESIS / UNKNOWN**.
+
+T16.3 removes ModuleCount, module-list, UID, and address lookup from this
+resolver. It reuses only the `sceKernelFindModuleByName()` path already used by
+working PSP-1000 activation instrumentation, against exactly six fixed Sony UI
+candidates: `scePaf_Module`, `sceVshCommonGui_Module`, `vsh_module`,
+`slide_plugin_module`, `impose_plugin_module`, and
+`launcher_plugin_module`. Missing candidates are normal. A non-null result must
+be an aligned KSEG0 RAM pointer before any `SceModule2` field is read.
+
+The resolver counts present candidates and text-containing candidates, and
+requires exactly one containing range. Zero produces `NO_KNOWN_OWNER`; more
+than one produces `AMBIGUOUS_OWNER`; a suspicious returned pointer produces
+`INVALID_CANDIDATE_POINTER`. Only the unique owner proceeds through the
+existing segment and complete ten-word text/segment bounds checks. The compact
+result is now:
+
+```text
+[state-zero-vcall-resolve] attempted=1 target=0x........ candidates_found=... containing_candidates=... owner_found=... text_valid=... segment_valid=... fingerprint_valid=... reason=NAME(...)
+```
+
+On success the existing owner, stable offset, segment, and ten-word code
+records follow. T16.3 performs no general enumeration, arbitrary scan,
+target-derived read before full validation, import experiment, compatibility
+change, new thread, or hot-path modification. The required hardware test is
+one recovery-protected run with the unchanged configuration and complete log.
+If no fixed candidate owns the target, the next decision should use that result
+rather than expanding the runtime list speculatively. If ownership succeeds,
+the next phase is offline correlation with the matching decrypted PSP-1000 ELF;
+no new compatibility behavior is justified first.
+
+### T16.3 hardware result and T17 TopMenu state observation
+
+**PROVEN BY HARDWARE:** T16.3 uniquely resolved the natural virtual target to
+`vsh_module` text offset `+0x1E2B0`. The loaded text and segment both measured
+`0x556C0` bytes, matching the external decrypted PSP-1000 VSHMAIN image, and
+the fixed fingerprint validated. The unchanged method returned 15 four times
+and Sony did not rejoin `+0x93EC`. T16 owner discovery is complete.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** the function at `+0x1E2B0` consists
+of eight instructions. It loads a context through a relocated global slot,
+returns 15 when byte `context+0x150` is nonzero, and otherwise returns the word
+at `context+0x12C`. Both fields are mutable and initialization writes 15 to
+`+0x12C` and zero to `+0x150`. The interface is the `+0x78` method of the
+pointer SlidePlugin obtains for `topmenu_plugin`; its official semantic name
+remains unknown. **STRONG INFERENCE:** 15 is an internal/default TopMenu state,
+not evidence of another missing PSP-1000 service.
+
+T17 remains observational. Only after T16 validates the unique VSH owner,
+exact `+0x1E2B0` offset, LUI/LW shape, and six fixed non-relocated instructions
+does it reconstruct the global slot using a signed 16-bit LW displacement. A
+fresh, plausibility-checked `vsh_module` metadata lookup must place the complete
+slot word in one of at most four segments before it is read. The resulting
+context must be aligned and contain the complete range through `+0x153` inside
+a partition range captured before Sony module start. Only then are words
+`+0x128`, `+0x12C`, and byte `+0x150` read.
+
+The existing deferred thread captures the first validated state and refreshes
+it only when the existing virtual-return counter changes. It retains the last
+state and increments one transition counter when the context or any requested
+field changes; it does not print on every poll. The compact first record names
+the natural source selected by the proven function, and one final record holds
+first/last values and the transition count. T17 adds no thread, code patch,
+function call, return conversion, context write, or `+0x6F84` behavior.
+
+The required hardware test is one recovery-protected run with the unchanged
+configuration and complete log. The key result is whether nonzero `field_150`
+selects `FORCED_15`, or zero selects `FIELD_12C` whose value is itself 15.
+No compatibility change is justified in T17. After hardware identifies that
+branch, inspect the decrypted VSH code responsible for the relevant field's
+natural transitions before designing any separate control.
+
+### T17 hardware result and T18 natural field_12C writer trace
+
+**PROVEN BY HARDWARE:** the validated deferred T17 sample read
+`field_128=0`, `field_12C=15`, and `field_150=0` from context `0x08AB8970`.
+The simultaneous natural virtual result remained 15. Combined with the
+decrypted getter, this is **STRONG INFERENCE**, not exact per-call proof, that
+the observed result came from `field_12C` rather than the nonzero-`field_150`
+fallback. The missing final record means T17 established no temporal transition
+count.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** initialization writes the same
+`0/15/0` tuple, while the natural store at `vsh_module+0x1DEAC` can replace
+`field_12C` with the incoming state retained in `s3`. T18 asks only whether
+that writer executes and what it naturally stores.
+
+T18 transactionally validates the `j +0x1D8C4` at `+0x1DEA8` and exact
+`0xAC53012C` (`sw s3,0x12C(v0)`) delay slot. Only after every VSH/helper range,
+jump-target, instruction, and J-region check passes does it replace the jump
+with a jump to a bounded helper leaf while rewriting the original store word
+unchanged in the replacement jump's delay slot. The leaf runs after Sony's
+natural store, records only hit count, first/last natural `s3`, value-change
+count, and natural `v0` context, restores its scratch registers and stack, and
+jumps to the original `+0x1D8C4` continuation. It never changes `s3`, `v0`,
+the stored field, or the path condition.
+
+The existing deferred writer emits one compact final record:
+
+```text
+[topmenu-field12c-write] validation=... install=... cache_sync=... hits=... first=0x........ last=0x........ changes=... context=0x........
+```
+
+Files changed are the shared registration ABI, user helper assembly and
+registration, kernel transactional installer/state and deferred diagnostics,
+safety verifier, and this report. Static verification and the PSPDEV build must
+pass. Required hardware work is one recovery-protected PSP-1000 run with the
+unchanged configuration and complete log. No T18 hardware result exists yet.
+Whether this writer executes, what value it stores, and whether any other
+writer changes `field_12C` remain unresolved. The recommended next phase is to
+interpret that single run and inspect the upstream natural branch if hits are
+zero; do not change `+0x6F84` or add compatibility behavior in T18.
