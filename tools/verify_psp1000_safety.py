@@ -774,8 +774,9 @@ def check_sources(root):
         "static void zeroCtrlInstall6F84ConsumerTraces(void) {"):
         kernel.find("static void zeroCtrlInstallBSManClosedShim")]
     for token in ("0x13F6C, 0x14020", "0x00000000, 0x0062800B",
-            "vsh->text_addr + 0x6F84", "_lw(callsite[i] + 4) != delays[i]",
-            "zeroCtrlMipsJumpTarget(callsite[i], _lw(callsite[i])) != target",
+            "vsh->text_addr + 0x6F84",
+            "consumer_callsite_words[i][1] != delays[i]",
+            "consumer_callsite_target[i] != target",
             "replacement[i] = 0x0C000000", "_sw(replacement[i], callsite[i])",
             "(const void *)callsite[i], 4", "shared_global_early_valid = 1",
             "_lw(slide_diag.vsh_shared_global_addr)"):
@@ -818,6 +819,53 @@ def check_sources(root):
     if writer.find("[vsh-6f84-consumers-install]") < 0 or \
             writer.find("[vsh-6f84-consumers-pre-slide]") < 0:
         fail("T22 deferred consumer diagnostics are missing")
+    guard_reasons = (
+        "MODEL_MISMATCH", "DEVKIT_MISMATCH", "VSH_NOT_FOUND",
+        "HELPER_NOT_FOUND", "VSH_TEXT_SIZE_MISMATCH",
+        "SHARED_GLOBAL_DECODE_INVALID", "SHARED_GLOBAL_SEGMENT_INVALID",
+        "PREDICATE_RANGE_INVALID", "SHARED_GLOBAL_RANGE_INVALID",
+        "TARGET_SCALAR_RANGE_INVALID", "PREDICATE_FINGERPRINT_MISMATCH",
+        "CALLSITE_13F6C_RANGE_INVALID", "CALLSITE_13F6C_HELPER_RANGE_INVALID",
+        "CALLSITE_13F6C_COUNTER_RANGE_INVALID", "CALLSITE_13F6C_NOT_JAL",
+        "CALLSITE_13F6C_TARGET_MISMATCH", "CALLSITE_13F6C_DELAY_MISMATCH",
+        "CALLSITE_13F6C_PSEUDODIRECT_RANGE_INVALID",
+        "CALLSITE_14020_RANGE_INVALID", "CALLSITE_14020_HELPER_RANGE_INVALID",
+        "CALLSITE_14020_COUNTER_RANGE_INVALID", "CALLSITE_14020_NOT_JAL",
+        "CALLSITE_14020_TARGET_MISMATCH", "CALLSITE_14020_DELAY_MISMATCH",
+        "CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID",
+        "REPLACEMENT_TARGET_MISMATCH",
+    )
+    for reason in guard_reasons:
+        if "ZERO_CONSUMER_GUARD_" + reason not in consumers_install:
+            fail("T22.2 installer does not record guard " + reason)
+    if consumers_install.count("return;") != 1 or \
+            "#define CONSUMER_GUARD_FAIL(value)" not in consumers_install:
+        fail("T22.2 has a consumer failure return outside the reason macro")
+    guard_success = consumers_install.find(
+        "consumer_guard_reason = ZERO_CONSUMER_GUARD_NONE")
+    validation = consumers_install.find("consumer_validation[i] = 1")
+    consumer_commit = consumers_install.find("_sw(replacement[i], callsite[i])")
+    if min(guard_success, validation, consumer_commit) < 0 or not (
+            guard_success < validation < consumer_commit):
+        fail("T22.2 success or VSH commit precedes complete guard validation")
+    if "_sw(replacement[i], callsite[i])" in consumers_install[:guard_success]:
+        fail("T22.2 writes a VSH callsite on a guard failure")
+    if "consumer_segment_count = vsh->nsegment < 4 ? vsh->nsegment : 4" not in \
+            consumers_install or \
+            "i < bsman->consumer_segment_count" not in consumers_install:
+        fail("T22.2 VSH segment capture is not bounded to four entries")
+    if "consumer_predicate_words[16]" not in kernel or \
+            consumers_install.count("i < 16") != 2:
+        fail("T22.2 predicate capture/validation is not bounded to 16 words")
+    if consumers_install.count("i < 2") < 4:
+        fail("T22.2 callsite/helper capture is not bounded to two consumers")
+    for record in ("[vsh-6f84-consumers-guard]", "[vsh-6f84-segment]",
+            "[vsh-6f84-callsite]", "[vsh-6f84-predicate]",
+            "[vsh-6f84-helper]"):
+        if writer.find(record) < 0:
+            fail("T22.2 diagnostic record is missing " + record)
+    if "i < bsman->consumer_segment_count && i < 4" not in writer:
+        fail("T22.2 diagnostic segment iteration is not capped at four")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")

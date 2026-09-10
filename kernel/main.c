@@ -295,8 +295,68 @@ typedef struct {
     unsigned int shared_global_early_value;
     int consumer_pre_slide_captured, shared_global_pre_slide_valid;
     unsigned int consumer_pre_slide_hits[2], shared_global_pre_slide_value;
+    int consumer_guard_reason;
+    unsigned int consumer_vsh_text, consumer_vsh_text_size;
+    unsigned int consumer_vsh_nsegment, consumer_segment_count;
+    unsigned int consumer_segment_addr[4], consumer_segment_size[4];
+    unsigned int consumer_shared_global_addr;
+    int consumer_predicate_validation, consumer_predicate_first_bad;
+    unsigned int consumer_predicate_words[16];
+    unsigned int consumer_predicate_actual, consumer_predicate_expected;
+    unsigned int consumer_callsite_words[2][2], consumer_callsite_target[2];
+    int consumer_leaf_range_valid[2], consumer_counter_range_valid[2];
+    int consumer_target_scalar_range_valid;
     unsigned int state_zero_original[14], state_zero_replacement[7];
 } ZeroCtrlBSManEvidence;
+
+enum zeroCtrlConsumerGuardReason {
+    ZERO_CONSUMER_GUARD_NOT_ATTEMPTED = 0, ZERO_CONSUMER_GUARD_NONE,
+    ZERO_CONSUMER_GUARD_MODEL_MISMATCH, ZERO_CONSUMER_GUARD_DEVKIT_MISMATCH,
+    ZERO_CONSUMER_GUARD_VSH_NOT_FOUND, ZERO_CONSUMER_GUARD_HELPER_NOT_FOUND,
+    ZERO_CONSUMER_GUARD_VSH_TEXT_SIZE_MISMATCH,
+    ZERO_CONSUMER_GUARD_SHARED_GLOBAL_DECODE_INVALID,
+    ZERO_CONSUMER_GUARD_SHARED_GLOBAL_SEGMENT_INVALID,
+    ZERO_CONSUMER_GUARD_PREDICATE_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_SHARED_GLOBAL_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_TARGET_SCALAR_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_PREDICATE_FINGERPRINT_MISMATCH,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_HELPER_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_COUNTER_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_NOT_JAL,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_TARGET_MISMATCH,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_DELAY_MISMATCH,
+    ZERO_CONSUMER_GUARD_CALLSITE_13F6C_PSEUDODIRECT_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_HELPER_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_COUNTER_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_NOT_JAL,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_TARGET_MISMATCH,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_DELAY_MISMATCH,
+    ZERO_CONSUMER_GUARD_CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID,
+    ZERO_CONSUMER_GUARD_REPLACEMENT_TARGET_MISMATCH
+};
+
+static const char *zeroCtrlConsumerGuardReasonName(int reason) {
+    static const char *names[] = {
+        "NOT_ATTEMPTED", "NONE", "MODEL_MISMATCH", "DEVKIT_MISMATCH",
+        "VSH_NOT_FOUND", "HELPER_NOT_FOUND", "VSH_TEXT_SIZE_MISMATCH",
+        "SHARED_GLOBAL_DECODE_INVALID", "SHARED_GLOBAL_SEGMENT_INVALID",
+        "PREDICATE_RANGE_INVALID", "SHARED_GLOBAL_RANGE_INVALID",
+        "TARGET_SCALAR_RANGE_INVALID", "PREDICATE_FINGERPRINT_MISMATCH",
+        "CALLSITE_13F6C_RANGE_INVALID", "CALLSITE_13F6C_HELPER_RANGE_INVALID",
+        "CALLSITE_13F6C_COUNTER_RANGE_INVALID", "CALLSITE_13F6C_NOT_JAL",
+        "CALLSITE_13F6C_TARGET_MISMATCH", "CALLSITE_13F6C_DELAY_MISMATCH",
+        "CALLSITE_13F6C_PSEUDODIRECT_RANGE_INVALID",
+        "CALLSITE_14020_RANGE_INVALID", "CALLSITE_14020_HELPER_RANGE_INVALID",
+        "CALLSITE_14020_COUNTER_RANGE_INVALID", "CALLSITE_14020_NOT_JAL",
+        "CALLSITE_14020_TARGET_MISMATCH", "CALLSITE_14020_DELAY_MISMATCH",
+        "CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID", "REPLACEMENT_TARGET_MISMATCH"
+    };
+    if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
+        return "UNKNOWN";
+    return names[reason];
+}
 
 static void zeroCtrlInstallDispatchEntryTrace(void);
 static void zeroCtrlInstall6F84ConsumerTraces(void);
@@ -2809,6 +2869,51 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->shared_global_early_valid,
                         bsman->shared_global_early_value);
                 zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-consumers-guard] reason=%s(%d) "
+                        "decode_valid=%d segment_valid=%d shared_global_addr=0x%08X "
+                        "vsh_text=0x%08X text_size=0x%X nsegment=%u\n",
+                        zeroCtrlConsumerGuardReasonName(bsman->consumer_guard_reason),
+                        bsman->consumer_guard_reason,
+                        slide_diag.vsh_shared_global_decode_valid,
+                        slide_diag.vsh_shared_global_segment_valid,
+                        bsman->consumer_shared_global_addr, bsman->consumer_vsh_text,
+                        bsman->consumer_vsh_text_size, bsman->consumer_vsh_nsegment);
+                zeroCtrlDiagnosticsText(line);
+                for (i = 0; i < bsman->consumer_segment_count && i < 4; i++) {
+                    snprintf(line, sizeof(line),
+                            "[vsh-6f84-segment] index=%u addr=0x%08X size=0x%X\n",
+                            i, bsman->consumer_segment_addr[i],
+                            bsman->consumer_segment_size[i]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                for (i = 0; i < 2; i++) {
+                    static const unsigned int offsets[2] = { 0x13F6C, 0x14020 };
+                    snprintf(line, sizeof(line),
+                            "[vsh-6f84-callsite] offset=0x%05X word=0x%08X "
+                            "delay=0x%08X decoded_target=0x%08X\n", offsets[i],
+                            bsman->consumer_callsite_words[i][0],
+                            bsman->consumer_callsite_words[i][1],
+                            bsman->consumer_callsite_target[i]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-predicate] validation=%d first_bad_index=%d "
+                        "actual=0x%08X expected=0x%08X\n",
+                        bsman->consumer_predicate_validation,
+                        bsman->consumer_predicate_first_bad,
+                        bsman->consumer_predicate_actual,
+                        bsman->consumer_predicate_expected);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(line, sizeof(line),
+                        "[vsh-6f84-helper] target_scalar=%d leaf_13f6c=%d "
+                        "counter_13f6c=%d leaf_14020=%d counter_14020=%d\n",
+                        bsman->consumer_target_scalar_range_valid,
+                        bsman->consumer_leaf_range_valid[0],
+                        bsman->consumer_counter_range_valid[0],
+                        bsman->consumer_leaf_range_valid[1],
+                        bsman->consumer_counter_range_valid[1]);
+                zeroCtrlDiagnosticsText(line);
                 observed_consumer_install = 1;
             }
             if (bsman->consumer_pre_slide_captured &&
@@ -3690,20 +3795,80 @@ static void zeroCtrlInstallDispatchEntryTrace(void) {
 static void zeroCtrlInstall6F84ConsumerTraces(void) {
     static const unsigned int offsets[2] = { 0x13F6C, 0x14020 };
     static const unsigned int delays[2] = { 0x00000000, 0x0062800B };
+    static const int range_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_RANGE_INVALID,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_RANGE_INVALID };
+    static const int helper_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_HELPER_RANGE_INVALID,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_HELPER_RANGE_INVALID };
+    static const int counter_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_COUNTER_RANGE_INVALID,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_COUNTER_RANGE_INVALID };
+    static const int jal_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_NOT_JAL,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_NOT_JAL };
+    static const int target_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_TARGET_MISMATCH,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_TARGET_MISMATCH };
+    static const int delay_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_DELAY_MISMATCH,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_DELAY_MISMATCH };
+    static const int region_reasons[2] = {
+        ZERO_CONSUMER_GUARD_CALLSITE_13F6C_PSEUDODIRECT_RANGE_INVALID,
+        ZERO_CONSUMER_GUARD_CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID };
     ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
     SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     unsigned int target, callsite[2], replacement[2], i;
+#define CONSUMER_GUARD_FAIL(value) do { \
+    bsman->consumer_guard_reason = (value); \
+    return; \
+} while (0)
 
-    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 || !vsh || !helper ||
-            vsh->text_size != 0x556C0 ||
-            !slide_diag.vsh_shared_global_decode_valid ||
-            !slide_diag.vsh_shared_global_segment_valid) return;
+    bsman->consumer_guard_reason = ZERO_CONSUMER_GUARD_NOT_ATTEMPTED;
+    bsman->consumer_predicate_first_bad = -1;
+    bsman->consumer_shared_global_addr = slide_diag.vsh_shared_global_addr;
+    if (model != 0) CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_MODEL_MISMATCH);
+    if (sceKernelDevkitVersion() != 0x06060110)
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_DEVKIT_MISMATCH);
+    if (!vsh) CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_VSH_NOT_FOUND);
+    bsman->consumer_vsh_text = vsh->text_addr;
+    bsman->consumer_vsh_text_size = vsh->text_size;
+    bsman->consumer_vsh_nsegment = vsh->nsegment;
+    bsman->consumer_segment_count = vsh->nsegment < 4 ? vsh->nsegment : 4;
+    for (i = 0; i < bsman->consumer_segment_count; i++) {
+        bsman->consumer_segment_addr[i] = vsh->segmentaddr[i];
+        bsman->consumer_segment_size[i] = vsh->segmentsize[i];
+    }
+    if (!helper) CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_HELPER_NOT_FOUND);
+    if (vsh->text_size != 0x556C0)
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_VSH_TEXT_SIZE_MISMATCH);
     target = vsh->text_addr + 0x6F84;
-    if (!zeroCtrlVshModuleRangeValid(vsh, target, 0x40) ||
-            !zeroCtrlVshModuleRangeValid(vsh,
-                slide_diag.vsh_shared_global_addr, 4) ||
-            !zeroCtrlVshModuleRangeValid(helper, bsman->consumer_target_addr, 4) ||
+    if (!zeroCtrlVshModuleRangeValid(vsh, target, 0x40))
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_PREDICATE_RANGE_INVALID);
+    for (i = 0; i < 16; i++)
+        bsman->consumer_predicate_words[i] = _lw(target + i * 4);
+    for (i = 0; i < 2; i++) {
+        callsite[i] = vsh->text_addr + offsets[i];
+        if (zeroCtrlVshModuleRangeValid(vsh, callsite[i], 8)) {
+            bsman->consumer_callsite_words[i][0] = _lw(callsite[i]);
+            bsman->consumer_callsite_words[i][1] = _lw(callsite[i] + 4);
+            if ((bsman->consumer_callsite_words[i][0] >> 26) == 3)
+                bsman->consumer_callsite_target[i] = zeroCtrlMipsJumpTarget(
+                        callsite[i], bsman->consumer_callsite_words[i][0]);
+        }
+    }
+    if (!slide_diag.vsh_shared_global_decode_valid)
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_SHARED_GLOBAL_DECODE_INVALID);
+    if (!slide_diag.vsh_shared_global_segment_valid)
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_SHARED_GLOBAL_SEGMENT_INVALID);
+    if (!zeroCtrlVshModuleRangeValid(vsh, slide_diag.vsh_shared_global_addr, 4))
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_SHARED_GLOBAL_RANGE_INVALID);
+    bsman->consumer_target_scalar_range_valid = zeroCtrlVshModuleRangeValid(
+            helper, bsman->consumer_target_addr, 4);
+    if (!bsman->consumer_target_scalar_range_valid)
+        CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_TARGET_SCALAR_RANGE_INVALID);
+    if (
             (_lw(target) & 0xFFFF0000) != 0x3C020000 ||
             _lw(target + 4) != 0x8C441620 ||
             _lw(target + 8) != 0x2483FFFC ||
@@ -3721,23 +3886,65 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
             (_lw(target + 56) >> 26) != 2 ||
             zeroCtrlMipsJumpTarget(target + 56, _lw(target + 56)) !=
                 target + 48 ||
-            _lw(target + 60) != 0x24050001) return;
+            _lw(target + 60) != 0x24050001) {
+        static const unsigned int expected[16] = {
+            0x3C020000, 0x8C441620, 0x2483FFFC, 0x38820007,
+            0x2C630002, 0x2C420001, 0x00621825, 0x14600006,
+            0x00002821, 0x24020009, 0x50820001, 0x24050001,
+            0x03E00008, 0x30A200FF, 0, 0x24050001 };
+        for (i = 0; i < 16; i++) {
+            unsigned int actual = bsman->consumer_predicate_words[i];
+            unsigned int wanted = expected[i];
+            int match = i == 0 ? (actual & 0xFFFF0000) == wanted :
+                    (i == 14 ? ((actual >> 26) == 2 &&
+                    zeroCtrlMipsJumpTarget(target + 56, actual) == target + 48) :
+                    actual == wanted);
+            if (!match) {
+                if (i == 14) wanted = 0x08000000 |
+                        (((target + 48) >> 2) & 0x03FFFFFF);
+                bsman->consumer_predicate_first_bad = i;
+                bsman->consumer_predicate_actual = actual;
+                bsman->consumer_predicate_expected = wanted;
+                break;
+            }
+        }
+        CONSUMER_GUARD_FAIL(
+                ZERO_CONSUMER_GUARD_PREDICATE_FINGERPRINT_MISMATCH);
+    }
+    bsman->consumer_predicate_validation = 1;
     for (i = 0; i < 2; i++) {
         callsite[i] = vsh->text_addr + offsets[i];
-        if (!zeroCtrlVshModuleRangeValid(vsh, callsite[i], 8) ||
-                !zeroCtrlVshModuleRangeValid(helper, bsman->consumer_leaf_addr[i],
-                    bsman->consumer_leaf_size[i]) ||
-                !zeroCtrlVshModuleRangeValid(helper, bsman->consumer_hits_addr[i], 4) ||
-                (_lw(callsite[i]) >> 26) != 3 ||
-                zeroCtrlMipsJumpTarget(callsite[i], _lw(callsite[i])) != target ||
-                _lw(callsite[i] + 4) != delays[i] ||
-                ((callsite[i] + 4) & 0xF0000000) !=
-                    (bsman->consumer_leaf_addr[i] & 0xF0000000)) return;
+        if (!zeroCtrlVshModuleRangeValid(vsh, callsite[i], 8))
+            CONSUMER_GUARD_FAIL(range_reasons[i]);
+        bsman->consumer_callsite_words[i][0] = _lw(callsite[i]);
+        bsman->consumer_callsite_words[i][1] = _lw(callsite[i] + 4);
+        bsman->consumer_leaf_range_valid[i] = zeroCtrlVshModuleRangeValid(
+                helper, bsman->consumer_leaf_addr[i], bsman->consumer_leaf_size[i]);
+        if (!bsman->consumer_leaf_range_valid[i])
+            CONSUMER_GUARD_FAIL(helper_reasons[i]);
+        bsman->consumer_counter_range_valid[i] = zeroCtrlVshModuleRangeValid(
+                helper, bsman->consumer_hits_addr[i], 4);
+        if (!bsman->consumer_counter_range_valid[i])
+            CONSUMER_GUARD_FAIL(counter_reasons[i]);
+        if ((bsman->consumer_callsite_words[i][0] >> 26) != 3)
+            CONSUMER_GUARD_FAIL(jal_reasons[i]);
+        bsman->consumer_callsite_target[i] = zeroCtrlMipsJumpTarget(
+                callsite[i], bsman->consumer_callsite_words[i][0]);
+        if (bsman->consumer_callsite_target[i] != target)
+            CONSUMER_GUARD_FAIL(target_reasons[i]);
+        if (bsman->consumer_callsite_words[i][1] != delays[i])
+            CONSUMER_GUARD_FAIL(delay_reasons[i]);
+        if (((callsite[i] + 4) & 0xF0000000) !=
+                (bsman->consumer_leaf_addr[i] & 0xF0000000))
+            CONSUMER_GUARD_FAIL(region_reasons[i]);
         replacement[i] = 0x0C000000 |
                 ((bsman->consumer_leaf_addr[i] >> 2) & 0x03FFFFFF);
         if (zeroCtrlMipsJumpTarget(callsite[i], replacement[i]) !=
-                bsman->consumer_leaf_addr[i]) return;
+                bsman->consumer_leaf_addr[i])
+            CONSUMER_GUARD_FAIL(
+                    ZERO_CONSUMER_GUARD_REPLACEMENT_TARGET_MISMATCH);
     }
+    bsman->consumer_guard_reason = ZERO_CONSUMER_GUARD_NONE;
     for (i = 0; i < 2; i++) bsman->consumer_validation[i] = 1;
     _sw(target, bsman->consumer_target_addr);
     for (i = 0; i < 2; i++) _sw(0, bsman->consumer_hits_addr[i]);
@@ -3755,6 +3962,7 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
         bsman->consumer_install[i] = 1;
         bsman->consumer_cache_sync[i] = 1;
     }
+#undef CONSUMER_GUARD_FAIL
 }
 
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {

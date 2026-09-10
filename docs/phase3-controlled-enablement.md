@@ -1573,3 +1573,39 @@ the decrypted predicate establishes the natural result for that snapshot but
 does not justify forcing either consumer. A changing global requires transition
 localization; zero counts move research to the enclosing initializer. T22 adds
 no compatibility and leaves the existing `+0x58D4` substitution unchanged.
+
+### T22.2 validation-failure diagnostics
+
+**PROVEN BY HARDWARE:** The first T22 run reported validation, installation,
+cache synchronization, and early shared-global validity all as zero. The hit
+counters from that run are not interpretable. T22.2 does not loosen or bypass
+the installer; it records which existing guard rejected the transaction.
+
+The bounded guard state distinguishes model/devkit/module/text failures,
+shared-global decode and segment validation, predicate/global/helper ranges,
+the predicate fingerprint, and every range/opcode/target/delay/pseudo-direct
+condition at each callsite. `NONE` is assigned only after all guards pass.
+Failure still occurs before either VSH callsite write, leaving both consumers
+uninstalled.
+
+T22.2 also captures the VSH text address and size, bounded `nsegment` metadata
+(at most four segment address/size pairs), the decoded shared-global address,
+the 16 predicate words, both callsite/delay pairs and decoded targets, and the
+installer-side helper/scalar range results. These are reads into fixed kernel
+diagnostic state; neither Sony data nor the wrappers are changed.
+
+The existing deferred writer retains both T22 records and adds:
+
+```text
+[vsh-6f84-consumers-guard] reason=... decode_valid=... segment_valid=... shared_global_addr=0x........ vsh_text=0x........ text_size=0x........ nsegment=...
+[vsh-6f84-segment] index=... addr=0x........ size=0x........
+[vsh-6f84-callsite] offset=... word=0x........ delay=0x........ decoded_target=0x........
+[vsh-6f84-predicate] validation=... first_bad_index=... actual=0x........ expected=0x........
+[vsh-6f84-helper] target_scalar=... leaf_13f6c=... counter_13f6c=... leaf_14020=... counter_14020=...
+```
+
+The required hardware test is one recovery-protected run with the unchanged
+configuration and complete log. The failing reason and captured metadata must
+be reviewed before any validator change. The VSH BSS/segment-size relationship,
+the actual failing guard, and whether T22 can install remain **HYPOTHESIS /
+UNKNOWN**. The recommended next phase is evidence review only.
