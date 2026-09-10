@@ -854,6 +854,13 @@ def check_sources(root):
             "zeroCtrlConsumer14020EffectiveResult"):
         if token not in compat_stub:
             fail("T24 14020 wrapper lacks " + token)
+    mode_bypass = compat_stub.find("beqz    $t1, 62f")
+    natural_bypass = compat_stub.find("bnez    $v0, 62f")
+    substitution = compat_stub.find("addiu   $v0, $zero, 1")
+    no_substitute = compat_stub.find("\n62:")
+    if min(mode_bypass, natural_bypass, substitution, no_substitute) < 0 or \
+            not mode_bypass < natural_bypass < substitution < no_substitute:
+        fail("T24 source does not route both bypasses around substitution to 62")
     if "sceKernelCreateThread" in consumers_install or \
             re.search(r"_sw\([^\n]*vsh_shared_global", consumers_install):
         fail("T22 creates a thread or writes the Sony shared global")
@@ -882,6 +889,9 @@ def check_sources(root):
         "CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID",
         "CALLSITE_13F6C_RESULT_RANGE_INVALID",
         "CALLSITE_14020_RESULT_RANGE_INVALID",
+        "CALLSITE_14020_COMPAT_MODE_RANGE_INVALID",
+        "CALLSITE_14020_EFFECTIVE_RESULT_RANGE_INVALID",
+        "CALLSITE_14020_SUBSTITUTION_HITS_RANGE_INVALID",
         "REPLACEMENT_TARGET_MISMATCH",
     )
     for reason in guard_reasons:
@@ -1270,14 +1280,25 @@ def check_t22_consumer_semantics(body, symbol):
 def check_t24_consumer_semantics(body):
     """Prove 14020 preserves nonzero v0 and substitutes only exact zero."""
     symbol = "zeroCtrlConsumer14020Trace"
-    if re.search(r"\bgp\b|\bjal\b", body) or len(re.findall(r"\bjalr\s+t2\b", body)) != 1:
-        fail(symbol + " uses gp, a direct call, or not exactly one natural JALR")
+    forbidden = r"\b(?:at|v1|a[0-3]|t[3-9]|s[0-7]|k[01]|gp|fp)\b"
+    set_v0_one = r"\b(?:li\s+v0,\s*1|addiu\s+v0,\s*zero,\s*1)\b"
+    if re.search(forbidden, body) or re.search(r"\bjal\b", body):
+        fail(symbol + " uses a forbidden register or direct function call")
     ordered = (
-        r"\bjalr\s+t2\b", r"\bsw\s+v0,", r"\blw\s+t1,",
+        r"\baddiu\s+sp,\s*sp,\s*-16\b",
+        r"\bsw\s+t0,\s*0\(sp\)", r"\bsw\s+t1,\s*4\(sp\)",
+        r"\bsw\s+t2,\s*8\(sp\)", r"\bsw\s+ra,\s*12\(sp\)",
+        r"\blui\s+t0,", r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1\b",
+        r"\bsw\s+t1,", r"\blui\s+t0,", r"\blw\s+t2,",
+        r"\bjalr\s+t2\b", r"\bnop\b", r"\blui\s+t0,",
+        r"\bsw\s+v0,", r"\blui\s+t0,", r"\blw\s+t1,",
         r"\bbeqz\s+t1,", r"\bbnez\s+v0,",
-        r"\baddiu\s+v0,\s*zero,\s*1\b", r"\baddiu\s+t1,\s*t1,\s*1\b",
-        r"\bsw\s+t1,", r"\bsw\s+v0,", r"\blw\s+ra,\s*12\(sp\)",
-        r"\baddiu\s+sp,\s*sp,\s*16\b", r"\bjr\s+ra\b",
+        set_v0_one, r"\blui\s+t0,", r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b", r"\bsw\s+t1,",
+        r"\blui\s+t0,", r"\bsw\s+v0,",
+        r"\blw\s+t2,\s*8\(sp\)", r"\blw\s+t1,\s*4\(sp\)",
+        r"\blw\s+t0,\s*0\(sp\)", r"\blw\s+ra,\s*12\(sp\)",
+        r"\baddiu\s+sp,\s*sp,\s*16\b", r"\bjr\s+ra\b", r"\bnop\b",
     )
     cursor = 0
     for pattern in ordered:
@@ -1285,9 +1306,20 @@ def check_t24_consumer_semantics(body):
         if not match:
             fail(symbol + " lacks ordered T24 operation " + pattern)
         cursor += match.end()
-    if len(re.findall(r"\baddiu\s+v0,\s*zero,\s*1\b", body)) != 1 or \
-            len(re.findall(r"\baddiu\s+sp,\s*sp,", body)) != 2:
-        fail(symbol + " has an extra substitution or unbalanced frame")
+    if len(re.findall(set_v0_one, body)) != 1 or \
+            len(re.findall(r"\baddiu\s+sp,\s*sp,", body)) != 2 or \
+            len(re.findall(r"\bjalr\s+t2\b", body)) != 1 or \
+            len(re.findall(r"\bjr\s+ra\b", body)) != 1:
+        fail(symbol + " has an extra substitution, call, return, or stack adjustment")
+    if len(re.findall(r"\blw\s+", body)) != 8 or \
+            len(re.findall(r"\bsw\s+", body)) != 8:
+        fail(symbol + " does not have exactly eight loads and eight stores")
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    expected_v0 = (r"\bsw\s+v0,", r"\bbnez\s+v0,", set_v0_one,
+                   r"\bsw\s+v0,")
+    if len(v0_lines) != 4 or any(not re.search(pattern, line)
+            for pattern, line in zip(expected_v0, v0_lines)):
+        fail(symbol + " has a v0 use outside natural store/test/substitute/effective store")
 
 
 def check_post_bsman_branch_semantics(body, relocatable=False):
@@ -1498,10 +1530,25 @@ def check_stub_object(stub_object):
                     result + r"\b", body):
             fail(symbol + " lacks the unique natural-result store relocation")
         if symbol.endswith("14020Trace"):
-            for scalar in T24_SCALARS:
-                if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != 1 or \
-                        len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != 1:
-                    fail(symbol + " lacks exact relocation pair for " + scalar)
+            expected_relocations = {
+                "zeroCtrlConsumer14020CompatMode": (1, 1),
+                "zeroCtrlConsumer14020EffectiveResult": (1, 1),
+                "zeroCtrlConsumer14020SubstitutionHits": (1, 2),
+            }
+            for scalar, (hi_count, lo_count) in expected_relocations.items():
+                if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi_count or \
+                        len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo_count:
+                    fail(symbol + " has wrong exact relocation counts for " + scalar)
+            relocation_uses = (
+                (r"\blw\s+t1,", "zeroCtrlConsumer14020CompatMode", 1),
+                (r"\bsw\s+v0,", "zeroCtrlConsumer14020EffectiveResult", 1),
+                (r"\blw\s+t1,", "zeroCtrlConsumer14020SubstitutionHits", 1),
+                (r"\bsw\s+t1,", "zeroCtrlConsumer14020SubstitutionHits", 1),
+            )
+            for instruction, scalar, count in relocation_uses:
+                tied = instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" + scalar + r"\b"
+                if len(re.findall(tied, body)) != count:
+                    fail(symbol + " does not tie " + scalar + " to " + instruction)
     bsman_leaf = function_body(disassembly, BSMAN_STUB)
     if not re.search(r"R_MIPS_HI16\s+" + BSMAN_COUNTER + r"\b", bsman_leaf) or \
             len(re.findall(r"R_MIPS_LO16\s+" + BSMAN_COUNTER + r"\b",
