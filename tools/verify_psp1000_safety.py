@@ -452,20 +452,33 @@ def check_sources(root):
     owner_capture = kernel[kernel.find(
         "static void zeroCtrlCaptureStateZeroVCallOwner"):
         kernel.find("static unsigned int zeroCtrlParseTriggerMode")]
-    if "sceKernelFindModuleByAddress(target)" not in owner_capture or \
-            "target - owner->text_addr > owner->text_size - bytes" not in owner_capture or \
-            "target - start <= size - bytes" not in owner_capture:
-        fail("T16 virtual target ownership lacks module/text/segment bounds checks")
+    if "module_count = sceKernelModuleCount()" not in owner_capture or \
+            "module_count * sizeof(module_ids[0]), module_ids" not in owner_capture or \
+            "sceKernelFindModuleByUID(module_ids[i])" not in owner_capture or \
+            "target - candidate->text_addr <=" not in owner_capture or \
+            "target - start <= size - sizeof(unsigned int)" not in owner_capture:
+        fail("T16.1 ownership lacks bounded module enumeration/text/segment checks")
     first_read = owner_capture.find("_lw(target +")
-    segment_validation = owner_capture.find("target - start <= size - bytes")
-    if first_read < 0 or segment_validation < 0 or first_read <= segment_validation:
-        fail("T16 fingerprints the virtual target before range validation")
+    fingerprint_validation = owner_capture.find(
+        "target - slide_diag.state_zero_vcall_segment_addr >")
+    if first_read < 0 or fingerprint_validation < 0 or \
+            first_read <= fingerprint_validation:
+        fail("T16.1 fingerprints the virtual target before complete range validation")
     if "STATE_ZERO_VCALL_CODE_WORDS 10" not in kernel or \
-            "state_zero_vcall_owner_valid = 1" not in owner_capture:
-        fail("T16 virtual target fingerprint is not fixed and fail-closed")
+            "state_zero_vcall_fingerprint_valid = 1" not in owner_capture or \
+            "ZERO_VCALL_RESOLVE_FINGERPRINT_RANGE_INVALID" not in owner_capture:
+        fail("T16.1 virtual target fingerprint is not fixed and fail-closed")
     if any(token in owner_capture for token in
             ("_sw(", "sceKernelDcache", "sceKernelIcache", "sceIo")):
-        fail("T16 virtual target ownership is not read-only")
+        fail("T16.1 virtual target ownership is not read-only")
+    resolve_gate = kernel[kernel.find(
+        "if (!observed_state_zero_vcall_owner)"):
+        kernel.find("observed_state_zero_vcall_owner = 1", kernel.find(
+            "if (!observed_state_zero_vcall_owner)"))]
+    if "if (target != 0 && returns != 0)" not in resolve_gate or \
+            "[state-zero-vcall-resolve] attempted=1" not in resolve_gate or \
+            "if (slide_diag.state_zero_vcall_fingerprint_valid)" not in resolve_gate:
+        fail("T16.1 resolution is not gated by target/return or lacks status gating")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")

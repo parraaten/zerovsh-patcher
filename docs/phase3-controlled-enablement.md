@@ -1100,37 +1100,61 @@ classifiers selected `15 >= 15` followed by `15 < 17` and exited without
 rejoining `+0x93EC`. No downstream PAF or VshBridge boundary was reached. The
 absolute virtual address is not stable evidence across boots.
 
-T16 asks only which loaded executable module owns that natural virtual target.
-After the existing helper scalar becomes nonzero, the already-running deferred
-diagnostic writer passes it to `sceKernelFindModuleByAddress()`. It accepts the
-result only when the complete ten-word fingerprint lies in both the owner's
-text range and one of its at most four reported segments. All arithmetic uses
-subtraction-based bounds checks before the first target read. A successful
-capture writes compact owner metadata, the stable text-relative offset, the
-containing segment, and ten read-only instruction words:
+The first T16 hardware run reproduced the complete T15 result with target
+`0x09C462B0`, but emitted neither ownership nor failure output. The earlier and
+newer activation entry and virtual target both shifted by exactly `0x100`,
+while their distance remained `0x52A54`; **STRONG INFERENCE:** both addresses
+are relocation-dependent. No absolute target is hardcoded.
+
+Source inspection proves that the old writer read the nonzero target in the
+same loop iteration that emitted the T15 state record, then called
+`sceKernelFindModuleByAddress()`, and emitted output only after that call
+returned. Consequently the hardware log cannot distinguish a lookup that did
+not return normally from interruption at that exact point. It also collapsed
+all normal validation failures into one generic record. T16 therefore did not
+produce an actionable result and is not complete.
+
+T16.1 removes that unsuitable address lookup. The deferred writer waits for
+both a nonzero captured target and a completed virtual return, obtains a
+bounded list of at most 128 loaded module UIDs with `sceKernelGetModuleList()`,
+and validates each candidate through `sceKernelFindModuleByUID()`. It selects
+an owner only when the target word lies in the candidate text range. It then
+separately validates reported segment metadata and the complete ten-word range
+in both text and segment before the first instruction read. The writer always
+emits one compact outcome after a resolution attempt:
+
+```text
+[state-zero-vcall-resolve] attempted=1 target=0x........ owner_found=... text_valid=... segment_valid=... fingerprint_valid=... reason=NAME(...)
+```
+
+Stable reasons distinguish module-list failure, no text owner, invalid module
+segment metadata, no containing segment, and an incomplete fingerprint range.
+A successful capture additionally writes compact owner metadata, the stable
+text-relative offset, the containing segment, and ten read-only words:
 
 ```text
 [state-zero-vcall-owner] target=0x........ module=........ text=0x........ text_size=0x........ offset=0x........ segment=... segment_start=0x........ segment_size=0x........
 [state-zero-vcall-code] offset=0x........ words=0x........,...
 ```
 
-An unknown module or an invalid text/segment range emits only
-`validation=failed`; it never dereferences the captured address. T16 adds no
-thread, scanner, hook, patch, argument capture, result conversion, or cache
-operation. In particular, it does not interpret or change 15, and the T15
-virtual wrapper and downstream tracers are unchanged.
+Every failure exits before fingerprint reads and fabricates no module output.
+T16.1 adds no thread, RAM/flash scanner, hook, patch, argument capture, result
+conversion, or cache operation. In particular, it does not interpret or
+change 15, and the T15 virtual wrapper and downstream tracers are unchanged.
 
 Phase report: files changed are `kernel/main.c`, the safety verifier, and this
-Phase 3 record. The technical finding is limited to the hardware-proven T15
-natural result and exit described above; T16 has no hardware result yet.
-The implementation assumes only that LoadCore's existing address lookup and
-reported module ranges describe loaded executable text. Static verification
-and PSPDEV build status must be recorded with the change. The required hardware
+Phase 3 record. The technical findings are the hardware-proven T15 natural
+result and exit, and that the original T16 outcome was unobservable after its
+address lookup; the precise API failure mode remains **HYPOTHESIS / UNKNOWN**.
+T16.1 assumes only that ModuleMgr's bounded loaded-UID list and LoadCore's UID
+lookup expose the metadata already used elsewhere in the project. Static
+verification and PSPDEV build status must be recorded. The required hardware
 test is one recovery-protected PSP-1000 6.61 run with `ClockAndCalendar` and the
 broad BSMan shim disabled, the dangerous 58D4 trigger and diagnostics/activation
 trace enabled, and both proven narrow compatibility controls enabled. Do not
 load `660_plugins_on_661.prx`. Return the complete unedited log containing the
-owner, fingerprint, and unchanged T15 result/counts. The owner's module name,
+resolver status, owner/fingerprint if successful, and unchanged T15
+result/counts. The owner's module name,
 stable offset, function semantics, and whether an additional decrypted PRX is
 needed remain unresolved. The recommended next phase is offline correlation
 against the matching decrypted PSP-1000 PRX; no new compatibility behavior is
