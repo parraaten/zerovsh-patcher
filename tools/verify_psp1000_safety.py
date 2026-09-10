@@ -54,6 +54,13 @@ STATE_ZERO_TRACE_STUBS = (
     "zeroCtrlStateZeroVReturnTrace", "zeroCtrlStateZeroClass15Trace",
     "zeroCtrlStateZeroClass17Trace", "zeroCtrlStateZeroClass18Trace",
 )
+T22_CONSUMER_WRAPPERS = (
+    ("zeroCtrlConsumer13F6CTrace", "zeroCtrlConsumer13F6CTraceEnd",
+     "zeroCtrlConsumer13F6CHits"),
+    ("zeroCtrlConsumer14020Trace", "zeroCtrlConsumer14020TraceEnd",
+     "zeroCtrlConsumer14020Hits"),
+)
+T22_CONSUMER_TARGET = "zeroCtrlConsumer6F84Target"
 
 
 def fail(message):
@@ -1087,6 +1094,45 @@ def require_result_store_relocation(body, function, result_symbol):
         fail(function + " does not store v0 to " + result_symbol)
 
 
+def check_t22_consumer_semantics(body, symbol):
+    """Prove the assembled T22 wrapper preserves the caller and natural result."""
+    forbidden = r"\b(?:at|v[01]|a[0-3]|t[3-9]|s[0-7]|k[01]|gp|fp|ra)\b"
+    if re.search(forbidden, body) or re.search(r"\bjalr?\b", body):
+        fail(symbol + " uses a forbidden register or function call")
+    ordered = (
+        r"\baddiu\s+sp,\s*sp,\s*-12\b",
+        r"\bsw\s+t0,\s*0\(sp\)",
+        r"\bsw\s+t1,\s*4\(sp\)",
+        r"\bsw\s+t2,\s*8\(sp\)",
+        r"\blui\s+t0,",
+        r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b",
+        r"\bsw\s+t1,",
+        r"\blui\s+t0,",
+        r"\blw\s+t2,",
+        r"\blw\s+t1,\s*4\(sp\)",
+        r"\blw\s+t0,\s*0\(sp\)",
+        r"\baddiu\s+sp,\s*sp,\s*12\b",
+        r"\bjr\s+t2\b",
+        r"\blw\s+t2,\s*-4\(sp\)",
+    )
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail(symbol + " lacks ordered transparent operation " + pattern)
+        cursor += match.end()
+    if len(re.findall(r"\baddiu\s+sp,\s*sp,", body)) != 2 or \
+            len(re.findall(r"\bjr\s+t2\b", body)) != 1:
+        fail(symbol + " has unexpected stack adjustment or control transfer")
+    if len(re.findall(r"\blw\s+", body)) != 5 or \
+            len(re.findall(r"\bsw\s+", body)) != 4:
+        fail(symbol + " has unexpected memory accesses")
+    if not re.search(r"\bjr\s+t2\b[^\n]*\n\s*[0-9a-f]+:\s+[^\n]*"
+            r"\blw\s+t2,\s*-4\(sp\)", body, re.I):
+        fail(symbol + " does not restore S-4 in the JR delay slot")
+
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -1190,6 +1236,19 @@ def check_elf(elf):
             "zeroCtrlPostVshNaturalResult"):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing Sony module_start wrapper symbol " + symbol)
+    symbol_addresses = {}
+    for line in nm.splitlines():
+        match = re.match(r"^([0-9a-fA-F]+)\s+\w\s+(\S+)$", line)
+        if match:
+            symbol_addresses[match.group(2)] = int(match.group(1), 16)
+    for start, end, counter in T22_CONSUMER_WRAPPERS:
+        for symbol in (start, end, counter):
+            if symbol not in symbol_addresses:
+                fail("missing linked T22 symbol " + symbol)
+        if symbol_addresses[end] <= symbol_addresses[start]:
+            fail(start + " has an empty or reversed linked range")
+    if T22_CONSUMER_TARGET not in symbol_addresses:
+        fail("missing linked T22 natural-target symbol")
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
     for symbol in STUBS:
         body = function_body(disassembly, symbol)
@@ -1241,6 +1300,8 @@ def check_elf(elf):
                 (not re.search(r"\blw\s+ra,", prefix_trace) or
                  not re.search(r"\bjr\s+ra\b", prefix_trace)):
             fail("post-BSMan VshBridge return trace does not restore ra")
+    for start, _end, _counter in T22_CONSUMER_WRAPPERS:
+        check_t22_consumer_semantics(function_body(disassembly, start), start)
 
 
 def check_stub_object(stub_object):
@@ -1253,6 +1314,19 @@ def check_stub_object(stub_object):
             fail(symbol + " has no HI16 relocation to its dedicated counter")
         if len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
             fail(symbol + " does not have two LO16 counter relocations")
+    for symbol, _end, counter in T22_CONSUMER_WRAPPERS:
+        body = function_body(disassembly, symbol)
+        check_t22_consumer_semantics(body, symbol)
+        if len(re.findall(r"R_MIPS_HI16\s+" + counter + r"\b", body)) != 1 or \
+                len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
+            fail(symbol + " lacks exact dedicated-counter relocations")
+        if len(re.findall(r"R_MIPS_HI16\s+" + T22_CONSUMER_TARGET + r"\b",
+                body)) != 1 or len(re.findall(
+                    r"R_MIPS_LO16\s+" + T22_CONSUMER_TARGET + r"\b", body)) != 1:
+            fail(symbol + " lacks unique natural-target relocations")
+        if not re.search(r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                T22_CONSUMER_TARGET + r"\b", body):
+            fail(symbol + " does not load the natural target into t2")
     bsman_leaf = function_body(disassembly, BSMAN_STUB)
     if not re.search(r"R_MIPS_HI16\s+" + BSMAN_COUNTER + r"\b", bsman_leaf) or \
             len(re.findall(r"R_MIPS_LO16\s+" + BSMAN_COUNTER + r"\b",
