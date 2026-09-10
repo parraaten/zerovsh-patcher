@@ -644,6 +644,58 @@ zeroCtrlCase14Trace:
 zeroCtrlCase14TraceEnd:
 .end zeroCtrlCase14Trace
 
+.globl zeroCtrlDispatchEntryTrace
+.type zeroCtrlDispatchEntryTrace @function
+.ent zeroCtrlDispatchEntryTrace, 0
+zeroCtrlDispatchEntryTrace:
+    addiu   $sp, $sp, -12
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t2, 8($sp)
+    lui     $t0, %hi(zeroCtrlDispatchEntryHits)
+    lw      $t1, %lo(zeroCtrlDispatchEntryHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlDispatchEntryHits)($t0)
+    addiu   $t2, $zero, 14
+    bne     $a0, $t2, 61f
+    nop
+    lui     $t0, %hi(zeroCtrlDispatchCase14Hits)
+    lw      $t1, %lo(zeroCtrlDispatchCase14Hits)($t0)
+    bnez    $t1, 60f
+    nop
+    lui     $t0, %hi(zeroCtrlDispatchCase14FirstRA)
+    sw      $ra, %lo(zeroCtrlDispatchCase14FirstRA)($t0)
+    b       62f
+    nop
+60:
+    lui     $t0, %hi(zeroCtrlDispatchCase14LastRA)
+    lw      $t2, %lo(zeroCtrlDispatchCase14LastRA)($t0)
+    beq     $t2, $ra, 62f
+    nop
+    lui     $t0, %hi(zeroCtrlDispatchCase14RAChanges)
+    lw      $t2, %lo(zeroCtrlDispatchCase14RAChanges)($t0)
+    addiu   $t2, $t2, 1
+    sw      $t2, %lo(zeroCtrlDispatchCase14RAChanges)($t0)
+62:
+    lui     $t0, %hi(zeroCtrlDispatchCase14LastRA)
+    sw      $ra, %lo(zeroCtrlDispatchCase14LastRA)($t0)
+    lui     $t0, %hi(zeroCtrlDispatchCase14Hits)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlDispatchCase14Hits)($t0)
+61:
+    lui     $t0, %hi(zeroCtrlDispatchEntryResume)
+    lw      $t2, %lo(zeroCtrlDispatchEntryResume)($t0)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 12
+    addiu   $sp, $sp, -0x40
+    sw      $s2, 0x18($sp)
+    jr      $t2
+    lw      $t2, 0x24($sp)
+.globl zeroCtrlDispatchEntryTraceEnd
+zeroCtrlDispatchEntryTraceEnd:
+.end zeroCtrlDispatchEntryTrace
+
 .macro STATE_ZERO_CLASS name, limit, bit_true, bit_false, true_slot, false_slot, rejoin
 .globl \name
 .type \name @function
@@ -1032,3 +1084,15 @@ zeroCtrlCase14FirstRA: .space 4
 zeroCtrlCase14LastRA: .space 4
 .globl zeroCtrlCase14RAChanges
 zeroCtrlCase14RAChanges: .space 4
+.globl zeroCtrlDispatchEntryResume
+zeroCtrlDispatchEntryResume: .space 4
+.globl zeroCtrlDispatchEntryHits
+zeroCtrlDispatchEntryHits: .space 4
+.globl zeroCtrlDispatchCase14Hits
+zeroCtrlDispatchCase14Hits: .space 4
+.globl zeroCtrlDispatchCase14FirstRA
+zeroCtrlDispatchCase14FirstRA: .space 4
+.globl zeroCtrlDispatchCase14LastRA
+zeroCtrlDispatchCase14LastRA: .space 4
+.globl zeroCtrlDispatchCase14RAChanges
+zeroCtrlDispatchCase14RAChanges: .space 4

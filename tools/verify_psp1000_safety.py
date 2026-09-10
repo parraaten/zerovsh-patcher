@@ -603,7 +603,7 @@ def check_sources(root):
         fail("T18.1 changed the 12-second observation window")
     case14_install = kernel[kernel.find(
         "static void zeroCtrlInstallCase14Trace"):
-        kernel.find("static void zeroCtrlInstallBSManClosedShim")]
+        kernel.find("static void zeroCtrlInstallDispatchEntryTrace")]
     for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
             "vsh->text_addr + 0x1D7A4", "vsh->text_addr + 0x4FDA0",
             "table + 14 * 4", "vsh->text_addr + 0x1DE18",
@@ -650,6 +650,56 @@ def check_sources(root):
         if ("bsman->case14_scalar_addr[%d]" % scalar) not in \
                 writer[case14_live_record:topmenu_owner_done]:
             fail("T19 live result is missing case-14 scalar %d" % scalar)
+    dispatch_install = kernel[kernel.find(
+        "static void zeroCtrlInstallDispatchEntryTrace"):
+        kernel.find("static void zeroCtrlInstallBSManClosedShim")]
+    for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
+            "vsh->text_size != 0x556C0", "vsh->text_addr + 0x1D7A4",
+            "_lw(site) != 0x27BDFFC0", "_lw(site + 4) != 0xAFB20018",
+            "_lw(site + 0x24) != 0x9062019D",
+            "_lw(site + 0x28) != 0x1440003D", "resume = site + 8",
+            "dispatch_entry_validation = 1", "_sw(replacement, site)",
+            "_sw(0, site + 4)", "dispatch_entry_install = 1",
+            "dispatch_entry_cache_sync = 1"):
+        if token not in dispatch_install:
+            fail("T20 dispatcher-entry transaction is missing " + token)
+    dispatch_commit = dispatch_install.find("_sw(replacement, site)")
+    dispatch_validation = dispatch_install.find("dispatch_entry_validation = 1")
+    if dispatch_commit <= dispatch_validation or \
+            dispatch_install.count("_sw(replacement, site)") != 1:
+        fail("T20 writes VSH before complete dispatcher validation")
+    if dispatch_install.count("_sw(0, site + 4)") != 1 or \
+            "(const void *)site, 8" not in dispatch_install:
+        fail("T20 does not replace and synchronize exactly two entry words")
+    if "sceKernelCreateThread" in dispatch_install or \
+            "0x6F84" in dispatch_install:
+        fail("T20 creates a thread or changes the broad predicate")
+    dispatch_stub = assembly[assembly.find("zeroCtrlDispatchEntryTrace:"):
+        assembly.find("zeroCtrlDispatchEntryTraceEnd:")]
+    for token in ("bne     $a0, $t2", "sw      $ra, %lo(zeroCtrlDispatchCase14FirstRA)",
+            "sw      $ra, %lo(zeroCtrlDispatchCase14LastRA)",
+            "addiu   $sp, $sp, -0x40", "sw      $s2, 0x18($sp)",
+            "lw      $t2, %lo(zeroCtrlDispatchEntryResume)",
+            "jr      $t2", "lw      $t2, 0x24($sp)"):
+        if token not in dispatch_stub:
+            fail("T20 helper does not preserve displaced entry behavior: " + token)
+    if any(token in dispatch_stub for token in
+            ("jal ", "jalr", "sceIo", "Alloc", "malloc", "sceKernel")):
+        fail("T20 helper calls code, performs I/O, or allocates")
+    if re.search(r"\b(?:li|addiu|ori|lw|move|addu)\s+\$(?:a0|ra|s2|s3)\b",
+            dispatch_stub):
+        fail("T20 helper modifies Sony argument or preserved registers")
+    if any(token in dispatch_stub for token in ("0x19D", "0x12C")):
+        fail("T20 helper accesses Sony context state")
+    dispatch_install_record = writer.find("[topmenu-dispatch-entry-install]")
+    dispatch_live_record = writer.find("[topmenu-dispatch-entry-live]")
+    if min(dispatch_install_record, dispatch_live_record) < 0 or not (
+            case14_live_record < dispatch_live_record < topmenu_owner_done):
+        fail("T20 records are missing or not at the existing live boundary")
+    for scalar in range(5):
+        if ("bsman->dispatch_entry_scalar_addr[%d]" % scalar) not in \
+                writer[dispatch_live_record:topmenu_owner_done]:
+            fail("T20 live result is missing dispatcher scalar %d" % scalar)
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")

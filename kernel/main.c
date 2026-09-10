@@ -282,6 +282,10 @@ typedef struct {
     int case14_validation, case14_install, case14_cache_sync;
     unsigned int case14_leaf_addr, case14_leaf_size;
     unsigned int case14_resume_addr, case14_scalar_addr[4];
+    int dispatch_entry_validation, dispatch_entry_install;
+    int dispatch_entry_cache_sync;
+    unsigned int dispatch_entry_leaf_addr, dispatch_entry_leaf_size;
+    unsigned int dispatch_entry_resume_addr, dispatch_entry_scalar_addr[5];
     unsigned int state_zero_original[14], state_zero_replacement[7];
 } ZeroCtrlBSManEvidence;
 
@@ -1374,6 +1378,14 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(case14_first_ra_addr);
     CHECK_POST_SCALAR(case14_last_ra_addr);
     CHECK_POST_SCALAR(case14_ra_changes_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.dispatch_entry_leaf_addr,
+                copied.dispatch_entry_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(dispatch_entry_resume_addr);
+    CHECK_POST_SCALAR(dispatch_entry_hits_addr);
+    CHECK_POST_SCALAR(dispatch_case14_hits_addr);
+    CHECK_POST_SCALAR(dispatch_case14_first_ra_addr);
+    CHECK_POST_SCALAR(dispatch_case14_last_ra_addr);
+    CHECK_POST_SCALAR(dispatch_case14_ra_changes_addr);
 #undef CHECK_POST_SCALAR
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -1531,6 +1543,15 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->case14_scalar_addr[1] = copied.case14_first_ra_addr;
     bsman->case14_scalar_addr[2] = copied.case14_last_ra_addr;
     bsman->case14_scalar_addr[3] = copied.case14_ra_changes_addr;
+    bsman->dispatch_entry_leaf_addr = copied.dispatch_entry_leaf_addr;
+    bsman->dispatch_entry_leaf_size = copied.dispatch_entry_leaf_end_addr -
+            copied.dispatch_entry_leaf_addr;
+    bsman->dispatch_entry_resume_addr = copied.dispatch_entry_resume_addr;
+    bsman->dispatch_entry_scalar_addr[0] = copied.dispatch_entry_hits_addr;
+    bsman->dispatch_entry_scalar_addr[1] = copied.dispatch_case14_hits_addr;
+    bsman->dispatch_entry_scalar_addr[2] = copied.dispatch_case14_first_ra_addr;
+    bsman->dispatch_entry_scalar_addr[3] = copied.dispatch_case14_last_ra_addr;
+    bsman->dispatch_entry_scalar_addr[4] = copied.dispatch_case14_ra_changes_addr;
     bsman->registered = 1;
 }
 
@@ -2595,6 +2616,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_bsman_attempted = 0;
     int observed_field12c_write_install_status = 0;
     int observed_case14_install_status = 0;
+    int observed_dispatch_entry_install_status = 0;
     char line[256];
     unsigned int i;
 
@@ -2755,6 +2777,16 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->case14_install, bsman->case14_cache_sync);
                 zeroCtrlDiagnosticsText(line);
                 observed_case14_install_status = 1;
+            }
+            if (bsman->attempted && !observed_dispatch_entry_install_status) {
+                snprintf(line, sizeof(line),
+                        "[topmenu-dispatch-entry-install] validation=%d "
+                        "install=%d cache_sync=%d\n",
+                        bsman->dispatch_entry_validation,
+                        bsman->dispatch_entry_install,
+                        bsman->dispatch_entry_cache_sync);
+                zeroCtrlDiagnosticsText(line);
+                observed_dispatch_entry_install_status = 1;
             }
             if (bsman->attempted && !observed_bsman_attempted) {
                 snprintf(line, sizeof(line),
@@ -3054,6 +3086,25 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[1]),
                                 zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[2]),
                                 zeroCtrlReadHelperCounter(bsman->case14_scalar_addr[3]));
+                        zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[topmenu-dispatch-entry-live] validation=%d "
+                                "install=%d cache_sync=%d hits=%u "
+                                "case14_requests=%u first_ra=0x%08X "
+                                "last_ra=0x%08X ra_changes=%u\n",
+                                bsman->dispatch_entry_validation,
+                                bsman->dispatch_entry_install,
+                                bsman->dispatch_entry_cache_sync,
+                                zeroCtrlReadHelperCounter(
+                                    bsman->dispatch_entry_scalar_addr[0]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->dispatch_entry_scalar_addr[1]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->dispatch_entry_scalar_addr[2]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->dispatch_entry_scalar_addr[3]),
+                                zeroCtrlReadHelperCounter(
+                                    bsman->dispatch_entry_scalar_addr[4]));
                         zeroCtrlDiagnosticsText(line);
                         observed_state_zero_vcall_owner = 1;
                     }
@@ -3498,6 +3549,54 @@ static void zeroCtrlInstallCase14Trace(void) {
     bsman->case14_cache_sync = 1;
 }
 
+static void zeroCtrlInstallDispatchEntryTrace(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int site, resume, replacement, i;
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 || !vsh || !helper ||
+            vsh->text_size != 0x556C0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x1D7A4, 0x58) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->dispatch_entry_leaf_addr,
+                bsman->dispatch_entry_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                bsman->dispatch_entry_resume_addr, 4)) return;
+    for (i = 0; i < 5; i++)
+        if (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->dispatch_entry_scalar_addr[i], 4)) return;
+    site = vsh->text_addr + 0x1D7A4;
+    resume = site + 8;
+    if (_lw(site) != 0x27BDFFC0 || _lw(site + 4) != 0xAFB20018 ||
+            (_lw(site + 8) & 0xFFFF0000) != 0x3C120000 ||
+            (_lw(site + 0x20) & 0xFFFF0000) != 0x8E430000 ||
+            _lw(site + 0x24) != 0x9062019D ||
+            _lw(site + 0x28) != 0x1440003D ||
+            _lw(site + 0x2C) != 0x00809821 ||
+            _lw(site + 0x30) != 0x2C820016 ||
+            !zeroCtrlVshModuleRangeValid(vsh, resume, 4) ||
+            ((site + 4) & 0xF0000000) !=
+                (bsman->dispatch_entry_leaf_addr & 0xF0000000)) return;
+    replacement = 0x08000000 |
+            ((bsman->dispatch_entry_leaf_addr >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(site, replacement) !=
+            bsman->dispatch_entry_leaf_addr) return;
+    bsman->dispatch_entry_validation = 1;
+    _sw(resume, bsman->dispatch_entry_resume_addr);
+    for (i = 0; i < 5; i++) _sw(0, bsman->dispatch_entry_scalar_addr[i]);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->dispatch_entry_resume_addr, 4);
+    for (i = 0; i < 5; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->dispatch_entry_scalar_addr[i], 4);
+    _sw(replacement, site);
+    _sw(0, site + 4);
+    sceKernelDcacheWritebackInvalidateRange((const void *)site, 8);
+    sceKernelIcacheInvalidateRange((const void *)site, 8);
+    bsman->dispatch_entry_install = 1;
+    bsman->dispatch_entry_cache_sync = 1;
+}
+
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     const unsigned int target_nid = 0x23E3A9B6;
     static const char paf_library[] = "scePaf";
@@ -3513,6 +3612,7 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             sceKernelDevkitVersion() != 0x06060110) return;
     zeroCtrlInstallField12CWriteTrace();
     zeroCtrlInstallCase14Trace();
+    zeroCtrlInstallDispatchEntryTrace();
     bsman->attempted = 1;
     cursor = (unsigned int)mod->stub_top;
     end = cursor + mod->stub_size;

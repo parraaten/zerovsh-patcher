@@ -1437,3 +1437,61 @@ log and normal-use stability observations. Required records are
   conclusion or compatibility work.
 * Failed T19 validation invalidates all hit-counter interpretation and must be
   investigated first.
+
+### T19 hardware result and T20 pre-dispatch entry trace
+
+**PROVEN BY HARDWARE:** T19 installed with `validation=1 install=1
+cache_sync=1`, but its working TopMenu-boundary record reported zero case-14
+hits and zero caller-RA evidence. Jump-table case 14 was therefore not reached
+during the observed post-installation interval. T19 remains installed and
+unchanged for the next control.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** Before dispatch, the function at
+`vsh_module+0x1D7A4` reads a byte at offset `+0x19D` in the active context and
+branches to the common `+0x1D8C4` epilogue when that byte is nonzero. Its exact
+official meaning is **HYPOTHESIS / UNKNOWN**. An incoming value of 14 passes
+the later unsigned `<22` range gate. The upper jump-table cases 14 through 21
+begin at `+0x1DE18`, `+0x1DF04`, `+0x1DFA4`, `+0x1E05C`, `+0x1E080`,
+`+0x1E0F0`, `+0x1E174`, and `+0x1E1E8`, respectively, and their natural paths
+converge on the common `+0x1DEA8/+0x1DEAC` tail. Consequently, that writer is
+not exclusive to case 14.
+
+T20 asks only whether the dispatcher is entered after instrumentation and
+whether any entry carries the unchanged incoming `a0=14` before the `+0x19D`
+gate. It does not inspect individual callers or change the context.
+
+The T20 installer is restricted to model 0, devkit `0x06060110`, and exact VSH
+text size `0x556C0`. It validates the dispatcher and pre-gate fingerprint,
+including original entry words `0x27BDFFC0` (`addiu sp,sp,-0x40`) and
+`0xAFB20018` (`sw s2,0x18(sp)`), every VSH/helper/scalar range, the natural
+`+0x1D7AC` resume, and pseudo-direct jump reachability before any VSH write.
+It then replaces only the first two entry words with a helper jump and NOP and
+synchronizes exactly those eight code bytes.
+
+The transparent leaf records bounded scalars only: total dispatcher entries,
+number of incoming case-14 requests, first and last case-14 caller `$ra`, and
+RA-change count. It modifies neither `a0` nor `$ra`, preserves all scratch
+registers, reproduces both displaced instructions exactly, and resumes at
+`+0x1D7AC`. It makes no calls, performs no I/O or allocation, creates no thread,
+and reads or writes no Sony context field.
+
+The existing diagnostic writer emits `[topmenu-dispatch-entry-install]` once
+and `[topmenu-dispatch-entry-live]` immediately after the retained T19 live
+record. Interpretation is limited to the requested distinctions: zero total
+hits moves research to callers/scheduling; total hits without case-14 requests
+moves research to constant-14 caller prerequisites; case-14 requests without
+T19 hits directs the next read-only investigation to the earlier `+0x19D` gate;
+case-14 and T19 hits without T18 hits directs later localization inside the
+natural case path. Invalid installation invalidates every T20 counter.
+
+Required hardware output is the existing TopMenu state, T18.1 live record,
+T19 live record, plus:
+
+```text
+[topmenu-dispatch-entry-install] validation=... install=... cache_sync=...
+[topmenu-dispatch-entry-live] validation=... install=... cache_sync=... hits=... case14_requests=... first_ra=0x........ last_ra=0x........ ra_changes=...
+```
+
+Broad `+0x6F84`, `+0x13F6C`, `+0x14020`, field `+0x19D`, `field_12C`, and all
+compatibility behavior remain unchanged. The deferred 12-second finalization
+problem is explicitly outside T20.

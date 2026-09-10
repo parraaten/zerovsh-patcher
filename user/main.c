@@ -247,6 +247,10 @@ extern void zeroCtrlCase14Trace(void), zeroCtrlCase14TraceEnd(void);
 extern volatile unsigned int zeroCtrlCase14Resume, zeroCtrlCase14Hits;
 extern volatile unsigned int zeroCtrlCase14FirstRA, zeroCtrlCase14LastRA;
 extern volatile unsigned int zeroCtrlCase14RAChanges;
+extern void zeroCtrlDispatchEntryTrace(void), zeroCtrlDispatchEntryTraceEnd(void);
+extern volatile unsigned int zeroCtrlDispatchEntryResume, zeroCtrlDispatchEntryHits;
+extern volatile unsigned int zeroCtrlDispatchCase14Hits, zeroCtrlDispatchCase14FirstRA;
+extern volatile unsigned int zeroCtrlDispatchCase14LastRA, zeroCtrlDispatchCase14RAChanges;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -553,6 +557,14 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.case14_first_ra_addr = (u32)&zeroCtrlCase14FirstRA;
 	bsmanClosedRegistration.case14_last_ra_addr = (u32)&zeroCtrlCase14LastRA;
 	bsmanClosedRegistration.case14_ra_changes_addr = (u32)&zeroCtrlCase14RAChanges;
+	bsmanClosedRegistration.dispatch_entry_leaf_addr = (u32)zeroCtrlDispatchEntryTrace;
+	bsmanClosedRegistration.dispatch_entry_leaf_end_addr = (u32)zeroCtrlDispatchEntryTraceEnd;
+	bsmanClosedRegistration.dispatch_entry_resume_addr = (u32)&zeroCtrlDispatchEntryResume;
+	bsmanClosedRegistration.dispatch_entry_hits_addr = (u32)&zeroCtrlDispatchEntryHits;
+	bsmanClosedRegistration.dispatch_case14_hits_addr = (u32)&zeroCtrlDispatchCase14Hits;
+	bsmanClosedRegistration.dispatch_case14_first_ra_addr = (u32)&zeroCtrlDispatchCase14FirstRA;
+	bsmanClosedRegistration.dispatch_case14_last_ra_addr = (u32)&zeroCtrlDispatchCase14LastRA;
+	bsmanClosedRegistration.dispatch_case14_ra_changes_addr = (u32)&zeroCtrlDispatchCase14RAChanges;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        
