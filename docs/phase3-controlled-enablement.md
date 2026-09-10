@@ -1609,3 +1609,26 @@ configuration and complete log. The failing reason and captured metadata must
 be reviewed before any validator change. The VSH BSS/segment-size relationship,
 the actual failing guard, and whether T22 can install remain **HYPOTHESIS /
 UNKNOWN**. The recommended next phase is evidence review only.
+
+### T22.3 relocation-aware predicate validation
+
+**PROVEN BY HARDWARE:** T22.2 failed only at predicate word index 1. The loaded
+word was `0x8C44EEE0`, and together with the runtime `lui v0,0x09C8` it resolves
+to `0x09C7EEE0`, exactly the separately decoded shared-global address. That
+address lies within hardware-reported VSH segment 1 (`0x09C7D8C0` through
+`0x09C84EA0`), so the prior BSS/segment-range hypothesis is false. Both runtime
+consumer JALs decoded to natural `vsh_module+0x6F84`, with their expected delay
+slots intact.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** The pre-relocation word at `+0x6F88`
+is `0x8C441620`. Its `0x1620` immediate is not an invariant after relocation.
+
+T22.3 changes only that validator rule. Word 0 remains a structural
+`LUI v0,imm` check. Word 1 must structurally match `LW a0,imm(v0)`, and the
+actual HI16 plus signed LO16 are decoded with the same pure helper used by the
+existing shared-global derivation. The resulting runtime address must equal the
+already decoded, segment-validated, range-valid shared-global address. All
+remaining predicate words, the natural jump target, both callsites, both delay
+slots, transactional ordering, wrappers, and diagnostics remain unchanged.
+The bounded predicate record now also reports that reconstructed address so a
+structurally valid load with the wrong effective target is unambiguous.

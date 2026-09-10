@@ -789,11 +789,40 @@ def check_sources(root):
         fail("T22 consumer JAL writes are not transactional")
     if re.search(r"_sw\([^\n]*callsite\[i\]\s*\+\s*4", consumers_install):
         fail("T22 modifies a consumer delay slot")
-    for word in ("0x8C441620", "0x2483FFFC", "0x38820007",
+    for word in ("0x2483FFFC", "0x38820007",
             "0x2C630002", "0x2C420001", "0x00621825", "0x14600006",
             "0x50820001", "0x03E00008", "0x30A200FF"):
         if word not in consumers_install:
             fail("T22 does not validate natural +6F84 word " + word)
+    decode_helper = kernel[kernel.find(
+        "static unsigned int zeroCtrlDecodeLuiSignedLowAddress"):
+        kernel.find("static void zeroCtrlDeriveVshSharedGlobal")]
+    if "int displacement = (short)(low_instruction & 0xFFFF)" not in \
+            decode_helper or \
+            "((lui & 0xFFFF) << 16) + (unsigned int)displacement" not in \
+            decode_helper:
+        fail("T22.3 shared LUI/LO16 decoder lost signed-low semantics")
+    derive = kernel[kernel.find("static void zeroCtrlDeriveVshSharedGlobal"):
+        kernel.find("static int zeroCtrlVshModuleRangeValid")]
+    if "zeroCtrlDecodeLuiSignedLowAddress(lui, access)" not in derive or \
+            "zeroCtrlDecodeLuiSignedLowAddress(" not in consumers_install:
+        fail("T22.3 does not share address decoding with original derivation")
+    if "(_lw(target + 4) & 0xFFFF0000) != 0x8C440000" not in \
+            consumers_install or \
+            "predicate_global != slide_diag.vsh_shared_global_addr" not in \
+            consumers_install:
+        fail("T22.3 does not validate LW structure and effective address")
+    if "consumer_predicate_decoded_addr = predicate_global" not in \
+            consumers_install or "decoded=0x%08X" not in writer:
+        fail("T22.3 address mismatch diagnostics omit the decoded runtime address")
+    if re.search(r"_lw\(target \+ 4\)\s*(!=|==)\s*0x8C441620",
+            consumers_install):
+        fail("T22.3 reintroduced the pre-relocation LW immediate")
+    for guard in ("if (!slide_diag.vsh_shared_global_decode_valid)",
+            "if (!slide_diag.vsh_shared_global_segment_valid)",
+            "zeroCtrlVshModuleRangeValid(vsh, slide_diag.vsh_shared_global_addr, 4)"):
+        if guard not in consumers_install:
+            fail("T22.3 removed required shared-global guard " + guard)
     consumer_stub = assembly[assembly.find(".macro CONSUMER_6F84_TRACE"):
         assembly.find(".endm", assembly.find(".macro CONSUMER_6F84_TRACE"))]
     for token in ("sw      $t0, 0($sp)", "sw      $t1, 4($sp)",

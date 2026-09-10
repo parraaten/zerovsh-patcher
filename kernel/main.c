@@ -303,6 +303,7 @@ typedef struct {
     int consumer_predicate_validation, consumer_predicate_first_bad;
     unsigned int consumer_predicate_words[16];
     unsigned int consumer_predicate_actual, consumer_predicate_expected;
+    unsigned int consumer_predicate_decoded_addr;
     unsigned int consumer_callsite_words[2][2], consumer_callsite_target[2];
     int consumer_leaf_range_valid[2], consumer_counter_range_valid[2];
     int consumer_target_scalar_range_valid;
@@ -900,12 +901,17 @@ static int zeroCtrlInstructionWritesRegister(unsigned int instruction,
     return 0;
 }
 
+static unsigned int zeroCtrlDecodeLuiSignedLowAddress(unsigned int lui,
+        unsigned int low_instruction) {
+    int displacement = (short)(low_instruction & 0xFFFF);
+    return ((lui & 0xFFFF) << 16) + (unsigned int)displacement;
+}
+
 static void zeroCtrlDeriveVshSharedGlobal(unsigned int text_addr,
         unsigned int text_size, unsigned int target_offset) {
     unsigned int lui;
     unsigned int access;
     unsigned int base;
-    int displacement;
 
     slide_diag.vsh_shared_global_decode_valid = 0;
     if (target_offset > text_size || text_size - target_offset < 8) return;
@@ -916,9 +922,8 @@ static void zeroCtrlDeriveVshSharedGlobal(unsigned int text_addr,
             ((access >> 21) & 0x1F) != base)
         return;
 
-    displacement = (short)(access & 0xFFFF);
     slide_diag.vsh_shared_global_addr =
-            ((lui & 0xFFFF) << 16) + (unsigned int)displacement;
+            zeroCtrlDecodeLuiSignedLowAddress(lui, access);
     slide_diag.vsh_shared_global_offset =
             slide_diag.vsh_shared_global_addr - text_addr;
     slide_diag.vsh_shared_global_decode_valid = 1;
@@ -2899,11 +2904,12 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 }
                 snprintf(line, sizeof(line),
                         "[vsh-6f84-predicate] validation=%d first_bad_index=%d "
-                        "actual=0x%08X expected=0x%08X\n",
+                        "actual=0x%08X expected=0x%08X decoded=0x%08X\n",
                         bsman->consumer_predicate_validation,
                         bsman->consumer_predicate_first_bad,
                         bsman->consumer_predicate_actual,
-                        bsman->consumer_predicate_expected);
+                        bsman->consumer_predicate_expected,
+                        bsman->consumer_predicate_decoded_addr);
                 zeroCtrlDiagnosticsText(line);
                 snprintf(line, sizeof(line),
                         "[vsh-6f84-helper] target_scalar=%d leaf_13f6c=%d "
@@ -3819,7 +3825,7 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
     ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
     SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-    unsigned int target, callsite[2], replacement[2], i;
+    unsigned int target, callsite[2], replacement[2], predicate_global, i;
 #define CONSUMER_GUARD_FAIL(value) do { \
     bsman->consumer_guard_reason = (value); \
     return; \
@@ -3868,9 +3874,14 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
             helper, bsman->consumer_target_addr, 4);
     if (!bsman->consumer_target_scalar_range_valid)
         CONSUMER_GUARD_FAIL(ZERO_CONSUMER_GUARD_TARGET_SCALAR_RANGE_INVALID);
+    predicate_global = zeroCtrlDecodeLuiSignedLowAddress(
+            bsman->consumer_predicate_words[0],
+            bsman->consumer_predicate_words[1]);
+    bsman->consumer_predicate_decoded_addr = predicate_global;
     if (
             (_lw(target) & 0xFFFF0000) != 0x3C020000 ||
-            _lw(target + 4) != 0x8C441620 ||
+            (_lw(target + 4) & 0xFFFF0000) != 0x8C440000 ||
+            predicate_global != slide_diag.vsh_shared_global_addr ||
             _lw(target + 8) != 0x2483FFFC ||
             _lw(target + 12) != 0x38820007 ||
             _lw(target + 16) != 0x2C630002 ||
@@ -3888,7 +3899,7 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
                 target + 48 ||
             _lw(target + 60) != 0x24050001) {
         static const unsigned int expected[16] = {
-            0x3C020000, 0x8C441620, 0x2483FFFC, 0x38820007,
+            0x3C020000, 0x8C440000, 0x2483FFFC, 0x38820007,
             0x2C630002, 0x2C420001, 0x00621825, 0x14600006,
             0x00002821, 0x24020009, 0x50820001, 0x24050001,
             0x03E00008, 0x30A200FF, 0, 0x24050001 };
@@ -3896,9 +3907,11 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
             unsigned int actual = bsman->consumer_predicate_words[i];
             unsigned int wanted = expected[i];
             int match = i == 0 ? (actual & 0xFFFF0000) == wanted :
+                    (i == 1 ? ((actual & 0xFFFF0000) == wanted &&
+                    predicate_global == slide_diag.vsh_shared_global_addr) :
                     (i == 14 ? ((actual >> 26) == 2 &&
                     zeroCtrlMipsJumpTarget(target + 56, actual) == target + 48) :
-                    actual == wanted);
+                    actual == wanted));
             if (!match) {
                 if (i == 14) wanted = 0x08000000 |
                         (((target + 48) >> 2) & 0x03FFFFFF);
