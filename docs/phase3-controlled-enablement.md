@@ -1287,3 +1287,44 @@ selects `FORCED_15`, or zero selects `FIELD_12C` whose value is itself 15.
 No compatibility change is justified in T17. After hardware identifies that
 branch, inspect the decrypted VSH code responsible for the relevant field's
 natural transitions before designing any separate control.
+
+### T17 hardware result and T18 natural field_12C writer trace
+
+**PROVEN BY HARDWARE:** the validated deferred T17 sample read
+`field_128=0`, `field_12C=15`, and `field_150=0` from context `0x08AB8970`.
+The simultaneous natural virtual result remained 15. Combined with the
+decrypted getter, this is **STRONG INFERENCE**, not exact per-call proof, that
+the observed result came from `field_12C` rather than the nonzero-`field_150`
+fallback. The missing final record means T17 established no temporal transition
+count.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** initialization writes the same
+`0/15/0` tuple, while the natural store at `vsh_module+0x1DEAC` can replace
+`field_12C` with the incoming state retained in `s3`. T18 asks only whether
+that writer executes and what it naturally stores.
+
+T18 transactionally validates the `j +0x1D8C4` at `+0x1DEA8` and exact
+`0xAC53012C` (`sw s3,0x12C(v0)`) delay slot. Only after every VSH/helper range,
+jump-target, instruction, and J-region check passes does it replace the jump
+with a jump to a bounded helper leaf while rewriting the original store word
+unchanged in the replacement jump's delay slot. The leaf runs after Sony's
+natural store, records only hit count, first/last natural `s3`, value-change
+count, and natural `v0` context, restores its scratch registers and stack, and
+jumps to the original `+0x1D8C4` continuation. It never changes `s3`, `v0`,
+the stored field, or the path condition.
+
+The existing deferred writer emits one compact final record:
+
+```text
+[topmenu-field12c-write] validation=... install=... cache_sync=... hits=... first=0x........ last=0x........ changes=... context=0x........
+```
+
+Files changed are the shared registration ABI, user helper assembly and
+registration, kernel transactional installer/state and deferred diagnostics,
+safety verifier, and this report. Static verification and the PSPDEV build must
+pass. Required hardware work is one recovery-protected PSP-1000 run with the
+unchanged configuration and complete log. No T18 hardware result exists yet.
+Whether this writer executes, what value it stores, and whether any other
+writer changes `field_12C` remain unresolved. The recommended next phase is to
+interpret that single run and inspect the upstream natural branch if hits are
+zero; do not change `+0x6F84` or add compatibility behavior in T18.

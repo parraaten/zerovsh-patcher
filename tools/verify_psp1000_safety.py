@@ -534,6 +534,38 @@ def check_sources(root):
     if "returns != observed_topmenu_returns" not in fast_poll or \
             "[topmenu-state]" not in resolve_gate:
         fail("T17 state capture is not bounded by virtual-return transitions")
+    field12c_install = kernel[kernel.find(
+        "static void zeroCtrlInstallField12CWriteTrace"):
+        kernel.find("static void zeroCtrlInstallBSManClosedShim")]
+    for token in ("vsh->text_addr + 0x1DEA8",
+            "vsh->text_addr + 0x1D8C4", "store_word != 0xAC53012C",
+            "zeroCtrlMipsJumpTarget(site, jump_word) != continuation",
+            "_sw(replacement, site)", "_sw(store_word, site + 4)",
+            "field12c_write_validation = 1",
+            "field12c_write_install = 1", "field12c_write_cache_sync = 1"):
+        if token not in field12c_install:
+            fail("T18 field_12C writer validation is missing " + token)
+    commit = field12c_install.find("_sw(replacement, site)")
+    validation = field12c_install.find("field12c_write_validation = 1")
+    if commit <= validation or "0xAC53012C" not in field12c_install[:commit]:
+        fail("T18 patches the jump/store pair before transactional validation")
+    field12c_stub = assembly[assembly.find("zeroCtrlField12CWriteTrace:"):
+        assembly.find("zeroCtrlField12CWriteTraceEnd:")]
+    if not field12c_stub or "$s3" not in field12c_stub or \
+            "sw      $v0, %lo(zeroCtrlField12CWriteContext)" not in field12c_stub or \
+            "lw      $t2, %lo(zeroCtrlField12CWriteResume)" not in field12c_stub or \
+            "jr      $t2" not in field12c_stub or \
+            "lw      $t2, -4($sp)" not in field12c_stub:
+        fail("T18 tracer does not preserve the natural value/context/continuation")
+    if any(token in field12c_stub for token in
+            ("jal ", "jalr", "sceIo", "Alloc", "malloc")):
+        fail("T18 tracer calls code, performs I/O, or allocates")
+    if re.search(r"\b(?:li|addiu|ori)\s+\$s3\b|\b(?:lw|move|addu)\s+\$s3\b",
+            field12c_stub) or re.search(
+                r"\b(?:li|addiu|ori|lw|move|addu)\s+\$v0\b", field12c_stub):
+        fail("T18 tracer modifies Sony's natural s3 value or v0 context")
+    if "sceKernelCreateThread" in field12c_install:
+        fail("T18 creates a new thread")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")

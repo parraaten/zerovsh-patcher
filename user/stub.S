@@ -558,6 +558,50 @@ zeroCtrlStateZeroVReturnTrace:
 zeroCtrlStateZeroVReturnTraceEnd:
 .end zeroCtrlStateZeroVReturnTrace
 
+.globl zeroCtrlField12CWriteTrace
+.type zeroCtrlField12CWriteTrace @function
+.ent zeroCtrlField12CWriteTrace, 0
+zeroCtrlField12CWriteTrace:
+    addiu   $sp, $sp, -12
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t2, 8($sp)
+    lui     $t0, %hi(zeroCtrlField12CWriteHits)
+    lw      $t1, %lo(zeroCtrlField12CWriteHits)($t0)
+    bnez    $t1, 40f
+    nop
+    lui     $t0, %hi(zeroCtrlField12CWriteFirst)
+    sw      $s3, %lo(zeroCtrlField12CWriteFirst)($t0)
+    b       41f
+    nop
+40:
+    lui     $t0, %hi(zeroCtrlField12CWriteLast)
+    lw      $t2, %lo(zeroCtrlField12CWriteLast)($t0)
+    beq     $t2, $s3, 41f
+    nop
+    lui     $t0, %hi(zeroCtrlField12CWriteChanges)
+    lw      $t2, %lo(zeroCtrlField12CWriteChanges)($t0)
+    addiu   $t2, $t2, 1
+    sw      $t2, %lo(zeroCtrlField12CWriteChanges)($t0)
+41:
+    lui     $t0, %hi(zeroCtrlField12CWriteLast)
+    sw      $s3, %lo(zeroCtrlField12CWriteLast)($t0)
+    lui     $t0, %hi(zeroCtrlField12CWriteContext)
+    sw      $v0, %lo(zeroCtrlField12CWriteContext)($t0)
+    lui     $t0, %hi(zeroCtrlField12CWriteHits)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlField12CWriteHits)($t0)
+    lui     $t0, %hi(zeroCtrlField12CWriteResume)
+    lw      $t2, %lo(zeroCtrlField12CWriteResume)($t0)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 12
+    jr      $t2
+    lw      $t2, -4($sp)
+.globl zeroCtrlField12CWriteTraceEnd
+zeroCtrlField12CWriteTraceEnd:
+.end zeroCtrlField12CWriteTrace
+
 .macro STATE_ZERO_CLASS name, limit, bit_true, bit_false, true_slot, false_slot, rejoin
 .globl \name
 .type \name @function
@@ -924,3 +968,15 @@ zeroCtrlStateZeroClass17False: .space 4
 zeroCtrlStateZeroClass18Equal: .space 4
 .globl zeroCtrlStateZeroClass18Unequal
 zeroCtrlStateZeroClass18Unequal: .space 4
+.globl zeroCtrlField12CWriteResume
+zeroCtrlField12CWriteResume: .space 4
+.globl zeroCtrlField12CWriteHits
+zeroCtrlField12CWriteHits: .space 4
+.globl zeroCtrlField12CWriteFirst
+zeroCtrlField12CWriteFirst: .space 4
+.globl zeroCtrlField12CWriteLast
+zeroCtrlField12CWriteLast: .space 4
+.globl zeroCtrlField12CWriteChanges
+zeroCtrlField12CWriteChanges: .space 4
+.globl zeroCtrlField12CWriteContext
+zeroCtrlField12CWriteContext: .space 4

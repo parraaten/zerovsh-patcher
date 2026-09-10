@@ -132,9 +132,17 @@ typedef struct {
     u32 state_zero_class17_false_addr;
     u32 state_zero_class18_equal_addr;
     u32 state_zero_class18_unequal_addr;
+    u32 field12c_write_leaf_addr;
+    u32 field12c_write_leaf_end_addr;
+    u32 field12c_write_resume_addr;
+    u32 field12c_write_hits_addr;
+    u32 field12c_write_first_addr;
+    u32 field12c_write_last_addr;
+    u32 field12c_write_changes_addr;
+    u32 field12c_write_context_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 512 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 544 ? 1 : -1];
 
 #endif

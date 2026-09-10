@@ -275,6 +275,10 @@ typedef struct {
     unsigned int state_zero_leaf_addr[8], state_zero_leaf_size[8];
     unsigned int state_zero_path_mask_addr, state_zero_value_addr[7];
     unsigned int state_zero_counter_addr[4], state_zero_target_addr[12];
+    int field12c_write_validation, field12c_write_install;
+    int field12c_write_cache_sync;
+    unsigned int field12c_write_leaf_addr, field12c_write_leaf_size;
+    unsigned int field12c_write_resume_addr, field12c_write_scalar_addr[5];
     unsigned int state_zero_original[14], state_zero_replacement[7];
 } ZeroCtrlBSManEvidence;
 
@@ -1352,6 +1356,14 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(state_zero_class17_false_addr);
     CHECK_POST_SCALAR(state_zero_class18_equal_addr);
     CHECK_POST_SCALAR(state_zero_class18_unequal_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.field12c_write_leaf_addr,
+                copied.field12c_write_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(field12c_write_resume_addr);
+    CHECK_POST_SCALAR(field12c_write_hits_addr);
+    CHECK_POST_SCALAR(field12c_write_first_addr);
+    CHECK_POST_SCALAR(field12c_write_last_addr);
+    CHECK_POST_SCALAR(field12c_write_changes_addr);
+    CHECK_POST_SCALAR(field12c_write_context_addr);
 #undef CHECK_POST_SCALAR
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -1493,6 +1505,15 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->state_zero_target_addr[9] = copied.state_zero_class17_false_addr;
     bsman->state_zero_target_addr[10] = copied.state_zero_class18_equal_addr;
     bsman->state_zero_target_addr[11] = copied.state_zero_class18_unequal_addr;
+    bsman->field12c_write_leaf_addr = copied.field12c_write_leaf_addr;
+    bsman->field12c_write_leaf_size = copied.field12c_write_leaf_end_addr -
+            copied.field12c_write_leaf_addr;
+    bsman->field12c_write_resume_addr = copied.field12c_write_resume_addr;
+    bsman->field12c_write_scalar_addr[0] = copied.field12c_write_hits_addr;
+    bsman->field12c_write_scalar_addr[1] = copied.field12c_write_first_addr;
+    bsman->field12c_write_scalar_addr[2] = copied.field12c_write_last_addr;
+    bsman->field12c_write_scalar_addr[3] = copied.field12c_write_changes_addr;
+    bsman->field12c_write_scalar_addr[4] = copied.field12c_write_context_addr;
     bsman->registered = 1;
 }
 
@@ -3092,6 +3113,24 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 slide_diag.bsman.install, slide_diag.bsman.validation,
                 zeroCtrlReadBSManHits());
         zeroCtrlDiagnosticsText(line);
+        snprintf(line, sizeof(line),
+                "[topmenu-field12c-write] validation=%d install=%d "
+                "cache_sync=%d hits=%u first=0x%08X last=0x%08X "
+                "changes=%u context=0x%08X\n",
+                slide_diag.bsman.field12c_write_validation,
+                slide_diag.bsman.field12c_write_install,
+                slide_diag.bsman.field12c_write_cache_sync,
+                zeroCtrlReadHelperCounter(
+                    slide_diag.bsman.field12c_write_scalar_addr[0]),
+                zeroCtrlReadHelperCounter(
+                    slide_diag.bsman.field12c_write_scalar_addr[1]),
+                zeroCtrlReadHelperCounter(
+                    slide_diag.bsman.field12c_write_scalar_addr[2]),
+                zeroCtrlReadHelperCounter(
+                    slide_diag.bsman.field12c_write_scalar_addr[3]),
+                zeroCtrlReadHelperCounter(
+                    slide_diag.bsman.field12c_write_scalar_addr[4]));
+        zeroCtrlDiagnosticsText(line);
     }
     if (slide_diag.state_zero_vcall_resolve_attempted) {
         snprintf(line, sizeof(line),
@@ -3298,6 +3337,51 @@ static unsigned int zeroCtrlBSManOriginalStubForm(unsigned int word0,
     return ZERO_BSMAN_STUB_UNKNOWN;
 }
 
+static void zeroCtrlInstallField12CWriteTrace(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int site, continuation, jump_word, store_word, replacement;
+    unsigned int i;
+
+    if (!vsh || !helper || vsh->text_size < 0x1DEB0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x1DEA8, 8) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->field12c_write_leaf_addr,
+                bsman->field12c_write_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                bsman->field12c_write_resume_addr, 4)) return;
+    for (i = 0; i < 5; i++)
+        if (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->field12c_write_scalar_addr[i], 4)) return;
+    site = vsh->text_addr + 0x1DEA8;
+    continuation = vsh->text_addr + 0x1D8C4;
+    jump_word = _lw(site);
+    store_word = _lw(site + 4);
+    if ((jump_word >> 26) != 2 ||
+            zeroCtrlMipsJumpTarget(site, jump_word) != continuation ||
+            store_word != 0xAC53012C ||
+            ((site + 4) & 0xF0000000) !=
+                (bsman->field12c_write_leaf_addr & 0xF0000000)) return;
+    replacement = 0x08000000 |
+            ((bsman->field12c_write_leaf_addr >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(site, replacement) !=
+            bsman->field12c_write_leaf_addr) return;
+    bsman->field12c_write_validation = 1;
+    _sw(continuation, bsman->field12c_write_resume_addr);
+    for (i = 0; i < 5; i++) _sw(0, bsman->field12c_write_scalar_addr[i]);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->field12c_write_resume_addr, 4);
+    for (i = 0; i < 5; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)bsman->field12c_write_scalar_addr[i], 4);
+    _sw(replacement, site);
+    _sw(store_word, site + 4);
+    sceKernelDcacheWritebackInvalidateRange((const void *)site, 8);
+    sceKernelIcacheInvalidateRange((const void *)site, 8);
+    bsman->field12c_write_install = 1;
+    bsman->field12c_write_cache_sync = 1;
+}
+
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     const unsigned int target_nid = 0x23E3A9B6;
     static const char paf_library[] = "scePaf";
@@ -3311,6 +3395,7 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             !bsman->registered || model != 0 || !mod ||
             strcmp(mod->modname, "slide_plugin_module") != 0 ||
             sceKernelDevkitVersion() != 0x06060110) return;
+    zeroCtrlInstallField12CWriteTrace();
     bsman->attempted = 1;
     cursor = (unsigned int)mod->stub_top;
     end = cursor + mod->stub_size;
