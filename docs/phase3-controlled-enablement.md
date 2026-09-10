@@ -1009,3 +1009,82 @@ or other compatibility behavior belongs in T14. If hardware observes
 `0x80000107`, that result is evidence for a later separately reviewed control;
 if it observes zero, investigation follows Sony's natural `+0x9420` virtual-call
 sequence instead.
+
+### T14 hardware result and T15 state-zero localization
+
+**PROVEN BY HARDWARE:** the corrected T14 trace installed and synchronized
+successfully. Across four activations, PAF `0xED83BBCF` naturally returned zero
+and the existing compatibility converted all four calls to one. BSMan naturally
+returned exact `0x8002013A` four times, the exact-error control substituted all
+four, and the effective result was zero. Sony consequently selected its
+BSMan-zero continuation. The untouched relocated state byte was naturally zero
+on all four observations. The stable mask was `0x00B`; neither post-BSMan PAF
+call nor VshBridge was entered.
+
+Natural state zero is not itself identified as a blocker. The current blocker
+is **HYPOTHESIS / UNKNOWN** somewhere in Sony's alternate
+`+0x957C..+0x95D4` path. The decrypted SlidePlugin independently proves this
+path compares `s2` with a word loaded through the relocated LUI, tests a second
+relocated word, tests a relocated byte, optionally calls the virtual target at
+`0x78(s0)`, and classifies its untouched return around 15, 17, and 18 before
+either exiting or rejoining the existing PAF path at `+0x93EC`.
+
+T15 adds transparent fixed-scalar localization only. It replaces the seven
+natural branches/call at `+0x9580`, `+0x958C`, `+0x959C`, `+0x95A8`,
+`+0x95B8`, `+0x95C0`, and `+0x95CC` only after transactionally validating all
+fourteen runtime words. Every original delay-slot instruction remains in
+place, including both relocation-dependent LUI/load sequences and the Sony
+classification operations. The state-byte branch now saves the natural LBU
+value before its branch and leaves the original relocated LUI delay slot
+untouched rather than reconstructing its immediate.
+
+The cumulative `state_zero_mask` reports:
+
+| Bit | Natural observation |
+| --- | --- |
+| `0x0001` / `0x0002` | `+0x957C` entered / `s2 == loaded word` |
+| `0x0004` / `0x0008` | relocated word tested / nonzero |
+| `0x0010` / `0x0020` | relocated byte tested / nonzero |
+| `0x0040` / `0x0080` | virtual call entered / returned |
+| `0x0100` / `0x0200` | natural return `<15` / `>=15` |
+| `0x0400` / `0x0800` | natural return `<17` / `>=17` |
+| `0x1000` / `0x2000` | natural return `==18` / `!=18` |
+
+Dedicated scalars retain the exact comparison operands, relocated global word
+and byte, virtual target, and untouched virtual return. Counters record state
+path entry, virtual-call entry/return, and rejoin selection. The virtual wrapper
+temporarily saves and restores its scratch registers and stack pointer, changes
+no arguments, invokes the exact target Sony loaded from `0x78(s0)`, captures
+the unmodified return, restores Sony's original return address, and resumes the
+unaltered classification logic.
+
+T15 retains both hardware-proven compatibility controls and all existing
+post-PAF/VshBridge tracers. It performs no result conversion and adds no PAF,
+VshBridge, Impose, model, OPEN/CLOSE, state-byte, or ClockAndCalendar behavior.
+The required hardware configuration remains:
+
+```ini
+ClockAndCalendar = Disabled
+PSP1000ActivationTrace = Enabled
+PSP1000PafPresentCompat = Enabled
+PSP1000BSManNotLinkedCompat = Enabled
+PSP1000BSManClosedShim = Disabled
+```
+
+Return the complete log and observations. The next decision must follow the
+first natural exit proved by these counters; no additional compatibility shim
+is justified before that evidence.
+
+Phase report: changed the shared registration ABI, helper assembly and
+registration, kernel transactional installer/deferred scalar diagnostics,
+safety verifier, and Phase 3 hardware documentation. The technical finding is
+that T14's two narrow controls are hardware-proven to reach the natural
+state-zero alternate path; the location and nature of the next exit remain
+unknown. T15 assumes only the register liveness and destinations proven by the
+decrypted CFG and changes no natural result. Static source and host MIPS
+assembly checks pass; a PSPDEV build remains required. Required hardware work
+is one recovery-protected T15 run with the stated configuration and a complete,
+unedited log. No T15 hardware result is available yet. Unresolved questions are
+which early test or virtual-result class exits, whether `+0x93EC` is rejoined,
+and whether VshBridge is eventually reached. The recommended next phase is to
+review that single run before designing any further compatibility behavior.

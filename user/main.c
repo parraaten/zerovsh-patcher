@@ -208,6 +208,7 @@ extern volatile unsigned int zeroCtrlPostBSManZero, zeroCtrlPostBSManNonzero;
 extern volatile unsigned int zeroCtrlPostBSManZeroHits, zeroCtrlPostBSManNonzeroHits;
 extern volatile unsigned int zeroCtrlPostStateZero, zeroCtrlPostStateNonzero;
 extern volatile unsigned int zeroCtrlPostStateDelayValue;
+extern volatile unsigned int zeroCtrlPostStateNaturalValue;
 extern volatile unsigned int zeroCtrlPostStateZeroHits, zeroCtrlPostStateNonzeroHits;
 extern volatile unsigned int zeroCtrlPostPafTarget, zeroCtrlPostPafCall0RA;
 extern volatile unsigned int zeroCtrlPostPafCall1RA, zeroCtrlPostPafSavedRA;
@@ -217,6 +218,27 @@ extern volatile unsigned int zeroCtrlPostVshTarget, zeroCtrlPostVshSavedRA;
 extern volatile unsigned int zeroCtrlPostVshNaturalResult, zeroCtrlPostVshReturnHits;
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
 extern volatile unsigned int zeroCtrlPostVshEntryHits;
+extern void zeroCtrlStateZeroCompareTrace(void), zeroCtrlStateZeroCompareTraceEnd(void);
+extern void zeroCtrlStateZeroWordTrace(void), zeroCtrlStateZeroWordTraceEnd(void);
+extern void zeroCtrlStateZeroByteTrace(void), zeroCtrlStateZeroByteTraceEnd(void);
+extern void zeroCtrlStateZeroVCallTrace(void), zeroCtrlStateZeroVCallTraceEnd(void);
+extern void zeroCtrlStateZeroVReturnTrace(void), zeroCtrlStateZeroVReturnTraceEnd(void);
+extern void zeroCtrlStateZeroClass15Trace(void), zeroCtrlStateZeroClass15TraceEnd(void);
+extern void zeroCtrlStateZeroClass17Trace(void), zeroCtrlStateZeroClass17TraceEnd(void);
+extern void zeroCtrlStateZeroClass18Trace(void), zeroCtrlStateZeroClass18TraceEnd(void);
+extern volatile unsigned int zeroCtrlStateZeroPathMask;
+extern volatile unsigned int zeroCtrlStateZeroCompareLeft, zeroCtrlStateZeroCompareRight;
+extern volatile unsigned int zeroCtrlStateZeroWordValue, zeroCtrlStateZeroByteValue;
+extern volatile unsigned int zeroCtrlStateZeroVCallTarget, zeroCtrlStateZeroVCallRA;
+extern volatile unsigned int zeroCtrlStateZeroVCallResult;
+extern volatile unsigned int zeroCtrlStateZeroEntryHits, zeroCtrlStateZeroVCallHits;
+extern volatile unsigned int zeroCtrlStateZeroVReturnHits, zeroCtrlStateZeroRejoinHits;
+extern volatile unsigned int zeroCtrlStateZeroCompareEqual, zeroCtrlStateZeroCompareUnequal;
+extern volatile unsigned int zeroCtrlStateZeroWordZero, zeroCtrlStateZeroWordNonzero;
+extern volatile unsigned int zeroCtrlStateZeroByteZero, zeroCtrlStateZeroByteNonzero;
+extern volatile unsigned int zeroCtrlStateZeroClass15True, zeroCtrlStateZeroClass15False;
+extern volatile unsigned int zeroCtrlStateZeroClass17True, zeroCtrlStateZeroClass17False;
+extern volatile unsigned int zeroCtrlStateZeroClass18Equal, zeroCtrlStateZeroClass18Unequal;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -426,6 +448,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.post_state_nonzero_addr = (u32)&zeroCtrlPostStateNonzero;
 	bsmanClosedRegistration.post_state_delay_value_addr =
 			(u32)&zeroCtrlPostStateDelayValue;
+	bsmanClosedRegistration.post_state_natural_value_addr =
+			(u32)&zeroCtrlPostStateNaturalValue;
 	bsmanClosedRegistration.post_state_zero_hits_addr =
 			(u32)&zeroCtrlPostStateZeroHits;
 	bsmanClosedRegistration.post_state_nonzero_hits_addr =
@@ -466,6 +490,46 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlPostPafEntry1Hits;
 	bsmanClosedRegistration.post_vsh_entry_hits_addr =
 			(u32)&zeroCtrlPostVshEntryHits;
+	bsmanClosedRegistration.state_zero_cmp_leaf_addr = (u32)zeroCtrlStateZeroCompareTrace;
+	bsmanClosedRegistration.state_zero_cmp_leaf_end_addr = (u32)zeroCtrlStateZeroCompareTraceEnd;
+	bsmanClosedRegistration.state_zero_word_leaf_addr = (u32)zeroCtrlStateZeroWordTrace;
+	bsmanClosedRegistration.state_zero_word_leaf_end_addr = (u32)zeroCtrlStateZeroWordTraceEnd;
+	bsmanClosedRegistration.state_zero_byte_leaf_addr = (u32)zeroCtrlStateZeroByteTrace;
+	bsmanClosedRegistration.state_zero_byte_leaf_end_addr = (u32)zeroCtrlStateZeroByteTraceEnd;
+	bsmanClosedRegistration.state_zero_vcall_leaf_addr = (u32)zeroCtrlStateZeroVCallTrace;
+	bsmanClosedRegistration.state_zero_vcall_leaf_end_addr = (u32)zeroCtrlStateZeroVCallTraceEnd;
+	bsmanClosedRegistration.state_zero_vreturn_leaf_addr = (u32)zeroCtrlStateZeroVReturnTrace;
+	bsmanClosedRegistration.state_zero_vreturn_leaf_end_addr = (u32)zeroCtrlStateZeroVReturnTraceEnd;
+	bsmanClosedRegistration.state_zero_class15_leaf_addr = (u32)zeroCtrlStateZeroClass15Trace;
+	bsmanClosedRegistration.state_zero_class15_leaf_end_addr = (u32)zeroCtrlStateZeroClass15TraceEnd;
+	bsmanClosedRegistration.state_zero_class17_leaf_addr = (u32)zeroCtrlStateZeroClass17Trace;
+	bsmanClosedRegistration.state_zero_class17_leaf_end_addr = (u32)zeroCtrlStateZeroClass17TraceEnd;
+	bsmanClosedRegistration.state_zero_class18_leaf_addr = (u32)zeroCtrlStateZeroClass18Trace;
+	bsmanClosedRegistration.state_zero_class18_leaf_end_addr = (u32)zeroCtrlStateZeroClass18TraceEnd;
+	bsmanClosedRegistration.state_zero_path_mask_addr = (u32)&zeroCtrlStateZeroPathMask;
+	bsmanClosedRegistration.state_zero_cmp_left_addr = (u32)&zeroCtrlStateZeroCompareLeft;
+	bsmanClosedRegistration.state_zero_cmp_right_addr = (u32)&zeroCtrlStateZeroCompareRight;
+	bsmanClosedRegistration.state_zero_word_value_addr = (u32)&zeroCtrlStateZeroWordValue;
+	bsmanClosedRegistration.state_zero_byte_value_addr = (u32)&zeroCtrlStateZeroByteValue;
+	bsmanClosedRegistration.state_zero_vcall_target_addr = (u32)&zeroCtrlStateZeroVCallTarget;
+	bsmanClosedRegistration.state_zero_vcall_ra_addr = (u32)&zeroCtrlStateZeroVCallRA;
+	bsmanClosedRegistration.state_zero_vcall_result_addr = (u32)&zeroCtrlStateZeroVCallResult;
+	bsmanClosedRegistration.state_zero_entry_hits_addr = (u32)&zeroCtrlStateZeroEntryHits;
+	bsmanClosedRegistration.state_zero_vcall_hits_addr = (u32)&zeroCtrlStateZeroVCallHits;
+	bsmanClosedRegistration.state_zero_vreturn_hits_addr = (u32)&zeroCtrlStateZeroVReturnHits;
+	bsmanClosedRegistration.state_zero_rejoin_hits_addr = (u32)&zeroCtrlStateZeroRejoinHits;
+	bsmanClosedRegistration.state_zero_cmp_equal_addr = (u32)&zeroCtrlStateZeroCompareEqual;
+	bsmanClosedRegistration.state_zero_cmp_unequal_addr = (u32)&zeroCtrlStateZeroCompareUnequal;
+	bsmanClosedRegistration.state_zero_word_zero_addr = (u32)&zeroCtrlStateZeroWordZero;
+	bsmanClosedRegistration.state_zero_word_nonzero_addr = (u32)&zeroCtrlStateZeroWordNonzero;
+	bsmanClosedRegistration.state_zero_byte_zero_addr = (u32)&zeroCtrlStateZeroByteZero;
+	bsmanClosedRegistration.state_zero_byte_nonzero_addr = (u32)&zeroCtrlStateZeroByteNonzero;
+	bsmanClosedRegistration.state_zero_class15_true_addr = (u32)&zeroCtrlStateZeroClass15True;
+	bsmanClosedRegistration.state_zero_class15_false_addr = (u32)&zeroCtrlStateZeroClass15False;
+	bsmanClosedRegistration.state_zero_class17_true_addr = (u32)&zeroCtrlStateZeroClass17True;
+	bsmanClosedRegistration.state_zero_class17_false_addr = (u32)&zeroCtrlStateZeroClass17False;
+	bsmanClosedRegistration.state_zero_class18_equal_addr = (u32)&zeroCtrlStateZeroClass18Equal;
+	bsmanClosedRegistration.state_zero_class18_unequal_addr = (u32)&zeroCtrlStateZeroClass18Unequal;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

@@ -48,6 +48,12 @@ POST_TRACE_STUBS = (
     "zeroCtrlPostVshCallTrace",
     "zeroCtrlPostVshReturnTrace",
 )
+STATE_ZERO_TRACE_STUBS = (
+    "zeroCtrlStateZeroCompareTrace", "zeroCtrlStateZeroWordTrace",
+    "zeroCtrlStateZeroByteTrace", "zeroCtrlStateZeroVCallTrace",
+    "zeroCtrlStateZeroVReturnTrace", "zeroCtrlStateZeroClass15Trace",
+    "zeroCtrlStateZeroClass17Trace", "zeroCtrlStateZeroClass18Trace",
+)
 
 
 def fail(message):
@@ -290,10 +296,32 @@ def check_sources(root):
         '_lw(bsman->activation_addr + 0x108) != 0x3C048000',
         'bsman->post_original[9] != 0x3484000D',
         'post_bsman_path_mask=0x%03X',
+        'state_zero_mask=0x%04X',
+        'bsman->state_zero_original[0] != 0x1243FF73',
+        '(bsman->state_zero_original[1] & 0xFFFF0000) != 0x3C020000',
+        'bsman->state_zero_original[2] != 0x1460FF71',
+        'bsman->state_zero_original[3] != 0x8FBF001C',
+        'bsman->state_zero_original[4] != 0x1460FF6E',
+        'bsman->state_zero_original[5] != 0x8FB60018',
+        'bsman->state_zero_original[6] != 0x0040F809',
+        'bsman->state_zero_original[7] != 0',
+        'bsman->state_zero_original[8] != 0x1440FF8C',
+        'bsman->state_zero_original[9] != 0x28620011',
+        'bsman->state_zero_original[10] != 0x1440FF64',
+        'bsman->state_zero_original[11] != 0x8FBF001C',
+        'bsman->state_zero_original[12] != 0x1462FF87',
+        'bsman->state_zero_original[13] != 0x8FB60018',
+        'bsman->activation_addr + 0x284',
+        'bsman->activation_addr + 0x2D0',
+        '_sw(bsman->state_zero_replacement[pc],',
+        '(const void *)(bsman->activation_addr + 0x27C), 0x50',
+        'Transaction commit: all transparent trace sites validated above.',
         'results=bs_natural:0x%08X,bs_exact_sub:%u,',
     ):
         if required not in kernel:
             fail("activation localization trace is missing " + required)
+    if '_sw(0, bsman->activation_addr + 0xE0)' in kernel:
+        fail("T15 must leave the relocated state-branch LUI delay slot intact")
     activation_start = assembly.find("zeroCtrlSlideActivationTrace:")
     activation_end = assembly.find("zeroCtrlSlideActivationTraceEnd:",
         activation_start)
@@ -368,13 +396,38 @@ def check_sources(root):
         assembly.find("zeroCtrlPostBSManBranchTraceEnd:")]
     post_state = assembly[assembly.find("zeroCtrlPostStateBranchTrace:"):
         assembly.find("zeroCtrlPostStateBranchTraceEnd:")]
-    if "lw      $t2, %lo(zeroCtrlPostBSManEffectiveResult)($t0)" not in post_bs or \
+    if "sw      $v0, %lo(zeroCtrlPostStateNaturalValue)($t0)" not in post_bs or \
+            "lw      $t2, %lo(zeroCtrlPostBSManEffectiveResult)($t0)" not in post_bs or \
             "beqz    $t2, 8f" not in post_bs:
         fail("post-BSMan result branch does not use the effective result")
-    if "$v0" in post_bs or "lbu" in post_bs:
+    v0_post_bs = [line for line in post_bs.splitlines() if "$v0" in line]
+    if len(v0_post_bs) != 1 or "sw      $v0," not in v0_post_bs[0] or "lbu" in post_bs:
         fail("post-BSMan result branch modifies or reconstructs the state byte")
-    if "lw      $v0, %lo(zeroCtrlPostStateDelayValue)" not in post_state:
-        fail("post-BSMan state branch does not reproduce its LUI delay value")
+    if "lw      $t2, %lo(zeroCtrlPostStateNaturalValue)" not in post_state or \
+            "beqz    $t2, 10f" not in post_state or "$v0" in post_state:
+        fail("post-BSMan state branch does not preserve the natural LUI delay slot")
+    for symbol in (STATE_ZERO_TRACE_STUBS[0:5] + STATE_ZERO_TRACE_STUBS[7:8]):
+        start = assembly.find(symbol + ":")
+        end = assembly.find(symbol + "End:", start)
+        if start < 0 or end < 0:
+            fail("T15 state-zero trace leaf is missing " + symbol)
+        leaf = assembly[start:end]
+        if any(token in leaf for token in ("$gp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
+            fail(symbol + " uses gp, a call, I/O, or allocation")
+    for invocation in (
+            "STATE_ZERO_CLASS zeroCtrlStateZeroClass15Trace, 15",
+            "STATE_ZERO_CLASS zeroCtrlStateZeroClass17Trace, 17"):
+        if invocation not in assembly:
+            fail("T15 classification tracer is missing " + invocation)
+    vcall = assembly[assembly.find("zeroCtrlStateZeroVCallTrace:"):
+        assembly.find("zeroCtrlStateZeroVCallTraceEnd:")]
+    vreturn = assembly[assembly.find("zeroCtrlStateZeroVReturnTrace:"):
+        assembly.find("zeroCtrlStateZeroVReturnTraceEnd:")]
+    if "sw      $v0, %lo(zeroCtrlStateZeroVCallTarget)" not in vcall or \
+            "jr      $v0" not in vcall or \
+            "sw      $v0, %lo(zeroCtrlStateZeroVCallResult)" not in vreturn or \
+            "lw      $ra, %lo(zeroCtrlStateZeroVCallRA)" not in vreturn:
+        fail("T15 virtual-call trace does not preserve target/result/ra")
     for symbol in ("zeroCtrlPostPafReturnTrace", "zeroCtrlPostVshReturnTrace"):
         start = assembly.find(symbol + ":")
         end = assembly.find(symbol + "End:", start)
@@ -739,7 +792,7 @@ def check_elf(elf):
     for symbol in (SONY_ENTRY_STUB, SONY_ENTRY_STUB_END,
             SONY_EXIT_STUB, SONY_EXIT_STUB_END, BSMAN_STUB, BSMAN_STUB_END,
             BSMAN_RETURN_TRACE, BSMAN_RETURN_TRACE_END,
-            *PREFIX_TRACE_STUBS, *POST_TRACE_STUBS,
+            *PREFIX_TRACE_STUBS, *POST_TRACE_STUBS, *STATE_ZERO_TRACE_STUBS,
             "zeroCtrlPostBSManNaturalResult", "zeroCtrlPostBSManCompatMode",
             "zeroCtrlPostBSManSubstitutionHits",
             "zeroCtrlPostBSManEffectiveResult",
@@ -828,7 +881,12 @@ def check_stub_object(stub_object):
     check_bsman_return_semantics(return_trace, relocatable=True)
     post_bs_branch = function_body(
             disassembly, "zeroCtrlPostBSManBranchTrace")
-    if re.search(r"\bv0\b|\blbu\b", post_bs_branch) or \
+    require_result_store_relocation(post_bs_branch,
+            "zeroCtrlPostBSManBranchTrace", "zeroCtrlPostStateNaturalValue")
+    v0_lines = [line for line in post_bs_branch.splitlines()
+                if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
+            re.search(r"\blbu\b", post_bs_branch) or \
             not re.search(
                 r"R_MIPS_HI16\s+zeroCtrlPostBSManEffectiveResult\b",
                 post_bs_branch) or \
@@ -838,6 +896,26 @@ def check_stub_object(stub_object):
             not re.search(r"\bbeqz\s+t2,", post_bs_branch):
         fail("post-BSMan branch trace lacks the exact saved-result decision "
              "or modifies/reconstructs v0")
+    post_state_branch = function_body(disassembly, "zeroCtrlPostStateBranchTrace")
+    if re.search(r"\bv0\b", post_state_branch) or not re.search(
+            r"R_MIPS_HI16\s+zeroCtrlPostStateNaturalValue\b",
+            post_state_branch) or not re.search(r"\bbeqz\s+t2,", post_state_branch):
+        fail("post-state trace does not preserve the relocated LUI delay result")
+    state_vcall = function_body(disassembly, "zeroCtrlStateZeroVCallTrace")
+    require_result_store_relocation(state_vcall,
+            "zeroCtrlStateZeroVCallTrace", "zeroCtrlStateZeroVCallTarget")
+    if not re.search(r"R_MIPS_HI16\s+zeroCtrlStateZeroVCallRA\b", state_vcall) or \
+            not re.search(r"\bjr\s+v0\b", state_vcall):
+        fail("T15 virtual-call wrapper does not preserve target and original ra")
+    state_vreturn = function_body(disassembly, "zeroCtrlStateZeroVReturnTrace")
+    require_result_store_relocation(state_vreturn,
+            "zeroCtrlStateZeroVReturnTrace", "zeroCtrlStateZeroVCallResult")
+    v0_lines = [line for line in state_vreturn.splitlines()
+                if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
+            not re.search(r"R_MIPS_HI16\s+zeroCtrlStateZeroVCallRA\b",
+                          state_vreturn) or not re.search(r"\bjr\s+ra\b", state_vreturn):
+        fail("T15 virtual return does not preserve the natural result and Sony ra")
     post_paf_return = function_body(disassembly, "zeroCtrlPostPafReturnTrace")
     require_only_natural_result_stores(
             post_paf_return, "zeroCtrlPostPafReturnTrace", 2)
