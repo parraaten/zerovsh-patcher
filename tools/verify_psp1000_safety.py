@@ -501,6 +501,39 @@ def check_sources(root):
             "state_zero_vcall_containing_candidates" not in resolve_gate or \
             "if (slide_diag.state_zero_vcall_fingerprint_valid)" not in resolve_gate:
         fail("T16.1 resolution is not gated by target/return or lacks status gating")
+    topmenu_validate = kernel[kernel.find(
+        "static void zeroCtrlValidateTopMenuState"):
+        kernel.find("static void zeroCtrlCaptureTopMenuState")]
+    topmenu_capture = kernel[kernel.find(
+        "static void zeroCtrlCaptureTopMenuState"):
+        kernel.find("static const char *zeroCtrlTopMenuReasonName")]
+    for token in ("state_zero_vcall_offset != 0x1E2B0", "0x90620150",
+            "0x14400002", "0x2404000F", "0x8C64012C", "0x03E00008",
+            "0x00801021", "displacement = (short)(load & 0xFFFF)",
+            "sceKernelFindModuleByName(\"vsh_module\")",
+            "(unsigned int)vsh < 0x88000000",
+            "slot - start <= size - sizeof(unsigned int)"):
+        if token not in topmenu_validate:
+            fail("T17 TopMenu validation is missing " + token)
+    if topmenu_validate.find("(unsigned int)vsh < 0x88000000") > \
+            topmenu_validate.find("vsh->text_addr"):
+        fail("T17 dereferences VSH metadata before pointer validation")
+    slot_read = topmenu_capture.find("_lw(slide_diag.topmenu_global_slot)")
+    context_validation = topmenu_capture.find("zeroCtrlRangeInSnapshot(")
+    first_field_read = topmenu_capture.find("_lw(context + 0x128)")
+    if slot_read < 0 or context_validation <= slot_read or \
+            first_field_read <= context_validation or \
+            "context, 0x154" not in topmenu_capture or \
+            "if (!slide_diag.topmenu_validation) return" not in topmenu_capture:
+        fail("T17 reads TopMenu state before slot/context range validation")
+    t17_source = topmenu_validate + topmenu_capture
+    if any(token in t17_source for token in
+            ("_sw(", "_sb(", "sceKernelDcache", "sceKernelIcache",
+             "sceKernelCreateThread")):
+        fail("T17 TopMenu observation writes state or creates a thread")
+    if "returns != observed_topmenu_returns" not in fast_poll or \
+            "[topmenu-state]" not in resolve_gate:
+        fail("T17 state capture is not bounded by virtual-return transitions")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
     stub_validation = bsman.find("bsman->stub_form =")

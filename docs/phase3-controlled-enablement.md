@@ -1246,3 +1246,44 @@ If no fixed candidate owns the target, the next decision should use that result
 rather than expanding the runtime list speculatively. If ownership succeeds,
 the next phase is offline correlation with the matching decrypted PSP-1000 ELF;
 no new compatibility behavior is justified first.
+
+### T16.3 hardware result and T17 TopMenu state observation
+
+**PROVEN BY HARDWARE:** T16.3 uniquely resolved the natural virtual target to
+`vsh_module` text offset `+0x1E2B0`. The loaded text and segment both measured
+`0x556C0` bytes, matching the external decrypted PSP-1000 VSHMAIN image, and
+the fixed fingerprint validated. The unchanged method returned 15 four times
+and Sony did not rejoin `+0x93EC`. T16 owner discovery is complete.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** the function at `+0x1E2B0` consists
+of eight instructions. It loads a context through a relocated global slot,
+returns 15 when byte `context+0x150` is nonzero, and otherwise returns the word
+at `context+0x12C`. Both fields are mutable and initialization writes 15 to
+`+0x12C` and zero to `+0x150`. The interface is the `+0x78` method of the
+pointer SlidePlugin obtains for `topmenu_plugin`; its official semantic name
+remains unknown. **STRONG INFERENCE:** 15 is an internal/default TopMenu state,
+not evidence of another missing PSP-1000 service.
+
+T17 remains observational. Only after T16 validates the unique VSH owner,
+exact `+0x1E2B0` offset, LUI/LW shape, and six fixed non-relocated instructions
+does it reconstruct the global slot using a signed 16-bit LW displacement. A
+fresh, plausibility-checked `vsh_module` metadata lookup must place the complete
+slot word in one of at most four segments before it is read. The resulting
+context must be aligned and contain the complete range through `+0x153` inside
+a partition range captured before Sony module start. Only then are words
+`+0x128`, `+0x12C`, and byte `+0x150` read.
+
+The existing deferred thread captures the first validated state and refreshes
+it only when the existing virtual-return counter changes. It retains the last
+state and increments one transition counter when the context or any requested
+field changes; it does not print on every poll. The compact first record names
+the natural source selected by the proven function, and one final record holds
+first/last values and the transition count. T17 adds no thread, code patch,
+function call, return conversion, context write, or `+0x6F84` behavior.
+
+The required hardware test is one recovery-protected run with the unchanged
+configuration and complete log. The key result is whether nonzero `field_150`
+selects `FORCED_15`, or zero selects `FIELD_12C` whose value is itself 15.
+No compatibility change is justified in T17. After hardware identifies that
+branch, inspect the decrypted VSH code responsible for the relevant field's
+natural transitions before designing any separate control.

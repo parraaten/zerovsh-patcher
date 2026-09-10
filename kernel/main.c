@@ -369,6 +369,13 @@ typedef struct {
     unsigned int state_zero_vcall_segment_addr;
     unsigned int state_zero_vcall_segment_size;
     unsigned int state_zero_vcall_code[STATE_ZERO_VCALL_CODE_WORDS];
+    int topmenu_validation;
+    int topmenu_failure_reason;
+    unsigned int topmenu_global_slot;
+    unsigned int topmenu_context;
+    unsigned int topmenu_first[3];
+    unsigned int topmenu_last[3];
+    unsigned int topmenu_transition_count;
     int vsh_target_in_text;
     int vsh_modid;
     unsigned int vsh_text_addr;
@@ -443,6 +450,114 @@ static const char *state_zero_vcall_candidates[] = {
     "impose_plugin_module",
     "launcher_plugin_module"
 };
+
+enum ZeroCtrlTopMenuStateReason {
+    ZERO_TOPMENU_NONE = 0,
+    ZERO_TOPMENU_TARGET_MISMATCH,
+    ZERO_TOPMENU_CODE_MISMATCH,
+    ZERO_TOPMENU_SLOT_OUT_OF_SEGMENT,
+    ZERO_TOPMENU_CONTEXT_OUT_OF_PARTITION
+};
+
+static int zeroCtrlRangeInSnapshot(const ZeroCtrlPartitionSnapshot *snapshot,
+        unsigned int address, unsigned int size) {
+    unsigned int i;
+    if (!snapshot || size == 0) return 0;
+    for (i = 0; i < ZEROCTRL_PARTITION_COUNT; i++) {
+        const ZeroCtrlPartitionEntry *entry = &snapshot->entries[i];
+        if (entry->valid && entry->memsize >= size &&
+                address >= entry->startaddr &&
+                address - entry->startaddr <= entry->memsize - size)
+            return 1;
+    }
+    return 0;
+}
+
+static void zeroCtrlValidateTopMenuState(void) {
+    unsigned int lui, load, upper, slot;
+    SceModule2 *vsh;
+    int displacement;
+    unsigned int i;
+
+    if (!slide_diag.state_zero_vcall_fingerprint_valid ||
+            slide_diag.state_zero_vcall_offset != 0x1E2B0) {
+        slide_diag.topmenu_failure_reason = ZERO_TOPMENU_TARGET_MISMATCH;
+        return;
+    }
+    lui = slide_diag.state_zero_vcall_code[0];
+    load = slide_diag.state_zero_vcall_code[1];
+    if ((lui >> 26) != 0x0F || ((lui >> 16) & 0x1F) != 2 ||
+            (load >> 26) != 0x23 || ((load >> 21) & 0x1F) != 2 ||
+            ((load >> 16) & 0x1F) != 3 ||
+            slide_diag.state_zero_vcall_code[2] != 0x90620150 ||
+            slide_diag.state_zero_vcall_code[3] != 0x14400002 ||
+            slide_diag.state_zero_vcall_code[4] != 0x2404000F ||
+            slide_diag.state_zero_vcall_code[5] != 0x8C64012C ||
+            slide_diag.state_zero_vcall_code[6] != 0x03E00008 ||
+            slide_diag.state_zero_vcall_code[7] != 0x00801021) {
+        slide_diag.topmenu_failure_reason = ZERO_TOPMENU_CODE_MISMATCH;
+        return;
+    }
+    upper = (lui & 0xFFFF) << 16;
+    displacement = (short)(load & 0xFFFF);
+    slot = upper + (unsigned int)displacement;
+    vsh = sceKernelFindModuleByName("vsh_module");
+    if (!vsh || ((unsigned int)vsh & 3) != 0 ||
+            (unsigned int)vsh < 0x88000000 ||
+            (unsigned int)vsh >= 0x8C000000 ||
+            vsh->text_addr != slide_diag.state_zero_vcall_text_addr ||
+            vsh->text_size != slide_diag.state_zero_vcall_text_size ||
+            vsh->nsegment == 0 || vsh->nsegment > 4) {
+        slide_diag.topmenu_failure_reason =
+                ZERO_TOPMENU_SLOT_OUT_OF_SEGMENT;
+        return;
+    }
+    for (i = 0; i < vsh->nsegment; i++) {
+        unsigned int start = vsh->segmentaddr[i];
+        unsigned int size = vsh->segmentsize[i];
+        if (size >= sizeof(unsigned int) && slot >= start &&
+                slot - start <= size - sizeof(unsigned int)) {
+            slide_diag.topmenu_global_slot = slot;
+            slide_diag.topmenu_validation = 1;
+            return;
+        }
+    }
+    slide_diag.topmenu_failure_reason = ZERO_TOPMENU_SLOT_OUT_OF_SEGMENT;
+}
+
+static void zeroCtrlCaptureTopMenuState(void) {
+    unsigned int context, values[3];
+    if (!slide_diag.topmenu_validation) return;
+    context = _lw(slide_diag.topmenu_global_slot);
+    if ((context & 3) != 0 || !zeroCtrlRangeInSnapshot(
+            &slide_diag.pre_start, context, 0x154)) {
+        slide_diag.topmenu_failure_reason =
+                ZERO_TOPMENU_CONTEXT_OUT_OF_PARTITION;
+        slide_diag.topmenu_validation = 0;
+        return;
+    }
+    values[0] = _lw(context + 0x128);
+    values[1] = _lw(context + 0x12C);
+    values[2] = _lb(context + 0x150) & 0xFF;
+    if (slide_diag.topmenu_context == 0) {
+        memcpy(slide_diag.topmenu_first, values, sizeof(values));
+    } else if (slide_diag.topmenu_context != context ||
+            memcmp(slide_diag.topmenu_last, values, sizeof(values)) != 0) {
+        slide_diag.topmenu_transition_count++;
+    }
+    slide_diag.topmenu_context = context;
+    memcpy(slide_diag.topmenu_last, values, sizeof(values));
+}
+
+static const char *zeroCtrlTopMenuReasonName(int reason) {
+    static const char *names[] = {
+        "NONE", "TARGET_MISMATCH", "CODE_MISMATCH", "SLOT_OUT_OF_SEGMENT",
+        "CONTEXT_OUT_OF_PARTITION"
+    };
+    if (reason < 0 || (unsigned int)reason >= sizeof(names) / sizeof(names[0]))
+        return "UNKNOWN";
+    return names[reason];
+}
 
 /*
  * T16 resolves the observed virtual target through LoadCore metadata.  The
@@ -537,6 +652,7 @@ static void zeroCtrlCaptureStateZeroVCallOwner(unsigned int target) {
                 _lw(target + i * sizeof(unsigned int));
     slide_diag.state_zero_vcall_fingerprint_valid = 1;
     slide_diag.state_zero_vcall_resolve_reason = ZERO_VCALL_RESOLVE_NONE;
+    zeroCtrlValidateTopMenuState();
 }
 
 static const char *zeroCtrlStateZeroVCallReasonName(int reason) {
@@ -2432,6 +2548,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_paf_returns = 0;
     unsigned int observed_post_mask = 0;
     unsigned int observed_state_zero_mask = 0;
+    unsigned int observed_topmenu_returns = 0;
     int observed_state_zero_vcall_owner = 0;
     unsigned int observed_post_counts[11] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
@@ -2827,7 +2944,38 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                     slide_diag.state_zero_vcall_code[9]);
                             zeroCtrlDiagnosticsText(line);
                         }
+                        if (slide_diag.topmenu_validation) {
+                            zeroCtrlCaptureTopMenuState();
+                            observed_topmenu_returns = returns;
+                        }
+                        snprintf(line, sizeof(line),
+                                "[topmenu-state] validation=%d reason=%s(%d) "
+                                "target_offset=0x%08X global_slot=0x%08X "
+                                "context=0x%08X field_128=0x%08X "
+                                "field_12C=0x%08X field_150=0x%02X "
+                                "return_source=%s\n",
+                                slide_diag.topmenu_validation,
+                                zeroCtrlTopMenuReasonName(
+                                    slide_diag.topmenu_failure_reason),
+                                slide_diag.topmenu_failure_reason,
+                                slide_diag.state_zero_vcall_offset,
+                                slide_diag.topmenu_global_slot,
+                                slide_diag.topmenu_context,
+                                slide_diag.topmenu_first[0],
+                                slide_diag.topmenu_first[1],
+                                slide_diag.topmenu_first[2] & 0xFF,
+                                slide_diag.topmenu_first[2] != 0 ?
+                                    "FORCED_15" : "FIELD_12C");
+                        zeroCtrlDiagnosticsText(line);
                         observed_state_zero_vcall_owner = 1;
+                    }
+                }
+                if (slide_diag.topmenu_validation) {
+                    unsigned int returns = zeroCtrlReadHelperCounter(
+                            bsman->state_zero_counter_addr[2]);
+                    if (returns != observed_topmenu_returns) {
+                        zeroCtrlCaptureTopMenuState();
+                        observed_topmenu_returns = returns;
                     }
                 }
             }
@@ -2943,6 +3091,25 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 "[bsman] final install=%d validation=%d hit_count=%u\n",
                 slide_diag.bsman.install, slide_diag.bsman.validation,
                 zeroCtrlReadBSManHits());
+        zeroCtrlDiagnosticsText(line);
+    }
+    if (slide_diag.state_zero_vcall_resolve_attempted) {
+        snprintf(line, sizeof(line),
+                "[topmenu-state-final] validation=%d reason=%s(%d) "
+                "context=0x%08X first=0x%08X,0x%08X,0x%02X "
+                "last=0x%08X,0x%08X,0x%02X transitions=%u "
+                "return_source=%s\n",
+                slide_diag.topmenu_validation,
+                zeroCtrlTopMenuReasonName(slide_diag.topmenu_failure_reason),
+                slide_diag.topmenu_failure_reason,
+                slide_diag.topmenu_context,
+                slide_diag.topmenu_first[0], slide_diag.topmenu_first[1],
+                slide_diag.topmenu_first[2] & 0xFF,
+                slide_diag.topmenu_last[0], slide_diag.topmenu_last[1],
+                slide_diag.topmenu_last[2] & 0xFF,
+                slide_diag.topmenu_transition_count,
+                slide_diag.topmenu_last[2] != 0 ?
+                    "FORCED_15" : "FIELD_12C");
         zeroCtrlDiagnosticsText(line);
     }
 
