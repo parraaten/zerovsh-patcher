@@ -239,10 +239,12 @@ zeroCtrlBSManReturnTraceEnd:
 .type zeroCtrlPostBSManBranchTrace @function
 .ent zeroCtrlPostBSManBranchTrace, 0
 zeroCtrlPostBSManBranchTrace:
+    lui     $t0, %hi(zeroCtrlPostBSManNaturalResult)
+    lw      $t2, %lo(zeroCtrlPostBSManNaturalResult)($t0)
     lui     $t0, %hi(zeroCtrlPostPathMask)
     lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
     ori     $t1, $t1, 0x0002
-    beqz    $v0, 8f
+    beqz    $t2, 8f
     sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
     ori     $t1, $t1, 0x0004
     sw      $t1, %lo(zeroCtrlPostPathMask)($t0)
@@ -256,7 +258,6 @@ zeroCtrlPostBSManBranchTrace:
     lui     $t0, %hi(zeroCtrlPostBSManZero)
     lw      $t9, %lo(zeroCtrlPostBSManZero)($t0)
 9:
-    lbu     $v0, 0x0DCD($s3)
     jr      $t9
     nop
 .globl zeroCtrlPostBSManBranchTraceEnd

@@ -3034,7 +3034,7 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     bsman->prefix_replacement[3]) !=
                         bsman->prefix_paf_call_leaf_addr ||
                 bsman->post_original[0] != 0x1040000A ||
-                bsman->post_original[1] != 0x92620DCD ||
+                (bsman->post_original[1] & 0xFFFF0000) != 0x92620000 ||
                 bsman->post_original[2] != 0x10400066 ||
                 (bsman->post_original[3] & 0xFFFF0000) != 0x3C020000 ||
                 (bsman->post_original[4] >> 26) != 3 ||
@@ -3189,7 +3189,6 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         _sw(0, bsman->activation_addr + 0x98);
         _sw(bsman->prefix_replacement[3], bsman->activation_addr + 0x2C);
         _sw(bsman->post_replacement[0], bsman->activation_addr + 0xB0);
-        _sw(0, bsman->activation_addr + 0xB4);
         _sw(bsman->post_replacement[1], bsman->activation_addr + 0xDC);
         _sw(0, bsman->activation_addr + 0xE0);
         _sw(bsman->post_replacement[2], bsman->activation_addr + 0xE8);
@@ -3218,9 +3217,9 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         sceKernelIcacheInvalidateRange(
                 (const void *)(bsman->activation_addr + 0x2C), 4);
         sceKernelDcacheWritebackInvalidateRange(
-                (const void *)(bsman->activation_addr + 0xB0), 8);
+                (const void *)(bsman->activation_addr + 0xB0), 4);
         sceKernelIcacheInvalidateRange(
-                (const void *)(bsman->activation_addr + 0xB0), 8);
+                (const void *)(bsman->activation_addr + 0xB0), 4);
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)(bsman->activation_addr + 0xDC), 8);
         sceKernelIcacheInvalidateRange(

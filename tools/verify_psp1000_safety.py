@@ -342,8 +342,11 @@ def check_sources(root):
         assembly.find("zeroCtrlPostBSManBranchTraceEnd:")]
     post_state = assembly[assembly.find("zeroCtrlPostStateBranchTrace:"):
         assembly.find("zeroCtrlPostStateBranchTraceEnd:")]
-    if "lbu     $v0, 0x0DCD($s3)" not in post_bs:
-        fail("post-BSMan result branch does not reproduce its LBU delay slot")
+    if "lw      $t2, %lo(zeroCtrlPostBSManNaturalResult)($t0)" not in post_bs or \
+            "beqz    $t2, 8f" not in post_bs:
+        fail("post-BSMan result branch does not use the saved natural result")
+    if "$v0" in post_bs or "lbu" in post_bs:
+        fail("post-BSMan result branch modifies or reconstructs the state byte")
     if "lw      $v0, %lo(zeroCtrlPostStateDelayValue)" not in post_state:
         fail("post-BSMan state branch does not reproduce its LUI delay value")
     for symbol in ("zeroCtrlPostPafReturnTrace", "zeroCtrlPostVshReturnTrace"):
@@ -394,6 +397,19 @@ def check_sources(root):
         fail("activation prefix trace does not retain the natural PAF target")
     if "bsman->caller_addr != bsman->activation_addr + 0xA8" not in bsman:
         fail("post-BSMan trace is not tied to the validated BSMan caller")
+    if "(bsman->post_original[1] & 0xFFFF0000) != 0x92620000" not in bsman:
+        fail("runtime BSMan delay slot is not structurally validated as LBU v0(s3)")
+    if re.search(r"_sw\([^;\n]*bsman->activation_addr \+ 0xB4", bsman):
+        fail("runtime BSMan LBU delay slot is overwritten")
+    for sync in (
+            "(const void *)(bsman->activation_addr + 0xB0), 4",):
+        if bsman.count(sync) != 2:
+            fail("post-BSMan branch patch does not narrowly synchronize one word")
+    for required in (
+            "_sw(bsman->activation_addr + 0xDC, bsman->post_bs_target_addr[0])",
+            "_sw(bsman->activation_addr + 0xB8, bsman->post_bs_target_addr[1])"):
+        if required not in bsman:
+            fail("post-BSMan natural branch destination is missing " + required)
     validation_marker = "Validation pass: no VSH write may occur in this loop."
     commit_marker = "Commit pass: selected callsites are all valid or none are written."
     validation_start = kernel.find(validation_marker)
@@ -675,6 +691,12 @@ def check_elf(elf):
         prefix_trace = function_body(disassembly, symbol)
         if re.search(r"\bgp\b|\bjalr?\b", prefix_trace):
             fail(symbol + " uses gp or a call")
+        if symbol == "zeroCtrlPostBSManBranchTrace" and \
+                (re.search(r"\bv0\b|\blbu\b", prefix_trace) or
+                 not re.search(r"\blw\s+t2,", prefix_trace) or
+                 not re.search(r"\bbeqz\s+t2,", prefix_trace)):
+            fail("post-BSMan branch trace does not branch on the saved result "
+                 "while preserving the relocated state byte")
         if symbol == "zeroCtrlSlidePrefixPafReturnTrace" and \
                 (not re.search(r"\bsw\s+v0,", prefix_trace) or
                  not re.search(r"\bbnez\s+v0,", prefix_trace) or
@@ -726,6 +748,18 @@ def check_stub_object(stub_object):
     v0_lines = [line for line in return_trace.splitlines() if re.search(r"\bv0\b", line)]
     if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]):
         fail("BSMan return trace does not only record the natural v0")
+    post_bs_branch = function_body(
+            disassembly, "zeroCtrlPostBSManBranchTrace")
+    if re.search(r"\bv0\b|\blbu\b", post_bs_branch) or \
+            not re.search(
+                r"R_MIPS_HI16\s+zeroCtrlPostBSManNaturalResult\b",
+                post_bs_branch) or \
+            not re.search(
+                r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPostBSManNaturalResult\b", post_bs_branch) or \
+            not re.search(r"\bbeqz\s+t2,", post_bs_branch):
+        fail("post-BSMan branch trace lacks the exact saved-result decision "
+             "or modifies/reconstructs v0")
     post_paf_return = function_body(disassembly, "zeroCtrlPostPafReturnTrace")
     require_only_natural_result_stores(
             post_paf_return, "zeroCtrlPostPafReturnTrace", 2)

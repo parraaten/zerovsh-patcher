@@ -836,7 +836,7 @@ Static analysis gives the following post-BSMan CFG and raw tests:
 ```
 +0x93AC  jal  sceBSMan / 0x23E3A9B6
 +0x93B4  beq  v0,zero,+0x93E0       # BSMan result: zero/nonzero
-+0x93B8  lbu  v0,0xDCD(s3)          # delay slot on both sides
++0x93B8  lbu  v0,0xDCD(s3)          # pre-relocation PRX delay-slot word
 +0x93BC  load relocated byte flag
 +0x93C4  bne  flag,zero,epilogue
           [zero flag sets two state bytes, then joins +0x93E0]
@@ -874,11 +874,29 @@ The new post-BSMan mask and counters are temporary fixed-scalar evidence:
 | `0x080` / `0x100` | second `0xFF03BCD5` call entered / returned |
 | `0x200` / `0x400` | `sceVshBridge` call entered / returned |
 
+The checked-in research PRX encodes the `+0x93B8` delay slot as
+`0x92620DCD` (`lbu v0,0x0DCD(s3)`). The first T13 hardware attempt failed
+closed before any trace write because the relocated PSP-1000 image instead
+contained `0x926286FD` (`lbu v0,0x86FD(s3)`). This changes only the relocated
+16-bit operand; the opcode and `s3`/`v0` registers are identical. The runtime
+validator therefore proves the instruction structurally as an LBU with
+`rs=s3` and `rt=v0`, while the research-image verifier retains the separate
+exact pre-relocation-word proof.
+
+The replacement jump at `+0x93B4` changes only the original branch word. By
+MIPS jump-delay semantics, the untouched runtime LBU at `+0x93B8` still runs
+before control reaches the trace leaf and leaves the exact Sony state byte in
+`v0`. The leaf tests the natural BSMan result previously saved by the return
+trace, never reads or writes `v0`, and selects the unchanged natural targets
+`+0x93E0` (BSMan zero) or `+0x93BC` (BSMan nonzero). No reconstructed LBU or
+relocation-dependent immediate remains in that helper.
+
 Dedicated counters separately record BSMan returns, both immediate branch
 outcomes, both state-byte outcomes, entry/return for each PAF call, and
 VshBridge entry/return. Raw BSMan, PAF, and VshBridge results are captured
-before any tracer use or deferred serialization. Branch leaves reproduce the
-original `lbu v0,0xDCD(s3)` and relocated `LUI v0` delay slots. Call leaves
+before any tracer use or deferred serialization. The state-branch leaf derives
+its relocated `LUI v0` delay value from the validated runtime word and restores
+that exact value; it does not hardcode a relocated operand. Call leaves
 retain the original PAF `a0=0/1` and VshBridge `a0=0x8000000D` JAL delay slots,
 tail-call the validated natural imports, restore the Sony return addresses, and
 preserve every natural result.

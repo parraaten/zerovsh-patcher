@@ -398,3 +398,12 @@ Require the exact `[post-bsman]` fingerprints, including uniquely resolved
 
 Return the unedited log and XMB observations. This row substitutes no BSMan,
 second-PAF, VshBridge, impose, OPEN/CLOSE, or model result.
+
+The first T13 attempt is an inconclusive fail-closed result: validation and
+installation were both zero. Hardware reported `0x926286FD` at `+0x93B8`,
+where the research PRX contains pre-relocation `0x92620DCD`; both are
+`lbu v0,imm16(s3)`. The retry validates that structural identity without
+assuming the relocated immediate, replaces only the branch at `+0x93B4`, and
+leaves the runtime LBU in the jump delay slot. Its branch tracer decides from
+the separately saved natural BSMan result and preserves the LBU-produced `v0`.
+Require `validation=1 install=1` before interpreting any T13 counters.
