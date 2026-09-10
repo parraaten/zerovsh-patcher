@@ -680,9 +680,26 @@ def check_sources(root):
             "sw      $ra, %lo(zeroCtrlDispatchCase14LastRA)",
             "addiu   $sp, $sp, -0x40", "sw      $s2, 0x18($sp)",
             "lw      $t2, %lo(zeroCtrlDispatchEntryResume)",
-            "jr      $t2", "lw      $t2, 0x24($sp)"):
+            "jr      $t2", "lw      $t2, 0x3C($sp)"):
         if token not in dispatch_stub:
             fail("T20 helper does not preserve displaced entry behavior: " + token)
+    dispatch_stack_sequence = (
+        "addiu   $sp, $sp, -12\n"
+        "    sw      $t0, 0($sp)\n"
+        "    sw      $t1, 4($sp)\n"
+        "    sw      $t2, 8($sp)")
+    dispatch_restore_sequence = (
+        "lw      $t1, 4($sp)\n"
+        "    lw      $t0, 0($sp)\n"
+        "    addiu   $sp, $sp, 12\n"
+        "    addiu   $sp, $sp, -0x40\n"
+        "    sw      $s2, 0x18($sp)\n"
+        "    jr      $t2\n"
+        "    lw      $t2, 0x3C($sp)")
+    if dispatch_stack_sequence not in dispatch_stub or \
+            dispatch_restore_sequence not in dispatch_stub or \
+            "lw      $t2, 0x24($sp)" in dispatch_stub:
+        fail("T20 stack proof must restore S-4 as (S-0x40)+0x3C")
     if any(token in dispatch_stub for token in
             ("jal ", "jalr", "sceIo", "Alloc", "malloc", "sceKernel")):
         fail("T20 helper calls code, performs I/O, or allocates")

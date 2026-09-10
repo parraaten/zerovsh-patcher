@@ -691,7 +691,7 @@ zeroCtrlDispatchEntryTrace:
     addiu   $sp, $sp, -0x40
     sw      $s2, 0x18($sp)
     jr      $t2
-    lw      $t2, 0x24($sp)
+    lw      $t2, 0x3C($sp)
 .globl zeroCtrlDispatchEntryTraceEnd
 zeroCtrlDispatchEntryTraceEnd:
 .end zeroCtrlDispatchEntryTrace
