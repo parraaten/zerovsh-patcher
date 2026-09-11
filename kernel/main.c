@@ -100,6 +100,7 @@ static char psp1000StateZero15To14Compat[16];
 static char psp1000ImposeParam8000000DCompat[16];
 static char psp1000PostImposeVCallTrace[16];
 static char psp1000PostMinusOneVCall64Trace[16];
+static char psp1000PostVCall64CollectionTrace[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -302,6 +303,11 @@ typedef struct {
     int post_minus_one_vcall64_install, post_minus_one_vcall64_cache_sync;
     unsigned int post_minus_one_vcall64_original[2];
     unsigned int post_minus_one_vcall64_replacement;
+    unsigned int post_minus_one_vcall64_collection_enabled_addr;
+    unsigned int post_minus_one_vcall64_count_snapshot_addr;
+    unsigned int post_minus_one_vcall64_array_snapshot_addr;
+    unsigned int post_minus_one_vcall64_array_read_hits_addr;
+    int post_vcall64_collection_enabled;
     unsigned int post_paf_entry_counter_addr[2], post_vsh_entry_hits_addr;
     unsigned int post_original[12], post_replacement[6];
     unsigned int state_zero_leaf_addr[8], state_zero_leaf_size[8];
@@ -1511,6 +1517,10 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(post_minus_one_vcall64_natural_result_addr);
     CHECK_POST_SCALAR(post_minus_one_vcall64_hits_addr);
     CHECK_POST_SCALAR(post_minus_one_vcall64_return_hits_addr);
+    CHECK_POST_SCALAR(post_minus_one_vcall64_collection_enabled_addr);
+    CHECK_POST_SCALAR(post_minus_one_vcall64_count_snapshot_addr);
+    CHECK_POST_SCALAR(post_minus_one_vcall64_array_snapshot_addr);
+    CHECK_POST_SCALAR(post_minus_one_vcall64_array_read_hits_addr);
 #define CHECK_STATE_ZERO_LEAF(field) \
     if (!zeroCtrlRegistrationLeafValid(helper, copied.field##_addr, \
                 copied.field##_end_addr)) return
@@ -1746,6 +1756,14 @@ void zeroCtrlRegisterBSManClosedShim(
             copied.post_minus_one_vcall64_hits_addr;
     bsman->post_minus_one_vcall64_return_hits_addr =
             copied.post_minus_one_vcall64_return_hits_addr;
+    bsman->post_minus_one_vcall64_collection_enabled_addr =
+            copied.post_minus_one_vcall64_collection_enabled_addr;
+    bsman->post_minus_one_vcall64_count_snapshot_addr =
+            copied.post_minus_one_vcall64_count_snapshot_addr;
+    bsman->post_minus_one_vcall64_array_snapshot_addr =
+            copied.post_minus_one_vcall64_array_snapshot_addr;
+    bsman->post_minus_one_vcall64_array_read_hits_addr =
+            copied.post_minus_one_vcall64_array_read_hits_addr;
 #define COPY_STATE_ZERO_LEAF(index, field) do { \
     bsman->state_zero_leaf_addr[index] = copied.field##_addr; \
     bsman->state_zero_leaf_size[index] = copied.field##_end_addr - \
@@ -3697,6 +3715,19 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 target_offset == 0x1F8E0, natural);
                         zeroCtrlDiagnosticsText(line);
                     }
+                    snprintf(line, sizeof(line),
+                            "[post-vcall64-collection] enabled=%d pointer=0x%08X "
+                            "count=0x%08X array=0x%08X array_read=%u\n",
+                            bsman->post_vcall64_collection_enabled,
+                            zeroCtrlReadHelperCounter(
+                                bsman->post_minus_one_vcall64_natural_result_addr),
+                            zeroCtrlReadHelperCounter(
+                                bsman->post_minus_one_vcall64_count_snapshot_addr),
+                            zeroCtrlReadHelperCounter(
+                                bsman->post_minus_one_vcall64_array_snapshot_addr),
+                            zeroCtrlReadHelperCounter(
+                                bsman->post_minus_one_vcall64_array_read_hits_addr));
+                    zeroCtrlDiagnosticsText(line);
                 }
             }
             {
@@ -4921,6 +4952,11 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         _sw(0xFFFFFFFF, bsman->post_minus_one_vcall64_natural_result_addr);
         _sw(0, bsman->post_minus_one_vcall64_hits_addr);
         _sw(0, bsman->post_minus_one_vcall64_return_hits_addr);
+        _sw(bsman->post_vcall64_collection_enabled ? 1 : 0,
+                bsman->post_minus_one_vcall64_collection_enabled_addr);
+        _sw(0xFFFFFFFF, bsman->post_minus_one_vcall64_count_snapshot_addr);
+        _sw(0, bsman->post_minus_one_vcall64_array_snapshot_addr);
+        _sw(0, bsman->post_minus_one_vcall64_array_read_hits_addr);
         _sw(0, bsman->post_paf_entry_counter_addr[0]);
         _sw(0, bsman->post_paf_entry_counter_addr[1]);
         _sw(0, bsman->post_vsh_entry_hits_addr);
@@ -5021,6 +5057,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         SYNC_POST_SCALAR(bsman->post_minus_one_vcall64_natural_result_addr);
         SYNC_POST_SCALAR(bsman->post_minus_one_vcall64_hits_addr);
         SYNC_POST_SCALAR(bsman->post_minus_one_vcall64_return_hits_addr);
+        SYNC_POST_SCALAR(bsman->post_minus_one_vcall64_collection_enabled_addr);
+        SYNC_POST_SCALAR(bsman->post_minus_one_vcall64_count_snapshot_addr);
+        SYNC_POST_SCALAR(bsman->post_minus_one_vcall64_array_snapshot_addr);
+        SYNC_POST_SCALAR(bsman->post_minus_one_vcall64_array_read_hits_addr);
         SYNC_POST_SCALAR(bsman->state_zero_path_mask_addr);
         SYNC_POST_SCALAR(bsman->state_zero_15to14_compat_mode_addr);
         SYNC_POST_SCALAR(bsman->state_zero_15to14_effective_result_addr);
@@ -5497,6 +5537,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	ini_gets("Experimental", "PSP1000PostMinusOneVCall64Trace", "Disabled",
 			psp1000PostMinusOneVCall64Trace,
 			sizeof(psp1000PostMinusOneVCall64Trace), config);
+	ini_gets("Experimental", "PSP1000PostVCall64CollectionTrace", "Disabled",
+			psp1000PostVCall64CollectionTrace,
+			sizeof(psp1000PostVCall64CollectionTrace), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -5574,6 +5617,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		slide_diag.bsman.post_minus_one_vcall64_enabled =
 			slide_diag.bsman.post_impose_vcall_enabled &&
 			strcmp(psp1000PostMinusOneVCall64Trace, "Enabled") == 0;
+		slide_diag.bsman.post_vcall64_collection_enabled =
+			slide_diag.bsman.post_minus_one_vcall64_enabled &&
+			strcmp(psp1000PostVCall64CollectionTrace, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,

@@ -500,6 +500,23 @@ zeroCtrlPostMinusOneVCall64ReturnTrace:
     sw      $t1, 4($sp)
     lui     $t0, %hi(zeroCtrlPostMinusOneVCall64NaturalResult)
     sw      $v0, %lo(zeroCtrlPostMinusOneVCall64NaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlPostMinusOneVCall64CollectionEnabled)
+    lw      $t1, %lo(zeroCtrlPostMinusOneVCall64CollectionEnabled)($t0)
+    beqz    $t1, 67f
+    nop
+    lw      $t1, 0x364($v0)
+    lui     $t0, %hi(zeroCtrlPostMinusOneVCall64CountSnapshot)
+    sw      $t1, %lo(zeroCtrlPostMinusOneVCall64CountSnapshot)($t0)
+    beqz    $t1, 67f
+    nop
+    lw      $t1, 0x360($v0)
+    lui     $t0, %hi(zeroCtrlPostMinusOneVCall64ArraySnapshot)
+    sw      $t1, %lo(zeroCtrlPostMinusOneVCall64ArraySnapshot)($t0)
+    lui     $t0, %hi(zeroCtrlPostMinusOneVCall64ArrayReadHits)
+    lw      $t1, %lo(zeroCtrlPostMinusOneVCall64ArrayReadHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostMinusOneVCall64ArrayReadHits)($t0)
+67:
     lui     $t0, %hi(zeroCtrlPostMinusOneVCall64ReturnHits)
     lw      $t1, %lo(zeroCtrlPostMinusOneVCall64ReturnHits)($t0)
     addiu   $t1, $t1, 1
@@ -1330,6 +1347,14 @@ zeroCtrlPostMinusOneVCall64NaturalResult: .space 4
 zeroCtrlPostMinusOneVCall64Hits: .space 4
 .globl zeroCtrlPostMinusOneVCall64ReturnHits
 zeroCtrlPostMinusOneVCall64ReturnHits: .space 4
+.globl zeroCtrlPostMinusOneVCall64CollectionEnabled
+zeroCtrlPostMinusOneVCall64CollectionEnabled: .space 4
+.globl zeroCtrlPostMinusOneVCall64CountSnapshot
+zeroCtrlPostMinusOneVCall64CountSnapshot: .space 4
+.globl zeroCtrlPostMinusOneVCall64ArraySnapshot
+zeroCtrlPostMinusOneVCall64ArraySnapshot: .space 4
+.globl zeroCtrlPostMinusOneVCall64ArrayReadHits
+zeroCtrlPostMinusOneVCall64ArrayReadHits: .space 4
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits

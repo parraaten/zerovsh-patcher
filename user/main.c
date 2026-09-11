@@ -235,6 +235,10 @@ extern volatile unsigned int zeroCtrlPostMinusOneVCall64SavedRA;
 extern volatile unsigned int zeroCtrlPostMinusOneVCall64NaturalResult;
 extern volatile unsigned int zeroCtrlPostMinusOneVCall64Hits;
 extern volatile unsigned int zeroCtrlPostMinusOneVCall64ReturnHits;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64CollectionEnabled;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64CountSnapshot;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64ArraySnapshot;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64ArrayReadHits;
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
 extern volatile unsigned int zeroCtrlPostVshEntryHits;
 extern void zeroCtrlStateZeroCompareTrace(void), zeroCtrlStateZeroCompareTraceEnd(void);
@@ -709,6 +713,14 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlPostMinusOneVCall64Hits;
 	bsmanClosedRegistration.post_minus_one_vcall64_return_hits_addr =
 			(u32)&zeroCtrlPostMinusOneVCall64ReturnHits;
+	bsmanClosedRegistration.post_minus_one_vcall64_collection_enabled_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64CollectionEnabled;
+	bsmanClosedRegistration.post_minus_one_vcall64_count_snapshot_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64CountSnapshot;
+	bsmanClosedRegistration.post_minus_one_vcall64_array_snapshot_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64ArraySnapshot;
+	bsmanClosedRegistration.post_minus_one_vcall64_array_read_hits_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64ArrayReadHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

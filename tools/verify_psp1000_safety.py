@@ -93,7 +93,11 @@ T33_SYMBOLS = ("zeroCtrlPostMinusOneVCall64Trace",
     "zeroCtrlPostMinusOneVCall64ReturnTraceEnd",
     "zeroCtrlPostMinusOneVCall64Target", "zeroCtrlPostMinusOneVCall64SavedRA",
     "zeroCtrlPostMinusOneVCall64NaturalResult", "zeroCtrlPostMinusOneVCall64Hits",
-    "zeroCtrlPostMinusOneVCall64ReturnHits")
+    "zeroCtrlPostMinusOneVCall64ReturnHits",
+    "zeroCtrlPostMinusOneVCall64CollectionEnabled",
+    "zeroCtrlPostMinusOneVCall64CountSnapshot",
+    "zeroCtrlPostMinusOneVCall64ArraySnapshot",
+    "zeroCtrlPostMinusOneVCall64ArrayReadHits")
 T32_SYMBOLS = ("zeroCtrlPostImposeVCallTrace",
     "zeroCtrlPostImposeVCallTraceEnd", "zeroCtrlPostImposeVCallReturnTrace",
     "zeroCtrlPostImposeVCallReturnTraceEnd", "zeroCtrlPostImposeVCallTarget",
@@ -567,9 +571,12 @@ def check_sources(root):
         if any(token in body for token in ("jal ", "jalr", "$gp", "sceIo",
                 "Alloc", "malloc")):
             fail("T33 " + role + " wrapper calls code or performs I/O/allocation")
+    t33_v0_lines = [line for line in t33_return.splitlines() if "$v0" in line]
     if t33_call.count("$v0") != 2 or "jr      $v0" not in t33_call or \
-            t33_return.count("$v0") != 1 or \
-            "sw      $v0, %lo(zeroCtrlPostMinusOneVCall64NaturalResult)" not in t33_return:
+            len(t33_v0_lines) != 3 or \
+            "sw      $v0, %lo(zeroCtrlPostMinusOneVCall64NaturalResult)" not in t33_v0_lines[0] or \
+            "lw      $t1, 0x364($v0)" not in t33_v0_lines[1] or \
+            "lw      $t1, 0x360($v0)" not in t33_v0_lines[2]:
         fail("T33 wrappers transform the indirect target or natural result")
     post_paf_source = assembly[assembly.find("zeroCtrlPostPafReturnTrace:"):
         assembly.find("zeroCtrlPostPafReturnTraceEnd:")]
@@ -1246,8 +1253,45 @@ def check_sources(root):
             "post_minus_one_vcall64_return_hits_addr"):
         if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
             fail("T33 registration does not range-validate " + field)
-    if "sizeof(ZeroCtrlBSManClosedRegistration) == 856" not in bsman_header:
-        fail("T33 registration ABI is not exactly 856 bytes")
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 872" not in bsman_header:
+        fail("T34 registration ABI is not exactly 872 bytes")
+    if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
+            '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
+        fail("T34 collection trace is not default-disabled")
+    t34_gate = kernel[kernel.find("post_vcall64_collection_enabled ="):
+        kernel.find(";", kernel.find("post_vcall64_collection_enabled ="))]
+    if "post_minus_one_vcall64_enabled" not in t34_gate or \
+            'strcmp(psp1000PostVCall64CollectionTrace, "Enabled") == 0' not in t34_gate:
+        fail("T34 does not depend on T33 and its explicit opt-in")
+    for token in ("lw      $t1, 0x364($v0)", "beqz    $t1, 67f",
+            "lw      $t1, 0x360($v0)", "\n67:"):
+        if token not in t33_return:
+            fail("T34 return tracer lacks " + token)
+    if not (t33_return.find("0x364($v0)") < t33_return.find("beqz    $t1, 67f",
+            t33_return.find("0x364($v0)")) < t33_return.find("0x360($v0)") <
+            t33_return.find("\n67:")):
+        fail("T34 array read is not guarded by the natural nonzero count")
+    if t33_return.count("beqz    $t1, 67f") != 2:
+        fail("T34 mode/count bypasses do not share the exact skip label")
+    for scalar in ("CollectionEnabled", "CountSnapshot", "ArraySnapshot",
+            "ArrayReadHits"):
+        if ("zeroCtrlPostMinusOneVCall64" + scalar) not in t33_return:
+            fail("T34 wrapper lacks diagnostic scalar " + scalar)
+    for field in ("post_minus_one_vcall64_collection_enabled_addr",
+            "post_minus_one_vcall64_count_snapshot_addr",
+            "post_minus_one_vcall64_array_snapshot_addr",
+            "post_minus_one_vcall64_array_read_hits_addr"):
+        if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
+            fail("T34 registration does not range-validate " + field)
+    for initialization in (
+            "_sw(bsman->post_vcall64_collection_enabled ? 1 : 0,",
+            "_sw(0xFFFFFFFF, bsman->post_minus_one_vcall64_count_snapshot_addr)",
+            "_sw(0, bsman->post_minus_one_vcall64_array_snapshot_addr)",
+            "_sw(0, bsman->post_minus_one_vcall64_array_read_hits_addr)"):
+        if initialization not in bsman_install:
+            fail("T34 transaction lacks initialization " + initialization)
+    if "[post-vcall64-collection]" not in writer:
+        fail("T34 deferred diagnostic is missing")
     for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
         if record not in writer:
             fail("T27 deferred diagnostic is missing " + record)
@@ -1842,6 +1886,37 @@ def check_t32_vcall_semantics(call, returned):
         fail("T32 return wrapper transforms v0 or has an invalid private frame/call")
 
 
+def check_t34_vcall_semantics(call, returned):
+    """Prove T33 transparency plus T34's conditional natural collection reads."""
+    call_v0 = [line for line in call.splitlines() if re.search(r"\bv0\b", line)]
+    if len(call_v0) != 2 or not re.search(r"\bsw\s+v0,", call_v0[0]) or \
+            not re.search(r"\bjr\s+v0\b", call_v0[1]):
+        fail("T34 call wrapper transforms its v0 target")
+    ordered = (r"\baddiu\s+sp,\s*sp,\s*-8", r"\bsw\s+t0,\s*0\(sp\)",
+        r"\bsw\s+t1,\s*4\(sp\)", r"\bsw\s+v0,", r"\blw\s+t1,",
+        r"\bbeqz\s+t1,", r"\blw\s+t1,\s*(?:0x)?364\(v0\)",
+        r"\bsw\s+t1,", r"\bbeqz\s+t1,",
+        r"\blw\s+t1,\s*(?:0x)?360\(v0\)", r"\bsw\s+t1,",
+        r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\blw\s+ra,", r"\blw\s+t1,\s*4\(sp\)",
+        r"\blw\s+t0,\s*0\(sp\)", r"\baddiu\s+sp,\s*sp,\s*8",
+        r"\bjr\s+ra\b", r"\bnop\b")
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, returned[cursor:], re.I)
+        if not match:
+            fail("T34 return wrapper lacks ordered operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in returned.splitlines() if re.search(r"\bv0\b", line)]
+    allowed = (r"\bsw\s+v0,", r"\blw\s+t1,\s*(?:0x)?364\(v0\)",
+               r"\blw\s+t1,\s*(?:0x)?360\(v0\)")
+    if len(v0_lines) != 3 or any(not re.search(pattern, line, re.I)
+            for pattern, line in zip(allowed, v0_lines)) or \
+            re.search(r"\bgp\b|\bjalr?\b", returned):
+        fail("T34 return wrapper transforms v0 or performs a call")
+
+
 def linked_instructions(body):
     """Return final linked instruction addresses/words, excluding relocations."""
     instructions = []
@@ -2023,6 +2098,48 @@ def check_t32_linked_pair(disassembly, symbol_addresses, prefix):
             routed.append((((first & 0xFFFF) << 16) + low) & 0xFFFFFFFF)
     if routed != [return_addr]:
         fail(prefix + " does not route RA to its linked return tracer")
+
+
+def check_t34_linked_collection(disassembly, symbol_addresses):
+    """Prove final T34 scalar addresses and conditional pointer reads."""
+    prefix = "zeroCtrlPostMinusOneVCall64"
+    body = function_body(disassembly, prefix + "ReturnTrace")
+    uses = {}
+    for suffix, expected in (
+            ("CollectionEnabled", [("lw", 9, 8)]),
+            ("CountSnapshot", [("sw", 9, 8)]),
+            ("ArraySnapshot", [("sw", 9, 8)]),
+            ("ArrayReadHits", [("lw", 9, 8), ("sw", 9, 8)]),
+            ("ReturnHits", [("lw", 9, 8), ("sw", 9, 8)])):
+        symbol = prefix + suffix
+        uses[suffix] = linked_scalar_uses(body, symbol,
+                symbol_addresses[symbol], expected)
+    instructions = linked_instructions(body)
+    count_loads = [(pc, word) for pc, word in instructions
+        if word >> 26 == 0x23 and (word >> 21) & 0x1F == 2 and
+        (word >> 16) & 0x1F == 9 and (word & 0xFFFF) == 0x364]
+    array_loads = [(pc, word) for pc, word in instructions
+        if word >> 26 == 0x23 and (word >> 21) & 0x1F == 2 and
+        (word >> 16) & 0x1F == 9 and (word & 0xFFFF) == 0x360]
+    if len(count_loads) != 1 or len(array_loads) != 1 or \
+            not count_loads[0][0] < array_loads[0][0]:
+        fail("T34 linked wrapper lacks exact ordered v0+0x364/v0+0x360 reads")
+    if any(word >> 26 == 0x2B and (word >> 21) & 0x1F == 2
+            for _pc, word in instructions):
+        fail("T34 linked wrapper stores through the natural v0 pointer")
+    branches = []
+    for pc, word in instructions:
+        if word >> 26 == 4 and (word >> 21) & 0x1F == 9 and \
+                (word >> 16) & 0x1F == 0:
+            imm = word & 0xFFFF
+            if imm & 0x8000:
+                imm -= 0x10000
+            branches.append((pc, pc + 4 + (imm << 2)))
+    bypass = uses["ReturnHits"][0] - 4
+    if len(branches) != 2 or branches[0][1] != branches[1][1] or \
+            branches[0][1] != bypass or \
+            not branches[1][0] < array_loads[0][0] < bypass:
+        fail("T34 linked array read is not exclusively on nonzero-count fall-through")
 
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
@@ -2232,11 +2349,12 @@ def check_elf(elf):
     check_t32_vcall_semantics(function_body(disassembly,
         "zeroCtrlPostImposeVCallTrace"), function_body(disassembly,
         "zeroCtrlPostImposeVCallReturnTrace"))
-    check_t32_vcall_semantics(function_body(disassembly,
+    check_t34_vcall_semantics(function_body(disassembly,
         "zeroCtrlPostMinusOneVCall64Trace"), function_body(disassembly,
         "zeroCtrlPostMinusOneVCall64ReturnTrace"))
     check_t32_linked_pair(disassembly, symbol_addresses,
         "zeroCtrlPostMinusOneVCall64")
+    check_t34_linked_collection(disassembly, symbol_addresses)
 
 
 def check_stub_object(stub_object):
@@ -2280,7 +2398,7 @@ def check_stub_object(stub_object):
         fail("T32 call wrapper does not bind its dedicated return tracer")
     t33_call = function_body(disassembly, "zeroCtrlPostMinusOneVCall64Trace")
     t33_return = function_body(disassembly, "zeroCtrlPostMinusOneVCall64ReturnTrace")
-    check_t32_vcall_semantics(t33_call, t33_return)
+    check_t34_vcall_semantics(t33_call, t33_return)
     for body, scalar, hi, lo, op in (
         (t33_call, "zeroCtrlPostMinusOneVCall64Target", 1, 1, r"\bsw\s+v0,"),
         (t33_call, "zeroCtrlPostMinusOneVCall64SavedRA", 1, 1, r"\bsw\s+ra,"),
@@ -2293,6 +2411,23 @@ def check_stub_object(stub_object):
             fail("T33 wrapper has wrong relocation counts for " + scalar)
         if op and not relocation_bound_to_instruction(body, scalar, op):
             fail("T33 wrapper does not bind relocation for " + scalar)
+    for body, scalar, hi, lo, op in (
+        (t33_return, "zeroCtrlPostMinusOneVCall64CollectionEnabled", 1, 1,
+            r"\blw\s+t1,"),
+        (t33_return, "zeroCtrlPostMinusOneVCall64CountSnapshot", 1, 1,
+            r"\bsw\s+t1,"),
+        (t33_return, "zeroCtrlPostMinusOneVCall64ArraySnapshot", 1, 1,
+            r"\bsw\s+t1,"),
+        (t33_return, "zeroCtrlPostMinusOneVCall64ArrayReadHits", 1, 2, None)):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo:
+            fail("T34 wrapper has wrong relocation counts for " + scalar)
+        if op and not relocation_bound_to_instruction(body, scalar, op):
+            fail("T34 wrapper does not bind relocation for " + scalar)
+    for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+        if not relocation_bound_to_instruction(t33_return,
+                "zeroCtrlPostMinusOneVCall64ArrayReadHits", instruction):
+            fail("T34 wrapper does not bind array-read counter " + instruction)
     for body, counter in (
             (t33_call, "zeroCtrlPostMinusOneVCall64Hits"),
             (t33_return, "zeroCtrlPostMinusOneVCall64ReturnHits")):

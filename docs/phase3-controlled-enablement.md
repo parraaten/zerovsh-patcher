@@ -1928,3 +1928,17 @@ the target offset from the current dynamic VSH text address. Whether the
 expected VSH `+0x1F8E0` function's natural `context+0xA6C` value permits later
 SlidePlugin processing is **HYPOTHESIS / UNKNOWN**. No semantic name is
 assigned to the interface entry or context field.
+
+### T34 conditional collection snapshot
+
+**PROVEN BY HARDWARE — T33:** the `s0+0x64` entry resolved to VSH
+`+0x1F8E0` and naturally returned `0x08A516D0` for that boot. T34 adds no
+SlidePlugin patch owner or compatibility. With the new explicit diagnostic
+opt-in, the existing return tracer reads the natural count at `p+0x364`; only
+a nonzero count permits the subsequent natural array-pointer read at
+`p+0x360`. Both addresses are derived from the captured pointer and are never
+hardcoded or written.
+
+The interface entry, returned object, count, array, and entries retain unknown
+official semantics. Whether the natural collection is empty, populated, or
+structurally inconsistent remains **HYPOTHESIS / UNKNOWN** pending hardware.

@@ -649,3 +649,16 @@ require:
 
 This record is observation only. Do not substitute a zero or pointer-like
 result; first identify the natural `+0x14C` branch and accessed object fields.
+
+### T34 — conditional natural collection snapshot
+
+Enable `PSP1000PostVCall64CollectionTrace` only with the complete T33 gate.
+After confirming all T30.1–T33 prerequisite records, require:
+
+```text
+[post-vcall64-collection] enabled=1 pointer=0x........ count=0x........ array=0x........ array_read=...
+```
+
+A zero count must report `array_read=0` and must not read `p+0x360`. A nonzero
+count permits exactly the natural array-pointer snapshot. T34 performs no
+pointer, object, collection, field, dispatcher, or result substitution.
