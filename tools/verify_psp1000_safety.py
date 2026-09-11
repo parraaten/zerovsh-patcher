@@ -1886,17 +1886,35 @@ def check_t32_vcall_semantics(call, returned):
         fail("T32 return wrapper transforms v0 or has an invalid private frame/call")
 
 
+def mips_immediate_pattern(value):
+    """Match an objdump immediate in equivalent decimal or 0x-prefixed hex."""
+    return rf"(?:0x0*{value:x}|{value:d})"
+
+
+def check_mips_immediate_patterns():
+    """Self-test strict numeric equivalence for T34 objdump offsets."""
+    for value, accepted, rejected in (
+            (0x364, ("868", "0x364", "0x0364", "0x00000364"), ("364",)),
+            (0x360, ("864", "0x360", "0x0360", "0x00000360"), ("360",))):
+        pattern = re.compile(rf"^(?:{mips_immediate_pattern(value)})$", re.I)
+        if any(not pattern.fullmatch(text) for text in accepted) or \
+                any(pattern.fullmatch(text) for text in rejected):
+            fail("MIPS immediate pattern does not preserve numeric equivalence")
+
+
 def check_t34_vcall_semantics(call, returned):
     """Prove T33 transparency plus T34's conditional natural collection reads."""
+    count_offset = mips_immediate_pattern(0x364)
+    array_offset = mips_immediate_pattern(0x360)
     call_v0 = [line for line in call.splitlines() if re.search(r"\bv0\b", line)]
     if len(call_v0) != 2 or not re.search(r"\bsw\s+v0,", call_v0[0]) or \
             not re.search(r"\bjr\s+v0\b", call_v0[1]):
         fail("T34 call wrapper transforms its v0 target")
     ordered = (r"\baddiu\s+sp,\s*sp,\s*-8", r"\bsw\s+t0,\s*0\(sp\)",
         r"\bsw\s+t1,\s*4\(sp\)", r"\bsw\s+v0,", r"\blw\s+t1,",
-        r"\bbeqz\s+t1,", r"\blw\s+t1,\s*(?:0x)?364\(v0\)",
+        r"\bbeqz\s+t1,", rf"\blw\s+t1,\s*{count_offset}\(v0\)",
         r"\bsw\s+t1,", r"\bbeqz\s+t1,",
-        r"\blw\s+t1,\s*(?:0x)?360\(v0\)", r"\bsw\s+t1,",
+        rf"\blw\s+t1,\s*{array_offset}\(v0\)", r"\bsw\s+t1,",
         r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
         r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
         r"\blw\s+ra,", r"\blw\s+t1,\s*4\(sp\)",
@@ -1909,8 +1927,8 @@ def check_t34_vcall_semantics(call, returned):
             fail("T34 return wrapper lacks ordered operation " + pattern)
         cursor += match.end()
     v0_lines = [line for line in returned.splitlines() if re.search(r"\bv0\b", line)]
-    allowed = (r"\bsw\s+v0,", r"\blw\s+t1,\s*(?:0x)?364\(v0\)",
-               r"\blw\s+t1,\s*(?:0x)?360\(v0\)")
+    allowed = (r"\bsw\s+v0,", rf"\blw\s+t1,\s*{count_offset}\(v0\)",
+               rf"\blw\s+t1,\s*{array_offset}\(v0\)")
     if len(v0_lines) != 3 or any(not re.search(pattern, line, re.I)
             for pattern, line in zip(allowed, v0_lines)) or \
             re.search(r"\bgp\b|\bjalr?\b", returned):
@@ -2644,6 +2662,7 @@ def main():
     parser.add_argument("--user-elf", type=pathlib.Path)
     parser.add_argument("--stub-object", type=pathlib.Path)
     args = parser.parse_args()
+    check_mips_immediate_patterns()
     check_sources(args.source_root.resolve())
     if args.user_elf:
         check_elf(args.user_elf)
