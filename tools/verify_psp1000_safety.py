@@ -1679,6 +1679,102 @@ def check_t31_vsh_return_semantics(body):
         fail(symbol + " has an unintended v0 substitution or return")
 
 
+def linked_instructions(body):
+    """Return final linked instruction addresses/words, excluding relocations."""
+    instructions = []
+    for line in body.splitlines():
+        match = re.match(r"\s*([0-9a-f]+):\s+([0-9a-f]{8})\s+", line, re.I)
+        if match:
+            instructions.append((int(match.group(1), 16),
+                                 int(match.group(2), 16)))
+    return instructions
+
+
+def linked_scalar_uses(body, symbol, expected_addr, uses):
+    """Bind linked LW/SW uses to a symbol via decoded HI16/signed-LO16."""
+    instructions = linked_instructions(body)
+    matches = []
+    latest_lui = {}
+    for pc, word in instructions:
+        opcode = word >> 26
+        rs = (word >> 21) & 0x1F
+        rt = (word >> 16) & 0x1F
+        if opcode == 0x0F:
+            latest_lui[rt] = word & 0xFFFF
+        if opcode in (0x23, 0x2B) and rs in latest_lui:
+            low = word & 0xFFFF
+            if low & 0x8000:
+                low -= 0x10000
+            address = ((latest_lui[rs] << 16) + low) & 0xFFFFFFFF
+            if address == expected_addr:
+                matches.append((pc, opcode, rt, rs))
+    expected = [(0x23 if mnemonic == "lw" else 0x2B, rt, base)
+                for mnemonic, rt, base in uses]
+    actual = [(opcode, rt, base) for _pc, opcode, rt, base in matches]
+    if actual != expected:
+        fail(symbol + " linked scalar uses do not match " + repr(expected))
+    return [pc for pc, _opcode, _rt, _base in matches]
+
+
+def check_t311_linked(disassembly, symbol_addresses):
+    """Independently prove T31 linked scalar addresses and guard topology."""
+    call = function_body(disassembly, "zeroCtrlPostVshCallTrace")
+    linked_scalar_uses(call, "zeroCtrlPostVshArgument",
+            symbol_addresses["zeroCtrlPostVshArgument"], [("sw", 4, 8)])
+    call_words = linked_instructions(call)
+    if sum(1 for _pc, word in call_words if ((word >> 26) == 0x2B and
+            ((word >> 16) & 0x1F) == 4)) != 1:
+        fail("T31 linked call wrapper has an unintended a0 store")
+
+    body = function_body(disassembly, "zeroCtrlPostVshReturnTrace")
+    use_specs = (
+        ("zeroCtrlPostVshNaturalResult", [("sw", 2, 8)]),
+        ("zeroCtrlPostVshCompatMode", [("lw", 9, 8)]),
+        ("zeroCtrlPostVshArgument", [("lw", 9, 8)]),
+        ("zeroCtrlPostVshSubstitutionHits", [("lw", 9, 8), ("sw", 9, 8)]),
+        ("zeroCtrlPostVshEffectiveResult", [("sw", 2, 8)]),
+        ("zeroCtrlPostVshSavedRA", [("lw", 31, 8)]),
+    )
+    use_pcs = {}
+    for scalar, uses in use_specs:
+        use_pcs[scalar] = linked_scalar_uses(body, scalar,
+                symbol_addresses[scalar], uses)
+    instructions = linked_instructions(body)
+    constant_pairs = []
+    for index, (_pc, word) in enumerate(instructions[:-1]):
+        next_word = instructions[index + 1][1]
+        if word == 0x3C0A8000 and (next_word & 0xFFFF0000) == 0x354A0000:
+            constant_pairs.append(next_word & 0xFFFF)
+    if constant_pairs != [0x000D, 0x0107]:
+        fail("T31 linked exact argument/result constants are not 0x8000000D/0x80000107")
+    branches = []
+    zero_pcs = []
+    for pc, word in instructions:
+        opcode = word >> 26
+        rs, rt = (word >> 21) & 0x1F, (word >> 16) & 0x1F
+        if (opcode, rs, rt) in ((4, 9, 0), (5, 9, 10), (5, 2, 10)):
+            imm = word & 0xFFFF
+            if imm & 0x8000:
+                imm -= 0x10000
+            branches.append((pc, (pc + 4 + (imm << 2)) & 0xFFFFFFFF))
+        if word == 0x00001021:
+            zero_pcs.append(pc)
+    if len(branches) != 3 or len({target for _pc, target in branches}) != 1 or \
+            len(zero_pcs) != 1:
+        fail("T31 linked guards do not share one bypass around one v0=0")
+    bypass = branches[0][1]
+    zero_pc = zero_pcs[0]
+    effective_lui_pc = use_pcs["zeroCtrlPostVshEffectiveResult"][0] - 4
+    if bypass != effective_lui_pc or not branches[-1][0] < zero_pc < bypass:
+        fail("T31 linked bypass does not enter immediately before effective store")
+    if not (use_pcs["zeroCtrlPostVshNaturalResult"][0] < branches[0][0] and
+            use_pcs["zeroCtrlPostVshSavedRA"][0] >
+            use_pcs["zeroCtrlPostVshEffectiveResult"][0]):
+        fail("T31 linked natural/effective/saved-RA order is invalid")
+    if sum(1 for _pc, word in instructions if word == 0x03E00008) != 1:
+        fail("T31 linked return wrapper does not have exactly one jr ra")
+
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -1811,6 +1907,7 @@ def check_elf(elf):
         if symbol not in symbol_addresses:
             fail("missing linked T27 mask symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
+    check_t311_linked(disassembly, symbol_addresses)
     effective_addr = symbol_addresses["zeroCtrlStateZero15To14EffectiveResult"]
     for symbol in ("zeroCtrlStateZeroClass15Trace",
             "zeroCtrlStateZeroClass17Trace"):
