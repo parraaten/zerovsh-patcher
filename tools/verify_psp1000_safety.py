@@ -450,6 +450,16 @@ def check_sources(root):
             "STATE_ZERO_CLASS zeroCtrlStateZeroClass17Trace, 17"):
         if invocation not in assembly:
             fail("T15 classification tracer is missing " + invocation)
+    state_class_macro = assembly[assembly.find(".macro STATE_ZERO_CLASS"):
+        assembly.find(".endm", assembly.find(".macro STATE_ZERO_CLASS"))]
+    if state_class_macro.count("zeroCtrlStateZero15To14EffectiveResult") != 2 or \
+            "zeroCtrlStateZeroVCallResult" in state_class_macro:
+        fail("T30.1 Class15/Class17 routing does not use only the effective result")
+    class18_source = assembly[assembly.find("zeroCtrlStateZeroClass18Trace:"):
+        assembly.find("zeroCtrlStateZeroClass18TraceEnd:")]
+    if "bne     $v1, $t2" not in class18_source or \
+            "zeroCtrlStateZero15To14EffectiveResult" in class18_source:
+        fail("T30.1 unnecessarily changed Class18 effective-v1 semantics")
     vcall = assembly[assembly.find("zeroCtrlStateZeroVCallTrace:"):
         assembly.find("zeroCtrlStateZeroVCallTraceEnd:")]
     vreturn = assembly[assembly.find("zeroCtrlStateZeroVReturnTrace:"):
@@ -1566,6 +1576,34 @@ def check_t30_state_zero_return_semantics(body):
         fail(symbol + " has unintended T30 result/frame/memory semantics")
 
 
+def check_t301_class_input(body, symbol, relocatable=False, expected_addr=None):
+    """Prove Class15/Class17 route from the T30 effective-result slot."""
+    natural = "zeroCtrlStateZeroVCallResult"
+    effective = "zeroCtrlStateZero15To14EffectiveResult"
+    if natural in body:
+        fail(symbol + " references the natural diagnostic slot")
+    if relocatable:
+        if len(re.findall(r"R_MIPS_HI16\s+" + effective + r"\b", body)) != 1 or \
+                len(re.findall(r"R_MIPS_LO16\s+" + effective + r"\b", body)) != 1 or \
+                not re.search(r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                    effective + r"\b", body):
+            fail(symbol + " lacks exact effective-result input relocations")
+    elif expected_addr is not None:
+        match = re.search(r"[0-9a-f]+:\s+([0-9a-f]{8})\s+"
+                r"lui\s+t0,.*?[0-9a-f]+:\s+([0-9a-f]{8})\s+"
+                r"lw\s+t2,", body, re.I | re.S)
+        if not match:
+            fail(symbol + " lacks linked LUI/LW classification input")
+        lui_word = int(match.group(1), 16)
+        lw_word = int(match.group(2), 16)
+        upper = (lui_word & 0xFFFF) << 16
+        low = lw_word & 0xFFFF
+        if low > 0x7FFF:
+            low -= 0x10000
+        if ((upper + low) & 0xFFFFFFFF) != expected_addr:
+            fail(symbol + " linked classification input is not the effective slot")
+
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -1696,6 +1734,11 @@ def check_elf(elf):
         if symbol not in symbol_addresses:
             fail("missing linked T27 mask symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
+    effective_addr = symbol_addresses["zeroCtrlStateZero15To14EffectiveResult"]
+    for symbol in ("zeroCtrlStateZeroClass15Trace",
+            "zeroCtrlStateZeroClass17Trace"):
+        check_t301_class_input(function_body(disassembly, symbol), symbol,
+                expected_addr=effective_addr)
     for symbol in STUBS:
         body = function_body(disassembly, symbol)
         if re.search(r"\bgp\b|\bsp\b|\bjal\b", body):
@@ -1761,6 +1804,10 @@ def check_stub_object(stub_object):
     disassembly = subprocess.check_output(
         ["psp-objdump", "-dr", str(stub_object)], text=True
     )
+    for symbol in ("zeroCtrlStateZeroClass15Trace",
+            "zeroCtrlStateZeroClass17Trace"):
+        check_t301_class_input(function_body(disassembly, symbol), symbol,
+                relocatable=True)
     for symbol, counter in zip(STUBS, COUNTERS):
         body = function_body(disassembly, symbol)
         if not re.search(r"R_MIPS_HI16\s+" + counter + r"\b", body):

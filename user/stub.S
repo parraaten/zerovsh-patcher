@@ -873,8 +873,8 @@ zeroCtrlPafCapabilityMaskTraceEnd:
 .type \name @function
 .ent \name, 0
 \name:
-    lui     $t0, %hi(zeroCtrlStateZeroVCallResult)
-    lw      $t2, %lo(zeroCtrlStateZeroVCallResult)($t0)
+    lui     $t0, %hi(zeroCtrlStateZero15To14EffectiveResult)
+    lw      $t2, %lo(zeroCtrlStateZero15To14EffectiveResult)($t0)
     lui     $t0, %hi(zeroCtrlStateZeroPathMask)
     lw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
     slti    $t2, $t2, \limit

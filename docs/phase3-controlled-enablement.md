@@ -1838,3 +1838,24 @@ to leave or alter the stuck state-zero path. A changed boundary would identify
 15 as an immediate blocker but would not justify retaining the substitution;
 an unchanged path would show that case14 side effects or another prerequisite
 are still required.
+
+### T30.1 cross-instrumentation correction
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY + SOURCE:** the initial T30 return wrapper
+correctly retained natural 15 and presented effective 14 in `$v0`, but the
+existing T15 Class15/Class17 branch owners reloaded the untouched natural-result
+scalar. They would therefore reconstruct the `<15` and `<17` decisions for 15
+while Sony's intervening instructions operated on 14, neutralizing the isolated
+experiment.
+
+T30.1 changes only the classification-input scalar used by the existing
+Class15 and Class17 wrappers. They now load
+`zeroCtrlStateZero15To14EffectiveResult`; the natural
+`zeroCtrlStateZeroVCallResult` slot remains unchanged for diagnostics. When the
+control is disabled or the natural result is not 15, effective equals natural
+and routing remains transparent. Class18 remains unchanged and continues to
+compare Sony's `$v1`, which already received the effective return value.
+
+No hardware conclusion is assigned to the pre-correction T30 implementation.
+No patch owner, callsite, compatibility rule, dispatcher invocation, or Sony
+context/global write is added by this correction.

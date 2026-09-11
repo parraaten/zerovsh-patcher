@@ -585,3 +585,12 @@ The substitution count may exceed one. Compare state-zero mask/rejoin,
 activation and post-BSMan paths, field-writer values, dispatcher/case14 counts,
 and post-PAF/VshBridge results. Do not invoke the dispatcher or write
 `context+0x12C`; substitution alone is not success.
+
+### T30.1 prerequisite
+
+Use only a build containing the Class15/Class17 cross-instrumentation fix. The
+natural diagnostic slot must remain `zeroCtrlStateZeroVCallResult`, while both
+classification wrappers route from
+`zeroCtrlStateZero15To14EffectiveResult`. Class18 must remain based on Sony's
+`$v1`. Discard any pre-T30.1 run as an invalid isolated test because the old
+branch instrumentation could neutralize the 15-to-14 return substitution.
