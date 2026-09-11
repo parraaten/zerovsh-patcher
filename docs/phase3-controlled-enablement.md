@@ -2011,3 +2011,28 @@ chain. A natural zero makes the masked-low-byte PAF call at `+0x1B4` the next
 diagnostic boundary; a nonzero identifies this distinct callsite as a future
 compatibility candidate, but T37 does not alter it. A PSPDEV build and real
 PSP-1000 run remain required.
+
+### T37.1 validation-failure isolation
+
+Hardware isolation proved that enabling T37 rejects the activation transaction
+(`validation=0 install=0 cache_sync=0`), while disabling only T37 restores the
+complete hardware-confirmed T30.1–T36 chain. Direct decrypted-binary inspection
+also confirms all five expected static words, so the specific failing runtime
+guard remains unknown.
+
+T37.1 changes no runtime behavior, helper code, route target, registration field,
+or Sony patch. Before any T37-specific rejection, the kernel records the five
+loaded words, dynamically decoded and expected `+0x19C` targets, replacement
+word and decoded target, and helper leaf. An append-only ten-bit mask identifies
+LUI shape, call opcode/target, argument load, decision, RA delay, replacement
+opcode/target, helper range, and pseudodirect-region failures independently.
+Every prior T37 guard remains mandatory, and any nonzero mask still rejects the
+transaction.
+
+The deferred writer emits `[t37-validation]` and
+`[t37-validation-targets]` even when activation validation and installation are
+zero. Hardware interpretation requires `enabled=1 checked=1`; the ordinary T37
+natural-result record is meaningful only with a zero mask and successful
+validation/install/cache synchronization. The ABI remains 956 bytes. Build
+status is limited to static verification until PSPDEV and hardware are
+available. The next phase is to decode the T37.1 mask, not add compatibility.

@@ -112,6 +112,17 @@ static long b_level;
 #define STATE_ZERO_VCALL_CODE_WORDS 10
 #define VSH_CODE_CAPTURE_BYTES  (VSH_CODE_CAPTURE_BEFORE + VSH_CODE_CAPTURE_AFTER)
 #define VSH_CODE_CAPTURE_WORDS  (VSH_CODE_CAPTURE_BYTES / sizeof(unsigned int))
+
+#define T37_FAIL_LUI_SHAPE            0x001
+#define T37_FAIL_CALL_OPCODE          0x002
+#define T37_FAIL_CALL_TARGET          0x004
+#define T37_FAIL_ARG_LOAD_WORD        0x008
+#define T37_FAIL_DECISION_WORD        0x010
+#define T37_FAIL_RA_DELAY_WORD        0x020
+#define T37_FAIL_REPLACEMENT_OPCODE   0x040
+#define T37_FAIL_REPLACEMENT_TARGET   0x080
+#define T37_FAIL_HELPER_RANGE         0x100
+#define T37_FAIL_PSEUDODIRECT_REGION  0x200
 #define VSH_REFERENCE_LIMIT     32
 #define VSH_REFERENCE_WINDOW_BEFORE 0x30
 #define VSH_REFERENCE_WINDOW_AFTER  0x50
@@ -342,6 +353,11 @@ typedef struct {
     int post_collection_paf_fcf265d8_install, post_collection_paf_fcf265d8_cache_sync;
     unsigned int post_collection_paf_fcf265d8_original[5];
     unsigned int post_collection_paf_fcf265d8_replacement;
+    unsigned int post_collection_paf_fcf265d8_guard_checked;
+    unsigned int post_collection_paf_fcf265d8_fail_mask;
+    unsigned int post_collection_paf_fcf265d8_decoded_call_target;
+    unsigned int post_collection_paf_fcf265d8_expected_call_target;
+    unsigned int post_collection_paf_fcf265d8_decoded_replacement_target;
     unsigned int post_paf_entry_counter_addr[2], post_vsh_entry_hits_addr;
     unsigned int post_original[12], post_replacement[6];
     unsigned int state_zero_leaf_addr[8], state_zero_leaf_size[8];
@@ -3401,6 +3417,31 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             bsman->activation_cache_sync,
                             bsman->activation_addr, bsman->caller_addr);
                     zeroCtrlDiagnosticsText(line);
+                    if (bsman->post_collection_paf_fcf265d8_enabled) {
+                        snprintf(line, sizeof(line),
+                                "[t37-validation] enabled=1 checked=%u "
+                                "fail_mask=0x%08X word_198=0x%08X "
+                                "word_19c=0x%08X word_1a0=0x%08X "
+                                "word_1a4=0x%08X word_1a8=0x%08X\n",
+                                bsman->post_collection_paf_fcf265d8_guard_checked,
+                                bsman->post_collection_paf_fcf265d8_fail_mask,
+                                bsman->post_collection_paf_fcf265d8_original[0],
+                                bsman->post_collection_paf_fcf265d8_original[1],
+                                bsman->post_collection_paf_fcf265d8_original[2],
+                                bsman->post_collection_paf_fcf265d8_original[3],
+                                bsman->post_collection_paf_fcf265d8_original[4]);
+                        zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[t37-validation-targets] call_target=0x%08X "
+                                "expected_call_target=0x%08X replacement=0x%08X "
+                                "replacement_target=0x%08X leaf=0x%08X\n",
+                                bsman->post_collection_paf_fcf265d8_decoded_call_target,
+                                bsman->post_collection_paf_fcf265d8_expected_call_target,
+                                bsman->post_collection_paf_fcf265d8_replacement,
+                                bsman->post_collection_paf_fcf265d8_decoded_replacement_target,
+                                bsman->post_collection_paf_fcf265d8_leaf_addr);
+                        zeroCtrlDiagnosticsText(line);
+                    }
                     snprintf(line, sizeof(line),
                             "[activation-trace] original=0x%08X,0x%08X "
                             "replacement=0x%08X,0x%08X "
@@ -4860,12 +4901,6 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     bsman->collection_paf_9a285882_leaf_size) ||
                 ((bsman->activation_addr + 0x184) & 0xF0000000) !=
                     (bsman->collection_paf_9a285882_leaf_addr & 0xF0000000))) return;
-        if (bsman->post_collection_paf_fcf265d8_enabled &&
-                (!zeroCtrlVshModuleRangeValid(helper,
-                    bsman->post_collection_paf_fcf265d8_leaf_addr,
-                    bsman->post_collection_paf_fcf265d8_leaf_size) ||
-                ((bsman->activation_addr + 0x1A8) & 0xF0000000) !=
-                    (bsman->post_collection_paf_fcf265d8_leaf_addr & 0xF0000000))) return;
         bsman->activation_original[0] = _lw(bsman->activation_addr);
         bsman->activation_original[1] = _lw(bsman->activation_addr + 4);
         bsman->call_original = _lw(bsman->caller_addr);
@@ -4918,6 +4953,45 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         bsman->post_collection_paf_fcf265d8_original[4] = _lw(bsman->activation_addr + 0x1A8);
         bsman->post_collection_paf_fcf265d8_replacement = 0x08000000 |
                 ((bsman->post_collection_paf_fcf265d8_leaf_addr >> 2) & 0x03FFFFFF);
+        if (bsman->post_collection_paf_fcf265d8_enabled) {
+            unsigned int fail_mask = 0;
+            bsman->post_collection_paf_fcf265d8_guard_checked = 1;
+            bsman->post_collection_paf_fcf265d8_decoded_call_target =
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x19C,
+                        bsman->post_collection_paf_fcf265d8_original[1]);
+            bsman->post_collection_paf_fcf265d8_expected_call_target =
+                    mod->text_addr + 0x2A698;
+            bsman->post_collection_paf_fcf265d8_decoded_replacement_target =
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1A4,
+                        bsman->post_collection_paf_fcf265d8_replacement);
+            if ((bsman->post_collection_paf_fcf265d8_original[0] & 0xFFFF0000) !=
+                    0x3C020000) fail_mask |= T37_FAIL_LUI_SHAPE;
+            if ((bsman->post_collection_paf_fcf265d8_original[1] >> 26) != 3)
+                fail_mask |= T37_FAIL_CALL_OPCODE;
+            if (bsman->post_collection_paf_fcf265d8_decoded_call_target !=
+                    bsman->post_collection_paf_fcf265d8_expected_call_target)
+                fail_mask |= T37_FAIL_CALL_TARGET;
+            if (bsman->post_collection_paf_fcf265d8_original[2] != 0x8C440DC4)
+                fail_mask |= T37_FAIL_ARG_LOAD_WORD;
+            if (bsman->post_collection_paf_fcf265d8_original[3] != 0x1440FFAA)
+                fail_mask |= T37_FAIL_DECISION_WORD;
+            if (bsman->post_collection_paf_fcf265d8_original[4] != 0x8FBF001C)
+                fail_mask |= T37_FAIL_RA_DELAY_WORD;
+            if ((bsman->post_collection_paf_fcf265d8_replacement >> 26) != 2)
+                fail_mask |= T37_FAIL_REPLACEMENT_OPCODE;
+            if (bsman->post_collection_paf_fcf265d8_decoded_replacement_target !=
+                    bsman->post_collection_paf_fcf265d8_leaf_addr)
+                fail_mask |= T37_FAIL_REPLACEMENT_TARGET;
+            if (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->post_collection_paf_fcf265d8_leaf_addr,
+                    bsman->post_collection_paf_fcf265d8_leaf_size))
+                fail_mask |= T37_FAIL_HELPER_RANGE;
+            if (((bsman->activation_addr + 0x1A8) & 0xF0000000) !=
+                    (bsman->post_collection_paf_fcf265d8_leaf_addr & 0xF0000000))
+                fail_mask |= T37_FAIL_PSEUDODIRECT_REGION;
+            bsman->post_collection_paf_fcf265d8_fail_mask = fail_mask;
+            if (fail_mask != 0) return;
+        }
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
                 0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8

@@ -1431,6 +1431,53 @@ def check_sources(root):
         fail("T37 cache synchronization is not +0x1A4/4")
     if "[post-collection-paf-fcf265d8]" not in writer:
         fail("T37 deferred diagnostic is missing")
+    t371_defs = {
+        "T37_FAIL_LUI_SHAPE": "0x001",
+        "T37_FAIL_CALL_OPCODE": "0x002",
+        "T37_FAIL_CALL_TARGET": "0x004",
+        "T37_FAIL_ARG_LOAD_WORD": "0x008",
+        "T37_FAIL_DECISION_WORD": "0x010",
+        "T37_FAIL_RA_DELAY_WORD": "0x020",
+        "T37_FAIL_REPLACEMENT_OPCODE": "0x040",
+        "T37_FAIL_REPLACEMENT_TARGET": "0x080",
+        "T37_FAIL_HELPER_RANGE": "0x100",
+        "T37_FAIL_PSEUDODIRECT_REGION": "0x200",
+    }
+    for name, value in t371_defs.items():
+        if ("#define " + name) not in kernel or value not in kernel[
+                kernel.find("#define " + name):kernel.find("\n",
+                    kernel.find("#define " + name))]:
+            fail("T37.1 lacks unique failure bit " + name)
+        if bsman_install.count("fail_mask |= " + name) != 1:
+            fail("T37.1 failure bit is not mapped exactly once: " + name)
+    t371 = bsman_install[bsman_install.find(
+        "bsman->post_collection_paf_fcf265d8_guard_checked = 1;"):]
+    rejection = t371.find("if (fail_mask != 0) return;")
+    if rejection < 0:
+        fail("T37.1 does not reject every nonzero failure mask")
+    transaction_commit = t371.find("/* Transaction commit")
+    if transaction_commit < 0 or rejection > transaction_commit:
+        fail("T37.1 can reach the T37 patch before rejecting its failure mask")
+    before_rejection = t371[:rejection]
+    for index, offset in enumerate(("0x198", "0x19C", "0x1A0", "0x1A4", "0x1A8")):
+        capture = "post_collection_paf_fcf265d8_original[%d]" % index
+        if capture not in before_rejection or offset not in bsman_install:
+            fail("T37.1 does not capture exact observed word " + offset)
+    for token in ("zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x19C",
+            "mod->text_addr + 0x2A698",
+            "zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1A4",
+            "zeroCtrlVshModuleRangeValid(helper,",
+            "bsman->post_collection_paf_fcf265d8_leaf_size",
+            "bsman->post_collection_paf_fcf265d8_fail_mask = fail_mask;"):
+        if token not in before_rejection:
+            fail("T37.1 fails to capture/check before rejection: " + token)
+    if writer.find("[t37-validation]") < 0 or \
+            writer.find("[t37-validation-targets]") < 0 or \
+            writer.find("[t37-validation]") > writer.find(
+                "[post-collection-paf-fcf265d8]"):
+        fail("T37.1 deferred failure diagnostic is not outside success-only tracing")
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 956" not in bsman_header:
+        fail("T37.1 unexpectedly changes the registration ABI")
     for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
         if record not in writer:
             fail("T27 deferred diagnostic is missing " + record)

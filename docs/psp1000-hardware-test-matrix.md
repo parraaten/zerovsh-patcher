@@ -702,3 +702,17 @@ Verify all prerequisite records in the same boot, then collect:
 T37 validates but does not patch the relocated `+0x19C` JAL, patches only the
 `+0x1A4` decision with `J`, preserves Sony's `+0x1A8` RA load, and follows the
 dynamically initialized natural routes without compatibility or state writes.
+
+### T37.1 — T37 validation failure isolation
+
+Keep T37 enabled with the complete T36 chain. T37.1 makes no additional config
+or runtime change. Collect both records even when activation validation is zero:
+
+```text
+[t37-validation] enabled=1 checked=1 fail_mask=0x........ word_198=0x........ word_19c=0x........ word_1a0=0x........ word_1a4=0x........ word_1a8=0x........
+[t37-validation-targets] call_target=0x........ expected_call_target=0x........ replacement=0x........ replacement_target=0x........ leaf=0x........
+```
+
+Decode only the failure mask. Do not interpret the T37 natural-result record
+unless the mask is zero and validation, installation, and cache sync all equal
+one.
