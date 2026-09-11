@@ -5167,12 +5167,12 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 ((bsman->activation_addr + 0x1C4) & 0xF0000000) !=
                     (bsman->masked_paf_c59fc3d0_leaf_addr & 0xF0000000))) return;
         if (bsman->masked_paf_c59fc3d0_enabled) {
-            static const unsigned int offset[7] = {
+            static const unsigned int masked_paf_offsets[7] = {
                 0x1AC, 0x1B0, 0x1B4, 0x1B8, 0x1BC, 0x1C0, 0x1C4
             };
             for (pc = 0; pc < 7; pc++)
                 bsman->masked_paf_c59fc3d0_original[pc] =
-                        _lw(bsman->activation_addr + offset[pc]);
+                        _lw(bsman->activation_addr + masked_paf_offsets[pc]);
             bsman->masked_paf_c59fc3d0_replacement = 0x08000000 |
                     ((bsman->masked_paf_c59fc3d0_leaf_addr >> 2) & 0x03FFFFFF);
             if (bsman->masked_paf_c59fc3d0_original[0] != 0x3C050300 ||
@@ -5198,7 +5198,7 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 ((bsman->activation_addr + 0x1E4) & 0xF0000000) !=
                     (bsman->masked_paf_c59fc3d0_second_leaf_addr & 0xF0000000))) return;
         if (bsman->masked_paf_c59fc3d0_second_enabled) {
-            static const unsigned int offset[8] = {
+            static const unsigned int masked_paf_second_offsets[8] = {
                 0x1C8, 0x1CC, 0x1D0, 0x1D4, 0x1D8, 0x1DC, 0x1E0, 0x1E4
             };
             unsigned int observed_arg_target;
@@ -5206,7 +5206,8 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             int arg_lo;
             for (pc = 0; pc < 8; pc++)
                 bsman->masked_paf_c59fc3d0_second_original[pc] =
-                        _lw(bsman->activation_addr + offset[pc]);
+                        _lw(bsman->activation_addr +
+                            masked_paf_second_offsets[pc]);
             arg_lo = (short)(bsman->masked_paf_c59fc3d0_second_original[1] &
                     0xFFFF);
             observed_arg_target =
@@ -5247,7 +5248,7 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             static const unsigned int wide_helper[6] = { 0, 1, 3, 5, 7, 8 };
             unsigned int wide_index;
             for (wide_index = 0; wide_index < 10; wide_index++)
-                if (!zeroCtrlTextRangeValid(bsman->helper,
+                if (!zeroCtrlVshModuleRangeValid(helper,
                         bsman->activation_wide_leaf_addr[wide_index],
                         bsman->activation_wide_leaf_size[wide_index])) return;
             for (wide_index = 0; wide_index < 6; wide_index++) {

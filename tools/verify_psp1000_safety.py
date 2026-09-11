@@ -1299,11 +1299,18 @@ def check_sources(root):
         fail("T40 registration fields are incomplete")
     for token in ("copied.activation_wide_leaf_addr[wide_index]",
             "copied.activation_wide_scalar_addr[wide_index], 4",
+            "zeroCtrlVshModuleRangeValid(helper,\n"
+            "                        bsman->activation_wide_leaf_addr[wide_index]",
             "bsman->activation_wide_validation = 1",
             "bsman->activation_wide_install = 1",
             "bsman->activation_wide_cache_sync = 1"):
         if token not in kernel:
             fail("T40 registration/transaction lacks " + token)
+    if "zeroCtrlTextRangeValid" in kernel or "bsman->helper" in kernel:
+        fail("T40 uses an invented helper range API or evidence member")
+    if "static const unsigned int offset[7]" in kernel or \
+            "static const unsigned int offset[8]" in kernel:
+        fail("masked PAF offset arrays shadow the installer's offset local")
     for word in ("0x1040000C", "0x1040FFF2", "0x26100001",
             "0x8FBF001C", "0x00002021"):
         if word not in kernel:
