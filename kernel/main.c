@@ -102,6 +102,10 @@ static char psp1000PostImposeVCallTrace[16];
 static char psp1000PostMinusOneVCall64Trace[16];
 static char psp1000PostVCall64CollectionTrace[16];
 static char psp1000CollectionPafFCF265D8Trace[16];
+static char psp1000CollectionPaf9A285882Trace[16];
+static char psp1000PostCollectionPafFCF265D8Trace[16];
+static char psp1000MaskedPafC59FC3D0Trace[16];
+static char psp1000MaskedPafC59FC3D0SecondTrace[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -110,6 +114,19 @@ static long b_level;
 #define STATE_ZERO_VCALL_CODE_WORDS 10
 #define VSH_CODE_CAPTURE_BYTES  (VSH_CODE_CAPTURE_BEFORE + VSH_CODE_CAPTURE_AFTER)
 #define VSH_CODE_CAPTURE_WORDS  (VSH_CODE_CAPTURE_BYTES / sizeof(unsigned int))
+
+#define T37_FAIL_LUI_SHAPE            0x001
+#define T37_FAIL_CALL_OPCODE          0x002
+#define T37_FAIL_CALL_TARGET          0x004
+#define T37_FAIL_ARG_LOAD_WORD        0x008
+#define T37_FAIL_DECISION_WORD        0x010
+#define T37_FAIL_RA_DELAY_WORD        0x020
+#define T37_FAIL_REPLACEMENT_OPCODE   0x040
+#define T37_FAIL_REPLACEMENT_TARGET   0x080
+#define T37_FAIL_HELPER_RANGE         0x100
+#define T37_FAIL_PSEUDODIRECT_REGION  0x200
+#define T37_FAIL_ARG_LOAD_TARGET      0x400
+#define T37_FAIL_SEGMENT1_MISSING     0x800
 #define VSH_REFERENCE_LIMIT     32
 #define VSH_REFERENCE_WINDOW_BEFORE 0x30
 #define VSH_REFERENCE_WINDOW_AFTER  0x50
@@ -319,6 +336,54 @@ typedef struct {
     int collection_paf_fcf265d8_install, collection_paf_fcf265d8_cache_sync;
     unsigned int collection_paf_fcf265d8_original[2];
     unsigned int collection_paf_fcf265d8_replacement;
+    unsigned int collection_paf_9a285882_leaf_addr, collection_paf_9a285882_leaf_size;
+    unsigned int collection_paf_9a285882_last_item_addr;
+    unsigned int collection_paf_9a285882_natural_result_addr;
+    unsigned int collection_paf_9a285882_hits_addr, collection_paf_9a285882_nonzero_hits_addr;
+    unsigned int collection_paf_9a285882_zero_resume_target_addr;
+    unsigned int collection_paf_9a285882_nonzero_target_addr;
+    int collection_paf_9a285882_enabled, collection_paf_9a285882_validation;
+    int collection_paf_9a285882_install, collection_paf_9a285882_cache_sync;
+    unsigned int collection_paf_9a285882_original[2];
+    unsigned int collection_paf_9a285882_replacement;
+    unsigned int post_collection_paf_fcf265d8_leaf_addr;
+    unsigned int post_collection_paf_fcf265d8_leaf_size;
+    unsigned int post_collection_paf_fcf265d8_natural_result_addr;
+    unsigned int post_collection_paf_fcf265d8_hits_addr;
+    unsigned int post_collection_paf_fcf265d8_nonzero_hits_addr;
+    unsigned int post_collection_paf_fcf265d8_zero_resume_target_addr;
+    unsigned int post_collection_paf_fcf265d8_nonzero_target_addr;
+    int post_collection_paf_fcf265d8_enabled, post_collection_paf_fcf265d8_validation;
+    int post_collection_paf_fcf265d8_install, post_collection_paf_fcf265d8_cache_sync;
+    unsigned int post_collection_paf_fcf265d8_original[5];
+    unsigned int post_collection_paf_fcf265d8_replacement;
+    unsigned int post_collection_paf_fcf265d8_guard_checked;
+    unsigned int post_collection_paf_fcf265d8_fail_mask;
+    unsigned int post_collection_paf_fcf265d8_decoded_call_target;
+    unsigned int post_collection_paf_fcf265d8_expected_call_target;
+    unsigned int post_collection_paf_fcf265d8_decoded_replacement_target;
+    unsigned int post_collection_paf_fcf265d8_observed_arg_target;
+    unsigned int post_collection_paf_fcf265d8_expected_arg_target;
+    unsigned int masked_paf_c59fc3d0_leaf_addr, masked_paf_c59fc3d0_leaf_size;
+    unsigned int masked_paf_c59fc3d0_decision_value_addr;
+    unsigned int masked_paf_c59fc3d0_hits_addr, masked_paf_c59fc3d0_nonzero_hits_addr;
+    unsigned int masked_paf_c59fc3d0_zero_resume_target_addr;
+    unsigned int masked_paf_c59fc3d0_nonzero_target_addr;
+    int masked_paf_c59fc3d0_enabled, masked_paf_c59fc3d0_validation;
+    int masked_paf_c59fc3d0_install, masked_paf_c59fc3d0_cache_sync;
+    unsigned int masked_paf_c59fc3d0_original[7];
+    unsigned int masked_paf_c59fc3d0_replacement;
+    unsigned int masked_paf_c59fc3d0_second_leaf_addr;
+    unsigned int masked_paf_c59fc3d0_second_leaf_size;
+    unsigned int masked_paf_c59fc3d0_second_decision_value_addr;
+    unsigned int masked_paf_c59fc3d0_second_hits_addr;
+    unsigned int masked_paf_c59fc3d0_second_nonzero_hits_addr;
+    unsigned int masked_paf_c59fc3d0_second_zero_resume_target_addr;
+    unsigned int masked_paf_c59fc3d0_second_nonzero_target_addr;
+    int masked_paf_c59fc3d0_second_enabled, masked_paf_c59fc3d0_second_validation;
+    int masked_paf_c59fc3d0_second_install, masked_paf_c59fc3d0_second_cache_sync;
+    unsigned int masked_paf_c59fc3d0_second_original[8];
+    unsigned int masked_paf_c59fc3d0_second_replacement;
     unsigned int post_paf_entry_counter_addr[2], post_vsh_entry_hits_addr;
     unsigned int post_original[12], post_replacement[6];
     unsigned int state_zero_leaf_addr[8], state_zero_leaf_size[8];
@@ -1539,6 +1604,39 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(collection_paf_fcf265d8_natural_result_addr);
     CHECK_POST_SCALAR(collection_paf_fcf265d8_hits_addr);
     CHECK_POST_SCALAR(collection_paf_fcf265d8_nonzero_hits_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper,
+                copied.collection_paf_9a285882_leaf_addr,
+                copied.collection_paf_9a285882_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(collection_paf_9a285882_last_item_addr);
+    CHECK_POST_SCALAR(collection_paf_9a285882_natural_result_addr);
+    CHECK_POST_SCALAR(collection_paf_9a285882_hits_addr);
+    CHECK_POST_SCALAR(collection_paf_9a285882_nonzero_hits_addr);
+    CHECK_POST_SCALAR(collection_paf_9a285882_zero_resume_target_addr);
+    CHECK_POST_SCALAR(collection_paf_9a285882_nonzero_target_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper,
+                copied.post_collection_paf_fcf265d8_leaf_addr,
+                copied.post_collection_paf_fcf265d8_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(post_collection_paf_fcf265d8_natural_result_addr);
+    CHECK_POST_SCALAR(post_collection_paf_fcf265d8_hits_addr);
+    CHECK_POST_SCALAR(post_collection_paf_fcf265d8_nonzero_hits_addr);
+    CHECK_POST_SCALAR(post_collection_paf_fcf265d8_zero_resume_target_addr);
+    CHECK_POST_SCALAR(post_collection_paf_fcf265d8_nonzero_target_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper,
+                copied.masked_paf_c59fc3d0_leaf_addr,
+                copied.masked_paf_c59fc3d0_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(masked_paf_c59fc3d0_decision_value_addr);
+    CHECK_POST_SCALAR(masked_paf_c59fc3d0_hits_addr);
+    CHECK_POST_SCALAR(masked_paf_c59fc3d0_nonzero_hits_addr);
+    CHECK_POST_SCALAR(masked_paf_c59fc3d0_zero_resume_target_addr);
+    CHECK_POST_SCALAR(masked_paf_c59fc3d0_nonzero_target_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper,
+                copied.masked_paf_c59fc3d0_second_leaf_addr,
+                copied.masked_paf_c59fc3d0_second_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_decision_value_addr);
+    CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_hits_addr);
+    CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_nonzero_hits_addr);
+    CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_zero_resume_target_addr);
+    CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_nonzero_target_addr);
 #define CHECK_STATE_ZERO_LEAF(field) \
     if (!zeroCtrlRegistrationLeafValid(helper, copied.field##_addr, \
                 copied.field##_end_addr)) return
@@ -1795,6 +1893,35 @@ void zeroCtrlRegisterBSManClosedShim(
             copied.collection_paf_fcf265d8_hits_addr;
     bsman->collection_paf_fcf265d8_nonzero_hits_addr =
             copied.collection_paf_fcf265d8_nonzero_hits_addr;
+    bsman->collection_paf_9a285882_leaf_addr = copied.collection_paf_9a285882_leaf_addr;
+    bsman->collection_paf_9a285882_leaf_size = copied.collection_paf_9a285882_leaf_end_addr - copied.collection_paf_9a285882_leaf_addr;
+    bsman->collection_paf_9a285882_last_item_addr = copied.collection_paf_9a285882_last_item_addr;
+    bsman->collection_paf_9a285882_natural_result_addr = copied.collection_paf_9a285882_natural_result_addr;
+    bsman->collection_paf_9a285882_hits_addr = copied.collection_paf_9a285882_hits_addr;
+    bsman->collection_paf_9a285882_nonzero_hits_addr = copied.collection_paf_9a285882_nonzero_hits_addr;
+    bsman->collection_paf_9a285882_zero_resume_target_addr = copied.collection_paf_9a285882_zero_resume_target_addr;
+    bsman->collection_paf_9a285882_nonzero_target_addr = copied.collection_paf_9a285882_nonzero_target_addr;
+    bsman->post_collection_paf_fcf265d8_leaf_addr = copied.post_collection_paf_fcf265d8_leaf_addr;
+    bsman->post_collection_paf_fcf265d8_leaf_size = copied.post_collection_paf_fcf265d8_leaf_end_addr - copied.post_collection_paf_fcf265d8_leaf_addr;
+    bsman->post_collection_paf_fcf265d8_natural_result_addr = copied.post_collection_paf_fcf265d8_natural_result_addr;
+    bsman->post_collection_paf_fcf265d8_hits_addr = copied.post_collection_paf_fcf265d8_hits_addr;
+    bsman->post_collection_paf_fcf265d8_nonzero_hits_addr = copied.post_collection_paf_fcf265d8_nonzero_hits_addr;
+    bsman->post_collection_paf_fcf265d8_zero_resume_target_addr = copied.post_collection_paf_fcf265d8_zero_resume_target_addr;
+    bsman->post_collection_paf_fcf265d8_nonzero_target_addr = copied.post_collection_paf_fcf265d8_nonzero_target_addr;
+    bsman->masked_paf_c59fc3d0_leaf_addr = copied.masked_paf_c59fc3d0_leaf_addr;
+    bsman->masked_paf_c59fc3d0_leaf_size = copied.masked_paf_c59fc3d0_leaf_end_addr - copied.masked_paf_c59fc3d0_leaf_addr;
+    bsman->masked_paf_c59fc3d0_decision_value_addr = copied.masked_paf_c59fc3d0_decision_value_addr;
+    bsman->masked_paf_c59fc3d0_hits_addr = copied.masked_paf_c59fc3d0_hits_addr;
+    bsman->masked_paf_c59fc3d0_nonzero_hits_addr = copied.masked_paf_c59fc3d0_nonzero_hits_addr;
+    bsman->masked_paf_c59fc3d0_zero_resume_target_addr = copied.masked_paf_c59fc3d0_zero_resume_target_addr;
+    bsman->masked_paf_c59fc3d0_nonzero_target_addr = copied.masked_paf_c59fc3d0_nonzero_target_addr;
+    bsman->masked_paf_c59fc3d0_second_leaf_addr = copied.masked_paf_c59fc3d0_second_leaf_addr;
+    bsman->masked_paf_c59fc3d0_second_leaf_size = copied.masked_paf_c59fc3d0_second_leaf_end_addr - copied.masked_paf_c59fc3d0_second_leaf_addr;
+    bsman->masked_paf_c59fc3d0_second_decision_value_addr = copied.masked_paf_c59fc3d0_second_decision_value_addr;
+    bsman->masked_paf_c59fc3d0_second_hits_addr = copied.masked_paf_c59fc3d0_second_hits_addr;
+    bsman->masked_paf_c59fc3d0_second_nonzero_hits_addr = copied.masked_paf_c59fc3d0_second_nonzero_hits_addr;
+    bsman->masked_paf_c59fc3d0_second_zero_resume_target_addr = copied.masked_paf_c59fc3d0_second_zero_resume_target_addr;
+    bsman->masked_paf_c59fc3d0_second_nonzero_target_addr = copied.masked_paf_c59fc3d0_second_nonzero_target_addr;
 #define COPY_STATE_ZERO_LEAF(index, field) do { \
     bsman->state_zero_leaf_addr[index] = copied.field##_addr; \
     bsman->state_zero_leaf_size[index] = copied.field##_end_addr - \
@@ -2963,7 +3090,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_state_zero_mask = 0;
     unsigned int observed_topmenu_returns = 0;
     int observed_state_zero_vcall_owner = 0;
-    unsigned int observed_post_counts[17] = {
+    unsigned int observed_post_counts[25] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
     unsigned int fast_poll_until = 0;
@@ -3346,6 +3473,34 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             bsman->activation_cache_sync,
                             bsman->activation_addr, bsman->caller_addr);
                     zeroCtrlDiagnosticsText(line);
+                    if (bsman->post_collection_paf_fcf265d8_enabled) {
+                        snprintf(line, sizeof(line),
+                                "[t37-validation] enabled=1 checked=%u "
+                                "fail_mask=0x%08X word_198=0x%08X "
+                                "word_19c=0x%08X word_1a0=0x%08X "
+                                "word_1a4=0x%08X word_1a8=0x%08X\n",
+                                bsman->post_collection_paf_fcf265d8_guard_checked,
+                                bsman->post_collection_paf_fcf265d8_fail_mask,
+                                bsman->post_collection_paf_fcf265d8_original[0],
+                                bsman->post_collection_paf_fcf265d8_original[1],
+                                bsman->post_collection_paf_fcf265d8_original[2],
+                                bsman->post_collection_paf_fcf265d8_original[3],
+                                bsman->post_collection_paf_fcf265d8_original[4]);
+                        zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[t37-validation-targets] call_target=0x%08X "
+                                "expected_call_target=0x%08X arg_target=0x%08X "
+                                "expected_arg_target=0x%08X replacement=0x%08X "
+                                "replacement_target=0x%08X leaf=0x%08X\n",
+                                bsman->post_collection_paf_fcf265d8_decoded_call_target,
+                                bsman->post_collection_paf_fcf265d8_expected_call_target,
+                                bsman->post_collection_paf_fcf265d8_observed_arg_target,
+                                bsman->post_collection_paf_fcf265d8_expected_arg_target,
+                                bsman->post_collection_paf_fcf265d8_replacement,
+                                bsman->post_collection_paf_fcf265d8_decoded_replacement_target,
+                                bsman->post_collection_paf_fcf265d8_leaf_addr);
+                        zeroCtrlDiagnosticsText(line);
+                    }
                     snprintf(line, sizeof(line),
                             "[activation-trace] original=0x%08X,0x%08X "
                             "replacement=0x%08X,0x%08X "
@@ -3644,7 +3799,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 }
             }
             {
-                unsigned int counts[17], j;
+                unsigned int counts[25], j;
                 int changed = 0;
                 counts[0] = zeroCtrlReadHelperCounter(bsman->bsman_return_hits_addr);
                 counts[1] = zeroCtrlReadHelperCounter(bsman->post_bs_counter_addr[0]);
@@ -3675,7 +3830,23 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->collection_paf_fcf265d8_hits_addr);
                 counts[16] = zeroCtrlReadHelperCounter(
                         bsman->collection_paf_fcf265d8_nonzero_hits_addr);
-                for (j = 0; j < 17; j++)
+                counts[17] = zeroCtrlReadHelperCounter(
+                        bsman->collection_paf_9a285882_hits_addr);
+                counts[18] = zeroCtrlReadHelperCounter(
+                        bsman->collection_paf_9a285882_nonzero_hits_addr);
+                counts[19] = zeroCtrlReadHelperCounter(
+                        bsman->post_collection_paf_fcf265d8_hits_addr);
+                counts[20] = zeroCtrlReadHelperCounter(
+                        bsman->post_collection_paf_fcf265d8_nonzero_hits_addr);
+                counts[21] = zeroCtrlReadHelperCounter(
+                        bsman->masked_paf_c59fc3d0_hits_addr);
+                counts[22] = zeroCtrlReadHelperCounter(
+                        bsman->masked_paf_c59fc3d0_nonzero_hits_addr);
+                counts[23] = zeroCtrlReadHelperCounter(
+                        bsman->masked_paf_c59fc3d0_second_hits_addr);
+                counts[24] = zeroCtrlReadHelperCounter(
+                        bsman->masked_paf_c59fc3d0_second_nonzero_hits_addr);
+                for (j = 0; j < 25; j++)
                     if (counts[j] != observed_post_counts[j]) changed = 1;
                 if (changed) {
                     unsigned int bs_result = zeroCtrlReadHelperCounter(
@@ -3703,6 +3874,49 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             counts[4], counts[5], counts[6], counts[7], counts[8],
                             counts[9], counts[10], bs_result, bs_substitutions,
                             bs_effective, paf0, paf1, vsh_result);
+                    zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[masked-paf-c59fc3d0-second] validation=%d "
+                            "install=%d cache_sync=%d hits=%u nonzero=%u "
+                            "decision=0x%08X\n",
+                            bsman->masked_paf_c59fc3d0_second_validation,
+                            bsman->masked_paf_c59fc3d0_second_install,
+                            bsman->masked_paf_c59fc3d0_second_cache_sync,
+                            counts[23], counts[24],
+                            zeroCtrlReadHelperCounter(bsman->
+                                masked_paf_c59fc3d0_second_decision_value_addr));
+                    zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[masked-paf-c59fc3d0] validation=%d install=%d "
+                            "cache_sync=%d hits=%u nonzero=%u decision=0x%08X\n",
+                            bsman->masked_paf_c59fc3d0_validation,
+                            bsman->masked_paf_c59fc3d0_install,
+                            bsman->masked_paf_c59fc3d0_cache_sync,
+                            counts[21], counts[22],
+                            zeroCtrlReadHelperCounter(
+                                bsman->masked_paf_c59fc3d0_decision_value_addr));
+                    zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[post-collection-paf-fcf265d8] validation=%d "
+                            "install=%d cache_sync=%d hits=%u nonzero=%u "
+                            "natural=0x%08X\n",
+                            bsman->post_collection_paf_fcf265d8_validation,
+                            bsman->post_collection_paf_fcf265d8_install,
+                            bsman->post_collection_paf_fcf265d8_cache_sync,
+                            counts[19], counts[20],
+                            zeroCtrlReadHelperCounter(
+                                bsman->post_collection_paf_fcf265d8_natural_result_addr));
+                    zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[collection-paf-9a285882] validation=%d install=%d "
+                            "cache_sync=%d hits=%u nonzero=%u last_item=0x%08X "
+                            "natural=0x%08X\n",
+                            bsman->collection_paf_9a285882_validation,
+                            bsman->collection_paf_9a285882_install,
+                            bsman->collection_paf_9a285882_cache_sync,
+                            counts[17], counts[18],
+                            zeroCtrlReadHelperCounter(bsman->collection_paf_9a285882_last_item_addr),
+                            zeroCtrlReadHelperCounter(bsman->collection_paf_9a285882_natural_result_addr));
                     zeroCtrlDiagnosticsText(line);
                     snprintf(line, sizeof(line),
                             "[vsh-impose-param-8000000d-compat] enabled=%d "
@@ -4769,6 +4983,12 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     bsman->collection_paf_fcf265d8_leaf_size) ||
                 ((bsman->activation_addr + 0x174) & 0xF0000000) !=
                     (bsman->collection_paf_fcf265d8_leaf_addr & 0xF0000000))) return;
+        if (bsman->collection_paf_9a285882_enabled &&
+                (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->collection_paf_9a285882_leaf_addr,
+                    bsman->collection_paf_9a285882_leaf_size) ||
+                ((bsman->activation_addr + 0x184) & 0xF0000000) !=
+                    (bsman->collection_paf_9a285882_leaf_addr & 0xF0000000))) return;
         bsman->activation_original[0] = _lw(bsman->activation_addr);
         bsman->activation_original[1] = _lw(bsman->activation_addr + 4);
         bsman->call_original = _lw(bsman->caller_addr);
@@ -4810,6 +5030,146 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 _lw(bsman->activation_addr + 0x174);
         bsman->collection_paf_fcf265d8_replacement = 0x0C000000 |
                 ((bsman->collection_paf_fcf265d8_leaf_addr >> 2) & 0x03FFFFFF);
+        bsman->collection_paf_9a285882_original[0] = _lw(bsman->activation_addr + 0x180);
+        bsman->collection_paf_9a285882_original[1] = _lw(bsman->activation_addr + 0x184);
+        bsman->collection_paf_9a285882_replacement = 0x08000000 |
+                ((bsman->collection_paf_9a285882_leaf_addr >> 2) & 0x03FFFFFF);
+        bsman->post_collection_paf_fcf265d8_original[0] = _lw(bsman->activation_addr + 0x198);
+        bsman->post_collection_paf_fcf265d8_original[1] = _lw(bsman->activation_addr + 0x19C);
+        bsman->post_collection_paf_fcf265d8_original[2] = _lw(bsman->activation_addr + 0x1A0);
+        bsman->post_collection_paf_fcf265d8_original[3] = _lw(bsman->activation_addr + 0x1A4);
+        bsman->post_collection_paf_fcf265d8_original[4] = _lw(bsman->activation_addr + 0x1A8);
+        bsman->post_collection_paf_fcf265d8_replacement = 0x08000000 |
+                ((bsman->post_collection_paf_fcf265d8_leaf_addr >> 2) & 0x03FFFFFF);
+        if (bsman->post_collection_paf_fcf265d8_enabled) {
+            unsigned int fail_mask = 0;
+            int arg_lo = (short)(
+                    bsman->post_collection_paf_fcf265d8_original[2] & 0xFFFF);
+            bsman->post_collection_paf_fcf265d8_guard_checked = 1;
+            bsman->post_collection_paf_fcf265d8_decoded_call_target =
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x19C,
+                        bsman->post_collection_paf_fcf265d8_original[1]);
+            bsman->post_collection_paf_fcf265d8_expected_call_target =
+                    mod->text_addr + 0x2A698;
+            bsman->post_collection_paf_fcf265d8_decoded_replacement_target =
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1A4,
+                        bsman->post_collection_paf_fcf265d8_replacement);
+            bsman->post_collection_paf_fcf265d8_observed_arg_target =
+                    ((bsman->post_collection_paf_fcf265d8_original[0] & 0xFFFF)
+                        << 16) + arg_lo;
+            bsman->post_collection_paf_fcf265d8_expected_arg_target =
+                    mod->nsegment >= 2 ? mod->segmentaddr[1] + 0x0DC4 : 0;
+            if ((bsman->post_collection_paf_fcf265d8_original[0] & 0xFFFF0000) !=
+                    0x3C020000) fail_mask |= T37_FAIL_LUI_SHAPE;
+            if ((bsman->post_collection_paf_fcf265d8_original[1] >> 26) != 3)
+                fail_mask |= T37_FAIL_CALL_OPCODE;
+            if (bsman->post_collection_paf_fcf265d8_decoded_call_target !=
+                    bsman->post_collection_paf_fcf265d8_expected_call_target)
+                fail_mask |= T37_FAIL_CALL_TARGET;
+            if ((bsman->post_collection_paf_fcf265d8_original[2] & 0xFFFF0000) !=
+                    0x8C440000)
+                fail_mask |= T37_FAIL_ARG_LOAD_WORD;
+            if (mod->nsegment < 2)
+                fail_mask |= T37_FAIL_SEGMENT1_MISSING;
+            else if (bsman->post_collection_paf_fcf265d8_observed_arg_target !=
+                    bsman->post_collection_paf_fcf265d8_expected_arg_target)
+                fail_mask |= T37_FAIL_ARG_LOAD_TARGET;
+            if (bsman->post_collection_paf_fcf265d8_original[3] != 0x1440FFAA)
+                fail_mask |= T37_FAIL_DECISION_WORD;
+            if (bsman->post_collection_paf_fcf265d8_original[4] != 0x8FBF001C)
+                fail_mask |= T37_FAIL_RA_DELAY_WORD;
+            if ((bsman->post_collection_paf_fcf265d8_replacement >> 26) != 2)
+                fail_mask |= T37_FAIL_REPLACEMENT_OPCODE;
+            if (bsman->post_collection_paf_fcf265d8_decoded_replacement_target !=
+                    bsman->post_collection_paf_fcf265d8_leaf_addr)
+                fail_mask |= T37_FAIL_REPLACEMENT_TARGET;
+            if (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->post_collection_paf_fcf265d8_leaf_addr,
+                    bsman->post_collection_paf_fcf265d8_leaf_size))
+                fail_mask |= T37_FAIL_HELPER_RANGE;
+            if (((bsman->activation_addr + 0x1A8) & 0xF0000000) !=
+                    (bsman->post_collection_paf_fcf265d8_leaf_addr & 0xF0000000))
+                fail_mask |= T37_FAIL_PSEUDODIRECT_REGION;
+            bsman->post_collection_paf_fcf265d8_fail_mask = fail_mask;
+            if (fail_mask != 0) return;
+        }
+        if (bsman->masked_paf_c59fc3d0_enabled &&
+                (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->masked_paf_c59fc3d0_leaf_addr,
+                    bsman->masked_paf_c59fc3d0_leaf_size) ||
+                ((bsman->activation_addr + 0x1C4) & 0xF0000000) !=
+                    (bsman->masked_paf_c59fc3d0_leaf_addr & 0xF0000000))) return;
+        if (bsman->masked_paf_c59fc3d0_enabled) {
+            static const unsigned int offset[7] = {
+                0x1AC, 0x1B0, 0x1B4, 0x1B8, 0x1BC, 0x1C0, 0x1C4
+            };
+            for (pc = 0; pc < 7; pc++)
+                bsman->masked_paf_c59fc3d0_original[pc] =
+                        _lw(bsman->activation_addr + offset[pc]);
+            bsman->masked_paf_c59fc3d0_replacement = 0x08000000 |
+                    ((bsman->masked_paf_c59fc3d0_leaf_addr >> 2) & 0x03FFFFFF);
+            if (bsman->masked_paf_c59fc3d0_original[0] != 0x3C050300 ||
+                    bsman->masked_paf_c59fc3d0_original[1] != 0x02202021 ||
+                    (bsman->masked_paf_c59fc3d0_original[2] >> 26) != 3 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1B4,
+                        bsman->masked_paf_c59fc3d0_original[2]) !=
+                            mod->text_addr + 0x2A558 ||
+                    bsman->masked_paf_c59fc3d0_original[3] != 0x34A50002 ||
+                    bsman->masked_paf_c59fc3d0_original[4] != 0x304200FF ||
+                    bsman->masked_paf_c59fc3d0_original[5] != 0x1440FFA3 ||
+                    bsman->masked_paf_c59fc3d0_original[6] != 0x8FBF001C ||
+                    (bsman->masked_paf_c59fc3d0_replacement >> 26) != 2 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1C0,
+                        bsman->masked_paf_c59fc3d0_replacement) !=
+                            bsman->masked_paf_c59fc3d0_leaf_addr) return;
+            bsman->masked_paf_c59fc3d0_validation = 1;
+        }
+        if (bsman->masked_paf_c59fc3d0_second_enabled &&
+                (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->masked_paf_c59fc3d0_second_leaf_addr,
+                    bsman->masked_paf_c59fc3d0_second_leaf_size) ||
+                ((bsman->activation_addr + 0x1E4) & 0xF0000000) !=
+                    (bsman->masked_paf_c59fc3d0_second_leaf_addr & 0xF0000000))) return;
+        if (bsman->masked_paf_c59fc3d0_second_enabled) {
+            static const unsigned int offset[8] = {
+                0x1C8, 0x1CC, 0x1D0, 0x1D4, 0x1D8, 0x1DC, 0x1E0, 0x1E4
+            };
+            unsigned int observed_arg_target;
+            unsigned int expected_arg_target;
+            int arg_lo;
+            for (pc = 0; pc < 8; pc++)
+                bsman->masked_paf_c59fc3d0_second_original[pc] =
+                        _lw(bsman->activation_addr + offset[pc]);
+            arg_lo = (short)(bsman->masked_paf_c59fc3d0_second_original[1] &
+                    0xFFFF);
+            observed_arg_target =
+                    ((bsman->masked_paf_c59fc3d0_second_original[0] & 0xFFFF)
+                        << 16) + arg_lo;
+            expected_arg_target = mod->nsegment >= 2 ?
+                    mod->segmentaddr[1] + 0x0DC0 : 0;
+            bsman->masked_paf_c59fc3d0_second_replacement = 0x08000000 |
+                    ((bsman->masked_paf_c59fc3d0_second_leaf_addr >> 2) &
+                        0x03FFFFFF);
+            if ((bsman->masked_paf_c59fc3d0_second_original[0] & 0xFFFF0000) !=
+                        0x3C020000 ||
+                    (bsman->masked_paf_c59fc3d0_second_original[1] &
+                        0xFFFF0000) != 0x8C440000 ||
+                    mod->nsegment < 2 || observed_arg_target != expected_arg_target ||
+                    bsman->masked_paf_c59fc3d0_second_original[2] != 0x3C050100 ||
+                    (bsman->masked_paf_c59fc3d0_second_original[3] >> 26) != 3 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1D4,
+                        bsman->masked_paf_c59fc3d0_second_original[3]) !=
+                            mod->text_addr + 0x2A558 ||
+                    bsman->masked_paf_c59fc3d0_second_original[4] != 0x34A50011 ||
+                    bsman->masked_paf_c59fc3d0_second_original[5] != 0x304200FF ||
+                    bsman->masked_paf_c59fc3d0_second_original[6] != 0x1440FF9A ||
+                    bsman->masked_paf_c59fc3d0_second_original[7] != 0x00008021 ||
+                    (bsman->masked_paf_c59fc3d0_second_replacement >> 26) != 2 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1E0,
+                        bsman->masked_paf_c59fc3d0_second_replacement) !=
+                            bsman->masked_paf_c59fc3d0_second_leaf_addr) return;
+            bsman->masked_paf_c59fc3d0_second_validation = 1;
+        }
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
                 0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8
@@ -4905,6 +5265,29 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x170,
                         bsman->collection_paf_fcf265d8_replacement) !=
                             bsman->collection_paf_fcf265d8_leaf_addr)) ||
+                (bsman->collection_paf_9a285882_enabled &&
+                    (bsman->collection_paf_9a285882_original[0] != 0x1440FFB3 ||
+                    bsman->collection_paf_9a285882_original[1] != 0x8FBF001C ||
+                    (bsman->collection_paf_9a285882_replacement >> 26) != 2 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x180,
+                        bsman->collection_paf_9a285882_replacement) !=
+                            bsman->collection_paf_9a285882_leaf_addr)) ||
+                (bsman->post_collection_paf_fcf265d8_enabled &&
+                    ((bsman->post_collection_paf_fcf265d8_original[0] & 0xFFFF0000) != 0x3C020000 ||
+                    (bsman->post_collection_paf_fcf265d8_original[1] >> 26) != 3 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x19C,
+                        bsman->post_collection_paf_fcf265d8_original[1]) !=
+                            mod->text_addr + 0x2A698 ||
+                    (bsman->post_collection_paf_fcf265d8_original[2] & 0xFFFF0000) != 0x8C440000 ||
+                    mod->nsegment < 2 ||
+                    bsman->post_collection_paf_fcf265d8_observed_arg_target !=
+                        bsman->post_collection_paf_fcf265d8_expected_arg_target ||
+                    bsman->post_collection_paf_fcf265d8_original[3] != 0x1440FFAA ||
+                    bsman->post_collection_paf_fcf265d8_original[4] != 0x8FBF001C ||
+                    (bsman->post_collection_paf_fcf265d8_replacement >> 26) != 2 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1A4,
+                        bsman->post_collection_paf_fcf265d8_replacement) !=
+                            bsman->post_collection_paf_fcf265d8_leaf_addr)) ||
                 bsman->state_zero_original[0] != 0x1243FF73 ||
                 (bsman->state_zero_original[1] & 0xFFFF0000) != 0x3C020000 ||
                 bsman->state_zero_original[2] != 0x1460FF71 ||
@@ -4945,6 +5328,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             bsman->post_minus_one_vcall64_validation = 1;
         if (bsman->collection_paf_fcf265d8_enabled)
             bsman->collection_paf_fcf265d8_validation = 1;
+        if (bsman->collection_paf_9a285882_enabled)
+            bsman->collection_paf_9a285882_validation = 1;
+        if (bsman->post_collection_paf_fcf265d8_enabled)
+            bsman->post_collection_paf_fcf265d8_validation = 1;
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
                 0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8
@@ -5029,6 +5416,35 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         _sw(0xFFFFFFFF, bsman->collection_paf_fcf265d8_natural_result_addr);
         _sw(0, bsman->collection_paf_fcf265d8_hits_addr);
         _sw(0, bsman->collection_paf_fcf265d8_nonzero_hits_addr);
+        _sw(0, bsman->collection_paf_9a285882_last_item_addr);
+        _sw(0xFFFFFFFF, bsman->collection_paf_9a285882_natural_result_addr);
+        _sw(0, bsman->collection_paf_9a285882_hits_addr);
+        _sw(0, bsman->collection_paf_9a285882_nonzero_hits_addr);
+        _sw(bsman->activation_addr + 0x188,
+                bsman->collection_paf_9a285882_zero_resume_target_addr);
+        _sw(bsman->activation_addr + 0x50,
+                bsman->collection_paf_9a285882_nonzero_target_addr);
+        _sw(0xFFFFFFFF, bsman->post_collection_paf_fcf265d8_natural_result_addr);
+        _sw(0, bsman->post_collection_paf_fcf265d8_hits_addr);
+        _sw(0, bsman->post_collection_paf_fcf265d8_nonzero_hits_addr);
+        _sw(bsman->activation_addr + 0x1AC,
+                bsman->post_collection_paf_fcf265d8_zero_resume_target_addr);
+        _sw(bsman->activation_addr + 0x50,
+                bsman->post_collection_paf_fcf265d8_nonzero_target_addr);
+        _sw(0xFFFFFFFF, bsman->masked_paf_c59fc3d0_decision_value_addr);
+        _sw(0, bsman->masked_paf_c59fc3d0_hits_addr);
+        _sw(0, bsman->masked_paf_c59fc3d0_nonzero_hits_addr);
+        _sw(bsman->activation_addr + 0x1C8,
+                bsman->masked_paf_c59fc3d0_zero_resume_target_addr);
+        _sw(bsman->activation_addr + 0x50,
+                bsman->masked_paf_c59fc3d0_nonzero_target_addr);
+        _sw(0xFFFFFFFF, bsman->masked_paf_c59fc3d0_second_decision_value_addr);
+        _sw(0, bsman->masked_paf_c59fc3d0_second_hits_addr);
+        _sw(0, bsman->masked_paf_c59fc3d0_second_nonzero_hits_addr);
+        _sw(bsman->activation_addr + 0x1E8,
+                bsman->masked_paf_c59fc3d0_second_zero_resume_target_addr);
+        _sw(bsman->activation_addr + 0x4C,
+                bsman->masked_paf_c59fc3d0_second_nonzero_target_addr);
         _sw(0, bsman->post_paf_entry_counter_addr[0]);
         _sw(0, bsman->post_paf_entry_counter_addr[1]);
         _sw(0, bsman->post_vsh_entry_hits_addr);
@@ -5137,6 +5553,27 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         SYNC_POST_SCALAR(bsman->collection_paf_fcf265d8_natural_result_addr);
         SYNC_POST_SCALAR(bsman->collection_paf_fcf265d8_hits_addr);
         SYNC_POST_SCALAR(bsman->collection_paf_fcf265d8_nonzero_hits_addr);
+        SYNC_POST_SCALAR(bsman->collection_paf_9a285882_last_item_addr);
+        SYNC_POST_SCALAR(bsman->collection_paf_9a285882_natural_result_addr);
+        SYNC_POST_SCALAR(bsman->collection_paf_9a285882_hits_addr);
+        SYNC_POST_SCALAR(bsman->collection_paf_9a285882_nonzero_hits_addr);
+        SYNC_POST_SCALAR(bsman->collection_paf_9a285882_zero_resume_target_addr);
+        SYNC_POST_SCALAR(bsman->collection_paf_9a285882_nonzero_target_addr);
+        SYNC_POST_SCALAR(bsman->post_collection_paf_fcf265d8_natural_result_addr);
+        SYNC_POST_SCALAR(bsman->post_collection_paf_fcf265d8_hits_addr);
+        SYNC_POST_SCALAR(bsman->post_collection_paf_fcf265d8_nonzero_hits_addr);
+        SYNC_POST_SCALAR(bsman->post_collection_paf_fcf265d8_zero_resume_target_addr);
+        SYNC_POST_SCALAR(bsman->post_collection_paf_fcf265d8_nonzero_target_addr);
+        SYNC_POST_SCALAR(bsman->masked_paf_c59fc3d0_decision_value_addr);
+        SYNC_POST_SCALAR(bsman->masked_paf_c59fc3d0_hits_addr);
+        SYNC_POST_SCALAR(bsman->masked_paf_c59fc3d0_nonzero_hits_addr);
+        SYNC_POST_SCALAR(bsman->masked_paf_c59fc3d0_zero_resume_target_addr);
+        SYNC_POST_SCALAR(bsman->masked_paf_c59fc3d0_nonzero_target_addr);
+        SYNC_POST_SCALAR(bsman->masked_paf_c59fc3d0_second_decision_value_addr);
+        SYNC_POST_SCALAR(bsman->masked_paf_c59fc3d0_second_hits_addr);
+        SYNC_POST_SCALAR(bsman->masked_paf_c59fc3d0_second_nonzero_hits_addr);
+        SYNC_POST_SCALAR(bsman->masked_paf_c59fc3d0_second_zero_resume_target_addr);
+        SYNC_POST_SCALAR(bsman->masked_paf_c59fc3d0_second_nonzero_target_addr);
         SYNC_POST_SCALAR(bsman->state_zero_path_mask_addr);
         SYNC_POST_SCALAR(bsman->state_zero_15to14_compat_mode_addr);
         SYNC_POST_SCALAR(bsman->state_zero_15to14_effective_result_addr);
@@ -5174,6 +5611,26 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             _sw(bsman->collection_paf_fcf265d8_replacement,
                     bsman->activation_addr + 0x170);
             bsman->collection_paf_fcf265d8_install = 1;
+        }
+        if (bsman->collection_paf_9a285882_enabled) {
+            _sw(bsman->collection_paf_9a285882_replacement,
+                    bsman->activation_addr + 0x180);
+            bsman->collection_paf_9a285882_install = 1;
+        }
+        if (bsman->post_collection_paf_fcf265d8_enabled) {
+            _sw(bsman->post_collection_paf_fcf265d8_replacement,
+                    bsman->activation_addr + 0x1A4);
+            bsman->post_collection_paf_fcf265d8_install = 1;
+        }
+        if (bsman->masked_paf_c59fc3d0_enabled) {
+            _sw(bsman->masked_paf_c59fc3d0_replacement,
+                    bsman->activation_addr + 0x1C0);
+            bsman->masked_paf_c59fc3d0_install = 1;
+        }
+        if (bsman->masked_paf_c59fc3d0_second_enabled) {
+            _sw(bsman->masked_paf_c59fc3d0_second_replacement,
+                    bsman->activation_addr + 0x1E0);
+            bsman->masked_paf_c59fc3d0_second_install = 1;
         }
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
@@ -5244,6 +5701,34 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             sceKernelIcacheInvalidateRange(
                     (const void *)(bsman->activation_addr + 0x170), 4);
             bsman->collection_paf_fcf265d8_cache_sync = 1;
+        }
+        if (bsman->collection_paf_9a285882_enabled) {
+            sceKernelDcacheWritebackInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x180), 4);
+            sceKernelIcacheInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x180), 4);
+            bsman->collection_paf_9a285882_cache_sync = 1;
+        }
+        if (bsman->post_collection_paf_fcf265d8_enabled) {
+            sceKernelDcacheWritebackInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1A4), 4);
+            sceKernelIcacheInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1A4), 4);
+            bsman->post_collection_paf_fcf265d8_cache_sync = 1;
+        }
+        if (bsman->masked_paf_c59fc3d0_enabled) {
+            sceKernelDcacheWritebackInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1C0), 4);
+            sceKernelIcacheInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1C0), 4);
+            bsman->masked_paf_c59fc3d0_cache_sync = 1;
+        }
+        if (bsman->masked_paf_c59fc3d0_second_enabled) {
+            sceKernelDcacheWritebackInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1E0), 4);
+            sceKernelIcacheInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1E0), 4);
+            bsman->masked_paf_c59fc3d0_second_cache_sync = 1;
         }
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)(bsman->activation_addr + 0x27C), 0x50);
@@ -5631,6 +6116,18 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	ini_gets("Experimental", "PSP1000CollectionPafFCF265D8Trace", "Disabled",
 			psp1000CollectionPafFCF265D8Trace,
 			sizeof(psp1000CollectionPafFCF265D8Trace), config);
+	ini_gets("Experimental", "PSP1000CollectionPaf9A285882Trace", "Disabled",
+			psp1000CollectionPaf9A285882Trace,
+			sizeof(psp1000CollectionPaf9A285882Trace), config);
+	ini_gets("Experimental", "PSP1000PostCollectionPafFCF265D8Trace", "Disabled",
+			psp1000PostCollectionPafFCF265D8Trace,
+			sizeof(psp1000PostCollectionPafFCF265D8Trace), config);
+	ini_gets("Experimental", "PSP1000MaskedPafC59FC3D0Trace", "Disabled",
+			psp1000MaskedPafC59FC3D0Trace,
+			sizeof(psp1000MaskedPafC59FC3D0Trace), config);
+	ini_gets("Experimental", "PSP1000MaskedPafC59FC3D0SecondTrace", "Disabled",
+			psp1000MaskedPafC59FC3D0SecondTrace,
+			sizeof(psp1000MaskedPafC59FC3D0SecondTrace), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -5714,6 +6211,18 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		slide_diag.bsman.collection_paf_fcf265d8_enabled =
 			slide_diag.bsman.post_vcall64_collection_enabled &&
 			strcmp(psp1000CollectionPafFCF265D8Trace, "Enabled") == 0;
+		slide_diag.bsman.collection_paf_9a285882_enabled =
+			slide_diag.bsman.collection_paf_fcf265d8_enabled &&
+			strcmp(psp1000CollectionPaf9A285882Trace, "Enabled") == 0;
+		slide_diag.bsman.post_collection_paf_fcf265d8_enabled =
+			slide_diag.bsman.collection_paf_9a285882_enabled &&
+			strcmp(psp1000PostCollectionPafFCF265D8Trace, "Enabled") == 0;
+		slide_diag.bsman.masked_paf_c59fc3d0_enabled =
+			slide_diag.bsman.post_collection_paf_fcf265d8_enabled &&
+			strcmp(psp1000MaskedPafC59FC3D0Trace, "Enabled") == 0;
+		slide_diag.bsman.masked_paf_c59fc3d0_second_enabled =
+			slide_diag.bsman.masked_paf_c59fc3d0_enabled &&
+			strcmp(psp1000MaskedPafC59FC3D0SecondTrace, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,

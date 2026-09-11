@@ -675,3 +675,83 @@ After confirming the prerequisite records, require:
 A nonzero natural result proves Sony exits to activation `+0x4C`; zero proves
 that item reaches the second natural PAF call at `+0x178`. No result is
 substituted in T35.
+
+### T36 — natural scePaf/0x9A285882 collection decision
+
+Enable `PSP1000CollectionPaf9A285882Trace` only with the complete T35 chain and
+retain the recovery path. Confirm all prerequisite records in the same boot,
+then collect:
+
+```text
+[collection-paf-9a285882] validation=1 install=1 cache_sync=1 hits=... nonzero=... last_item=0x........ natural=0x........
+```
+
+This diagnostic only observes Sony's result. It patches only activation `+0x180`
+with `J`, preserves the `+0x184` RA-loading delay slot, and dynamically follows
+Sony's zero/nonzero routes without modifying an item, result, or VSH context.
+
+### T37 — post-collection scePaf/0xFCF265D8 decision
+
+Enable `PSP1000PostCollectionPafFCF265D8Trace` only with the full T36 chain.
+Verify all prerequisite records in the same boot, then collect:
+
+```text
+[post-collection-paf-fcf265d8] validation=1 install=1 cache_sync=1 hits=... nonzero=... natural=0x........
+```
+
+T37 validates but does not patch the relocated `+0x19C` JAL, patches only the
+`+0x1A4` decision with `J`, preserves Sony's `+0x1A8` RA load, and follows the
+dynamically initialized natural routes without compatibility or state writes.
+
+### T37.1 — T37 validation failure isolation
+
+Keep T37 enabled with the complete T36 chain. T37.1 makes no additional config
+or runtime change. Collect both records even when activation validation is zero:
+
+```text
+[t37-validation] enabled=1 checked=1 fail_mask=0x........ word_198=0x........ word_19c=0x........ word_1a0=0x........ word_1a4=0x........ word_1a8=0x........
+[t37-validation-targets] call_target=0x........ expected_call_target=0x........ replacement=0x........ replacement_target=0x........ leaf=0x........
+```
+
+Decode only the failure mask. Do not interpret the T37 natural-result record
+unless the mask is zero and validation, installation, and cache sync all equal
+one.
+
+### T37.2 — relocated argument-load validation
+
+Repeat T37 with the full prerequisite chain. Require:
+
+```text
+[t37-validation] enabled=1 checked=1 fail_mask=0x00000000 ...
+[t37-validation-targets] ... arg_target=0x........ expected_arg_target=0x........ ...
+```
+
+Confirm `arg_target == expected_arg_target`, followed by T37
+`validation=1 install=1 cache_sync=1`. Only then interpret its natural result.
+T37.2 changes validation only and adds no compatibility.
+
+### T38 — scePaf/0xC59FC3D0 masked decision
+
+Enable `PSP1000MaskedPafC59FC3D0Trace` only with the complete successful T37.2
+chain. Collect:
+
+```text
+[masked-paf-c59fc3d0] validation=1 install=1 cache_sync=1 hits=... nonzero=... decision=0x........
+```
+
+The value is Sony's post-`ANDI 0xFF` decision, not the full raw return. Zero
+continues to `+0x1C8`; nonzero follows Sony's epilogue route. T38 does not alter
+either outcome.
+
+### T39 — second scePaf/0xC59FC3D0 masked decision
+
+Enable `PSP1000MaskedPafC59FC3D0SecondTrace` only with the complete successful
+T38 chain. Collect:
+
+```text
+[masked-paf-c59fc3d0-second] validation=1 install=1 cache_sync=1 hits=... nonzero=... decision=0x........
+```
+
+The decision is Sony's already-masked low byte. Zero resumes at `+0x1E8`;
+nonzero routes to `+0x4C`, where Sony restores RA. The natural `+0x1E4`
+`move s0,zero` delay slot executes before either route.

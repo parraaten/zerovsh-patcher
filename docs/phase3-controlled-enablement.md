@@ -1956,3 +1956,157 @@ The tracer reproduces Sony's exact decision: zero resumes at activation
 resumes at activation `+0x4C`. No PAF call, item, result, collection field,
 context, or dispatcher behavior is modified. Whether this NID naturally blocks
 an item remains **HYPOTHESIS / UNKNOWN** pending hardware evidence.
+
+### T36 natural scePaf/0x9A285882 collection decision trace
+
+T36 is a default-disabled, diagnostic-only continuation of the hardware-confirmed
+T35 chain. It owns only the branch at activation `+0x180`, after the untouched
+`scePaf` NID `0x9A285882` call, and requires Sony's `0x1440FFB3` branch plus its
+untouched `0x8FBF001C` delay slot. The replacement is an unconditional `J` to a
+pseudodirect-reachable helper; it is not a `JAL`, so Sony's delay-slot load leaves
+the activation caller RA intact.
+
+The helper records the natural result and the current item from `s0`, increments
+hit/nonzero counters, and branches on the unchanged `v0`. Kernel-initialized
+scalars route zero to activation `+0x188` and nonzero to activation `+0x050`.
+A private `t0`/`t1` frame and `jr t0` delay-slot restoration preserve both
+temporaries, SP, RA, `v0`, and `s0`. T36 performs no call, I/O, allocation,
+dispatch, context write, item mutation, result substitution, or compatibility.
+
+Hardware interpretation requires same-boot T30.1 through T35 prerequisite
+records. Eight hits with no nonzero result proves all eight natural items pass;
+one nonzero at eight hits identifies the eighth natural result as the next
+compatibility candidate without changing it. Any earlier nonzero result must be
+reconciled against same-run T34/T35 evidence before drawing conclusions.
+
+Hardware reported `hits=8`, `nonzero=0`, and `natural=0`, while same-run T34
+and T35 retained eight collection entries and eight passing first-PAF results.
+This proves both natural PAF decisions pass all eight items and Sony naturally
+completes the loop; no loop compatibility is justified. T37 is the recommended
+next phase.
+
+### T37 post-collection scePaf/0xFCF265D8 decision trace
+
+Hardware-confirmed T36 established that both per-item PAF decisions pass all
+eight natural collection entries. T37 remains default-disabled and diagnostic
+only. It validates the relocated `LUI v0` shape at activation `+0x198`, decodes
+the loaded JAL at `+0x19C` to require the dynamic SlidePlugin text address plus
+`0x2A698`, and requires the untouched `lw a0,0x0DC4(v0)` delay slot. It neither
+patches nor wraps that call.
+
+The transaction validates Sony's `0x1440FFAA` decision and `0x8FBF001C` delay
+slot, then replaces only activation `+0x1A4` with a pseudodirect `J`. The delay
+slot therefore loads Sony's activation caller RA before the tracer, which never
+references RA or assumes anything about post-call `a0`. Kernel-initialized
+scalars route zero to activation `+0x1AC` and nonzero to `+0x050`.
+
+The helper records only the untouched natural `v0`, hits, and nonzero hits. It
+branches directly on `v0` and uses the T36 transparent `t0`/`t1` frame and JR
+delay-slot restoration. There is no result substitution, compatibility mode,
+argument/object mutation, collection or VSH-context write, dispatcher, call,
+I/O, or allocation.
+
+Hardware interpretation requires the complete same-run T30.1 through T36
+chain. A natural zero makes the masked-low-byte PAF call at `+0x1B4` the next
+diagnostic boundary; a nonzero identifies this distinct callsite as a future
+compatibility candidate, but T37 does not alter it. A PSPDEV build and real
+PSP-1000 run remain required.
+
+### T37.1 validation-failure isolation
+
+Hardware isolation proved that enabling T37 rejects the activation transaction
+(`validation=0 install=0 cache_sync=0`), while disabling only T37 restores the
+complete hardware-confirmed T30.1–T36 chain. Direct decrypted-binary inspection
+also confirms all five expected static words, so the specific failing runtime
+guard remains unknown.
+
+T37.1 changes no runtime behavior, helper code, route target, registration field,
+or Sony patch. Before any T37-specific rejection, the kernel records the five
+loaded words, dynamically decoded and expected `+0x19C` targets, replacement
+word and decoded target, and helper leaf. An append-only ten-bit mask identifies
+LUI shape, call opcode/target, argument load, decision, RA delay, replacement
+opcode/target, helper range, and pseudodirect-region failures independently.
+Every prior T37 guard remains mandatory, and any nonzero mask still rejects the
+transaction.
+
+The deferred writer emits `[t37-validation]` and
+`[t37-validation-targets]` even when activation validation and installation are
+zero. Hardware interpretation requires `enabled=1 checked=1`; the ordinary T37
+natural-result record is meaningful only with a zero mask and successful
+validation/install/cache synchronization. The ABI remains 956 bytes. Build
+status is limited to static verification until PSPDEV and hardware are
+available. The next phase is to decode the T37.1 mask, not add compatibility.
+
+### T37.2 relocation-aware argument-load validation
+
+T37.1 hardware reported only `T37_FAIL_ARG_LOAD_WORD` (`0x008`). The observed
+`lui v0,0x09E5` plus `lw a0,0x9EF4(v0)` reconstructs `0x09E49EF4` when the LW
+LO16 is sign-extended, exactly matching the runtime second-segment address plus
+static offset `0x0DC4`. Thus the former comparison against the unrelocated
+literal `0x8C440DC4` was invalid; every other T37 guard passed on hardware.
+
+T37.2 changes only that validation. Bit `0x008` now proves the instruction shape
+`lw a0,imm16(v0)`. The kernel sign-extends its runtime immediate, combines it
+with the relocated LUI immediate, and requires the resulting address to equal
+`mod->segmentaddr[1] + 0x0DC4`. New append-only bits distinguish target mismatch
+(`0x400`) from a missing second segment (`0x800`). Deferred target diagnostics
+now include both reconstructed and expected argument addresses.
+
+All other T37 guards, its tracer, helper scalars, route targets, single `J` patch
+at `+0x1A4`, and four-byte cache synchronization are unchanged. No registration
+fields were added, so the ABI remains 956 bytes. This remains validation only;
+there is no compatibility or Sony behavior change. Hardware must first confirm
+a zero failure mask and successful transaction before the natural T37 result is
+interpreted.
+
+### T38 scePaf/0xC59FC3D0 masked decision trace
+
+T37.2 hardware reported a zero validation mask, equal observed/expected argument
+targets, and one natural zero post-collection FCF265D8 result. Together with the
+same-run eight-entry T35/T36 results, this proves all three prior PAF boundaries
+pass naturally and no compatibility is justified there.
+
+T38 is default-disabled and requires the full T37 chain. It validates the exact
+Sony sequence from activation `+0x1AC` through `+0x1C4`, including argument
+setup, a dynamically decoded JAL target of SlidePlugin text plus `0x2A558`, and
+Sony's untouched `andi v0,v0,0x00FF`. It patches only the `+0x1C0` decision with
+a pseudodirect `J`; the untouched `+0x1C4` delay slot restores the caller RA.
+
+The helper records `DecisionValue`, explicitly meaning Sony's already-masked
+low-byte value rather than the full raw PAF return. It branches directly on the
+unchanged `v0`, counts hits/nonzero decisions, and uses kernel-initialized routes
+to `+0x1C8` or `+0x050` with the transparent T36/T37 `t0`/`t1` tail. It makes no
+call, transformation, allocation, I/O, dispatcher invocation, context write,
+or compatibility substitution.
+
+The registration adds seven addresses and is exactly 984 bytes. Hardware must
+retain the full prerequisite chain before interpreting T38. A zero decision
+advances the diagnostic boundary to the distinct masked decision at `+0x1E0`;
+a nonzero decision becomes a candidate for later investigation, not a T38
+compatibility change.
+
+### T39 second scePaf/0xC59FC3D0 masked decision trace
+
+Hardware-confirmed T38 reported one zero masked decision and reached activation
+`+0x1C8` naturally. T37.2 and the earlier collection evidence remained valid,
+so no compatibility is justified at any preceding observed PAF boundary.
+
+T39 is default-disabled and transitively requires the full T38 chain. It
+validates the relocated `LUI v0`/`LW a0,imm(v0)` pair at `+0x1C8/+0x1CC` by
+sign-extending LO16 and requiring the effective address to equal
+`mod->segmentaddr[1] + 0x0DC0`. It also validates `a1=0x01000011`, dynamically
+resolves the untouched `+0x1D4` JAL to SlidePlugin text plus `0x2A558`, and
+requires Sony's `ANDI 0xFF`, branch, and `move s0,zero` delay slot exactly.
+
+Only the branch at `+0x1E0` is replaced with a pseudodirect `J`. Sony's
+untouched `+0x1E4` delay slot still clears `s0` on both routes before the tracer.
+The helper records the already-masked `DecisionValue` and routes unchanged zero
+to `+0x1E8` or nonzero to `+0x04C`; the latter intentionally lets Sony restore
+RA before its epilogue. The tracer does not reference or modify `s0`, RA, `v0`,
+`a0`, `a1`, or GP beyond storing/branching on `v0`, and performs no calls, I/O,
+allocation, dispatch, context write, or substitution.
+
+Seven registration addresses increase the ABI to exactly 1012 bytes. Hardware
+must retain the successful T37.2/T38 prerequisites before T39 is interpreted.
+A zero decision advances investigation from the exact sequence at `+0x1E8`; a
+nonzero decision is only a future compatibility candidate.

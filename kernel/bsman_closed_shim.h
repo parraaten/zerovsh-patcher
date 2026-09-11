@@ -218,9 +218,38 @@ typedef struct {
     u32 collection_paf_fcf265d8_natural_result_addr;
     u32 collection_paf_fcf265d8_hits_addr;
     u32 collection_paf_fcf265d8_nonzero_hits_addr;
+    u32 collection_paf_9a285882_leaf_addr;
+    u32 collection_paf_9a285882_leaf_end_addr;
+    u32 collection_paf_9a285882_last_item_addr;
+    u32 collection_paf_9a285882_natural_result_addr;
+    u32 collection_paf_9a285882_hits_addr;
+    u32 collection_paf_9a285882_nonzero_hits_addr;
+    u32 collection_paf_9a285882_zero_resume_target_addr;
+    u32 collection_paf_9a285882_nonzero_target_addr;
+    u32 post_collection_paf_fcf265d8_leaf_addr;
+    u32 post_collection_paf_fcf265d8_leaf_end_addr;
+    u32 post_collection_paf_fcf265d8_natural_result_addr;
+    u32 post_collection_paf_fcf265d8_hits_addr;
+    u32 post_collection_paf_fcf265d8_nonzero_hits_addr;
+    u32 post_collection_paf_fcf265d8_zero_resume_target_addr;
+    u32 post_collection_paf_fcf265d8_nonzero_target_addr;
+    u32 masked_paf_c59fc3d0_leaf_addr;
+    u32 masked_paf_c59fc3d0_leaf_end_addr;
+    u32 masked_paf_c59fc3d0_decision_value_addr;
+    u32 masked_paf_c59fc3d0_hits_addr;
+    u32 masked_paf_c59fc3d0_nonzero_hits_addr;
+    u32 masked_paf_c59fc3d0_zero_resume_target_addr;
+    u32 masked_paf_c59fc3d0_nonzero_target_addr;
+    u32 masked_paf_c59fc3d0_second_leaf_addr;
+    u32 masked_paf_c59fc3d0_second_leaf_end_addr;
+    u32 masked_paf_c59fc3d0_second_decision_value_addr;
+    u32 masked_paf_c59fc3d0_second_hits_addr;
+    u32 masked_paf_c59fc3d0_second_nonzero_hits_addr;
+    u32 masked_paf_c59fc3d0_second_zero_resume_target_addr;
+    u32 masked_paf_c59fc3d0_second_nonzero_target_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 896 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 1012 ? 1 : -1];
 
 #endif
