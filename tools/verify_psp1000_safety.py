@@ -126,6 +126,13 @@ T38_SYMBOLS = ("zeroCtrlMaskedPafC59FC3D0Trace",
     "zeroCtrlMaskedPafC59FC3D0NonzeroHits",
     "zeroCtrlMaskedPafC59FC3D0ZeroResumeTarget",
     "zeroCtrlMaskedPafC59FC3D0NonzeroTarget")
+T39_SYMBOLS = ("zeroCtrlMaskedPafC59FC3D0SecondTrace",
+    "zeroCtrlMaskedPafC59FC3D0SecondTraceEnd",
+    "zeroCtrlMaskedPafC59FC3D0SecondDecisionValue",
+    "zeroCtrlMaskedPafC59FC3D0SecondHits",
+    "zeroCtrlMaskedPafC59FC3D0SecondNonzeroHits",
+    "zeroCtrlMaskedPafC59FC3D0SecondZeroResumeTarget",
+    "zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget")
 T32_SYMBOLS = ("zeroCtrlPostImposeVCallTrace",
     "zeroCtrlPostImposeVCallTraceEnd", "zeroCtrlPostImposeVCallReturnTrace",
     "zeroCtrlPostImposeVCallReturnTraceEnd", "zeroCtrlPostImposeVCallTarget",
@@ -1281,8 +1288,8 @@ def check_sources(root):
             "post_minus_one_vcall64_return_hits_addr"):
         if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
             fail("T33 registration does not range-validate " + field)
-    if "sizeof(ZeroCtrlBSManClosedRegistration) == 984" not in bsman_header:
-        fail("T38 registration ABI is not exactly 984 bytes")
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header:
+        fail("T39 registration ABI is not exactly 1012 bytes")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")
@@ -1485,8 +1492,8 @@ def check_sources(root):
             writer.find("[t37-validation]") > writer.find(
                 "[post-collection-paf-fcf265d8]"):
         fail("T37.1 deferred failure diagnostic is not outside success-only tracing")
-    if "sizeof(ZeroCtrlBSManClosedRegistration) == 984" not in bsman_header:
-        fail("T38 registration ABI is not exactly 984 bytes")
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header:
+        fail("T39 registration ABI is not exactly 1012 bytes")
     if "post_collection_paf_fcf265d8_original[2] != 0x8C440DC4" in kernel:
         fail("T37.2 retains the invalid literal relocated LW comparison")
     t372 = bsman_install[bsman_install.rfind(
@@ -1555,6 +1562,55 @@ def check_sources(root):
         fail("T38 cache range or dynamic natural route targets are wrong")
     if "[masked-paf-c59fc3d0]" not in writer or "decision=0x%08X" not in writer:
         fail("T38 masked-decision diagnostic is missing or ambiguous")
+    if "PSP1000MaskedPafC59FC3D0SecondTrace = Disabled" not in sample_config or \
+            '"PSP1000MaskedPafC59FC3D0SecondTrace", "Disabled"' not in kernel:
+        fail("T39 trace is not default-disabled")
+    t39_gate = kernel[kernel.find("masked_paf_c59fc3d0_second_enabled ="):
+        kernel.find(";", kernel.find("masked_paf_c59fc3d0_second_enabled ="))]
+    if "masked_paf_c59fc3d0_enabled" not in t39_gate or \
+            'strcmp(psp1000MaskedPafC59FC3D0SecondTrace, "Enabled") == 0' not in t39_gate:
+        fail("T39 does not require T38 and explicit opt-in")
+    t39 = assembly[assembly.find("zeroCtrlMaskedPafC59FC3D0SecondTrace:"):
+        assembly.find("zeroCtrlMaskedPafC59FC3D0SecondTraceEnd:")]
+    for token in ("sw      $v0, %lo(zeroCtrlMaskedPafC59FC3D0SecondDecisionValue)",
+            "beqz    $v0, 75f", "jr      $t0", "lw      $t0, -8($sp)"):
+        if token not in t39:
+            fail("T39 transparent masked-decision tracer lacks " + token)
+    if any(x in t39 for x in ("andi", "$s0", "$a0", "$a1", "$ra", "$gp",
+            "jal ", "jalr", "sceIo", "Alloc", "malloc", "dispatcher",
+            "context")):
+        fail("T39 transforms or references forbidden natural state")
+    for token in ("0x1C8, 0x1CC, 0x1D0, 0x1D4, 0x1D8, 0x1DC, 0x1E0, 0x1E4",
+            "original[0] & 0xFFFF0000", "0x3C020000",
+            "original[1] &", "0x8C440000", "arg_lo = (short)(",
+            "mod->segmentaddr[1] + 0x0DC0", "observed_arg_target != expected_arg_target",
+            "original[2] != 0x3C050100", "original[3] >> 26) != 3",
+            "mod->text_addr + 0x2A558", "original[4] != 0x34A50011",
+            "original[5] != 0x304200FF", "original[6] != 0x1440FF9A",
+            "original[7] != 0x00008021",
+            "masked_paf_c59fc3d0_second_replacement >> 26) != 2",
+            "bsman->activation_addr + 0x1E8", "bsman->activation_addr + 0x4C"):
+        if token not in bsman_install:
+            fail("T39 transaction lacks " + token)
+    if commit.count("_sw(bsman->masked_paf_c59fc3d0_second_replacement,") != 1:
+        fail("T39 lacks one exact +0x1E0 patch owner")
+    t39_commit = commit[commit.find(
+        "if (bsman->masked_paf_c59fc3d0_second_enabled) {"):]
+    t39_commit = t39_commit[:t39_commit.find("\n        }")]
+    if "bsman->activation_addr + 0x1E0" not in t39_commit or any(
+            offset in t39_commit for offset in ("+ 0x1C8", "+ 0x1CC",
+                "+ 0x1D0", "+ 0x1D4", "+ 0x1D8", "+ 0x1DC", "+ 0x1E4")):
+        fail("T39 writes the natural call/ANDI/delay slot or another Sony word")
+    t39_cache = """if (bsman->masked_paf_c59fc3d0_second_enabled) {
+            sceKernelDcacheWritebackInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1E0), 4);
+            sceKernelIcacheInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1E0), 4);"""
+    if t39_cache not in bsman_install:
+        fail("T39 cache synchronization is not exactly +0x1E0/4")
+    if "[masked-paf-c59fc3d0-second]" not in writer or \
+            "decision=0x%08X" not in writer:
+        fail("T39 masked-decision diagnostic is missing or ambiguous")
     for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
         if record not in writer:
             fail("T27 deferred diagnostic is missing " + record)
@@ -2577,6 +2633,36 @@ def check_t38_linked(disassembly, symbol_addresses):
     if raw.count(0x27BDFFF8) != 1 or raw.count(0x27BD0008) != 1:
         fail("T38 linked tracer private frame is unbalanced")
 
+
+def check_t39_linked(disassembly, symbol_addresses):
+    """Prove T39 final scalars and transparent masked-result routing."""
+    body = function_body(disassembly, "zeroCtrlMaskedPafC59FC3D0SecondTrace")
+    prefix = "zeroCtrlMaskedPafC59FC3D0Second"
+    for suffix, uses in (("DecisionValue", [("sw", 2, 8)]),
+            ("Hits", [("lw", 9, 8), ("sw", 9, 8)]),
+            ("NonzeroHits", [("lw", 9, 8), ("sw", 9, 8)]),
+            ("ZeroResumeTarget", [("lw", 8, 8)]),
+            ("NonzeroTarget", [("lw", 8, 8)])):
+        linked_scalar_uses(body, prefix + suffix,
+                symbol_addresses[prefix + suffix], uses)
+    raw = [word for _pc, word in linked_instructions(body)]
+    if sum(word >> 26 == 4 and (word >> 21) & 0x1F == 2
+            for word in raw) != 1:
+        fail("T39 linked tracer lacks one masked-v0 decision branch")
+    if any(word >> 26 == 3 or (word & 0xFC00003F) == 9 for word in raw):
+        fail("T39 linked tracer contains JAL/JALR")
+    for register in ("v0", "s0", "ra"):
+        lines = [line for line in body.splitlines() if re.search(
+            r"\b" + register + r"\b", line)]
+        expected = 2 if register == "v0" else 0
+        if len(lines) != expected:
+            fail("T39 linked tracer changes or references " + register)
+    tail = [0x8FA90004, 0x27BD0008, 0x01000008, 0x8FA8FFF8]
+    if not any(raw[i:i + 4] == tail for i in range(len(raw) - 3)):
+        fail("T39 linked tracer lacks its exact transparent tail")
+    if raw.count(0x27BDFFF8) != 1 or raw.count(0x27BD0008) != 1:
+        fail("T39 linked tracer private frame is unbalanced")
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -2726,6 +2812,9 @@ def check_elf(elf):
     for symbol in T38_SYMBOLS:
         if symbol not in symbol_addresses:
             fail("missing linked T38 symbol " + symbol)
+    for symbol in T39_SYMBOLS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T39 symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
     check_t311_linked(disassembly, symbol_addresses)
     check_t32_linked(disassembly, symbol_addresses)
@@ -2809,6 +2898,7 @@ def check_elf(elf):
     check_t36_linked(disassembly, symbol_addresses)
     check_t37_linked(disassembly, symbol_addresses)
     check_t38_linked(disassembly, symbol_addresses)
+    check_t39_linked(disassembly, symbol_addresses)
 
 
 def check_stub_object(stub_object):
@@ -2963,6 +3053,23 @@ def check_stub_object(stub_object):
         for op in (r"\blw\s+t1,", r"\bsw\s+t1,"):
             if not relocation_bound_to_instruction(t38, counter, op):
                 fail("T38 tracer does not bind t1 counter operation")
+    t39 = function_body(disassembly, "zeroCtrlMaskedPafC59FC3D0SecondTrace")
+    for scalar, hi, lo, op in (
+            ("zeroCtrlMaskedPafC59FC3D0SecondDecisionValue", 1, 1, r"\bsw\s+v0,"),
+            ("zeroCtrlMaskedPafC59FC3D0SecondHits", 1, 2, None),
+            ("zeroCtrlMaskedPafC59FC3D0SecondNonzeroHits", 1, 2, None),
+            ("zeroCtrlMaskedPafC59FC3D0SecondZeroResumeTarget", 1, 1, r"\blw\s+t0,"),
+            ("zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget", 1, 1, r"\blw\s+t0,")):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", t39)) != hi or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", t39)) != lo:
+            fail("T39 tracer has wrong exact relocations for " + scalar)
+        if op and not relocation_bound_to_instruction(t39, scalar, op):
+            fail("T39 tracer does not bind relocation for " + scalar)
+    for counter in ("zeroCtrlMaskedPafC59FC3D0SecondHits",
+            "zeroCtrlMaskedPafC59FC3D0SecondNonzeroHits"):
+        for op in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not relocation_bound_to_instruction(t39, counter, op):
+                fail("T39 tracer does not bind t1 counter operation")
     for symbol, counter in zip(STUBS, COUNTERS):
         body = function_body(disassembly, symbol)
         if not re.search(r"R_MIPS_HI16\s+" + counter + r"\b", body):

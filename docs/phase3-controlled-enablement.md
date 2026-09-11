@@ -2084,3 +2084,29 @@ retain the full prerequisite chain before interpreting T38. A zero decision
 advances the diagnostic boundary to the distinct masked decision at `+0x1E0`;
 a nonzero decision becomes a candidate for later investigation, not a T38
 compatibility change.
+
+### T39 second scePaf/0xC59FC3D0 masked decision trace
+
+Hardware-confirmed T38 reported one zero masked decision and reached activation
+`+0x1C8` naturally. T37.2 and the earlier collection evidence remained valid,
+so no compatibility is justified at any preceding observed PAF boundary.
+
+T39 is default-disabled and transitively requires the full T38 chain. It
+validates the relocated `LUI v0`/`LW a0,imm(v0)` pair at `+0x1C8/+0x1CC` by
+sign-extending LO16 and requiring the effective address to equal
+`mod->segmentaddr[1] + 0x0DC0`. It also validates `a1=0x01000011`, dynamically
+resolves the untouched `+0x1D4` JAL to SlidePlugin text plus `0x2A558`, and
+requires Sony's `ANDI 0xFF`, branch, and `move s0,zero` delay slot exactly.
+
+Only the branch at `+0x1E0` is replaced with a pseudodirect `J`. Sony's
+untouched `+0x1E4` delay slot still clears `s0` on both routes before the tracer.
+The helper records the already-masked `DecisionValue` and routes unchanged zero
+to `+0x1E8` or nonzero to `+0x04C`; the latter intentionally lets Sony restore
+RA before its epilogue. The tracer does not reference or modify `s0`, RA, `v0`,
+`a0`, `a1`, or GP beyond storing/branching on `v0`, and performs no calls, I/O,
+allocation, dispatch, context write, or substitution.
+
+Seven registration addresses increase the ABI to exactly 1012 bytes. Hardware
+must retain the successful T37.2/T38 prerequisites before T39 is interpreted.
+A zero decision advances investigation from the exact sequence at `+0x1E8`; a
+nonzero decision is only a future compatibility candidate.

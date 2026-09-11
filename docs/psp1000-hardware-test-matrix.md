@@ -742,3 +742,16 @@ chain. Collect:
 The value is Sony's post-`ANDI 0xFF` decision, not the full raw return. Zero
 continues to `+0x1C8`; nonzero follows Sony's epilogue route. T38 does not alter
 either outcome.
+
+### T39 — second scePaf/0xC59FC3D0 masked decision
+
+Enable `PSP1000MaskedPafC59FC3D0SecondTrace` only with the complete successful
+T38 chain. Collect:
+
+```text
+[masked-paf-c59fc3d0-second] validation=1 install=1 cache_sync=1 hits=... nonzero=... decision=0x........
+```
+
+The decision is Sony's already-masked low byte. Zero resumes at `+0x1E8`;
+nonzero routes to `+0x4C`, where Sony restores RA. The natural `+0x1E4`
+`move s0,zero` delay slot executes before either route.
