@@ -61,6 +61,54 @@ T22_CONSUMER_WRAPPERS = (
      "zeroCtrlConsumer14020Hits", "zeroCtrlConsumer14020NaturalResult"),
 )
 T22_CONSUMER_TARGET = "zeroCtrlConsumer6F84Target"
+T24_SCALARS = (
+    "zeroCtrlConsumer14020CompatMode",
+    "zeroCtrlConsumer14020EffectiveResult",
+    "zeroCtrlConsumer14020SubstitutionHits",
+)
+T25_SCALARS = (
+    "zeroCtrlConsumer13F6CCompatMode",
+    "zeroCtrlConsumer13F6CEffectiveResult",
+    "zeroCtrlConsumer13F6CSubstitutionHits",
+)
+T27_PREDICATE_WRAPPERS = (
+    ("zeroCtrlCapability6F44Trace", "zeroCtrlCapability6F44TraceEnd",
+     "zeroCtrlCapability6F44Hits", "zeroCtrlCapability6F44NaturalResult",
+     "zeroCtrlCapability6F44Target"),
+    ("zeroCtrlCapability6FC4Trace", "zeroCtrlCapability6FC4TraceEnd",
+     "zeroCtrlCapability6FC4Hits", "zeroCtrlCapability6FC4NaturalResult",
+     "zeroCtrlCapability6FC4Target"),
+    ("zeroCtrlCapability7004Trace", "zeroCtrlCapability7004TraceEnd",
+     "zeroCtrlCapability7004Hits", "zeroCtrlCapability7004NaturalResult",
+     "zeroCtrlCapability7004Target"),
+)
+T27_MASK_SYMBOLS = ("zeroCtrlPafCapabilityMaskTrace",
+    "zeroCtrlPafCapabilityMaskTraceEnd", "zeroCtrlPafCapabilityMaskTarget",
+    "zeroCtrlPafCapabilityMaskHits", "zeroCtrlPafCapabilityMaskNatural",
+    "zeroCtrlPafCapabilityMaskCompatMode", "zeroCtrlPafCapabilityMaskEffective",
+    "zeroCtrlPafCapabilityMaskSubstitutionHits")
+T33_SYMBOLS = ("zeroCtrlPostMinusOneVCall64Trace",
+    "zeroCtrlPostMinusOneVCall64TraceEnd",
+    "zeroCtrlPostMinusOneVCall64ReturnTrace",
+    "zeroCtrlPostMinusOneVCall64ReturnTraceEnd",
+    "zeroCtrlPostMinusOneVCall64Target", "zeroCtrlPostMinusOneVCall64SavedRA",
+    "zeroCtrlPostMinusOneVCall64NaturalResult", "zeroCtrlPostMinusOneVCall64Hits",
+    "zeroCtrlPostMinusOneVCall64ReturnHits",
+    "zeroCtrlPostMinusOneVCall64CollectionEnabled",
+    "zeroCtrlPostMinusOneVCall64CountSnapshot",
+    "zeroCtrlPostMinusOneVCall64ArraySnapshot",
+    "zeroCtrlPostMinusOneVCall64ArrayReadHits")
+T35_SYMBOLS = ("zeroCtrlCollectionPafFCF265D8Trace",
+    "zeroCtrlCollectionPafFCF265D8TraceEnd",
+    "zeroCtrlCollectionPafFCF265D8LastItem",
+    "zeroCtrlCollectionPafFCF265D8NaturalResult",
+    "zeroCtrlCollectionPafFCF265D8Hits",
+    "zeroCtrlCollectionPafFCF265D8NonzeroHits")
+T32_SYMBOLS = ("zeroCtrlPostImposeVCallTrace",
+    "zeroCtrlPostImposeVCallTraceEnd", "zeroCtrlPostImposeVCallReturnTrace",
+    "zeroCtrlPostImposeVCallReturnTraceEnd", "zeroCtrlPostImposeVCallTarget",
+    "zeroCtrlPostImposeVCallSavedRA", "zeroCtrlPostImposeVCallNaturalResult",
+    "zeroCtrlPostImposeVCallHits", "zeroCtrlPostImposeVCallReturnHits")
 
 
 def fail(message):
@@ -167,6 +215,7 @@ def check_sources(root):
     kernel_exports = (root / "kernel/exports.exp").read_text()
     user_imports = (root / "user/import.S").read_text()
     registration_header = (root / "kernel/sony_start_trace.h").read_text()
+    bsman_header = (root / "kernel/bsman_closed_shim.h").read_text()
     assembly = (root / "user/stub.S").read_text()
     build = (root / "build_linux.sh").read_text()
     sample_config = (root / "bin/zerovsh.ini").read_text()
@@ -424,6 +473,16 @@ def check_sources(root):
             "STATE_ZERO_CLASS zeroCtrlStateZeroClass17Trace, 17"):
         if invocation not in assembly:
             fail("T15 classification tracer is missing " + invocation)
+    state_class_macro = assembly[assembly.find(".macro STATE_ZERO_CLASS"):
+        assembly.find(".endm", assembly.find(".macro STATE_ZERO_CLASS"))]
+    if state_class_macro.count("zeroCtrlStateZero15To14EffectiveResult") != 2 or \
+            "zeroCtrlStateZeroVCallResult" in state_class_macro:
+        fail("T30.1 Class15/Class17 routing does not use only the effective result")
+    class18_source = assembly[assembly.find("zeroCtrlStateZeroClass18Trace:"):
+        assembly.find("zeroCtrlStateZeroClass18TraceEnd:")]
+    if "bne     $v1, $t2" not in class18_source or \
+            "zeroCtrlStateZero15To14EffectiveResult" in class18_source:
+        fail("T30.1 unnecessarily changed Class18 effective-v1 semantics")
     vcall = assembly[assembly.find("zeroCtrlStateZeroVCallTrace:"):
         assembly.find("zeroCtrlStateZeroVCallTraceEnd:")]
     vreturn = assembly[assembly.find("zeroCtrlStateZeroVReturnTrace:"):
@@ -433,7 +492,18 @@ def check_sources(root):
             "sw      $v0, %lo(zeroCtrlStateZeroVCallResult)" not in vreturn or \
             "lw      $ra, %lo(zeroCtrlStateZeroVCallRA)" not in vreturn:
         fail("T15 virtual-call trace does not preserve target/result/ra")
-    for symbol in ("zeroCtrlPostPafReturnTrace", "zeroCtrlPostVshReturnTrace"):
+    for token in ("zeroCtrlStateZero15To14CompatMode", "beqz    $t1, 65f",
+            "addiu   $t1, $zero, 15", "bne     $v0, $t1, 65f",
+            "addiu   $v0, $zero, 14", "zeroCtrlStateZero15To14SubstitutionHits",
+            "\n65:", "zeroCtrlStateZero15To14EffectiveResult"):
+        if token not in vreturn:
+            fail("T30 state-zero return source lacks " + token)
+    if not (vreturn.find("beqz    $t1, 65f") <
+            vreturn.find("bne     $v0, $t1, 65f") <
+            vreturn.find("addiu   $v0, $zero, 14") < vreturn.find("\n65:") <
+            vreturn.find("zeroCtrlStateZero15To14EffectiveResult")):
+        fail("T30 source does not guard the exact 15-to-14 substitution")
+    for symbol in ("zeroCtrlPostPafReturnTrace",):
         start = assembly.find(symbol + ":")
         end = assembly.find(symbol + "End:", start)
         leaf = assembly[start:end]
@@ -444,6 +514,76 @@ def check_sources(root):
         if len(v0_lines) != expected_count or any(
                 "sw      $v0," not in line for line in v0_lines):
             fail(symbol + " has unexpected natural-result uses")
+    post_vsh_call = assembly[assembly.find("zeroCtrlPostVshCallTrace:"):
+        assembly.find("zeroCtrlPostVshCallTraceEnd:")]
+    post_vsh_return = assembly[assembly.find("zeroCtrlPostVshReturnTrace:"):
+        assembly.find("zeroCtrlPostVshReturnTraceEnd:")]
+    if post_vsh_call.find("sw      $a0, %lo(zeroCtrlPostVshArgument)") < 0 or \
+            post_vsh_call.count("$a0") != 1:
+        fail("T31 call wrapper does not capture untouched a0 exactly once")
+    for token in ("sw      $v0, %lo(zeroCtrlPostVshNaturalResult)",
+            "lw      $t1, %lo(zeroCtrlPostVshCompatMode)", "beqz    $t1, 66f",
+            "ori     $t2, $t2, 0x000D", "bne     $t1, $t2, 66f",
+            "ori     $t2, $t2, 0x0107", "bne     $v0, $t2, 66f",
+            "addu    $v0, $zero, $zero", "zeroCtrlPostVshSubstitutionHits",
+            "\n66:", "sw      $v0, %lo(zeroCtrlPostVshEffectiveResult)",
+            "lw      $ra, %lo(zeroCtrlPostVshSavedRA)"):
+        if token not in post_vsh_return:
+            fail("T31 exact return source lacks " + token)
+    if not (post_vsh_return.find("zeroCtrlPostVshNaturalResult") <
+            post_vsh_return.find("zeroCtrlPostVshCompatMode") <
+            post_vsh_return.find("bne     $t1, $t2, 66f") <
+            post_vsh_return.find("bne     $v0, $t2, 66f") <
+            post_vsh_return.find("addu    $v0, $zero, $zero") <
+            post_vsh_return.find("\n66:") <
+            post_vsh_return.find("zeroCtrlPostVshEffectiveResult")):
+        fail("T31 natural/guard/substitution/effective ordering is invalid")
+    post_impose_call = assembly[assembly.find("zeroCtrlPostImposeVCallTrace:"):
+        assembly.find("zeroCtrlPostImposeVCallTraceEnd:")]
+    post_impose_return = assembly[assembly.find(
+        "zeroCtrlPostImposeVCallReturnTrace:"):assembly.find(
+        "zeroCtrlPostImposeVCallReturnTraceEnd:")]
+    for token in ("sw      $v0, %lo(zeroCtrlPostImposeVCallTarget)",
+            "sw      $ra, %lo(zeroCtrlPostImposeVCallSavedRA)",
+            "zeroCtrlPostImposeVCallHits", "zeroCtrlPostImposeVCallReturnTrace",
+            "jr      $v0"):
+        if token not in post_impose_call:
+            fail("T32 indirect call wrapper lacks " + token)
+    if post_impose_call.count("$v0") != 2 or any(token in post_impose_call for token in
+            ("jal ", "jalr", "$gp", "sceIo", "Alloc", "malloc")):
+        fail("T32 indirect call wrapper changes target or performs a call/I/O/allocation")
+    for token in ("addiu   $sp, $sp, -8", "sw      $t0, 0($sp)",
+            "sw      $t1, 4($sp)",
+            "sw      $v0, %lo(zeroCtrlPostImposeVCallNaturalResult)",
+            "zeroCtrlPostImposeVCallReturnHits",
+            "lw      $ra, %lo(zeroCtrlPostImposeVCallSavedRA)",
+            "lw      $t1, 4($sp)", "lw      $t0, 0($sp)",
+            "addiu   $sp, $sp, 8", "jr      $ra"):
+        if token not in post_impose_return:
+            fail("T32 indirect return wrapper lacks " + token)
+    if post_impose_return.count("$v0") != 1 or any(token in post_impose_return for token in
+            ("jal ", "jalr", "$gp", "sceIo", "Alloc", "malloc")):
+        fail("T32 return wrapper transforms v0 or performs a call/I/O/allocation")
+    t33_call = assembly[assembly.find("zeroCtrlPostMinusOneVCall64Trace:"):
+        assembly.find("zeroCtrlPostMinusOneVCall64TraceEnd:")]
+    t33_return = assembly[assembly.find("zeroCtrlPostMinusOneVCall64ReturnTrace:"):
+        assembly.find("zeroCtrlPostMinusOneVCall64ReturnTraceEnd:")]
+    for body, role in ((t33_call, "call"), (t33_return, "return")):
+        for token in ("addiu   $sp, $sp, -8", "sw      $t0, 0($sp)",
+                "sw      $t1, 4($sp)", "lw      $t1, 4($sp)",
+                "lw      $t0, 0($sp)", "addiu   $sp, $sp, 8"):
+            if body.count(token) != 1:
+                fail("T33 " + role + " wrapper lacks exact frame operation " + token)
+        if any(token in body for token in ("jal ", "jalr", "$gp", "sceIo",
+                "Alloc", "malloc")):
+            fail("T33 " + role + " wrapper calls code or performs I/O/allocation")
+    t33_v0_lines = [line for line in t33_return.splitlines() if "$v0" in line]
+    if t33_call.count("$v0") != 2 or "jr      $v0" not in t33_call or \
+            len(t33_v0_lines) != 3 or \
+            "sw      $v0, %lo(zeroCtrlPostMinusOneVCall64NaturalResult)" not in t33_v0_lines[0] or \
+            "lw      $t1, 0x364($v0)" not in t33_v0_lines[1] or \
+            "lw      $t1, 0x360($v0)" not in t33_v0_lines[2]:
+        fail("T33 wrappers transform the indirect target or natural result")
     post_paf_source = assembly[assembly.find("zeroCtrlPostPafReturnTrace:"):
         assembly.find("zeroCtrlPostPafReturnTraceEnd:")]
     for result_symbol in ("zeroCtrlPostPafResult0", "zeroCtrlPostPafResult1"):
@@ -828,7 +968,7 @@ def check_sources(root):
     for token in ("addiu   $sp, $sp, -16", "sw      $t0, 0($sp)",
             "sw      $t1, 4($sp)", "sw      $t2, 8($sp)",
             "sw      $ra, 12($sp)",
-            "lw      $t2, %lo(zeroCtrlConsumer6F84Target)", "jalr    $t2",
+            "lw      $t2, %lo(\\target)", "jalr    $t2",
             "sw      $v0, %lo(\\result)($t0)", "lw      $t2, 8($sp)",
             "lw      $t1, 4($sp)", "lw      $t0, 0($sp)",
             "lw      $ra, 12($sp)", "addiu   $sp, $sp, 16", "jr      $ra"):
@@ -838,8 +978,39 @@ def check_sources(root):
             consumer_stub.count("$v0") != 1 or any(token in consumer_stub for token in
             ("sceIo", "Alloc", "malloc")):
         fail("T23 wrapper has an extra call or transforms natural v0")
-    if assembly.count("CONSUMER_6F84_TRACE zeroCtrlConsumer") != 2:
-        fail("T22 must use exactly two dedicated consumer wrappers")
+    compat_13f6c = assembly[assembly.find("zeroCtrlConsumer13F6CTrace:"):
+        assembly.find("zeroCtrlConsumer13F6CTraceEnd:")]
+    for token in ("jalr    $t2", "zeroCtrlConsumer13F6CNaturalResult",
+            "zeroCtrlConsumer13F6CCompatMode", "beqz    $t1, 63f",
+            "bnez    $v0, 63f", "addiu   $v0, $zero, 1",
+            "zeroCtrlConsumer13F6CSubstitutionHits",
+            "zeroCtrlConsumer13F6CEffectiveResult"):
+        if token not in compat_13f6c:
+            fail("T25 13F6C wrapper lacks " + token)
+    mode_bypass_13 = compat_13f6c.find("beqz    $t1, 63f")
+    natural_bypass_13 = compat_13f6c.find("bnez    $v0, 63f")
+    substitution_13 = compat_13f6c.find("addiu   $v0, $zero, 1")
+    no_substitute_13 = compat_13f6c.find("\n63:")
+    if min(mode_bypass_13, natural_bypass_13, substitution_13,
+            no_substitute_13) < 0 or not (mode_bypass_13 < natural_bypass_13 <
+            substitution_13 < no_substitute_13):
+        fail("T25 source does not route both bypasses around substitution to 63")
+    compat_stub = assembly[assembly.find("zeroCtrlConsumer14020Trace:"):
+        assembly.find("zeroCtrlConsumer14020TraceEnd:")]
+    for token in ("jalr    $t2", "zeroCtrlConsumer14020NaturalResult",
+            "zeroCtrlConsumer14020CompatMode", "beqz    $t1",
+            "bnez    $v0", "addiu   $v0, $zero, 1",
+            "zeroCtrlConsumer14020SubstitutionHits",
+            "zeroCtrlConsumer14020EffectiveResult"):
+        if token not in compat_stub:
+            fail("T24 14020 wrapper lacks " + token)
+    mode_bypass = compat_stub.find("beqz    $t1, 62f")
+    natural_bypass = compat_stub.find("bnez    $v0, 62f")
+    substitution = compat_stub.find("addiu   $v0, $zero, 1")
+    no_substitute = compat_stub.find("\n62:")
+    if min(mode_bypass, natural_bypass, substitution, no_substitute) < 0 or \
+            not mode_bypass < natural_bypass < substitution < no_substitute:
+        fail("T24 source does not route both bypasses around substitution to 62")
     if "sceKernelCreateThread" in consumers_install or \
             re.search(r"_sw\([^\n]*vsh_shared_global", consumers_install):
         fail("T22 creates a thread or writes the Sony shared global")
@@ -868,6 +1039,12 @@ def check_sources(root):
         "CALLSITE_14020_PSEUDODIRECT_RANGE_INVALID",
         "CALLSITE_13F6C_RESULT_RANGE_INVALID",
         "CALLSITE_14020_RESULT_RANGE_INVALID",
+        "CALLSITE_14020_COMPAT_MODE_RANGE_INVALID",
+        "CALLSITE_14020_EFFECTIVE_RESULT_RANGE_INVALID",
+        "CALLSITE_14020_SUBSTITUTION_HITS_RANGE_INVALID",
+        "CALLSITE_13F6C_COMPAT_MODE_RANGE_INVALID",
+        "CALLSITE_13F6C_EFFECTIVE_RESULT_RANGE_INVALID",
+        "CALLSITE_13F6C_SUBSTITUTION_HITS_RANGE_INVALID",
         "REPLACEMENT_TARGET_MISMATCH",
     )
     for reason in guard_reasons:
@@ -911,6 +1088,16 @@ def check_sources(root):
     for field in ("consumer_13f6c_result_addr", "consumer_14020_result_addr"):
         if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
             fail("T23 registration does not validate " + field)
+    for field in ("consumer_14020_compat_mode_addr",
+            "consumer_14020_effective_result_addr",
+            "consumer_14020_substitution_hits_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T24 registration does not validate " + field)
+    for field in ("consumer_13f6c_compat_mode_addr",
+            "consumer_13f6c_effective_result_addr",
+            "consumer_13f6c_substitution_hits_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T25 registration does not validate " + field)
     result_init = consumers_install.find(
         "_sw(0xFFFFFFFF, bsman->consumer_result_addr[i])")
     if result_init < 0 or result_init > consumer_commit or \
@@ -922,6 +1109,287 @@ def check_sources(root):
         fail("T23 natural results are not snapshotted and deferred")
     if "PSP1000PafPresentCompat = Disabled" not in sample_config:
         fail("callsite PAF compatibility experiment is not default-disabled")
+    if "PSP1000Consumer14020Compat = Disabled" not in sample_config or \
+            '"PSP1000Consumer14020Compat", "Disabled"' not in kernel:
+        fail("T24 compatibility is not default-disabled")
+    if "PSP1000Consumer13F6CCompat = Disabled" not in sample_config or \
+            '"PSP1000Consumer13F6CCompat", "Disabled"' not in kernel:
+        fail("T25 compatibility is not default-disabled")
+    t25_gate = kernel[kernel.find("consumer_13f6c_compat_enabled ="):
+        kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
+            "consumer_13f6c_compat_enabled ="))]
+    for gate in ('devkit == 0x06060110',
+            'strcmp(psp1000Diagnostics, "Enabled") == 0',
+            '"DangerousCaller58D4"',
+            'strcmp(psp1000Consumer13F6CCompat, "Enabled") == 0'):
+        if gate not in t25_gate:
+            fail("T25 compatibility gating lacks " + gate)
+    if "ZERO_TRIGGER_13F6C" in t25_gate:
+        fail("T25 compatibility enables the legacy 13F6C direct trigger")
+    for scalar in T25_SCALARS:
+        if assembly.count(scalar + ": .space 4") != 1:
+            fail("T25 does not define exactly one fixed scalar " + scalar)
+    t25_validation = consumers_install.find(
+        "consumer_13f6c_compat_mode_addr, 4")
+    if t25_validation < 0 or t25_validation > guard_success:
+        fail("T25 scalar validation does not precede transaction success")
+    for initialization in (
+            "_sw(bsman->consumer_13f6c_compat_enabled ? 1 : 0,",
+            "_sw(0xFFFFFFFF, bsman->consumer_13f6c_effective_result_addr)",
+            "_sw(0, bsman->consumer_13f6c_substitution_hits_addr)"):
+        position = consumers_install.find(initialization)
+        if position < guard_success or position > consumer_commit:
+            fail("T25 scalar initialization is outside the guarded transaction")
+    if "[vsh-6f84-14020-compat]" not in writer:
+        fail("T24 deferred compatibility diagnostic is missing")
+    if "[vsh-6f84-13f6c-compat]" not in writer:
+        fail("T25 deferred compatibility diagnostic is missing")
+    if "PSP1000PafCapabilityMaskCompat = Disabled" not in sample_config or \
+            '"PSP1000PafCapabilityMaskCompat", "Disabled"' not in kernel:
+        fail("T28 PAF mask compatibility is not default-disabled")
+    t28_gate = kernel[kernel.find("paf_mask_compat_enabled ="):
+        kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
+            "paf_mask_compat_enabled ="))]
+    for gate in ('devkit == 0x06060110',
+            'strcmp(psp1000Diagnostics, "Enabled") == 0',
+            '"DangerousCaller58D4"',
+            'strcmp(psp1000PafCapabilityMaskCompat, "Enabled") == 0'):
+        if gate not in t28_gate:
+            fail("T28 mask compatibility gating lacks " + gate)
+    if "PSP1000StateZero15To14Compat = Disabled" not in sample_config or \
+            '"PSP1000StateZero15To14Compat", "Disabled"' not in kernel:
+        fail("T30 state-zero compatibility is not default-disabled")
+    t30_gate = kernel[kernel.find("state_zero_15to14_compat_enabled ="):
+        kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
+            "state_zero_15to14_compat_enabled ="))]
+    for gate in ('devkit == 0x06060110',
+            'strcmp(psp1000Diagnostics, "Enabled") == 0',
+            '"DangerousCaller58D4"',
+            'strcmp(psp1000StateZero15To14Compat, "Enabled") == 0'):
+        if gate not in t30_gate:
+            fail("T30 state-zero compatibility gating lacks " + gate)
+    if "[state-zero-15to14-compat]" not in writer:
+        fail("T30 deferred state-zero compatibility diagnostic is missing")
+    for field in ("state_zero_15to14_compat_mode_addr",
+            "state_zero_15to14_effective_result_addr",
+            "state_zero_15to14_substitution_hits_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T30 registration does not range-validate " + field)
+    for initialization in (
+            "_sw(bsman->state_zero_15to14_compat_enabled ? 1 : 0,",
+            "_sw(0xFFFFFFFF, bsman->state_zero_15to14_effective_result_addr)",
+            "_sw(0, bsman->state_zero_15to14_substitution_hits_addr)"):
+        if initialization not in bsman_install:
+            fail("T30 scalar initialization is missing " + initialization)
+    if "PSP1000ImposeParam8000000DCompat = Disabled" not in sample_config or \
+            '"PSP1000ImposeParam8000000DCompat", "Disabled"' not in kernel:
+        fail("T31 impose compatibility is not default-disabled")
+    t31_gate = kernel[kernel.find("post_vsh_compat_enabled ="):
+        kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
+            "post_vsh_compat_enabled ="))]
+    for gate in ("slide_diag.bsman.activation_enabled",
+            "slide_diag.bsman.state_zero_15to14_compat_enabled",
+            'strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0'):
+        if gate not in t31_gate:
+            fail("T31 impose compatibility gating lacks " + gate)
+    if "[vsh-impose-param-8000000d-compat]" not in writer:
+        fail("T31 deferred impose diagnostic is missing")
+    for field in ("post_vsh_argument_addr", "post_vsh_compat_mode_addr",
+            "post_vsh_effective_result_addr", "post_vsh_substitution_hits_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T31 registration does not range-validate " + field)
+    for initialization in ("_sw(0xFFFFFFFF, bsman->post_vsh_argument_addr)",
+            "_sw(bsman->post_vsh_compat_enabled ? 1 : 0,",
+            "_sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr)",
+            "_sw(0, bsman->post_vsh_substitution_hits_addr)"):
+        if initialization not in bsman_install:
+            fail("T31 scalar initialization is missing " + initialization)
+    if "PSP1000PostImposeVCallTrace = Disabled" not in sample_config or \
+            '"PSP1000PostImposeVCallTrace", "Disabled"' not in kernel:
+        fail("T32 trace is not default-disabled")
+    t32_gate = kernel[kernel.find("post_impose_vcall_enabled ="):
+        kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
+            "post_impose_vcall_enabled ="))]
+    if "slide_diag.bsman.post_vsh_compat_enabled" not in t32_gate or \
+            'strcmp(psp1000PostImposeVCallTrace, "Enabled") == 0' not in t32_gate:
+        fail("T32 trace does not require the exact T31 gate and explicit opt-in")
+    for token in ("post_impose_vcall_original[0] != 0x0040F809",
+            "post_impose_vcall_original[1] != 0",
+            "bsman->activation_addr + 0x120",
+            "bsman->post_impose_vcall_validation = 1"):
+        if token not in bsman_install:
+            fail("T32 activation transaction lacks " + token)
+    for field in ("post_impose_vcall_target_addr",
+            "post_impose_vcall_saved_ra_addr",
+            "post_impose_vcall_natural_result_addr",
+            "post_impose_vcall_hits_addr",
+            "post_impose_vcall_return_hits_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T32 registration does not range-validate " + field)
+    if bsman_install.count("bsman->activation_addr + 0x120") < 4 or \
+            bsman_install.count("_sw(bsman->post_impose_vcall_replacement,") != 1:
+        fail("T32 does not retain one validated activation+0x120 patch owner")
+    if "[post-impose-vcall-50]" not in writer:
+        fail("T32 deferred diagnostic is missing")
+    if "PSP1000PostMinusOneVCall64Trace = Disabled" not in sample_config or \
+            '"PSP1000PostMinusOneVCall64Trace", "Disabled"' not in kernel:
+        fail("T33 trace is not default-disabled")
+    t33_gate = kernel[kernel.find("post_minus_one_vcall64_enabled ="):
+        kernel.find(";", kernel.find("post_minus_one_vcall64_enabled ="))]
+    if "post_impose_vcall_enabled" not in t33_gate or \
+            'strcmp(psp1000PostMinusOneVCall64Trace, "Enabled") == 0' not in t33_gate:
+        fail("T33 trace does not require the T32/T31 gate and explicit opt-in")
+    for token in ("post_minus_one_vcall64_original[0] != 0x0040F809",
+            "post_minus_one_vcall64_original[1] != 0x0000A021",
+            "bsman->activation_addr + 0x138",
+            "bsman->post_minus_one_vcall64_validation = 1"):
+        if token not in bsman_install:
+            fail("T33 activation transaction lacks " + token)
+    if bsman_install.count("_sw(bsman->post_minus_one_vcall64_replacement,") != 1 or \
+            "bsman->activation_addr + 0x13C" in bsman_install[bsman_install.find(
+                "/* Transaction commit"):]:
+        fail("T33 does not retain one +0x138 owner or overwrites its delay slot")
+    if "[post-minus-one-vcall-64]" not in writer or \
+            "target_offset == 0x1F8E0" not in writer:
+        fail("T33 deferred target-offset diagnostic is missing")
+    for field in ("post_minus_one_vcall64_target_addr",
+            "post_minus_one_vcall64_saved_ra_addr",
+            "post_minus_one_vcall64_natural_result_addr",
+            "post_minus_one_vcall64_hits_addr",
+            "post_minus_one_vcall64_return_hits_addr"):
+        if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
+            fail("T33 registration does not range-validate " + field)
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 896" not in bsman_header:
+        fail("T35 registration ABI is not exactly 896 bytes")
+    if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
+            '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
+        fail("T34 collection trace is not default-disabled")
+    t34_gate = kernel[kernel.find("post_vcall64_collection_enabled ="):
+        kernel.find(";", kernel.find("post_vcall64_collection_enabled ="))]
+    if "post_minus_one_vcall64_enabled" not in t34_gate or \
+            'strcmp(psp1000PostVCall64CollectionTrace, "Enabled") == 0' not in t34_gate:
+        fail("T34 does not depend on T33 and its explicit opt-in")
+    for token in ("lw      $t1, 0x364($v0)", "beqz    $t1, 67f",
+            "lw      $t1, 0x360($v0)", "\n67:"):
+        if token not in t33_return:
+            fail("T34 return tracer lacks " + token)
+    if not (t33_return.find("0x364($v0)") < t33_return.find("beqz    $t1, 67f",
+            t33_return.find("0x364($v0)")) < t33_return.find("0x360($v0)") <
+            t33_return.find("\n67:")):
+        fail("T34 array read is not guarded by the natural nonzero count")
+    if t33_return.count("beqz    $t1, 67f") != 2:
+        fail("T34 mode/count bypasses do not share the exact skip label")
+    for scalar in ("CollectionEnabled", "CountSnapshot", "ArraySnapshot",
+            "ArrayReadHits"):
+        if ("zeroCtrlPostMinusOneVCall64" + scalar) not in t33_return:
+            fail("T34 wrapper lacks diagnostic scalar " + scalar)
+    for field in ("post_minus_one_vcall64_collection_enabled_addr",
+            "post_minus_one_vcall64_count_snapshot_addr",
+            "post_minus_one_vcall64_array_snapshot_addr",
+            "post_minus_one_vcall64_array_read_hits_addr"):
+        if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
+            fail("T34 registration does not range-validate " + field)
+    for initialization in (
+            "_sw(bsman->post_vcall64_collection_enabled ? 1 : 0,",
+            "_sw(0xFFFFFFFF, bsman->post_minus_one_vcall64_count_snapshot_addr)",
+            "_sw(0, bsman->post_minus_one_vcall64_array_snapshot_addr)",
+            "_sw(0, bsman->post_minus_one_vcall64_array_read_hits_addr)"):
+        if initialization not in bsman_install:
+            fail("T34 transaction lacks initialization " + initialization)
+    if "[post-vcall64-collection]" not in writer:
+        fail("T34 deferred diagnostic is missing")
+    if "PSP1000CollectionPafFCF265D8Trace = Disabled" not in sample_config or \
+            '"PSP1000CollectionPafFCF265D8Trace", "Disabled"' not in kernel:
+        fail("T35 trace is not default-disabled")
+    t35_gate = kernel[kernel.find("collection_paf_fcf265d8_enabled ="):
+        kernel.find(";", kernel.find("collection_paf_fcf265d8_enabled ="))]
+    if "post_vcall64_collection_enabled" not in t35_gate or \
+            'strcmp(psp1000CollectionPafFCF265D8Trace, "Enabled") == 0' not in t35_gate:
+        fail("T35 does not depend on the complete T34 gate")
+    t35 = assembly[assembly.find("zeroCtrlCollectionPafFCF265D8Trace:"):
+        assembly.find("zeroCtrlCollectionPafFCF265D8TraceEnd:")]
+    for token in ("sw      $a0, %lo(zeroCtrlCollectionPafFCF265D8LastItem)",
+            "sw      $v0, %lo(zeroCtrlCollectionPafFCF265D8NaturalResult)",
+            "beqz    $v0, 68f", "addiu   $ra, $ra, -0x12C", "\n68:"):
+        if token not in t35:
+            fail("T35 decision tracer lacks " + token)
+    if t35.count("$v0") != 2 or t35.count("$a0") != 1 or \
+            any(token in t35 for token in ("jal ", "jalr", "$gp", "sceIo",
+                "Alloc", "malloc")):
+        fail("T35 tracer transforms inputs or performs a call/I/O/allocation")
+    for token in ("collection_paf_fcf265d8_original[0] != 0x1440FFB6",
+            "collection_paf_fcf265d8_original[1] != 0x02002021",
+            "bsman->activation_addr + 0x170"):
+        if token not in bsman_install:
+            fail("T35 transaction lacks " + token)
+    commit = bsman_install[bsman_install.find("/* Transaction commit"):]
+    if commit.count("_sw(bsman->collection_paf_fcf265d8_replacement,") != 1 or \
+            "bsman->activation_addr + 0x168" in commit or \
+            "bsman->activation_addr + 0x174" in commit:
+        fail("T35 patches the PAF call/delay slot or has multiple owners")
+    if "[collection-paf-fcf265d8]" not in writer:
+        fail("T35 deferred diagnostic is missing")
+    for field in ("collection_paf_fcf265d8_last_item_addr",
+            "collection_paf_fcf265d8_natural_result_addr",
+            "collection_paf_fcf265d8_hits_addr",
+            "collection_paf_fcf265d8_nonzero_hits_addr"):
+        if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
+            fail("T35 registration does not range-validate " + field)
+    if "zeroCtrlRegistrationLeafValid(helper,\n                copied.collection_paf_fcf265d8_leaf_addr" not in kernel:
+        fail("T35 registration does not validate its helper leaf range")
+    for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
+        if record not in writer:
+            fail("T27 deferred diagnostic is missing " + record)
+    if "zeroCtrlInstallCapabilityMaskTraces();" not in vsh_record:
+        fail("T27 transaction is not installed at the bounded early VSH point")
+    t27_install = kernel[kernel.find("static void zeroCtrlInstallCapabilityMaskTraces(void) {"):
+        kernel.find("static void zeroCtrlInstall6F84ConsumerTraces(void) {")]
+    for token in ("0x14014", "0x1402C", "0x14038", "0x1404C",
+            "0x6F44", "0x6FC4", "0x7004", "0x3F778",
+            "0x0062800B", "0x27B10030", "vsh->text_size != 0x556C0"):
+        if token not in t27_install:
+            fail("T27 transaction lacks validated constant " + token)
+    t27_commit = t27_install.find("_sw(replacement[i], callsite[i])")
+    t27_validation = t27_install.find("capability_validation[i] = 1")
+    if t27_install.count("_sw(replacement[i], callsite[i])") != 1 or \
+            not 0 <= t27_validation < t27_commit:
+        fail("T27 callsites are not an all-or-none four-word transaction")
+    for initialization in (
+            "_sw(bsman->paf_mask_compat_enabled ? 1 : 0, bsman->paf_mask_compat_mode_addr)",
+            "_sw(0xFFFFFFFF, bsman->paf_mask_effective_addr)",
+            "_sw(0, bsman->paf_mask_substitution_hits_addr)"):
+        position = t27_install.find(initialization)
+        if position < t27_validation or position > t27_commit:
+            fail("T28 scalar initialization is outside the all-or-none transaction")
+    if "value_scalar[3] = bsman->paf_mask_natural_addr" not in t27_install or \
+            "_sw(0xFFFFFFFF, value_scalar[i])" not in t27_install or \
+            "_sw(0, hits_scalar[i])" not in t27_install or \
+            "_sw(target[i], target_scalar[i])" not in t27_install:
+        fail("T28 natural/hits/target initialization is incomplete")
+    for field in ("paf_mask_natural_addr", "paf_mask_compat_mode_addr",
+            "paf_mask_effective_addr", "paf_mask_substitution_hits_addr"):
+        if ("copied." + field) not in kernel[kernel.find(
+                "void zeroCtrlRegisterBSManClosedShim"):kernel.find(
+                "void zeroCtrlRecordVshSlideTarget")]:
+            fail("T28 registration does not validate/copy " + field)
+    mask_source = assembly[assembly.find("zeroCtrlPafCapabilityMaskTrace:"):
+        assembly.find("zeroCtrlPafCapabilityMaskTraceEnd:")]
+    mask_source_tokens = ("sw      $a0, %lo(zeroCtrlPafCapabilityMaskNatural)",
+        "lw      $t1, %lo(zeroCtrlPafCapabilityMaskCompatMode)",
+        "beqz    $t1, 64f", "bne     $a0, $t2, 64f",
+        "addiu   $a0, $zero, 0x1E9",
+        "zeroCtrlPafCapabilityMaskSubstitutionHits", "\n64:",
+        "sw      $a0, %lo(zeroCtrlPafCapabilityMaskEffective)",
+        "lw      $t2, %lo(zeroCtrlPafCapabilityMaskTarget)", "jr      $t2")
+    if any(token not in mask_source for token in mask_source_tokens) or \
+            not (mask_source.find("beqz    $t1, 64f") <
+                mask_source.find("bne     $a0, $t2, 64f") <
+                mask_source.find("addiu   $a0, $zero, 0x1E9") <
+                mask_source.find("\n64:") <
+                mask_source.find("zeroCtrlPafCapabilityMaskEffective")) or \
+            any(token in mask_source for token in ("$v0", "$gp", "$sp", "$ra",
+                "$s0", "$s1", "jal", "sceIo", "Alloc")):
+        fail("T28 mask tail wrapper does not implement exact guarded substitution")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
     if stub_validation < 0 or caller_proof <= stub_validation or \
@@ -1196,6 +1664,13 @@ def require_result_store_relocation(body, function, result_symbol):
         fail(function + " does not store v0 to " + result_symbol)
 
 
+def relocation_bound_to_instruction(body, scalar, instruction):
+    """Return whether an instruction owns the scalar's following LO16 relocation."""
+    pattern = (instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+               re.escape(scalar) + r"\b")
+    return re.search(pattern, body) is not None
+
+
 def check_t22_consumer_semantics(body, symbol):
     """Prove the assembled T23 wrapper captures but preserves natural v0."""
     forbidden = r"\b(?:at|v1|a[0-3]|t[3-9]|s[0-7]|k[01]|gp|fp)\b"
@@ -1242,6 +1717,562 @@ def check_t22_consumer_semantics(body, symbol):
     if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]):
         fail(symbol + " transforms or uses natural v0 beyond one store")
 
+
+def check_selective_consumer_semantics(body, symbol):
+    """Prove a selective consumer preserves nonzero v0 and substitutes zero."""
+    forbidden = r"\b(?:at|v1|a[0-3]|t[3-9]|s[0-7]|k[01]|gp|fp)\b"
+    set_v0_one = r"\b(?:li\s+v0,\s*1|addiu\s+v0,\s*zero,\s*1)\b"
+    if re.search(forbidden, body) or re.search(r"\bjal\b", body):
+        fail(symbol + " uses a forbidden register or direct function call")
+    ordered = (
+        r"\baddiu\s+sp,\s*sp,\s*-16\b",
+        r"\bsw\s+t0,\s*0\(sp\)", r"\bsw\s+t1,\s*4\(sp\)",
+        r"\bsw\s+t2,\s*8\(sp\)", r"\bsw\s+ra,\s*12\(sp\)",
+        r"\blui\s+t0,", r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1\b",
+        r"\bsw\s+t1,", r"\blui\s+t0,", r"\blw\s+t2,",
+        r"\bjalr\s+t2\b", r"\bnop\b", r"\blui\s+t0,",
+        r"\bsw\s+v0,", r"\blui\s+t0,", r"\blw\s+t1,",
+        r"\bbeqz\s+t1,", r"\bbnez\s+v0,",
+        set_v0_one, r"\blui\s+t0,", r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b", r"\bsw\s+t1,",
+        r"\blui\s+t0,", r"\bsw\s+v0,",
+        r"\blw\s+t2,\s*8\(sp\)", r"\blw\s+t1,\s*4\(sp\)",
+        r"\blw\s+t0,\s*0\(sp\)", r"\blw\s+ra,\s*12\(sp\)",
+        r"\baddiu\s+sp,\s*sp,\s*16\b", r"\bjr\s+ra\b", r"\bnop\b",
+    )
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail(symbol + " lacks ordered T24 operation " + pattern)
+        cursor += match.end()
+    if len(re.findall(set_v0_one, body)) != 1 or \
+            len(re.findall(r"\baddiu\s+sp,\s*sp,", body)) != 2 or \
+            len(re.findall(r"\bjalr\s+t2\b", body)) != 1 or \
+            len(re.findall(r"\bjr\s+ra\b", body)) != 1:
+        fail(symbol + " has an extra substitution, call, return, or stack adjustment")
+    if len(re.findall(r"\blw\s+", body)) != 8 or \
+            len(re.findall(r"\bsw\s+", body)) != 8:
+        fail(symbol + " does not have exactly eight loads and eight stores")
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    expected_v0 = (r"\bsw\s+v0,", r"\bbnez\s+v0,", set_v0_one,
+                   r"\bsw\s+v0,")
+    if len(v0_lines) != 4 or any(not re.search(pattern, line)
+            for pattern, line in zip(expected_v0, v0_lines)):
+        fail(symbol + " has a v0 use outside natural store/test/substitute/effective store")
+
+
+def check_t27_mask_semantics(body):
+    """Prove exact T28 mask substitution and transparent tail transfer."""
+    symbol = "zeroCtrlPafCapabilityMaskTrace"
+    forbidden = r"\b(?:at|v[01]|a[1-3]|t[3-9]|s[0-7]|k[01]|gp|sp|fp|ra)\b"
+    set_t2_two = r"\b(?:li\s+t2,\s*2|addiu\s+t2,\s*zero,\s*2)\b"
+    set_a0_mask = (r"\b(?:li\s+a0,\s*(?:0x0*1e9|489)|"
+                   r"addiu\s+a0,\s*zero,\s*(?:0x0*1e9|489))\b")
+    if re.search(forbidden, body) or re.search(r"\bjalr?\b", body):
+        fail(symbol + " uses a forbidden register, frame, or call")
+    ordered = (r"\bsw\s+a0,", r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b", r"\bsw\s+t1,",
+        r"\blw\s+t1,", r"\bbeqz\s+t1,", set_t2_two,
+        r"\bbne\s+a0,\s*t2,", set_a0_mask, r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b", r"\bsw\s+t1,",
+        r"\bsw\s+a0,", r"\blw\s+t2,", r"\bjr\s+t2\b", r"\bnop\b")
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail(symbol + " lacks ordered tail-transfer operation " + pattern)
+        cursor += match.end()
+    a0_lines = [line for line in body.splitlines() if re.search(r"\ba0\b", line)]
+    expected_a0 = (r"\bsw\s+a0,", r"\bbne\s+a0,\s*t2,", set_a0_mask,
+                   r"\bsw\s+a0,")
+    if len(a0_lines) != 4 or any(not re.search(pattern, line, re.I)
+            for pattern, line in zip(expected_a0, a0_lines)) or \
+            len(re.findall(set_a0_mask, body, re.I)) != 1 or \
+            len(re.findall(r"\blw\s+", body)) != 4 or \
+            len(re.findall(r"\bsw\s+", body)) != 4 or \
+            len(re.findall(r"\bjr\s+t2\b", body)) != 1:
+        fail(symbol + " has an unintended a0, memory, or control operation")
+
+
+def check_t30_state_zero_return_semantics(body):
+    """Prove the existing return owner performs only exact 15-to-14 compat."""
+    symbol = "zeroCtrlStateZeroVReturnTrace"
+    set_v0_14 = r"\b(?:li\s+v0,\s*14|addiu\s+v0,\s*zero,\s*14)\b"
+    set_t1_15 = r"\b(?:li\s+t1,\s*15|addiu\s+t1,\s*zero,\s*15)\b"
+    forbidden = r"\b(?:at|v1|a[0-3]|t[2-9]|s[0-7]|k[01]|gp|fp)\b"
+    if re.search(forbidden, body) or re.search(r"\bjalr?\b", body):
+        fail(symbol + " uses a forbidden register or call")
+    ordered = (r"\baddiu\s+sp,\s*sp,\s*-8\b", r"\bsw\s+t0,",
+        r"\bsw\s+t1,", r"\bsw\s+v0,", r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b", r"\bsw\s+t1,",
+        r"\blw\s+t1,", r"\bbeqz\s+t1,", set_t1_15,
+        r"\bbne\s+v0,\s*t1,", set_v0_14, r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b", r"\bsw\s+t1,",
+        r"\bsw\s+v0,", r"\blw\s+t1,", r"\bori\s+t1,",
+        r"\bsw\s+t1,", r"\blw\s+ra,", r"\blw\s+t1,",
+        r"\blw\s+t0,", r"\baddiu\s+sp,\s*sp,\s*8\b",
+        r"\bjr\s+ra\b", r"\bnop\b")
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail(symbol + " lacks ordered T30 operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    expected_v0 = (r"\bsw\s+v0,", r"\bbne\s+v0,\s*t1,", set_v0_14,
+                   r"\bsw\s+v0,")
+    if len(v0_lines) != 4 or any(not re.search(pattern, line, re.I)
+            for pattern, line in zip(expected_v0, v0_lines)) or \
+            len(re.findall(set_v0_14, body, re.I)) != 1 or \
+            len(re.findall(r"\blw\s+", body)) != 7 or \
+            len(re.findall(r"\bsw\s+", body)) != 7 or \
+            len(re.findall(r"\baddiu\s+sp,\s*sp,", body)) != 2 or \
+            len(re.findall(r"\bjr\s+ra\b", body)) != 1:
+        fail(symbol + " has unintended T30 result/frame/memory semantics")
+
+
+def check_t301_class_input(body, symbol, relocatable=False, expected_addr=None):
+    """Prove Class15/Class17 route from the T30 effective-result slot."""
+    natural = "zeroCtrlStateZeroVCallResult"
+    effective = "zeroCtrlStateZero15To14EffectiveResult"
+    if natural in body:
+        fail(symbol + " references the natural diagnostic slot")
+    if relocatable:
+        if len(re.findall(r"R_MIPS_HI16\s+" + effective + r"\b", body)) != 1 or \
+                len(re.findall(r"R_MIPS_LO16\s+" + effective + r"\b", body)) != 1 or \
+                not re.search(r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                    effective + r"\b", body):
+            fail(symbol + " lacks exact effective-result input relocations")
+    elif expected_addr is not None:
+        match = re.search(r"[0-9a-f]+:\s+([0-9a-f]{8})\s+"
+                r"lui\s+t0,.*?[0-9a-f]+:\s+([0-9a-f]{8})\s+"
+                r"lw\s+t2,", body, re.I | re.S)
+        if not match:
+            fail(symbol + " lacks linked LUI/LW classification input")
+        lui_word = int(match.group(1), 16)
+        lw_word = int(match.group(2), 16)
+        upper = (lui_word & 0xFFFF) << 16
+        low = lw_word & 0xFFFF
+        if low > 0x7FFF:
+            low -= 0x10000
+        if ((upper + low) & 0xFFFFFFFF) != expected_addr:
+            fail(symbol + " linked classification input is not the effective slot")
+
+
+def check_t31_vsh_return_semantics(body):
+    """Prove only the exact impose argument/result pair can become zero."""
+    symbol = "zeroCtrlPostVshReturnTrace"
+    set_v0_zero = r"\b(?:move\s+v0,\s*zero|addu\s+v0,\s*zero,\s*zero)\b"
+    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b", body):
+        fail(symbol + " uses gp, a frame, or a call")
+    ordered = (r"\bsw\s+v0,", r"\blw\s+t1,", r"\bbeqz\s+t1,",
+        r"\blw\s+t1,", r"\blui\s+t2,\s*0x8000", r"\bori\s+t2,.*0xd",
+        r"\bbne\s+t1,\s*t2,", r"\blui\s+t2,\s*0x8000",
+        r"\bori\s+t2,.*0x107", r"\bbne\s+v0,\s*t2,", set_v0_zero,
+        r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\bsw\s+v0,", r"\blw\s+ra,", r"\bjr\s+ra\b", r"\bnop\b")
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail(symbol + " lacks ordered T31 operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    expected_v0 = (r"\bsw\s+v0,", r"\bbne\s+v0,\s*t2,", set_v0_zero,
+                   r"\bsw\s+v0,")
+    if len(v0_lines) != 4 or any(not re.search(pattern, line, re.I)
+            for pattern, line in zip(expected_v0, v0_lines)) or \
+            len(re.findall(set_v0_zero, body, re.I)) != 1 or \
+            len(re.findall(r"\bjr\s+ra\b", body)) != 1:
+        fail(symbol + " has an unintended v0 substitution or return")
+
+
+def check_t32_vcall_semantics(call, returned):
+    """Prove T32 transparently calls the captured v0 target and returns it."""
+    call_order = (r"\baddiu\s+sp,\s*sp,\s*-8", r"\bsw\s+t0,",
+        r"\bsw\s+t1,", r"\bsw\s+v0,", r"\bsw\s+ra,",
+        r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\blw\s+t1,", r"\blw\s+t0,", r"\baddiu\s+sp,\s*sp,\s*8",
+        r"\bjr\s+v0\b", r"\bnop\b")
+    cursor = 0
+    for pattern in call_order:
+        match = re.search(pattern, call[cursor:], re.I)
+        if not match:
+            fail("T32 call wrapper lacks ordered operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in call.splitlines() if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 2 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
+            not re.search(r"\bjr\s+v0\b", v0_lines[1]):
+        fail("T32 call wrapper transforms its v0 target")
+    return_order = (r"\baddiu\s+sp,\s*sp,\s*-8", r"\bsw\s+t0,\s*0\(sp\)",
+        r"\bsw\s+t1,\s*4\(sp\)", r"\bsw\s+v0,", r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\blw\s+ra,", r"\blw\s+t1,\s*4\(sp\)",
+        r"\blw\s+t0,\s*0\(sp\)", r"\baddiu\s+sp,\s*sp,\s*8",
+        r"\bjr\s+ra\b", r"\bnop\b")
+    cursor = 0
+    for pattern in return_order:
+        match = re.search(pattern, returned[cursor:], re.I)
+        if not match:
+            fail("T32 return wrapper lacks ordered operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in returned.splitlines() if re.search(r"\bv0\b", line)]
+    sp_adjusts = re.findall(r"\baddiu\s+sp,\s*sp,\s*(-?\d+)", returned)
+    frame_ops = {
+        "save_t0": len(re.findall(r"\bsw\s+t0,\s*0\(sp\)", returned)),
+        "save_t1": len(re.findall(r"\bsw\s+t1,\s*4\(sp\)", returned)),
+        "restore_t1": len(re.findall(r"\blw\s+t1,\s*4\(sp\)", returned)),
+        "restore_t0": len(re.findall(r"\blw\s+t0,\s*0\(sp\)", returned)),
+    }
+    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
+            sp_adjusts != ["-8", "8"] or any(count != 1 for count in frame_ops.values()) or \
+            re.search(r"\bgp\b|\bjalr?\b", returned):
+        fail("T32 return wrapper transforms v0 or has an invalid private frame/call")
+
+
+def mips_immediate_pattern(value):
+    """Match an objdump immediate in equivalent decimal or 0x-prefixed hex."""
+    return rf"(?:0x0*{value:x}|{value:d})"
+
+
+def check_mips_immediate_patterns():
+    """Self-test strict numeric equivalence for T34 objdump offsets."""
+    for value, accepted, rejected in (
+            (0x364, ("868", "0x364", "0x0364", "0x00000364"), ("364",)),
+            (0x360, ("864", "0x360", "0x0360", "0x00000360"), ("360",))):
+        pattern = re.compile(rf"^(?:{mips_immediate_pattern(value)})$", re.I)
+        if any(not pattern.fullmatch(text) for text in accepted) or \
+                any(pattern.fullmatch(text) for text in rejected):
+            fail("MIPS immediate pattern does not preserve numeric equivalence")
+
+
+def check_t34_vcall_semantics(call, returned):
+    """Prove T33 transparency plus T34's conditional natural collection reads."""
+    count_offset = mips_immediate_pattern(0x364)
+    array_offset = mips_immediate_pattern(0x360)
+    call_v0 = [line for line in call.splitlines() if re.search(r"\bv0\b", line)]
+    if len(call_v0) != 2 or not re.search(r"\bsw\s+v0,", call_v0[0]) or \
+            not re.search(r"\bjr\s+v0\b", call_v0[1]):
+        fail("T34 call wrapper transforms its v0 target")
+    ordered = (r"\baddiu\s+sp,\s*sp,\s*-8", r"\bsw\s+t0,\s*0\(sp\)",
+        r"\bsw\s+t1,\s*4\(sp\)", r"\bsw\s+v0,", r"\blw\s+t1,",
+        r"\bbeqz\s+t1,", rf"\blw\s+t1,\s*{count_offset}\(v0\)",
+        r"\bsw\s+t1,", r"\bbeqz\s+t1,",
+        rf"\blw\s+t1,\s*{array_offset}\(v0\)", r"\bsw\s+t1,",
+        r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\blw\s+ra,", r"\blw\s+t1,\s*4\(sp\)",
+        r"\blw\s+t0,\s*0\(sp\)", r"\baddiu\s+sp,\s*sp,\s*8",
+        r"\bjr\s+ra\b", r"\bnop\b")
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, returned[cursor:], re.I)
+        if not match:
+            fail("T34 return wrapper lacks ordered operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in returned.splitlines() if re.search(r"\bv0\b", line)]
+    allowed = (r"\bsw\s+v0,", rf"\blw\s+t1,\s*{count_offset}\(v0\)",
+               rf"\blw\s+t1,\s*{array_offset}\(v0\)")
+    if len(v0_lines) != 3 or any(not re.search(pattern, line, re.I)
+            for pattern, line in zip(allowed, v0_lines)) or \
+            re.search(r"\bgp\b|\bjalr?\b", returned):
+        fail("T34 return wrapper transforms v0 or performs a call")
+
+
+def check_t35_decision_semantics(body):
+    """Prove the natural FCF265D8 result controls only Sony's original routes."""
+    nonzero_delta = r"(?:-0x0*12c|-300)"
+    ordered = (r"\baddiu\s+sp,\s*sp,\s*-8", r"\bsw\s+t0,\s*0\(sp\)",
+        r"\bsw\s+t1,\s*4\(sp\)", r"\bsw\s+a0,", r"\bsw\s+v0,",
+        r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\bbeqz\s+v0,", r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1",
+        r"\bsw\s+t1,", r"\blw\s+t1,\s*4\(sp\)",
+        r"\blw\s+t0,\s*0\(sp\)", r"\baddiu\s+sp,\s*sp,\s*8",
+        rf"\baddiu\s+ra,\s*ra,\s*{nonzero_delta}", r"\bjr\s+ra\b",
+        r"\bnop\b", r"\blw\s+t1,\s*4\(sp\)",
+        r"\blw\s+t0,\s*0\(sp\)", r"\baddiu\s+sp,\s*sp,\s*8",
+        r"\bjr\s+ra\b", r"\bnop\b")
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail("T35 tracer lacks ordered operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    a0_lines = [line for line in body.splitlines() if re.search(r"\ba0\b", line)]
+    if len(v0_lines) != 2 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
+            not re.search(r"\bbeqz\s+v0,", v0_lines[1]) or len(a0_lines) != 1 or \
+            not re.search(r"\bsw\s+a0,", a0_lines[0]) or \
+            len(re.findall(r"\bjr\s+ra\b", body)) != 2 or \
+            re.search(r"\bgp\b|\bjalr?\b", body):
+        fail("T35 tracer transforms a0/v0 or performs a call")
+
+
+def linked_instructions(body):
+    """Return final linked instruction addresses/words, excluding relocations."""
+    instructions = []
+    for line in body.splitlines():
+        match = re.match(r"\s*([0-9a-f]+):\s+([0-9a-f]{8})\s+", line, re.I)
+        if match:
+            instructions.append((int(match.group(1), 16),
+                                 int(match.group(2), 16)))
+    return instructions
+
+
+def linked_scalar_uses(body, symbol, expected_addr, uses):
+    """Bind linked LW/SW uses to a symbol via decoded HI16/signed-LO16."""
+    instructions = linked_instructions(body)
+    matches = []
+    latest_lui = {}
+    for pc, word in instructions:
+        opcode = word >> 26
+        rs = (word >> 21) & 0x1F
+        rt = (word >> 16) & 0x1F
+        if opcode == 0x0F:
+            latest_lui[rt] = word & 0xFFFF
+        if opcode in (0x23, 0x2B) and rs in latest_lui:
+            low = word & 0xFFFF
+            if low & 0x8000:
+                low -= 0x10000
+            address = ((latest_lui[rs] << 16) + low) & 0xFFFFFFFF
+            if address == expected_addr:
+                matches.append((pc, opcode, rt, rs))
+    expected = [(0x23 if mnemonic == "lw" else 0x2B, rt, base)
+                for mnemonic, rt, base in uses]
+    actual = [(opcode, rt, base) for _pc, opcode, rt, base in matches]
+    if actual != expected:
+        fail(symbol + " linked scalar uses do not match " + repr(expected))
+    return [pc for pc, _opcode, _rt, _base in matches]
+
+
+def check_t311_linked(disassembly, symbol_addresses):
+    """Independently prove T31 linked scalar addresses and guard topology."""
+    call = function_body(disassembly, "zeroCtrlPostVshCallTrace")
+    linked_scalar_uses(call, "zeroCtrlPostVshArgument",
+            symbol_addresses["zeroCtrlPostVshArgument"], [("sw", 4, 8)])
+    call_words = linked_instructions(call)
+    if sum(1 for _pc, word in call_words if ((word >> 26) == 0x2B and
+            ((word >> 16) & 0x1F) == 4)) != 1:
+        fail("T31 linked call wrapper has an unintended a0 store")
+
+    body = function_body(disassembly, "zeroCtrlPostVshReturnTrace")
+    use_specs = (
+        ("zeroCtrlPostVshNaturalResult", [("sw", 2, 8)]),
+        ("zeroCtrlPostVshCompatMode", [("lw", 9, 8)]),
+        ("zeroCtrlPostVshArgument", [("lw", 9, 8)]),
+        ("zeroCtrlPostVshSubstitutionHits", [("lw", 9, 8), ("sw", 9, 8)]),
+        ("zeroCtrlPostVshEffectiveResult", [("sw", 2, 8)]),
+        ("zeroCtrlPostVshSavedRA", [("lw", 31, 8)]),
+    )
+    use_pcs = {}
+    for scalar, uses in use_specs:
+        use_pcs[scalar] = linked_scalar_uses(body, scalar,
+                symbol_addresses[scalar], uses)
+    instructions = linked_instructions(body)
+    constant_pairs = []
+    for index, (_pc, word) in enumerate(instructions[:-1]):
+        next_word = instructions[index + 1][1]
+        if word == 0x3C0A8000 and (next_word & 0xFFFF0000) == 0x354A0000:
+            constant_pairs.append(next_word & 0xFFFF)
+    if constant_pairs != [0x000D, 0x0107]:
+        fail("T31 linked exact argument/result constants are not 0x8000000D/0x80000107")
+    branches = []
+    zero_pcs = []
+    for pc, word in instructions:
+        opcode = word >> 26
+        rs, rt = (word >> 21) & 0x1F, (word >> 16) & 0x1F
+        if (opcode, rs, rt) in ((4, 9, 0), (5, 9, 10), (5, 2, 10)):
+            imm = word & 0xFFFF
+            if imm & 0x8000:
+                imm -= 0x10000
+            branches.append((pc, (pc + 4 + (imm << 2)) & 0xFFFFFFFF))
+        if word == 0x00001021:
+            zero_pcs.append(pc)
+    if len(branches) != 3 or len({target for _pc, target in branches}) != 1 or \
+            len(zero_pcs) != 1:
+        fail("T31 linked guards do not share one bypass around one v0=0")
+    bypass = branches[0][1]
+    zero_pc = zero_pcs[0]
+    effective_lui_pc = use_pcs["zeroCtrlPostVshEffectiveResult"][0] - 4
+    if bypass != effective_lui_pc or not branches[-1][0] < zero_pc < bypass:
+        fail("T31 linked bypass does not enter immediately before effective store")
+    if not (use_pcs["zeroCtrlPostVshNaturalResult"][0] < branches[0][0] and
+            use_pcs["zeroCtrlPostVshSavedRA"][0] >
+            use_pcs["zeroCtrlPostVshEffectiveResult"][0]):
+        fail("T31 linked natural/effective/saved-RA order is invalid")
+    if sum(1 for _pc, word in instructions if word == 0x03E00008) != 1:
+        fail("T31 linked return wrapper does not have exactly one jr ra")
+
+
+def check_t32_linked(disassembly, symbol_addresses):
+    """Independently prove T32 scalar resolution and transparent RA routing."""
+    call = function_body(disassembly, "zeroCtrlPostImposeVCallTrace")
+    returned = function_body(disassembly, "zeroCtrlPostImposeVCallReturnTrace")
+    linked_scalar_uses(call, "zeroCtrlPostImposeVCallTarget",
+            symbol_addresses["zeroCtrlPostImposeVCallTarget"], [("sw", 2, 8)])
+    linked_scalar_uses(call, "zeroCtrlPostImposeVCallSavedRA",
+            symbol_addresses["zeroCtrlPostImposeVCallSavedRA"], [("sw", 31, 8)])
+    linked_scalar_uses(call, "zeroCtrlPostImposeVCallHits",
+            symbol_addresses["zeroCtrlPostImposeVCallHits"],
+            [("lw", 9, 8), ("sw", 9, 8)])
+    linked_scalar_uses(returned, "zeroCtrlPostImposeVCallNaturalResult",
+            symbol_addresses["zeroCtrlPostImposeVCallNaturalResult"],
+            [("sw", 2, 8)])
+    linked_scalar_uses(returned, "zeroCtrlPostImposeVCallReturnHits",
+            symbol_addresses["zeroCtrlPostImposeVCallReturnHits"],
+            [("lw", 9, 8), ("sw", 9, 8)])
+    linked_scalar_uses(returned, "zeroCtrlPostImposeVCallSavedRA",
+            symbol_addresses["zeroCtrlPostImposeVCallSavedRA"], [("lw", 31, 8)])
+    words = linked_instructions(call)
+    return_addr = symbol_addresses["zeroCtrlPostImposeVCallReturnTrace"]
+    routed = []
+    for index, (pc, word) in enumerate(words[:-1]):
+        next_word = words[index + 1][1]
+        if (word >> 26) == 0x0F and ((word >> 16) & 0x1F) == 31 and \
+                (next_word >> 26) == 0x09 and \
+                ((next_word >> 21) & 0x1F) == 31 and \
+                ((next_word >> 16) & 0x1F) == 31:
+            low = next_word & 0xFFFF
+            if low & 0x8000:
+                low -= 0x10000
+            routed.append((((word & 0xFFFF) << 16) + low) & 0xFFFFFFFF)
+    if routed != [return_addr] or sum(1 for _pc, word in words
+            if word == 0x00400008) != 1:
+        fail("T32 linked call wrapper does not route RA then jr untouched v0")
+    if sum(1 for _pc, word in linked_instructions(returned)
+            if word == 0x03E00008) != 1:
+        fail("T32 linked return wrapper does not return once through saved RA")
+    return_words = [word for _pc, word in linked_instructions(returned)]
+    expected_frame = (0x27BDFFF8, 0xAFA80000, 0xAFA90004)
+    expected_restore = (0x8FA90004, 0x8FA80000, 0x27BD0008, 0x03E00008,
+                        0x00000000)
+    if tuple(return_words[:3]) != expected_frame or \
+            tuple(return_words[-5:]) != expected_restore or \
+            return_words.count(0x27BDFFF8) != 1 or \
+            return_words.count(0x27BD0008) != 1:
+        fail("T32 linked return wrapper does not preserve t0/t1 in one balanced frame")
+
+
+
+def check_t32_linked_pair(disassembly, symbol_addresses, prefix):
+    """Prove a T32.1-style transparent pair using its final linked words."""
+    call = function_body(disassembly, prefix + "Trace")
+    returned = function_body(disassembly, prefix + "ReturnTrace")
+    linked_scalar_uses(call, prefix + "Target", symbol_addresses[prefix + "Target"],
+            [("sw", 2, 8)])
+    linked_scalar_uses(call, prefix + "SavedRA", symbol_addresses[prefix + "SavedRA"],
+            [("sw", 31, 8)])
+    linked_scalar_uses(call, prefix + "Hits", symbol_addresses[prefix + "Hits"],
+            [("lw", 9, 8), ("sw", 9, 8)])
+    linked_scalar_uses(returned, prefix + "NaturalResult",
+            symbol_addresses[prefix + "NaturalResult"], [("sw", 2, 8)])
+    linked_scalar_uses(returned, prefix + "ReturnHits",
+            symbol_addresses[prefix + "ReturnHits"], [("lw", 9, 8), ("sw", 9, 8)])
+    linked_scalar_uses(returned, prefix + "SavedRA",
+            symbol_addresses[prefix + "SavedRA"], [("lw", 31, 8)])
+    call_words = [word for _pc, word in linked_instructions(call)]
+    return_words = [word for _pc, word in linked_instructions(returned)]
+    frame = (0x27BDFFF8, 0xAFA80000, 0xAFA90004)
+    call_tail = (0x8FA90004, 0x8FA80000, 0x27BD0008, 0x00400008, 0)
+    return_tail = (0x8FA90004, 0x8FA80000, 0x27BD0008, 0x03E00008, 0)
+    if tuple(call_words[:3]) != frame or tuple(call_words[-5:]) != call_tail or \
+            tuple(return_words[:3]) != frame or tuple(return_words[-5:]) != return_tail:
+        fail(prefix + " linked wrappers do not preserve transparent frames")
+    return_addr = symbol_addresses[prefix + "ReturnTrace"]
+    routed = []
+    for first, second in zip(call_words, call_words[1:]):
+        if first >> 26 == 0x0F and (first >> 16) & 0x1F == 31 and \
+                second >> 26 == 0x09 and (second >> 21) & 0x1F == 31 and \
+                (second >> 16) & 0x1F == 31:
+            low = second & 0xFFFF
+            if low & 0x8000: low -= 0x10000
+            routed.append((((first & 0xFFFF) << 16) + low) & 0xFFFFFFFF)
+    if routed != [return_addr]:
+        fail(prefix + " does not route RA to its linked return tracer")
+
+
+def check_t34_linked_collection(disassembly, symbol_addresses):
+    """Prove final T34 scalar addresses and conditional pointer reads."""
+    prefix = "zeroCtrlPostMinusOneVCall64"
+    body = function_body(disassembly, prefix + "ReturnTrace")
+    uses = {}
+    for suffix, expected in (
+            ("CollectionEnabled", [("lw", 9, 8)]),
+            ("CountSnapshot", [("sw", 9, 8)]),
+            ("ArraySnapshot", [("sw", 9, 8)]),
+            ("ArrayReadHits", [("lw", 9, 8), ("sw", 9, 8)]),
+            ("ReturnHits", [("lw", 9, 8), ("sw", 9, 8)])):
+        symbol = prefix + suffix
+        uses[suffix] = linked_scalar_uses(body, symbol,
+                symbol_addresses[symbol], expected)
+    instructions = linked_instructions(body)
+    count_loads = [(pc, word) for pc, word in instructions
+        if word >> 26 == 0x23 and (word >> 21) & 0x1F == 2 and
+        (word >> 16) & 0x1F == 9 and (word & 0xFFFF) == 0x364]
+    array_loads = [(pc, word) for pc, word in instructions
+        if word >> 26 == 0x23 and (word >> 21) & 0x1F == 2 and
+        (word >> 16) & 0x1F == 9 and (word & 0xFFFF) == 0x360]
+    if len(count_loads) != 1 or len(array_loads) != 1 or \
+            not count_loads[0][0] < array_loads[0][0]:
+        fail("T34 linked wrapper lacks exact ordered v0+0x364/v0+0x360 reads")
+    if any(word >> 26 == 0x2B and (word >> 21) & 0x1F == 2
+            for _pc, word in instructions):
+        fail("T34 linked wrapper stores through the natural v0 pointer")
+    branches = []
+    for pc, word in instructions:
+        if word >> 26 == 4 and (word >> 21) & 0x1F == 9 and \
+                (word >> 16) & 0x1F == 0:
+            imm = word & 0xFFFF
+            if imm & 0x8000:
+                imm -= 0x10000
+            branches.append((pc, pc + 4 + (imm << 2)))
+    bypass = uses["ReturnHits"][0] - 4
+    if len(branches) != 2 or branches[0][1] != branches[1][1] or \
+            branches[0][1] != bypass or \
+            not branches[1][0] < array_loads[0][0] < bypass:
+        fail("T34 linked array read is not exclusively on nonzero-count fall-through")
+
+
+def check_t35_linked(disassembly, symbol_addresses):
+    """Prove final T35 scalar bindings and exact natural-result routing."""
+    body = function_body(disassembly, "zeroCtrlCollectionPafFCF265D8Trace")
+    prefix = "zeroCtrlCollectionPafFCF265D8"
+    linked_scalar_uses(body, prefix + "LastItem",
+            symbol_addresses[prefix + "LastItem"], [("sw", 4, 8)])
+    linked_scalar_uses(body, prefix + "NaturalResult",
+            symbol_addresses[prefix + "NaturalResult"], [("sw", 2, 8)])
+    linked_scalar_uses(body, prefix + "Hits", symbol_addresses[prefix + "Hits"],
+            [("lw", 9, 8), ("sw", 9, 8)])
+    linked_scalar_uses(body, prefix + "NonzeroHits",
+            symbol_addresses[prefix + "NonzeroHits"],
+            [("lw", 9, 8), ("sw", 9, 8)])
+    words = linked_instructions(body)
+    branches = [(pc, word) for pc, word in words if word >> 26 == 4 and
+        (word >> 21) & 0x1F == 2 and (word >> 16) & 0x1F == 0]
+    adjust_ra = [(pc, word) for pc, word in words if word >> 26 == 9 and
+        (word >> 21) & 0x1F == 31 and (word >> 16) & 0x1F == 31 and
+        (word & 0xFFFF) == 0xFED4]
+    restores = [pc for pc, word in words if word == 0x8FA90004]
+    if len(branches) == 1:
+        imm = branches[0][1] & 0xFFFF
+        if imm & 0x8000:
+            imm -= 0x10000
+        zero_target = branches[0][0] + 4 + (imm << 2)
+    else:
+        zero_target = -1
+    if len(branches) != 1 or len(adjust_ra) != 1 or len(restores) != 2 or \
+            zero_target != restores[1] or \
+            sum(word == 0x03E00008 for _pc, word in words) != 2:
+        fail("T35 linked tracer lacks exact v0 branch/-0x12C/two-return routing")
+    for word, count in ((0x27BDFFF8, 1), (0xAFA80000, 1), (0xAFA90004, 1),
+            (0x8FA90004, 2), (0x8FA80000, 2), (0x27BD0008, 2)):
+        if sum(candidate == word for _pc, candidate in words) != count:
+            fail("T35 linked tracer has an unbalanced temporary frame")
+    v0_text = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    a0_text = [line for line in body.splitlines() if re.search(r"\ba0\b", line)]
+    if len(v0_text) != 2 or len(a0_text) != 1:
+        fail("T35 linked tracer modifies natural v0/a0")
 
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
@@ -1343,7 +2374,12 @@ def check_elf(elf):
             "zeroCtrlPostBSManSubstitutionHits",
             "zeroCtrlPostBSManEffectiveResult",
             "zeroCtrlPostPafResult0", "zeroCtrlPostPafResult1",
-            "zeroCtrlPostVshNaturalResult"):
+            "zeroCtrlPostVshNaturalResult",
+            "zeroCtrlStateZero15To14CompatMode",
+            "zeroCtrlStateZero15To14EffectiveResult",
+            "zeroCtrlStateZero15To14SubstitutionHits",
+            "zeroCtrlPostVshArgument", "zeroCtrlPostVshCompatMode",
+            "zeroCtrlPostVshEffectiveResult", "zeroCtrlPostVshSubstitutionHits"):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing Sony module_start wrapper symbol " + symbol)
     symbol_addresses = {}
@@ -1359,7 +2395,33 @@ def check_elf(elf):
             fail(start + " has an empty or reversed linked range")
     if T22_CONSUMER_TARGET not in symbol_addresses:
         fail("missing linked T22 natural-target symbol")
+    for symbol in T24_SCALARS + T25_SCALARS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T24 scalar " + symbol)
+    for wrapper in T27_PREDICATE_WRAPPERS:
+        for symbol in wrapper:
+            if symbol not in symbol_addresses:
+                fail("missing linked T27 predicate symbol " + symbol)
+    for symbol in T27_MASK_SYMBOLS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T27 mask symbol " + symbol)
+    for symbol in T32_SYMBOLS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T32 symbol " + symbol)
+    for symbol in T33_SYMBOLS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T33 symbol " + symbol)
+    for symbol in T35_SYMBOLS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T35 symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
+    check_t311_linked(disassembly, symbol_addresses)
+    check_t32_linked(disassembly, symbol_addresses)
+    effective_addr = symbol_addresses["zeroCtrlStateZero15To14EffectiveResult"]
+    for symbol in ("zeroCtrlStateZeroClass15Trace",
+            "zeroCtrlStateZeroClass17Trace"):
+        check_t301_class_input(function_body(disassembly, symbol), symbol,
+                expected_addr=effective_addr)
     for symbol in STUBS:
         body = function_body(disassembly, symbol)
         if re.search(r"\bgp\b|\bsp\b|\bjal\b", body):
@@ -1396,9 +2458,8 @@ def check_elf(elf):
                  not re.search(r"\blw\s+ra,", prefix_trace) or
                  not re.search(r"\bjr\s+ra\b", prefix_trace)):
             fail("prefix PAF return trace does not isolate zero-to-one and restore ra")
-        if symbol in ("zeroCtrlPostPafReturnTrace",
-                "zeroCtrlPostVshReturnTrace"):
-            expected_count = 2 if symbol == "zeroCtrlPostPafReturnTrace" else 1
+        if symbol == "zeroCtrlPostPafReturnTrace":
+            expected_count = 2
             require_only_natural_result_stores(
                     prefix_trace, symbol, expected_count)
         if symbol == "zeroCtrlPostPafReturnTrace" and \
@@ -1410,14 +2471,131 @@ def check_elf(elf):
                 (not re.search(r"\blw\s+ra,", prefix_trace) or
                  not re.search(r"\bjr\s+ra\b", prefix_trace)):
             fail("post-BSMan VshBridge return trace does not restore ra")
-    for start, _end, _counter, _result in T22_CONSUMER_WRAPPERS:
-        check_t22_consumer_semantics(function_body(disassembly, start), start)
+    for symbol in ("zeroCtrlConsumer13F6CTrace",
+            "zeroCtrlConsumer14020Trace"):
+        check_selective_consumer_semantics(function_body(disassembly, symbol), symbol)
+    for symbol, _end, _counter, _result, _target in T27_PREDICATE_WRAPPERS:
+        check_t22_consumer_semantics(function_body(disassembly, symbol), symbol)
+    check_t27_mask_semantics(function_body(disassembly,
+        "zeroCtrlPafCapabilityMaskTrace"))
+    check_t30_state_zero_return_semantics(function_body(disassembly,
+        "zeroCtrlStateZeroVReturnTrace"))
+    check_t31_vsh_return_semantics(function_body(disassembly,
+        "zeroCtrlPostVshReturnTrace"))
+    check_t32_vcall_semantics(function_body(disassembly,
+        "zeroCtrlPostImposeVCallTrace"), function_body(disassembly,
+        "zeroCtrlPostImposeVCallReturnTrace"))
+    check_t34_vcall_semantics(function_body(disassembly,
+        "zeroCtrlPostMinusOneVCall64Trace"), function_body(disassembly,
+        "zeroCtrlPostMinusOneVCall64ReturnTrace"))
+    check_t32_linked_pair(disassembly, symbol_addresses,
+        "zeroCtrlPostMinusOneVCall64")
+    check_t34_linked_collection(disassembly, symbol_addresses)
+    t35 = function_body(disassembly, "zeroCtrlCollectionPafFCF265D8Trace")
+    check_t35_decision_semantics(t35)
+    check_t35_linked(disassembly, symbol_addresses)
 
 
 def check_stub_object(stub_object):
     disassembly = subprocess.check_output(
         ["psp-objdump", "-dr", str(stub_object)], text=True
     )
+    for symbol in ("zeroCtrlStateZeroClass15Trace",
+            "zeroCtrlStateZeroClass17Trace"):
+        check_t301_class_input(function_body(disassembly, symbol), symbol,
+                relocatable=True)
+    post_impose_call = function_body(disassembly, "zeroCtrlPostImposeVCallTrace")
+    post_impose_return = function_body(disassembly,
+            "zeroCtrlPostImposeVCallReturnTrace")
+    check_t32_vcall_semantics(post_impose_call, post_impose_return)
+    t32_relocations = (
+        (post_impose_call, "zeroCtrlPostImposeVCallTarget", 1, 1, r"\bsw\s+v0,"),
+        (post_impose_call, "zeroCtrlPostImposeVCallSavedRA", 1, 1, r"\bsw\s+ra,"),
+        (post_impose_call, "zeroCtrlPostImposeVCallHits", 1, 2, None),
+        (post_impose_return, "zeroCtrlPostImposeVCallNaturalResult", 1, 1,
+            r"\bsw\s+v0,"),
+        (post_impose_return, "zeroCtrlPostImposeVCallReturnHits", 1, 2, None),
+        (post_impose_return, "zeroCtrlPostImposeVCallSavedRA", 1, 1, r"\blw\s+ra,"),
+    )
+    for body, scalar, hi_count, lo_count, instruction in t32_relocations:
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi_count or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo_count:
+            fail("T32 wrapper has wrong exact relocation counts for " + scalar)
+        if instruction and not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                scalar + r"\b", body):
+            fail("T32 wrapper does not bind relocation for " + scalar)
+    for body, counter in ((post_impose_call, "zeroCtrlPostImposeVCallHits"),
+            (post_impose_return, "zeroCtrlPostImposeVCallReturnHits")):
+        for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                    counter + r"\b", body):
+                fail("T32 wrapper does not bind counter relocation for " + counter)
+    if len(re.findall(r"R_MIPS_HI16\s+zeroCtrlPostImposeVCallReturnTrace\b",
+            post_impose_call)) != 1 or len(re.findall(
+            r"R_MIPS_LO16\s+zeroCtrlPostImposeVCallReturnTrace\b",
+            post_impose_call)) != 1:
+        fail("T32 call wrapper does not bind its dedicated return tracer")
+    t33_call = function_body(disassembly, "zeroCtrlPostMinusOneVCall64Trace")
+    t33_return = function_body(disassembly, "zeroCtrlPostMinusOneVCall64ReturnTrace")
+    check_t34_vcall_semantics(t33_call, t33_return)
+    for body, scalar, hi, lo, op in (
+        (t33_call, "zeroCtrlPostMinusOneVCall64Target", 1, 1, r"\bsw\s+v0,"),
+        (t33_call, "zeroCtrlPostMinusOneVCall64SavedRA", 1, 1, r"\bsw\s+ra,"),
+        (t33_call, "zeroCtrlPostMinusOneVCall64Hits", 1, 2, None),
+        (t33_return, "zeroCtrlPostMinusOneVCall64NaturalResult", 1, 1, r"\bsw\s+v0,"),
+        (t33_return, "zeroCtrlPostMinusOneVCall64ReturnHits", 1, 2, None),
+        (t33_return, "zeroCtrlPostMinusOneVCall64SavedRA", 1, 1, r"\blw\s+ra,")):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo:
+            fail("T33 wrapper has wrong relocation counts for " + scalar)
+        if op and not relocation_bound_to_instruction(body, scalar, op):
+            fail("T33 wrapper does not bind relocation for " + scalar)
+    for body, scalar, hi, lo, op in (
+        (t33_return, "zeroCtrlPostMinusOneVCall64CollectionEnabled", 1, 1,
+            r"\blw\s+t1,"),
+        (t33_return, "zeroCtrlPostMinusOneVCall64CountSnapshot", 1, 1,
+            r"\bsw\s+t1,"),
+        (t33_return, "zeroCtrlPostMinusOneVCall64ArraySnapshot", 1, 1,
+            r"\bsw\s+t1,"),
+        (t33_return, "zeroCtrlPostMinusOneVCall64ArrayReadHits", 1, 2, None)):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo:
+            fail("T34 wrapper has wrong relocation counts for " + scalar)
+        if op and not relocation_bound_to_instruction(body, scalar, op):
+            fail("T34 wrapper does not bind relocation for " + scalar)
+    for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+        if not relocation_bound_to_instruction(t33_return,
+                "zeroCtrlPostMinusOneVCall64ArrayReadHits", instruction):
+            fail("T34 wrapper does not bind array-read counter " + instruction)
+    for body, counter in (
+            (t33_call, "zeroCtrlPostMinusOneVCall64Hits"),
+            (t33_return, "zeroCtrlPostMinusOneVCall64ReturnHits")):
+        for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not relocation_bound_to_instruction(body, counter, instruction):
+                fail("T33 wrapper does not bind " + instruction +
+                     " to counter " + counter)
+    if len(re.findall(r"R_MIPS_HI16\s+zeroCtrlPostMinusOneVCall64ReturnTrace\b",
+            t33_call)) != 1 or len(re.findall(
+            r"R_MIPS_LO16\s+zeroCtrlPostMinusOneVCall64ReturnTrace\b",
+            t33_call)) != 1:
+        fail("T33 call wrapper does not bind its return tracer")
+    t35 = function_body(disassembly, "zeroCtrlCollectionPafFCF265D8Trace")
+    check_t35_decision_semantics(t35)
+    for scalar, hi, lo, op in (
+            ("zeroCtrlCollectionPafFCF265D8LastItem", 1, 1, r"\bsw\s+a0,"),
+            ("zeroCtrlCollectionPafFCF265D8NaturalResult", 1, 1, r"\bsw\s+v0,"),
+            ("zeroCtrlCollectionPafFCF265D8Hits", 1, 2, None),
+            ("zeroCtrlCollectionPafFCF265D8NonzeroHits", 1, 2, None)):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", t35)) != hi or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", t35)) != lo:
+            fail("T35 tracer has wrong relocation counts for " + scalar)
+        if op and not relocation_bound_to_instruction(t35, scalar, op):
+            fail("T35 tracer does not bind relocation for " + scalar)
+    for counter in ("zeroCtrlCollectionPafFCF265D8Hits",
+            "zeroCtrlCollectionPafFCF265D8NonzeroHits"):
+        for op in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not relocation_bound_to_instruction(t35, counter, op):
+                fail("T35 tracer does not bind counter operation for " + counter)
     for symbol, counter in zip(STUBS, COUNTERS):
         body = function_body(disassembly, symbol)
         if not re.search(r"R_MIPS_HI16\s+" + counter + r"\b", body):
@@ -1426,7 +2604,7 @@ def check_stub_object(stub_object):
             fail(symbol + " does not have two LO16 counter relocations")
     for symbol, _end, counter, result in T22_CONSUMER_WRAPPERS:
         body = function_body(disassembly, symbol)
-        check_t22_consumer_semantics(body, symbol)
+        check_selective_consumer_semantics(body, symbol)
         if len(re.findall(r"R_MIPS_HI16\s+" + counter + r"\b", body)) != 1 or \
                 len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
             fail(symbol + " lacks exact dedicated-counter relocations")
@@ -1442,6 +2620,65 @@ def check_stub_object(stub_object):
                 not re.search(r"\bsw\s+v0,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
                     result + r"\b", body):
             fail(symbol + " lacks the unique natural-result store relocation")
+        if symbol.endswith("14020Trace"):
+            scalar_prefix = "zeroCtrlConsumer14020"
+        else:
+            scalar_prefix = "zeroCtrlConsumer13F6C"
+        if symbol.endswith(("14020Trace", "13F6CTrace")):
+            expected_relocations = {
+                scalar_prefix + "CompatMode": (1, 1),
+                scalar_prefix + "EffectiveResult": (1, 1),
+                scalar_prefix + "SubstitutionHits": (1, 2),
+            }
+            for scalar, (hi_count, lo_count) in expected_relocations.items():
+                if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi_count or \
+                        len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo_count:
+                    fail(symbol + " has wrong exact relocation counts for " + scalar)
+            relocation_uses = (
+                (r"\blw\s+t1,", scalar_prefix + "CompatMode", 1),
+                (r"\bsw\s+v0,", scalar_prefix + "EffectiveResult", 1),
+                (r"\blw\s+t1,", scalar_prefix + "SubstitutionHits", 1),
+                (r"\bsw\s+t1,", scalar_prefix + "SubstitutionHits", 1),
+            )
+            for instruction, scalar, count in relocation_uses:
+                tied = instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" + scalar + r"\b"
+                if len(re.findall(tied, body)) != count:
+                    fail(symbol + " does not tie " + scalar + " to " + instruction)
+    for symbol, _end, counter, result, target in T27_PREDICATE_WRAPPERS:
+        body = function_body(disassembly, symbol)
+        check_t22_consumer_semantics(body, symbol)
+        expected = ((counter, 1, 2), (result, 1, 1), (target, 1, 1))
+        for scalar, hi_count, lo_count in expected:
+            if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi_count or \
+                    len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo_count:
+                fail(symbol + " has wrong exact relocation counts for " + scalar)
+        if not re.search(r"\bsw\s+v0,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                result + r"\b", body) or not re.search(
+                r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+" + target + r"\b", body):
+            fail(symbol + " does not bind natural result/target relocations")
+    mask_body = function_body(disassembly, "zeroCtrlPafCapabilityMaskTrace")
+    check_t27_mask_semantics(mask_body)
+    mask_relocations = (
+        ("zeroCtrlPafCapabilityMaskNatural", 1, 1, r"\bsw\s+a0,"),
+        ("zeroCtrlPafCapabilityMaskHits", 1, 2, None),
+        ("zeroCtrlPafCapabilityMaskCompatMode", 1, 1, r"\blw\s+t1,"),
+        ("zeroCtrlPafCapabilityMaskSubstitutionHits", 1, 2, None),
+        ("zeroCtrlPafCapabilityMaskEffective", 1, 1, r"\bsw\s+a0,"),
+        ("zeroCtrlPafCapabilityMaskTarget", 1, 1, r"\blw\s+t2,"),
+    )
+    for scalar, hi_count, lo_count, instruction in mask_relocations:
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", mask_body)) != hi_count or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", mask_body)) != lo_count:
+            fail("T27 mask wrapper has wrong exact relocation counts for " + scalar)
+        if instruction and not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                scalar + r"\b", mask_body):
+            fail("T27 mask wrapper does not bind relocation for " + scalar)
+    for counter in ("zeroCtrlPafCapabilityMaskHits",
+            "zeroCtrlPafCapabilityMaskSubstitutionHits"):
+        for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                    counter + r"\b", mask_body):
+                fail("T28 mask wrapper does not bind counter relocation for " + counter)
     bsman_leaf = function_body(disassembly, BSMAN_STUB)
     if not re.search(r"R_MIPS_HI16\s+" + BSMAN_COUNTER + r"\b", bsman_leaf) or \
             len(re.findall(r"R_MIPS_LO16\s+" + BSMAN_COUNTER + r"\b",
@@ -1469,14 +2706,28 @@ def check_stub_object(stub_object):
             not re.search(r"\bjr\s+v0\b", state_vcall):
         fail("T15 virtual-call wrapper does not preserve target and original ra")
     state_vreturn = function_body(disassembly, "zeroCtrlStateZeroVReturnTrace")
+    check_t30_state_zero_return_semantics(state_vreturn)
     require_result_store_relocation(state_vreturn,
             "zeroCtrlStateZeroVReturnTrace", "zeroCtrlStateZeroVCallResult")
-    v0_lines = [line for line in state_vreturn.splitlines()
-                if re.search(r"\bv0\b", line)]
-    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
-            not re.search(r"R_MIPS_HI16\s+zeroCtrlStateZeroVCallRA\b",
-                          state_vreturn) or not re.search(r"\bjr\s+ra\b", state_vreturn):
-        fail("T15 virtual return does not preserve the natural result and Sony ra")
+    if not re.search(r"R_MIPS_HI16\s+zeroCtrlStateZeroVCallRA\b",
+            state_vreturn) or not re.search(r"\bjr\s+ra\b", state_vreturn):
+        fail("T30 virtual return does not preserve the Sony ra")
+    t30_relocations = (
+        ("zeroCtrlStateZero15To14CompatMode", 1, 1, r"\blw\s+t1,"),
+        ("zeroCtrlStateZero15To14EffectiveResult", 1, 1, r"\bsw\s+v0,"),
+        ("zeroCtrlStateZero15To14SubstitutionHits", 1, 2, None),
+    )
+    for scalar, hi_count, lo_count, instruction in t30_relocations:
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", state_vreturn)) != hi_count or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", state_vreturn)) != lo_count:
+            fail("T30 virtual return has wrong relocation counts for " + scalar)
+        if instruction and not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                scalar + r"\b", state_vreturn):
+            fail("T30 virtual return does not bind relocation for " + scalar)
+    for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+        if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlStateZero15To14SubstitutionHits\b", state_vreturn):
+            fail("T30 virtual return does not bind substitution counter")
     post_paf_return = function_body(disassembly, "zeroCtrlPostPafReturnTrace")
     require_only_natural_result_stores(
             post_paf_return, "zeroCtrlPostPafReturnTrace", 2)
@@ -1494,8 +2745,7 @@ def check_stub_object(stub_object):
             not re.search(r"\bjr\s+ra\b", post_paf_return):
         fail("post-BSMan PAF return trace violates leaf/RA invariants")
     post_vsh_return = function_body(disassembly, "zeroCtrlPostVshReturnTrace")
-    require_only_natural_result_stores(
-            post_vsh_return, "zeroCtrlPostVshReturnTrace", 1)
+    check_t31_vsh_return_semantics(post_vsh_return)
     require_result_store_relocation(post_vsh_return,
             "zeroCtrlPostVshReturnTrace", "zeroCtrlPostVshNaturalResult")
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b", post_vsh_return) or \
@@ -1506,6 +2756,29 @@ def check_stub_object(stub_object):
             not re.search(r"\blw\s+ra,", post_vsh_return) or \
             not re.search(r"\bjr\s+ra\b", post_vsh_return):
         fail("post-BSMan VshBridge return trace violates leaf/RA invariants")
+    t31_relocations = (
+        ("zeroCtrlPostVshCompatMode", 1, 1, r"\blw\s+t1,"),
+        ("zeroCtrlPostVshEffectiveResult", 1, 1, r"\bsw\s+v0,"),
+        ("zeroCtrlPostVshSubstitutionHits", 1, 2, None),
+    )
+    for scalar, hi_count, lo_count, instruction in t31_relocations:
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", post_vsh_return)) != hi_count or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", post_vsh_return)) != lo_count:
+            fail("T31 return has wrong exact relocation counts for " + scalar)
+        if instruction and not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                scalar + r"\b", post_vsh_return):
+            fail("T31 return does not bind relocation for " + scalar)
+    for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+        if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPostVshSubstitutionHits\b", post_vsh_return):
+            fail("T31 return does not bind substitution counter")
+    post_vsh_call = function_body(disassembly, "zeroCtrlPostVshCallTrace")
+    if len(re.findall(r"R_MIPS_HI16\s+zeroCtrlPostVshArgument\b",
+            post_vsh_call)) != 1 or len(re.findall(
+            r"R_MIPS_LO16\s+zeroCtrlPostVshArgument\b", post_vsh_call)) != 1 or \
+            not re.search(r"\bsw\s+a0,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPostVshArgument\b", post_vsh_call):
+        fail("T31 call wrapper does not bind the exact argument capture")
     entry = function_body(disassembly, SONY_ENTRY_STUB)
     exit_stub = function_body(disassembly, SONY_EXIT_STUB)
     for symbol in ("zeroCtrlSonyModuleStartEntrySeen",
@@ -1527,6 +2800,7 @@ def main():
     parser.add_argument("--user-elf", type=pathlib.Path)
     parser.add_argument("--stub-object", type=pathlib.Path)
     args = parser.parse_args()
+    check_mips_immediate_patterns()
     check_sources(args.source_root.resolve())
     if args.user_elf:
         check_elf(args.user_elf)

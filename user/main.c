@@ -216,6 +216,35 @@ extern volatile unsigned int zeroCtrlPostPafResult0, zeroCtrlPostPafResult1;
 extern volatile unsigned int zeroCtrlPostPafReturn0Hits, zeroCtrlPostPafReturn1Hits;
 extern volatile unsigned int zeroCtrlPostVshTarget, zeroCtrlPostVshSavedRA;
 extern volatile unsigned int zeroCtrlPostVshNaturalResult, zeroCtrlPostVshReturnHits;
+extern volatile unsigned int zeroCtrlPostVshArgument, zeroCtrlPostVshCompatMode;
+extern volatile unsigned int zeroCtrlPostVshEffectiveResult;
+extern volatile unsigned int zeroCtrlPostVshSubstitutionHits;
+extern void zeroCtrlPostImposeVCallTrace(void), zeroCtrlPostImposeVCallTraceEnd(void);
+extern void zeroCtrlPostImposeVCallReturnTrace(void);
+extern void zeroCtrlPostImposeVCallReturnTraceEnd(void);
+extern volatile unsigned int zeroCtrlPostImposeVCallTarget;
+extern volatile unsigned int zeroCtrlPostImposeVCallSavedRA;
+extern volatile unsigned int zeroCtrlPostImposeVCallNaturalResult;
+extern volatile unsigned int zeroCtrlPostImposeVCallHits;
+extern volatile unsigned int zeroCtrlPostImposeVCallReturnHits;
+extern void zeroCtrlPostMinusOneVCall64Trace(void), zeroCtrlPostMinusOneVCall64TraceEnd(void);
+extern void zeroCtrlPostMinusOneVCall64ReturnTrace(void);
+extern void zeroCtrlPostMinusOneVCall64ReturnTraceEnd(void);
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64Target;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64SavedRA;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64NaturalResult;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64Hits;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64ReturnHits;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64CollectionEnabled;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64CountSnapshot;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64ArraySnapshot;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64ArrayReadHits;
+extern void zeroCtrlCollectionPafFCF265D8Trace(void);
+extern void zeroCtrlCollectionPafFCF265D8TraceEnd(void);
+extern volatile unsigned int zeroCtrlCollectionPafFCF265D8LastItem;
+extern volatile unsigned int zeroCtrlCollectionPafFCF265D8NaturalResult;
+extern volatile unsigned int zeroCtrlCollectionPafFCF265D8Hits;
+extern volatile unsigned int zeroCtrlCollectionPafFCF265D8NonzeroHits;
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
 extern volatile unsigned int zeroCtrlPostVshEntryHits;
 extern void zeroCtrlStateZeroCompareTrace(void), zeroCtrlStateZeroCompareTraceEnd(void);
@@ -233,6 +262,9 @@ extern volatile unsigned int zeroCtrlStateZeroVCallTarget, zeroCtrlStateZeroVCal
 extern volatile unsigned int zeroCtrlStateZeroVCallResult;
 extern volatile unsigned int zeroCtrlStateZeroEntryHits, zeroCtrlStateZeroVCallHits;
 extern volatile unsigned int zeroCtrlStateZeroVReturnHits, zeroCtrlStateZeroRejoinHits;
+extern volatile unsigned int zeroCtrlStateZero15To14CompatMode;
+extern volatile unsigned int zeroCtrlStateZero15To14EffectiveResult;
+extern volatile unsigned int zeroCtrlStateZero15To14SubstitutionHits;
 extern volatile unsigned int zeroCtrlStateZeroCompareEqual, zeroCtrlStateZeroCompareUnequal;
 extern volatile unsigned int zeroCtrlStateZeroWordZero, zeroCtrlStateZeroWordNonzero;
 extern volatile unsigned int zeroCtrlStateZeroByteZero, zeroCtrlStateZeroByteNonzero;
@@ -257,6 +289,27 @@ extern volatile unsigned int zeroCtrlConsumer6F84Target;
 extern volatile unsigned int zeroCtrlConsumer13F6CHits, zeroCtrlConsumer14020Hits;
 extern volatile unsigned int zeroCtrlConsumer13F6CNaturalResult;
 extern volatile unsigned int zeroCtrlConsumer14020NaturalResult;
+extern volatile unsigned int zeroCtrlConsumer14020CompatMode;
+extern volatile unsigned int zeroCtrlConsumer14020EffectiveResult;
+extern volatile unsigned int zeroCtrlConsumer14020SubstitutionHits;
+extern volatile unsigned int zeroCtrlConsumer13F6CCompatMode;
+extern volatile unsigned int zeroCtrlConsumer13F6CEffectiveResult;
+extern volatile unsigned int zeroCtrlConsumer13F6CSubstitutionHits;
+extern void zeroCtrlCapability6F44Trace(void), zeroCtrlCapability6F44TraceEnd(void);
+extern void zeroCtrlCapability6FC4Trace(void), zeroCtrlCapability6FC4TraceEnd(void);
+extern void zeroCtrlCapability7004Trace(void), zeroCtrlCapability7004TraceEnd(void);
+extern void zeroCtrlPafCapabilityMaskTrace(void), zeroCtrlPafCapabilityMaskTraceEnd(void);
+extern volatile unsigned int zeroCtrlCapability6F44Target, zeroCtrlCapability6FC4Target;
+extern volatile unsigned int zeroCtrlCapability7004Target, zeroCtrlPafCapabilityMaskTarget;
+extern volatile unsigned int zeroCtrlCapability6F44Hits, zeroCtrlCapability6FC4Hits;
+extern volatile unsigned int zeroCtrlCapability7004Hits, zeroCtrlPafCapabilityMaskHits;
+extern volatile unsigned int zeroCtrlCapability6F44NaturalResult;
+extern volatile unsigned int zeroCtrlCapability6FC4NaturalResult;
+extern volatile unsigned int zeroCtrlCapability7004NaturalResult;
+extern volatile unsigned int zeroCtrlPafCapabilityMaskNatural;
+extern volatile unsigned int zeroCtrlPafCapabilityMaskCompatMode;
+extern volatile unsigned int zeroCtrlPafCapabilityMaskEffective;
+extern volatile unsigned int zeroCtrlPafCapabilityMaskSubstitutionHits;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -582,6 +635,110 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlConsumer13F6CNaturalResult;
 	bsmanClosedRegistration.consumer_14020_result_addr =
 			(u32)&zeroCtrlConsumer14020NaturalResult;
+	bsmanClosedRegistration.consumer_14020_compat_mode_addr =
+			(u32)&zeroCtrlConsumer14020CompatMode;
+	bsmanClosedRegistration.consumer_14020_effective_result_addr =
+			(u32)&zeroCtrlConsumer14020EffectiveResult;
+	bsmanClosedRegistration.consumer_14020_substitution_hits_addr =
+			(u32)&zeroCtrlConsumer14020SubstitutionHits;
+	bsmanClosedRegistration.consumer_13f6c_compat_mode_addr =
+			(u32)&zeroCtrlConsumer13F6CCompatMode;
+	bsmanClosedRegistration.consumer_13f6c_effective_result_addr =
+			(u32)&zeroCtrlConsumer13F6CEffectiveResult;
+	bsmanClosedRegistration.consumer_13f6c_substitution_hits_addr =
+			(u32)&zeroCtrlConsumer13F6CSubstitutionHits;
+	bsmanClosedRegistration.capability_leaf_addr[0] = (u32)zeroCtrlCapability6F44Trace;
+	bsmanClosedRegistration.capability_leaf_addr[1] = (u32)zeroCtrlCapability6FC4Trace;
+	bsmanClosedRegistration.capability_leaf_addr[2] = (u32)zeroCtrlCapability7004Trace;
+	bsmanClosedRegistration.capability_leaf_end_addr[0] = (u32)zeroCtrlCapability6F44TraceEnd;
+	bsmanClosedRegistration.capability_leaf_end_addr[1] = (u32)zeroCtrlCapability6FC4TraceEnd;
+	bsmanClosedRegistration.capability_leaf_end_addr[2] = (u32)zeroCtrlCapability7004TraceEnd;
+	bsmanClosedRegistration.capability_target_addr[0] = (u32)&zeroCtrlCapability6F44Target;
+	bsmanClosedRegistration.capability_target_addr[1] = (u32)&zeroCtrlCapability6FC4Target;
+	bsmanClosedRegistration.capability_target_addr[2] = (u32)&zeroCtrlCapability7004Target;
+	bsmanClosedRegistration.capability_hits_addr[0] = (u32)&zeroCtrlCapability6F44Hits;
+	bsmanClosedRegistration.capability_hits_addr[1] = (u32)&zeroCtrlCapability6FC4Hits;
+	bsmanClosedRegistration.capability_hits_addr[2] = (u32)&zeroCtrlCapability7004Hits;
+	bsmanClosedRegistration.capability_result_addr[0] = (u32)&zeroCtrlCapability6F44NaturalResult;
+	bsmanClosedRegistration.capability_result_addr[1] = (u32)&zeroCtrlCapability6FC4NaturalResult;
+	bsmanClosedRegistration.capability_result_addr[2] = (u32)&zeroCtrlCapability7004NaturalResult;
+	bsmanClosedRegistration.paf_mask_leaf_addr = (u32)zeroCtrlPafCapabilityMaskTrace;
+	bsmanClosedRegistration.paf_mask_leaf_end_addr = (u32)zeroCtrlPafCapabilityMaskTraceEnd;
+	bsmanClosedRegistration.paf_mask_target_addr = (u32)&zeroCtrlPafCapabilityMaskTarget;
+	bsmanClosedRegistration.paf_mask_hits_addr = (u32)&zeroCtrlPafCapabilityMaskHits;
+	bsmanClosedRegistration.paf_mask_natural_addr = (u32)&zeroCtrlPafCapabilityMaskNatural;
+	bsmanClosedRegistration.paf_mask_compat_mode_addr = (u32)&zeroCtrlPafCapabilityMaskCompatMode;
+	bsmanClosedRegistration.paf_mask_effective_addr = (u32)&zeroCtrlPafCapabilityMaskEffective;
+	bsmanClosedRegistration.paf_mask_substitution_hits_addr =
+			(u32)&zeroCtrlPafCapabilityMaskSubstitutionHits;
+	bsmanClosedRegistration.state_zero_15to14_compat_mode_addr =
+			(u32)&zeroCtrlStateZero15To14CompatMode;
+	bsmanClosedRegistration.state_zero_15to14_effective_result_addr =
+			(u32)&zeroCtrlStateZero15To14EffectiveResult;
+	bsmanClosedRegistration.state_zero_15to14_substitution_hits_addr =
+			(u32)&zeroCtrlStateZero15To14SubstitutionHits;
+	bsmanClosedRegistration.post_vsh_argument_addr = (u32)&zeroCtrlPostVshArgument;
+	bsmanClosedRegistration.post_vsh_compat_mode_addr = (u32)&zeroCtrlPostVshCompatMode;
+	bsmanClosedRegistration.post_vsh_effective_result_addr =
+			(u32)&zeroCtrlPostVshEffectiveResult;
+	bsmanClosedRegistration.post_vsh_substitution_hits_addr =
+			(u32)&zeroCtrlPostVshSubstitutionHits;
+	bsmanClosedRegistration.post_impose_vcall_leaf_addr =
+			(u32)zeroCtrlPostImposeVCallTrace;
+	bsmanClosedRegistration.post_impose_vcall_leaf_end_addr =
+			(u32)zeroCtrlPostImposeVCallTraceEnd;
+	bsmanClosedRegistration.post_impose_vcall_return_leaf_addr =
+			(u32)zeroCtrlPostImposeVCallReturnTrace;
+	bsmanClosedRegistration.post_impose_vcall_return_leaf_end_addr =
+			(u32)zeroCtrlPostImposeVCallReturnTraceEnd;
+	bsmanClosedRegistration.post_impose_vcall_target_addr =
+			(u32)&zeroCtrlPostImposeVCallTarget;
+	bsmanClosedRegistration.post_impose_vcall_saved_ra_addr =
+			(u32)&zeroCtrlPostImposeVCallSavedRA;
+	bsmanClosedRegistration.post_impose_vcall_natural_result_addr =
+			(u32)&zeroCtrlPostImposeVCallNaturalResult;
+	bsmanClosedRegistration.post_impose_vcall_hits_addr =
+			(u32)&zeroCtrlPostImposeVCallHits;
+	bsmanClosedRegistration.post_impose_vcall_return_hits_addr =
+			(u32)&zeroCtrlPostImposeVCallReturnHits;
+	bsmanClosedRegistration.post_minus_one_vcall64_leaf_addr =
+			(u32)zeroCtrlPostMinusOneVCall64Trace;
+	bsmanClosedRegistration.post_minus_one_vcall64_leaf_end_addr =
+			(u32)zeroCtrlPostMinusOneVCall64TraceEnd;
+	bsmanClosedRegistration.post_minus_one_vcall64_return_leaf_addr =
+			(u32)zeroCtrlPostMinusOneVCall64ReturnTrace;
+	bsmanClosedRegistration.post_minus_one_vcall64_return_leaf_end_addr =
+			(u32)zeroCtrlPostMinusOneVCall64ReturnTraceEnd;
+	bsmanClosedRegistration.post_minus_one_vcall64_target_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64Target;
+	bsmanClosedRegistration.post_minus_one_vcall64_saved_ra_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64SavedRA;
+	bsmanClosedRegistration.post_minus_one_vcall64_natural_result_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64NaturalResult;
+	bsmanClosedRegistration.post_minus_one_vcall64_hits_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64Hits;
+	bsmanClosedRegistration.post_minus_one_vcall64_return_hits_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64ReturnHits;
+	bsmanClosedRegistration.post_minus_one_vcall64_collection_enabled_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64CollectionEnabled;
+	bsmanClosedRegistration.post_minus_one_vcall64_count_snapshot_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64CountSnapshot;
+	bsmanClosedRegistration.post_minus_one_vcall64_array_snapshot_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64ArraySnapshot;
+	bsmanClosedRegistration.post_minus_one_vcall64_array_read_hits_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64ArrayReadHits;
+	bsmanClosedRegistration.collection_paf_fcf265d8_leaf_addr =
+			(u32)zeroCtrlCollectionPafFCF265D8Trace;
+	bsmanClosedRegistration.collection_paf_fcf265d8_leaf_end_addr =
+			(u32)zeroCtrlCollectionPafFCF265D8TraceEnd;
+	bsmanClosedRegistration.collection_paf_fcf265d8_last_item_addr =
+			(u32)&zeroCtrlCollectionPafFCF265D8LastItem;
+	bsmanClosedRegistration.collection_paf_fcf265d8_natural_result_addr =
+			(u32)&zeroCtrlCollectionPafFCF265D8NaturalResult;
+	bsmanClosedRegistration.collection_paf_fcf265d8_hits_addr =
+			(u32)&zeroCtrlCollectionPafFCF265D8Hits;
+	bsmanClosedRegistration.collection_paf_fcf265d8_nonzero_hits_addr =
+			(u32)&zeroCtrlCollectionPafFCF265D8NonzeroHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

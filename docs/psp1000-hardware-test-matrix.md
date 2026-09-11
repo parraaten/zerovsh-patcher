@@ -463,3 +463,215 @@ virtual call enters and returns, and whether its untouched result follows the
 `+0x93EC`, interpret the unchanged post-PAF and VshBridge tracers immediately.
 Do not convert any newly observed value or enable any additional compatibility
 behavior during T15.
+
+## T24 — selective natural `+0x14020` consumer compatibility
+
+Retain the T23 trigger and existing exact PAF/BSMan controls, keep the broad
+closed shim disabled, and add only:
+
+```ini
+ClockAndCalendar = Disabled
+PSP1000SlidePlugin = Enabled
+PSP1000SlideTriggerMode = DangerousCaller58D4
+PSP1000Diagnostics = Enabled
+PSP1000PafPresentCompat = Enabled
+PSP1000BSManNotLinkedCompat = Enabled
+PSP1000BSManClosedShim = Disabled
+PSP1000Consumer14020Compat = Enabled
+```
+
+Require the compatibility record to show `natural=0`, `effective=1`, and one
+substitution before interpreting downstream behavior. Preserve and compare the
+complete T23 SlidePlugin, activation, exact PAF/BSMan, state-zero, topmenu,
+field-writer, and dispatcher records. A changed `field_12C` or newly reached
+downstream boundary supports the narrow capability hypothesis; unchanged
+`field_12C=15`, state-zero behavior, and zero dispatcher hits means this
+consumer alone is insufficient. Freeze or crash makes this isolated control
+unsafe. Do not combine it with `+0x13F6C` in this run.
+
+## T25 — selective natural `+0x13F6C` consumer compatibility
+
+Use the complete existing T24 instrumentation and exact callsite controls, but
+isolate the consumer experiment with:
+
+```ini
+ClockAndCalendar = Disabled
+PSP1000SlidePlugin = Enabled
+PSP1000SlideTriggerMode = DangerousCaller58D4
+PSP1000Diagnostics = Enabled
+PSP1000SonyStartTrace = Enabled
+PSP1000SelectiveSlideTrigger58D4 = Disabled
+PSP1000BSManClosedShim = Disabled
+PSP1000ActivationTrace = Enabled
+PSP1000PafPresentCompat = Enabled
+PSP1000BSManNotLinkedCompat = Enabled
+PSP1000Consumer13F6CCompat = Enabled
+PSP1000Consumer14020Compat = Disabled
+```
+
+Require the 13F6C record to show natural zero, effective one, and one
+substitution. Simultaneously require the 14020 record to show disabled, natural
+zero, effective zero, and zero substitutions. Compare all prefix/post-BSMan,
+state-zero, topmenu, field-writer, dispatcher, post-PAF, and post-VshBridge
+records with T23/T24. State advancement is strong evidence only after the exact
+changed boundary is identified. Unchanged state proves isolated 13F6C is
+insufficient; freeze or crash makes it unsafe. Do not enable both consumer
+compatibilities in T25.
+
+## T27 — natural capability predicates and final PAF mask
+
+Retain the T26 configuration, including both existing consumer compatibilities
+and exact `DangerousCaller58D4`; T27 itself is diagnostic-only. Require:
+
+```text
+[vsh-capability-predicate] offset=0x14014 target=0x6F44 validation=1 install=1 cache_sync=1 hits=1 natural=0x........
+[vsh-capability-predicate] offset=0x1402C target=0x6FC4 validation=1 install=1 cache_sync=1 hits=1 natural=0x........
+[vsh-capability-predicate] offset=0x14038 target=0x7004 validation=1 install=1 cache_sync=1 hits=1 natural=0x........
+[vsh-paf-capability-mask] validation=1 install=1 cache_sync=1 hits=1 mask=0x........
+```
+
+Also require the existing 13F6C and 14020 records to retain natural zero,
+effective one, and one substitution. If the mask lacks expected bit `0x40`,
+stop and audit the delay-slot interpretation. Natural zero at `+0x6F44` or
+`+0x6FC4` identifies candidate bits `0x20` or `0x80` for later analysis only;
+do not force them in T27. If those bits are already present naturally, do not
+pursue those predicates.
+
+## T28 — isolated exact PAF capability-mask compatibility
+
+Use the controlled configuration with `DangerousCaller58D4`, diagnostics,
+Sony-start and activation traces, exact PAF/BSMan controls, and broad BSMan shim
+disabled. Isolate T28 with:
+
+```ini
+PSP1000Consumer13F6CCompat = Disabled
+PSP1000Consumer14020Compat = Disabled
+PSP1000PafCapabilityMaskCompat = Enabled
+```
+
+First require both consumer records to show disabled, natural/effective zero,
+and zero substitutions. Then require:
+
+```text
+[vsh-paf-capability-mask] validation=1 install=1 cache_sync=1 enabled=1 hits=1 natural=0x00000002 effective=0x000001E9 substitutions=1
+```
+
+Compare every prefix, post-BSMan, state-zero, topmenu, field-writer, dispatcher,
+post-PAF, and post-VshBridge record against the natural T27 control. A first
+changed boundary is strong evidence the mask contributes to missing setup;
+unchanged state proves `0x1E9` alone insufficient; freeze or crash makes the
+isolated substitution unsafe. Do not add another compatibility in this run.
+
+## T30 — isolated exact state-zero return 15-to-14 control
+
+Retain the activation-required exact PAF-present and BSMan-not-linked controls,
+`DangerousCaller58D4`, diagnostics, and all traces. Isolate T30 with:
+
+```ini
+PSP1000Consumer13F6CCompat = Disabled
+PSP1000Consumer14020Compat = Disabled
+PSP1000PafCapabilityMaskCompat = Disabled
+PSP1000StateZero15To14Compat = Enabled
+```
+
+Require both consumer records and the PAF-mask record to prove their
+compatibilities are disabled. Then require:
+
+```text
+[state-zero-15to14-compat] enabled=1 natural=0x0000000F effective=0x0000000E substitutions=...
+```
+
+The substitution count may exceed one. Compare state-zero mask/rejoin,
+activation and post-BSMan paths, field-writer values, dispatcher/case14 counts,
+and post-PAF/VshBridge results. Do not invoke the dispatcher or write
+`context+0x12C`; substitution alone is not success.
+
+### T30.1 prerequisite
+
+Use only a build containing the Class15/Class17 cross-instrumentation fix. The
+natural diagnostic slot must remain `zeroCtrlStateZeroVCallResult`, while both
+classification wrappers route from
+`zeroCtrlStateZero15To14EffectiveResult`. Class18 must remain based on Sony's
+`$v1`. Discard any pre-T30.1 run as an invalid isolated test because the old
+branch instrumentation could neutralize the 15-to-14 return substitution.
+
+## T31 — exact impose parameter/result compatibility
+
+Keep T30.1 and the activation-required PAF-present/BSMan-not-linked controls
+enabled. Disable both consumer controls and the PAF-mask control, then enable:
+
+```ini
+PSP1000StateZero15To14Compat = Enabled
+PSP1000ImposeParam8000000DCompat = Enabled
+```
+
+A valid run must retain state-zero effective 14, mask `0x01D5`, and nonzero
+rejoin count, then report:
+
+```text
+[vsh-impose-param-8000000d-compat] enabled=1 argument=0x8000000D natural=0x80000107 effective=0x00000000 substitutions=...
+```
+
+The substitution count may exceed one. Compare the first boundary after Sony's
+`activation+0x114` branch along with activation, post-BSMan, field-writer,
+dispatcher/case14, and post-PAF/VshBridge evidence. Do not invoke the dispatcher
+or add another compatibility.
+
+## T32 — diagnostic trace of the `s0+0x50` indirect call
+
+Keep the valid isolated T31 configuration and additionally enable:
+
+```ini
+PSP1000PostImposeVCallTrace = Enabled
+```
+
+First require T30.1 mask `0x01D5` with nonzero rejoin and the exact T31 impose
+substitution. Then require:
+
+```text
+[post-impose-vcall-50] validation=1 install=1 cache_sync=1 hits=... returns=... target=0x........ natural=0x........ equals_minus_one=...
+```
+
+Natural `0xFFFFFFFF` proves Sony's exact condition is satisfied and makes the
+second indirect call at `s0+0x64` the next diagnostic boundary. Any other
+natural result proves this return is the immediate retry blocker, but must not
+be substituted in T32.
+
+### T33 — diagnostic `s0+0x64` indirect call
+
+Enable `PSP1000PostMinusOneVCall64Trace` only with the T30.1, T31, and T32
+prerequisites. First confirm T32 still reports natural `0xFFFFFFFF`, then
+require:
+
+```text
+[post-minus-one-vcall-64] validation=1 install=1 cache_sync=1 hits=... returns=... target=0x........ target_offset=0x0001F8E0 target_matches_1f8e0=1 natural=0x........
+```
+
+This record is observation only. Do not substitute a zero or pointer-like
+result; first identify the natural `+0x14C` branch and accessed object fields.
+
+### T34 — conditional natural collection snapshot
+
+Enable `PSP1000PostVCall64CollectionTrace` only with the complete T33 gate.
+After confirming all T30.1–T33 prerequisite records, require:
+
+```text
+[post-vcall64-collection] enabled=1 pointer=0x........ count=0x........ array=0x........ array_read=...
+```
+
+A zero count must report `array_read=0` and must not read `p+0x360`. A nonzero
+count permits exactly the natural array-pointer snapshot. T34 performs no
+pointer, object, collection, field, dispatcher, or result substitution.
+
+### T35 — natural scePaf/0xFCF265D8 decision
+
+Enable `PSP1000CollectionPafFCF265D8Trace` only with the complete T34 chain.
+After confirming the prerequisite records, require:
+
+```text
+[collection-paf-fcf265d8] validation=1 install=1 cache_sync=1 hits=... nonzero=... last_item=0x........ natural=0x........
+```
+
+A nonzero natural result proves Sony exits to activation `+0x4C`; zero proves
+that item reaches the second natural PAF call at `+0x178`. No result is
+substituted in T35.

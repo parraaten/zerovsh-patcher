@@ -1664,3 +1664,295 @@ evidence that both natural consumers returned false in this startup. Combined
 with the decrypted binary, that would establish the natural `0x28` selection
 at `+0x13F6C` and absence of the later `0x40` contribution at `+0x14020`, but
 would not itself justify compatibility. No consumer or predicate is forced.
+
+### T23 hardware result and T24 selective `+0x14020` compatibility
+
+**PROVEN BY HARDWARE:** T23 installed both transactional consumer wrappers,
+each natural consumer executed once, and both `+0x13F6C` and `+0x14020`
+observed an untouched natural `+0x6F84` result of zero.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** false at `+0x13F6C` selects argument
+`0x28` rather than `0x828`. False at `+0x14020` omits candidate mask bit
+`0x40`; Sony's unchanged `movn` at `+0x14030` contributes that bit when the
+effective result is nonzero. The surrounding mask is passed to the
+`scePaf/0xF48A9040` import. No unofficial semantic name is assigned to that
+NID.
+
+T24 adds the default-disabled `PSP1000Consumer14020Compat` control. It is armed
+only on PSP-1000 firmware 6.61 with the SlidePlugin master opt-in, disabled
+ClockAndCalendar, enabled diagnostics, and exact `DangerousCaller58D4` trigger
+mode. It does not select `ZERO_TRIGGER_14020` or use the legacy combined direct
+trigger.
+
+The `+0x13F6C` wrapper remains the pure T23 evidence wrapper: it calls Sony
+once, stores natural `$v0`, and returns it unchanged. The existing `+0x14020`
+wrapper still calls Sony once and stores natural `$v0` first. Only when its
+dedicated compatibility scalar is one and natural `$v0` is exactly zero does
+it substitute effective `$v0=1` and increment its dedicated substitution
+counter. Arbitrary nonzero values are returned exactly. The effective result
+is stored after that decision and returned to Sony, which consumes it through
+the original `+0x14030` instruction. The `+0x14024` delay slot remains
+`0x0062800B` and is not patched.
+
+All three new helper scalars are fixed storage, registered, range-validated,
+and initialized before either existing consumer JAL commit. Any validation
+failure prevents both callsite writes, preserving the T22 all-or-none
+transaction. No thread, allocation, polling, helper I/O, Sony global write,
+global predicate force, or additional VSH code write is introduced. Deferred
+pre-SlidePlugin diagnostics add:
+
+```text
+[vsh-6f84-14020-compat] enabled=1 hits=1 natural=0x00000000 effective=0x00000001 substitutions=1
+```
+
+**HYPOTHESIS / UNKNOWN:** Whether adding only the `+0x14020` candidate `0x40`
+capability is sufficient to advance Sony SlidePlugin state on PSP-1000. The
+hardware run must compare every existing downstream T23 record, especially
+`field_12C`, state-zero, dispatcher, and live topmenu state. Execution of the
+substitution alone is not success. If downstream behavior is unchanged,
+`+0x14020` alone is insufficient; if the XMB freezes or crashes, the isolated
+substitution is unsafe. Neither outcome authorizes a `+0x13F6C` compatibility.
+
+### T24 hardware result and T25 selective `+0x13F6C` compatibility
+
+**PROVEN BY HARDWARE — T24:** the isolated `+0x14020` control observed natural
+zero, returned effective one, and recorded one substitution. Nevertheless,
+Sony's downstream state remained `field_12C=15`, the state-zero virtual call
+returned 15, and both the field writer and dispatcher recorded zero hits.
+Selective `+0x14020` compatibility is therefore insufficient by itself on the
+tested PSP-1000; execution of the substitution was not a compatibility success.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** the natural false result at
+`vsh_module+0x13F6C` selects argument `0x28`, while an effective true result
+selects `0x828` before the call through the `sceVshBridge/0xC949966C` import at
+`+0x3FAF8`. No unofficial semantic name is assigned to that NID.
+
+T25 adds default-disabled `PSP1000Consumer13F6CCompat`. Under the same PSP-1000
+6.61, SlidePlugin opt-in, disabled ClockAndCalendar, diagnostics, and exact
+`DangerousCaller58D4` gates, its wrapper records natural `$v0` and changes only
+exact zero to effective one. It records effective `$v0` and a dedicated
+substitution count, while arbitrary nonzero values remain exact. Sony's
+unchanged branch at `+0x13F74` selects the argument; neither the branch nor its
+arguments are patched.
+
+The new fixed helper scalars are registered and range-validated before the
+existing all-or-none two-consumer commit. The `+0x13F70` NOP delay slot remains
+untouched. T24's `+0x14020` implementation remains available and unchanged, but
+must be configured Disabled during the isolated T25 run. Deferred diagnostics
+add:
+
+```text
+[vsh-6f84-13f6c-compat] enabled=1 hits=1 natural=0x00000000 effective=0x00000001 substitutions=1
+[vsh-6f84-14020-compat] enabled=0 hits=1 natural=0x00000000 effective=0x00000000 substitutions=0
+```
+
+**HYPOTHESIS / UNKNOWN:** Whether isolated `+0x13F6C` false-to-true is
+sufficient to advance Sony SlidePlugin state on PSP-1000. Substitution alone is
+not success; every downstream T24 state, PAF/VshBridge, field-writer, and
+dispatcher record must be compared before considering any later combined test.
+
+### T26 hardware result and T27 capability-mask diagnostics
+
+**PROVEN BY HARDWARE — T26:** the dangerous `+0x58D4` consumer executed once,
+and both selective consumers observed natural zero and returned effective one
+with one substitution. Thus all three known direct `+0x6F84` consumers were
+effectively true. Sony nevertheless retained `field_12C=15`, a state-zero
+virtual result of 15, zero field-writer hits, and zero dispatcher hits. Making
+all known direct `+0x6F84` consumers true is insufficient on the tested
+PSP-1000; T27 adds no further compatibility.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** the mask chain at `+0x14000` uses
+results from `+0x6F44`, `+0x6F84`, `+0x6FC4`, and `+0x7004` to contribute
+candidate bits `0x20`, `0x40`, `0x80`, and `0x100`, respectively. The final
+unchanged `$a0` mask is passed by the unique direct call at `+0x1404C` to the
+`scePaf/0xF48A9040` import. No unofficial semantic name is assigned to that
+NID.
+
+T27 transactionally replaces only the four JAL words at `+0x14014`,
+`+0x1402C`, `+0x14038`, and `+0x1404C` after validating model, firmware, VSH
+text size, JAL forms and targets, exact delay words, helper/scalar ranges, and
+pseudodirect reachability. The predicate wrappers call their natural targets
+once, record untouched results, and return those results exactly. The mask
+wrapper records incoming `$a0` and tail-transfers to the original PAF import
+with the original JAL `$ra`; it does not inspect or transform the return value.
+The delay slots at `+0x14018`, `+0x14030`, `+0x1403C`, and `+0x14050` remain
+untouched. No thread, allocation, I/O, data write, or compatibility is added.
+
+**HYPOTHESIS / UNKNOWN — T27:** whether adjacent natural hardware-capability
+predicates feeding the PAF initialization mask expose the missing PSP-1000
+prerequisite. Direct call-time results and the exact mask must be reviewed
+before considering any later controlled experiment.
+
+### T27 natural control and T28 exact PAF-mask compatibility
+
+**PROVEN BY HARDWARE:** with both consumer compatibilities disabled, the three
+adjacent predicates at `+0x6F44`, `+0x6FC4`, and `+0x7004` each returned zero,
+and the exact natural capability mask passed at `+0x1404C` was `0x00000002`.
+The earlier T27 run with only the existing effective `+0x6F84` contribution
+produced `0x00000042`, confirming candidate bit `0x40` reaches this mask.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** the complete predicate chain maps its
+nine results to bits `0x001` through `0x100`, and shared selector value 4 yields
+mask `0x000001E9`. The selector has no established official model semantic, and
+`0x1E9` is not hardware-proven to be a PSP Go mask.
+
+T28 extends the existing `+0x1404C` tail wrapper only. It records untouched
+incoming `$a0`, and when its dedicated default-disabled mode is enabled changes
+only exact natural `0x00000002` to effective `0x000001E9`, incrementing a fixed
+substitution counter. Every other mask is preserved exactly. The wrapper stores
+the effective value and tail-transfers to the already validated
+`scePaf/0xF48A9040` stub without a frame, nested call, `$ra` change, or `$v0`
+use. The existing four-callsite T27 transaction remains the only owner and
+still leaves the `+0x14050` delay word untouched.
+
+**HYPOTHESIS / UNKNOWN:** whether presenting `0x000001E9` to PAF reproduces a
+missing prerequisite needed for Sony SlidePlugin state progression on
+PSP-1000. T28 must disable both separate consumer compatibilities and compare
+the first changed downstream boundary; substitution alone is not success.
+
+### T29 hardware result and T30 state-zero return control
+
+**PROVEN BY HARDWARE — T29:** isolated `+0x13F6C` compatibility and exact PAF
+mask `0x00000002` to `0x000001E9` substitution both executed, while the
+`+0x14020` control remained disabled. Sony still reported `field_12C=15`, a
+state-zero virtual-call result of 15, zero field-writer hits, zero dispatcher
+hits, and zero case14 requests. The combined `0x828` path and `0x1E9` mask are
+therefore insufficient on the tested PSP-1000.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** ignoring stack accesses, the relevant
+VSH context field is initialized to 15 at `+0x1FC98`, written at runtime only by
+the dispatcher at `+0x1DEAC`, and read at `+0x1E2C4`. Dispatcher case 14 reaches
+that writer with the original entry value and naturally stores 14. Hardware has
+not reached the dispatcher or writer.
+
+T30 extends only the existing state-zero virtual-return owner. It retains the
+untouched natural result, and under a new default-disabled exact gate converts
+only natural 15 to effective 14, counts substitutions, stores the effective
+result, and returns through the already saved Sony `$ra`. Every other result is
+preserved exactly. It does not invoke the dispatcher, write the Sony context,
+modify a selector/global, add a callsite, or add any PAF, predicate, or
+VshBridge compatibility.
+
+**HYPOTHESIS / UNKNOWN:** whether effective state value 14 alone is sufficient
+to leave or alter the stuck state-zero path. A changed boundary would identify
+15 as an immediate blocker but would not justify retaining the substitution;
+an unchanged path would show that case14 side effects or another prerequisite
+are still required.
+
+### T30.1 cross-instrumentation correction
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY + SOURCE:** the initial T30 return wrapper
+correctly retained natural 15 and presented effective 14 in `$v0`, but the
+existing T15 Class15/Class17 branch owners reloaded the untouched natural-result
+scalar. They would therefore reconstruct the `<15` and `<17` decisions for 15
+while Sony's intervening instructions operated on 14, neutralizing the isolated
+experiment.
+
+T30.1 changes only the classification-input scalar used by the existing
+Class15 and Class17 wrappers. They now load
+`zeroCtrlStateZero15To14EffectiveResult`; the natural
+`zeroCtrlStateZeroVCallResult` slot remains unchanged for diagnostics. When the
+control is disabled or the natural result is not 15, effective equals natural
+and routing remains transparent. Class18 remains unchanged and continues to
+compare Sony's `$v1`, which already received the effective return value.
+
+No hardware conclusion is assigned to the pre-correction T30 implementation.
+No patch owner, callsite, compatibility rule, dispatcher invocation, or Sony
+context/global write is added by this correction.
+
+### T30.1 hardware result and T31 exact impose-return control
+
+**PROVEN BY HARDWARE — T30.1:** natural state result 15 became effective 14 on
+four returns. The state-zero mask changed from `0x06D5` to `0x01D5`, and rejoin
+increased from zero to four. Natural state value 15 was therefore an immediate
+blocker, and effective 14 exposes the Class15-true/rejoin path.
+
+The newly reached sequence completed both instrumented PAF calls with zero and
+then called `sceVshBridge/0x639C3CB3` with argument `0x8000000D`, returning
+natural `0x80000107`. Public NID data identifies the function as
+`vshImposeGetParam`; no official semantic name is assigned to private parameter
+`0x8000000D`. Sony's immediate nonzero branch returns to the retry path.
+
+T31 extends only the existing post-VshBridge call/return owners. The call owner
+records untouched `$a0`. The return owner records natural `$v0` and, only when
+T30 is enabled, activation tracing is enabled, the argument is exactly
+`0x8000000D`, and natural result is exactly `0x80000107`, presents effective
+zero and increments its fixed counter. All other argument/result pairs are
+preserved exactly, and the original saved Sony `$ra` restoration remains.
+
+**HYPOTHESIS / UNKNOWN:** whether zero is the result expected on the hardware
+profile for which Sony designed this private impose-parameter path, and whether
+presenting it advances beyond the `activation+0x114` retry branch. No dispatcher
+invocation, Sony context/global write, new callsite, or additional compatibility
+is part of T31.
+
+### T31 hardware result and T32 post-impose indirect-call trace
+
+**PROVEN BY HARDWARE — T31:** T30.1 again presented effective state 14 and
+rejoined the post-state path. The exact impose control captured argument
+`0x8000000D`, natural result `0x80000107`, and presented effective zero once,
+so Sony did not take the `activation+0x114` retry branch.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** the newly exposed sequence loads an
+unknown interface target from `s0+0x50`, calls it at `activation+0x120`, and
+returns to `activation+0x128`. Sony continues beyond `activation+0x12C` only
+when that untouched result equals `0xFFFFFFFF`. The interface entry has no
+established official semantic name.
+
+T32 is diagnostic-only and explicitly depends on the T31 gate. It extends the
+existing activation transaction with one optional JAL owner at `+0x120` after
+validating exact `jalr v0`/NOP words, helper ranges, and pseudodirect reachability.
+The call wrapper records the untouched `$v0` target and Sony `$ra`, counts the
+call, redirects `$ra` to a dedicated return tracer, restores temporaries, and
+jumps to the original target. The return tracer records natural `$v0`, counts
+the return, restores the saved Sony `$ra`, and returns without changing `$v0`.
+No compatibility, dispatcher invocation, context/global write, allocation,
+thread, polling, or wrapper I/O is added.
+
+The deferred writer reports the target, natural result, and an interpreted
+`equals_minus_one` comparison. Whether this natural interface result is the
+next blocker remains **HYPOTHESIS / UNKNOWN** pending hardware evidence.
+
+### T33 post-minus-one interface +0x64 trace
+
+**PROVEN BY HARDWARE — T32:** the `s0+0x50` target was VSH `+0x1F610` and
+returned `0xFFFFFFFF`, so Sony's exact minus-one comparison naturally permits
+the following `s0+0x64` call. T33 observes only that next call. It validates
+the original `jalr v0` at activation `+0x138` and the non-NOP
+`move s4,zero` delay slot at `+0x13C`, replaces only the call word, and leaves
+the delay slot untouched.
+
+The paired wrappers preserve `t0`, `t1`, `sp`, the untouched target/result,
+and Sony's resume address at activation `+0x140`. Deferred diagnostics compute
+the target offset from the current dynamic VSH text address. Whether the
+expected VSH `+0x1F8E0` function's natural `context+0xA6C` value permits later
+SlidePlugin processing is **HYPOTHESIS / UNKNOWN**. No semantic name is
+assigned to the interface entry or context field.
+
+### T34 conditional collection snapshot
+
+**PROVEN BY HARDWARE — T33:** the `s0+0x64` entry resolved to VSH
+`+0x1F8E0` and naturally returned `0x08A516D0` for that boot. T34 adds no
+SlidePlugin patch owner or compatibility. With the new explicit diagnostic
+opt-in, the existing return tracer reads the natural count at `p+0x364`; only
+a nonzero count permits the subsequent natural array-pointer read at
+`p+0x360`. Both addresses are derived from the captured pointer and are never
+hardcoded or written.
+
+The interface entry, returned object, count, array, and entries retain unknown
+official semantics. Whether the natural collection is empty, populated, or
+structurally inconsistent remains **HYPOTHESIS / UNKNOWN** pending hardware.
+
+### T35 natural scePaf/0xFCF265D8 decision trace
+
+**PROVEN BY HARDWARE — T34:** the natural VSH object exposed count `8` and
+array pointer `0x09BCF560` for that boot. T35 adds one diagnostic-only owner at
+activation `+0x170`, after the untouched natural scePaf/`0xFCF265D8` call. It
+preserves the original `move a0,s0` delay slot and records the current item and
+untouched PAF result.
+
+The tracer reproduces Sony's exact decision: zero resumes at activation
+`+0x178`; nonzero subtracts `0x12C` from that replacement-JAL return address and
+resumes at activation `+0x4C`. No PAF call, item, result, collection field,
+context, or dispatcher behavior is modified. Whether this NID naturally blocks
+an item remains **HYPOTHESIS / UNKNOWN** pending hardware evidence.
