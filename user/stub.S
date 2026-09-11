@@ -469,6 +469,9 @@ zeroCtrlPostImposeVCallTraceEnd:
 .type zeroCtrlPostImposeVCallReturnTrace @function
 .ent zeroCtrlPostImposeVCallReturnTrace, 0
 zeroCtrlPostImposeVCallReturnTrace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
     lui     $t0, %hi(zeroCtrlPostImposeVCallNaturalResult)
     sw      $v0, %lo(zeroCtrlPostImposeVCallNaturalResult)($t0)
     lui     $t0, %hi(zeroCtrlPostImposeVCallReturnHits)
@@ -477,6 +480,9 @@ zeroCtrlPostImposeVCallReturnTrace:
     sw      $t1, %lo(zeroCtrlPostImposeVCallReturnHits)($t0)
     lui     $t0, %hi(zeroCtrlPostImposeVCallSavedRA)
     lw      $ra, %lo(zeroCtrlPostImposeVCallSavedRA)($t0)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 8
     jr      $ra
     nop
 .globl zeroCtrlPostImposeVCallReturnTraceEnd

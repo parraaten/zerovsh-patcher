@@ -534,13 +534,17 @@ def check_sources(root):
     if post_impose_call.count("$v0") != 2 or any(token in post_impose_call for token in
             ("jal ", "jalr", "$gp", "sceIo", "Alloc", "malloc")):
         fail("T32 indirect call wrapper changes target or performs a call/I/O/allocation")
-    for token in ("sw      $v0, %lo(zeroCtrlPostImposeVCallNaturalResult)",
+    for token in ("addiu   $sp, $sp, -8", "sw      $t0, 0($sp)",
+            "sw      $t1, 4($sp)",
+            "sw      $v0, %lo(zeroCtrlPostImposeVCallNaturalResult)",
             "zeroCtrlPostImposeVCallReturnHits",
-            "lw      $ra, %lo(zeroCtrlPostImposeVCallSavedRA)", "jr      $ra"):
+            "lw      $ra, %lo(zeroCtrlPostImposeVCallSavedRA)",
+            "lw      $t1, 4($sp)", "lw      $t0, 0($sp)",
+            "addiu   $sp, $sp, 8", "jr      $ra"):
         if token not in post_impose_return:
             fail("T32 indirect return wrapper lacks " + token)
     if post_impose_return.count("$v0") != 1 or any(token in post_impose_return for token in
-            ("jal ", "jalr", "$gp", "$sp", "sceIo", "Alloc", "malloc")):
+            ("jal ", "jalr", "$gp", "sceIo", "Alloc", "malloc")):
         fail("T32 return wrapper transforms v0 or performs a call/I/O/allocation")
     post_paf_source = assembly[assembly.find("zeroCtrlPostPafReturnTrace:"):
         assembly.find("zeroCtrlPostPafReturnTraceEnd:")]
@@ -1750,9 +1754,12 @@ def check_t32_vcall_semantics(call, returned):
     if len(v0_lines) != 2 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
             not re.search(r"\bjr\s+v0\b", v0_lines[1]):
         fail("T32 call wrapper transforms its v0 target")
-    return_order = (r"\bsw\s+v0,", r"\blw\s+t1,",
+    return_order = (r"\baddiu\s+sp,\s*sp,\s*-8", r"\bsw\s+t0,\s*0\(sp\)",
+        r"\bsw\s+t1,\s*4\(sp\)", r"\bsw\s+v0,", r"\blw\s+t1,",
         r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
-        r"\blw\s+ra,", r"\bjr\s+ra\b", r"\bnop\b")
+        r"\blw\s+ra,", r"\blw\s+t1,\s*4\(sp\)",
+        r"\blw\s+t0,\s*0\(sp\)", r"\baddiu\s+sp,\s*sp,\s*8",
+        r"\bjr\s+ra\b", r"\bnop\b")
     cursor = 0
     for pattern in return_order:
         match = re.search(pattern, returned[cursor:], re.I)
@@ -1760,9 +1767,17 @@ def check_t32_vcall_semantics(call, returned):
             fail("T32 return wrapper lacks ordered operation " + pattern)
         cursor += match.end()
     v0_lines = [line for line in returned.splitlines() if re.search(r"\bv0\b", line)]
+    sp_adjusts = re.findall(r"\baddiu\s+sp,\s*sp,\s*(-?\d+)", returned)
+    frame_ops = {
+        "save_t0": len(re.findall(r"\bsw\s+t0,\s*0\(sp\)", returned)),
+        "save_t1": len(re.findall(r"\bsw\s+t1,\s*4\(sp\)", returned)),
+        "restore_t1": len(re.findall(r"\blw\s+t1,\s*4\(sp\)", returned)),
+        "restore_t0": len(re.findall(r"\blw\s+t0,\s*0\(sp\)", returned)),
+    }
     if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
-            re.search(r"\bgp\b|\bsp\b|\bjalr?\b", returned):
-        fail("T32 return wrapper transforms v0 or uses a frame/call")
+            sp_adjusts != ["-8", "8"] or any(count != 1 for count in frame_ops.values()) or \
+            re.search(r"\bgp\b|\bjalr?\b", returned):
+        fail("T32 return wrapper transforms v0 or has an invalid private frame/call")
 
 
 def linked_instructions(body):
@@ -1899,6 +1914,15 @@ def check_t32_linked(disassembly, symbol_addresses):
     if sum(1 for _pc, word in linked_instructions(returned)
             if word == 0x03E00008) != 1:
         fail("T32 linked return wrapper does not return once through saved RA")
+    return_words = [word for _pc, word in linked_instructions(returned)]
+    expected_frame = (0x27BDFFF8, 0xAFA80000, 0xAFA90004)
+    expected_restore = (0x8FA90004, 0x8FA80000, 0x27BD0008, 0x03E00008,
+                        0x00000000)
+    if tuple(return_words[:3]) != expected_frame or \
+            tuple(return_words[-5:]) != expected_restore or \
+            return_words.count(0x27BDFFF8) != 1 or \
+            return_words.count(0x27BD0008) != 1:
+        fail("T32 linked return wrapper does not preserve t0/t1 in one balanced frame")
 
 
 def check_post_bsman_branch_semantics(body, relocatable=False):
