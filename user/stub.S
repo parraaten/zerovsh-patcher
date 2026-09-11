@@ -528,7 +528,7 @@ zeroCtrlCollectionPafFCF265D8Trace:
 zeroCtrlCollectionPafFCF265D8TraceEnd:
 .end zeroCtrlCollectionPafFCF265D8Trace
 
- .globl zeroCtrlCollectionPaf9A285882Trace
+.globl zeroCtrlCollectionPaf9A285882Trace
 .type zeroCtrlCollectionPaf9A285882Trace @function
 .ent zeroCtrlCollectionPaf9A285882Trace, 0
 zeroCtrlCollectionPaf9A285882Trace:
@@ -563,6 +563,40 @@ zeroCtrlCollectionPaf9A285882Trace:
 .globl zeroCtrlCollectionPaf9A285882TraceEnd
 zeroCtrlCollectionPaf9A285882TraceEnd:
 .end zeroCtrlCollectionPaf9A285882Trace
+
+.globl zeroCtrlPostCollectionPafFCF265D8Trace
+.type zeroCtrlPostCollectionPafFCF265D8Trace @function
+.ent zeroCtrlPostCollectionPafFCF265D8Trace, 0
+zeroCtrlPostCollectionPafFCF265D8Trace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlPostCollectionPafFCF265D8NaturalResult)
+    sw      $v0, %lo(zeroCtrlPostCollectionPafFCF265D8NaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlPostCollectionPafFCF265D8Hits)
+    lw      $t1, %lo(zeroCtrlPostCollectionPafFCF265D8Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostCollectionPafFCF265D8Hits)($t0)
+    beqz    $v0, 71f
+    nop
+    lui     $t0, %hi(zeroCtrlPostCollectionPafFCF265D8NonzeroHits)
+    lw      $t1, %lo(zeroCtrlPostCollectionPafFCF265D8NonzeroHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostCollectionPafFCF265D8NonzeroHits)($t0)
+    lui     $t0, %hi(zeroCtrlPostCollectionPafFCF265D8NonzeroTarget)
+    b       72f
+    lw      $t0, %lo(zeroCtrlPostCollectionPafFCF265D8NonzeroTarget)($t0)
+71:
+    lui     $t0, %hi(zeroCtrlPostCollectionPafFCF265D8ZeroResumeTarget)
+    lw      $t0, %lo(zeroCtrlPostCollectionPafFCF265D8ZeroResumeTarget)($t0)
+72:
+    lw      $t1, 4($sp)
+    addiu   $sp, $sp, 8
+    jr      $t0
+    lw      $t0, -8($sp)
+.globl zeroCtrlPostCollectionPafFCF265D8TraceEnd
+zeroCtrlPostCollectionPafFCF265D8TraceEnd:
+.end zeroCtrlPostCollectionPafFCF265D8Trace
 
 .globl zeroCtrlPostMinusOneVCall64ReturnTrace
 .type zeroCtrlPostMinusOneVCall64ReturnTrace @function
@@ -1448,6 +1482,16 @@ zeroCtrlCollectionPaf9A285882NonzeroHits: .space 4
 zeroCtrlCollectionPaf9A285882ZeroResumeTarget: .space 4
 .globl zeroCtrlCollectionPaf9A285882NonzeroTarget
 zeroCtrlCollectionPaf9A285882NonzeroTarget: .space 4
+.globl zeroCtrlPostCollectionPafFCF265D8NaturalResult
+zeroCtrlPostCollectionPafFCF265D8NaturalResult: .space 4
+.globl zeroCtrlPostCollectionPafFCF265D8Hits
+zeroCtrlPostCollectionPafFCF265D8Hits: .space 4
+.globl zeroCtrlPostCollectionPafFCF265D8NonzeroHits
+zeroCtrlPostCollectionPafFCF265D8NonzeroHits: .space 4
+.globl zeroCtrlPostCollectionPafFCF265D8ZeroResumeTarget
+zeroCtrlPostCollectionPafFCF265D8ZeroResumeTarget: .space 4
+.globl zeroCtrlPostCollectionPafFCF265D8NonzeroTarget
+zeroCtrlPostCollectionPafFCF265D8NonzeroTarget: .space 4
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits

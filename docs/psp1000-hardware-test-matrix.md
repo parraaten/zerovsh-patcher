@@ -689,3 +689,16 @@ then collect:
 This diagnostic only observes Sony's result. It patches only activation `+0x180`
 with `J`, preserves the `+0x184` RA-loading delay slot, and dynamically follows
 Sony's zero/nonzero routes without modifying an item, result, or VSH context.
+
+### T37 — post-collection scePaf/0xFCF265D8 decision
+
+Enable `PSP1000PostCollectionPafFCF265D8Trace` only with the full T36 chain.
+Verify all prerequisite records in the same boot, then collect:
+
+```text
+[post-collection-paf-fcf265d8] validation=1 install=1 cache_sync=1 hits=... nonzero=... natural=0x........
+```
+
+T37 validates but does not patch the relocated `+0x19C` JAL, patches only the
+`+0x1A4` decision with `J`, preserves Sony's `+0x1A8` RA load, and follows the
+dynamically initialized natural routes without compatibility or state writes.

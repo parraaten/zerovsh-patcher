@@ -1979,6 +1979,35 @@ one nonzero at eight hits identifies the eighth natural result as the next
 compatibility candidate without changing it. Any earlier nonzero result must be
 reconciled against same-run T34/T35 evidence before drawing conclusions.
 
-Build status: source verification passes. A PSPDEV build and real PSP-1000 test
-remain required. The unresolved question is the eighth item's natural decision;
-the recommended next phase depends exclusively on that hardware record.
+Hardware reported `hits=8`, `nonzero=0`, and `natural=0`, while same-run T34
+and T35 retained eight collection entries and eight passing first-PAF results.
+This proves both natural PAF decisions pass all eight items and Sony naturally
+completes the loop; no loop compatibility is justified. T37 is the recommended
+next phase.
+
+### T37 post-collection scePaf/0xFCF265D8 decision trace
+
+Hardware-confirmed T36 established that both per-item PAF decisions pass all
+eight natural collection entries. T37 remains default-disabled and diagnostic
+only. It validates the relocated `LUI v0` shape at activation `+0x198`, decodes
+the loaded JAL at `+0x19C` to require the dynamic SlidePlugin text address plus
+`0x2A698`, and requires the untouched `lw a0,0x0DC4(v0)` delay slot. It neither
+patches nor wraps that call.
+
+The transaction validates Sony's `0x1440FFAA` decision and `0x8FBF001C` delay
+slot, then replaces only activation `+0x1A4` with a pseudodirect `J`. The delay
+slot therefore loads Sony's activation caller RA before the tracer, which never
+references RA or assumes anything about post-call `a0`. Kernel-initialized
+scalars route zero to activation `+0x1AC` and nonzero to `+0x050`.
+
+The helper records only the untouched natural `v0`, hits, and nonzero hits. It
+branches directly on `v0` and uses the T36 transparent `t0`/`t1` frame and JR
+delay-slot restoration. There is no result substitution, compatibility mode,
+argument/object mutation, collection or VSH-context write, dispatcher, call,
+I/O, or allocation.
+
+Hardware interpretation requires the complete same-run T30.1 through T36
+chain. A natural zero makes the masked-low-byte PAF call at `+0x1B4` the next
+diagnostic boundary; a nonzero identifies this distinct callsite as a future
+compatibility candidate, but T37 does not alter it. A PSPDEV build and real
+PSP-1000 run remain required.

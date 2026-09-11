@@ -112,6 +112,13 @@ T36_SYMBOLS = ("zeroCtrlCollectionPaf9A285882Trace",
     "zeroCtrlCollectionPaf9A285882NonzeroHits",
     "zeroCtrlCollectionPaf9A285882ZeroResumeTarget",
     "zeroCtrlCollectionPaf9A285882NonzeroTarget")
+T37_SYMBOLS = ("zeroCtrlPostCollectionPafFCF265D8Trace",
+    "zeroCtrlPostCollectionPafFCF265D8TraceEnd",
+    "zeroCtrlPostCollectionPafFCF265D8NaturalResult",
+    "zeroCtrlPostCollectionPafFCF265D8Hits",
+    "zeroCtrlPostCollectionPafFCF265D8NonzeroHits",
+    "zeroCtrlPostCollectionPafFCF265D8ZeroResumeTarget",
+    "zeroCtrlPostCollectionPafFCF265D8NonzeroTarget")
 T32_SYMBOLS = ("zeroCtrlPostImposeVCallTrace",
     "zeroCtrlPostImposeVCallTraceEnd", "zeroCtrlPostImposeVCallReturnTrace",
     "zeroCtrlPostImposeVCallReturnTraceEnd", "zeroCtrlPostImposeVCallTarget",
@@ -1267,8 +1274,8 @@ def check_sources(root):
             "post_minus_one_vcall64_return_hits_addr"):
         if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
             fail("T33 registration does not range-validate " + field)
-    if "sizeof(ZeroCtrlBSManClosedRegistration) == 928" not in bsman_header:
-        fail("T36 registration ABI is not exactly 928 bytes")
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 956" not in bsman_header:
+        fail("T37 registration ABI is not exactly 956 bytes")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")
@@ -1378,6 +1385,52 @@ def check_sources(root):
         fail("T36 does not exclusively own activation+0x180")
     if "[collection-paf-9a285882]" not in writer:
         fail("T36 deferred diagnostic is missing")
+    if "PSP1000PostCollectionPafFCF265D8Trace = Disabled" not in sample_config or \
+            '"PSP1000PostCollectionPafFCF265D8Trace", "Disabled"' not in kernel:
+        fail("T37 trace is not default-disabled")
+    t37_gate = kernel[kernel.find("post_collection_paf_fcf265d8_enabled ="):
+        kernel.find(";", kernel.find("post_collection_paf_fcf265d8_enabled ="))]
+    if "collection_paf_9a285882_enabled" not in t37_gate or \
+            'strcmp(psp1000PostCollectionPafFCF265D8Trace, "Enabled") == 0' not in t37_gate:
+        fail("T37 does not require T36 and explicit opt-in")
+    t37 = assembly[assembly.find("zeroCtrlPostCollectionPafFCF265D8Trace:"):
+        assembly.find("zeroCtrlPostCollectionPafFCF265D8TraceEnd:")]
+    for token in ("sw      $v0, %lo(zeroCtrlPostCollectionPafFCF265D8NaturalResult)",
+            "beqz    $v0, 71f", "jr      $t0", "lw      $t0, -8($sp)"):
+        if token not in t37:
+            fail("T37 transparent decision tracer lacks " + token)
+    if "$a0" in t37 or "$ra" in t37 or any(x in t37 for x in
+            ("jal ", "jalr", "$gp", "sceIo", "Alloc", "malloc",
+             "dispatcher", "context")):
+        fail("T37 assumes a0/touches ra or performs forbidden work")
+    for token in ("post_collection_paf_fcf265d8_original[0] & 0xFFFF0000",
+            "post_collection_paf_fcf265d8_original[1] >> 26) != 3",
+            "mod->text_addr + 0x2A698",
+            "post_collection_paf_fcf265d8_original[2] != 0x8C440DC4",
+            "post_collection_paf_fcf265d8_original[3] != 0x1440FFAA",
+            "post_collection_paf_fcf265d8_original[4] != 0x8FBF001C",
+            "(bsman->post_collection_paf_fcf265d8_replacement >> 26) != 2",
+            "bsman->activation_addr + 0x1AC"):
+        if token not in bsman_install:
+            fail("T37 transaction lacks " + token)
+    if commit.count("_sw(bsman->post_collection_paf_fcf265d8_replacement,") != 1:
+        fail("T37 lacks one exact +0x1A4 patch owner")
+    t37_commit = commit[commit.find(
+        "if (bsman->post_collection_paf_fcf265d8_enabled) {"):]
+    t37_commit = t37_commit[:t37_commit.find("\n        }")]
+    if "bsman->activation_addr + 0x1A4" not in t37_commit or any(
+            offset in t37_commit for offset in ("+ 0x198", "+ 0x19C",
+                "+ 0x1A0", "+ 0x1A8", "+ 0x1AC")):
+        fail("T37 commit writes outside its exact +0x1A4 ownership")
+    t37_cache_token = """if (bsman->post_collection_paf_fcf265d8_enabled) {
+            sceKernelDcacheWritebackInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1A4), 4);
+            sceKernelIcacheInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1A4), 4);"""
+    if t37_cache_token not in bsman_install:
+        fail("T37 cache synchronization is not +0x1A4/4")
+    if "[post-collection-paf-fcf265d8]" not in writer:
+        fail("T37 deferred diagnostic is missing")
     for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
         if record not in writer:
             fail("T27 deferred diagnostic is missing " + record)
@@ -2344,6 +2397,34 @@ def check_t36_linked(disassembly, symbol_addresses):
     if raw.count(0x27BDFFF8) != 1 or raw.count(0x27BD0008) != 1:
         fail("T36 linked tracer private frame is unbalanced")
 
+
+def check_t37_linked(disassembly, symbol_addresses):
+    """Prove T37 final scalars and transparent natural-result routing."""
+    body = function_body(disassembly, "zeroCtrlPostCollectionPafFCF265D8Trace")
+    prefix = "zeroCtrlPostCollectionPafFCF265D8"
+    for suffix, uses in (("NaturalResult", [("sw", 2, 8)]),
+            ("Hits", [("lw", 9, 8), ("sw", 9, 8)]),
+            ("NonzeroHits", [("lw", 9, 8), ("sw", 9, 8)]),
+            ("ZeroResumeTarget", [("lw", 8, 8)]),
+            ("NonzeroTarget", [("lw", 8, 8)])):
+        linked_scalar_uses(body, prefix + suffix,
+                symbol_addresses[prefix + suffix], uses)
+    raw = [word for _pc, word in linked_instructions(body)]
+    if sum(word >> 26 == 4 and (word >> 21) & 0x1F == 2
+            for word in raw) != 1:
+        fail("T37 linked tracer lacks one natural v0 branch")
+    if any(word >> 26 == 3 or (word & 0xFC00003F) == 9 for word in raw):
+        fail("T37 linked tracer contains JAL/JALR")
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 2 or any(re.search(r"\bra\b", line)
+            for line in body.splitlines()):
+        fail("T37 linked tracer assigns v0 or references ra")
+    tail = [0x8FA90004, 0x27BD0008, 0x01000008, 0x8FA8FFF8]
+    if not any(raw[i:i + 4] == tail for i in range(len(raw) - 3)):
+        fail("T37 linked tracer lacks its exact transparent tail")
+    if raw.count(0x27BDFFF8) != 1 or raw.count(0x27BD0008) != 1:
+        fail("T37 linked tracer private frame is unbalanced")
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -2487,6 +2568,9 @@ def check_elf(elf):
     for symbol in T36_SYMBOLS:
         if symbol not in symbol_addresses:
             fail("missing linked T36 symbol " + symbol)
+    for symbol in T37_SYMBOLS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T37 symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
     check_t311_linked(disassembly, symbol_addresses)
     check_t32_linked(disassembly, symbol_addresses)
@@ -2568,6 +2652,7 @@ def check_elf(elf):
     check_t35_decision_semantics(t35)
     check_t35_linked(disassembly, symbol_addresses)
     check_t36_linked(disassembly, symbol_addresses)
+    check_t37_linked(disassembly, symbol_addresses)
 
 
 def check_stub_object(stub_object):
@@ -2688,6 +2773,23 @@ def check_stub_object(stub_object):
         for op in (r"\blw\s+t1,", r"\bsw\s+t1,"):
             if not relocation_bound_to_instruction(t36, counter, op):
                 fail("T36 tracer does not bind t1 counter operation")
+    t37 = function_body(disassembly, "zeroCtrlPostCollectionPafFCF265D8Trace")
+    for scalar, hi, lo, op in (
+            ("zeroCtrlPostCollectionPafFCF265D8NaturalResult", 1, 1, r"\bsw\s+v0,"),
+            ("zeroCtrlPostCollectionPafFCF265D8Hits", 1, 2, None),
+            ("zeroCtrlPostCollectionPafFCF265D8NonzeroHits", 1, 2, None),
+            ("zeroCtrlPostCollectionPafFCF265D8ZeroResumeTarget", 1, 1, r"\blw\s+t0,"),
+            ("zeroCtrlPostCollectionPafFCF265D8NonzeroTarget", 1, 1, r"\blw\s+t0,")):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", t37)) != hi or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", t37)) != lo:
+            fail("T37 tracer has wrong exact relocations for " + scalar)
+        if op and not relocation_bound_to_instruction(t37, scalar, op):
+            fail("T37 tracer does not bind relocation for " + scalar)
+    for counter in ("zeroCtrlPostCollectionPafFCF265D8Hits",
+            "zeroCtrlPostCollectionPafFCF265D8NonzeroHits"):
+        for op in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not relocation_bound_to_instruction(t37, counter, op):
+                fail("T37 tracer does not bind t1 counter operation")
     for symbol, counter in zip(STUBS, COUNTERS):
         body = function_body(disassembly, symbol)
         if not re.search(r"R_MIPS_HI16\s+" + counter + r"\b", body):
