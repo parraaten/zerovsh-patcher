@@ -1942,3 +1942,17 @@ hardcoded or written.
 The interface entry, returned object, count, array, and entries retain unknown
 official semantics. Whether the natural collection is empty, populated, or
 structurally inconsistent remains **HYPOTHESIS / UNKNOWN** pending hardware.
+
+### T35 natural scePaf/0xFCF265D8 decision trace
+
+**PROVEN BY HARDWARE — T34:** the natural VSH object exposed count `8` and
+array pointer `0x09BCF560` for that boot. T35 adds one diagnostic-only owner at
+activation `+0x170`, after the untouched natural scePaf/`0xFCF265D8` call. It
+preserves the original `move a0,s0` delay slot and records the current item and
+untouched PAF result.
+
+The tracer reproduces Sony's exact decision: zero resumes at activation
+`+0x178`; nonzero subtracts `0x12C` from that replacement-JAL return address and
+resumes at activation `+0x4C`. No PAF call, item, result, collection field,
+context, or dispatcher behavior is modified. Whether this NID naturally blocks
+an item remains **HYPOTHESIS / UNKNOWN** pending hardware evidence.

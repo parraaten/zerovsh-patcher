@@ -491,6 +491,43 @@ zeroCtrlPostMinusOneVCall64Trace:
 zeroCtrlPostMinusOneVCall64TraceEnd:
 .end zeroCtrlPostMinusOneVCall64Trace
 
+.globl zeroCtrlCollectionPafFCF265D8Trace
+.type zeroCtrlCollectionPafFCF265D8Trace @function
+.ent zeroCtrlCollectionPafFCF265D8Trace, 0
+zeroCtrlCollectionPafFCF265D8Trace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlCollectionPafFCF265D8LastItem)
+    sw      $a0, %lo(zeroCtrlCollectionPafFCF265D8LastItem)($t0)
+    lui     $t0, %hi(zeroCtrlCollectionPafFCF265D8NaturalResult)
+    sw      $v0, %lo(zeroCtrlCollectionPafFCF265D8NaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlCollectionPafFCF265D8Hits)
+    lw      $t1, %lo(zeroCtrlCollectionPafFCF265D8Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlCollectionPafFCF265D8Hits)($t0)
+    beqz    $v0, 68f
+    nop
+    lui     $t0, %hi(zeroCtrlCollectionPafFCF265D8NonzeroHits)
+    lw      $t1, %lo(zeroCtrlCollectionPafFCF265D8NonzeroHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlCollectionPafFCF265D8NonzeroHits)($t0)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 8
+    addiu   $ra, $ra, -0x12C
+    jr      $ra
+    nop
+68:
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 8
+    jr      $ra
+    nop
+.globl zeroCtrlCollectionPafFCF265D8TraceEnd
+zeroCtrlCollectionPafFCF265D8TraceEnd:
+.end zeroCtrlCollectionPafFCF265D8Trace
+
 .globl zeroCtrlPostMinusOneVCall64ReturnTrace
 .type zeroCtrlPostMinusOneVCall64ReturnTrace @function
 .ent zeroCtrlPostMinusOneVCall64ReturnTrace, 0
@@ -1355,6 +1392,14 @@ zeroCtrlPostMinusOneVCall64CountSnapshot: .space 4
 zeroCtrlPostMinusOneVCall64ArraySnapshot: .space 4
 .globl zeroCtrlPostMinusOneVCall64ArrayReadHits
 zeroCtrlPostMinusOneVCall64ArrayReadHits: .space 4
+.globl zeroCtrlCollectionPafFCF265D8LastItem
+zeroCtrlCollectionPafFCF265D8LastItem: .space 4
+.globl zeroCtrlCollectionPafFCF265D8NaturalResult
+zeroCtrlCollectionPafFCF265D8NaturalResult: .space 4
+.globl zeroCtrlCollectionPafFCF265D8Hits
+zeroCtrlCollectionPafFCF265D8Hits: .space 4
+.globl zeroCtrlCollectionPafFCF265D8NonzeroHits
+zeroCtrlCollectionPafFCF265D8NonzeroHits: .space 4
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits

@@ -239,6 +239,12 @@ extern volatile unsigned int zeroCtrlPostMinusOneVCall64CollectionEnabled;
 extern volatile unsigned int zeroCtrlPostMinusOneVCall64CountSnapshot;
 extern volatile unsigned int zeroCtrlPostMinusOneVCall64ArraySnapshot;
 extern volatile unsigned int zeroCtrlPostMinusOneVCall64ArrayReadHits;
+extern void zeroCtrlCollectionPafFCF265D8Trace(void);
+extern void zeroCtrlCollectionPafFCF265D8TraceEnd(void);
+extern volatile unsigned int zeroCtrlCollectionPafFCF265D8LastItem;
+extern volatile unsigned int zeroCtrlCollectionPafFCF265D8NaturalResult;
+extern volatile unsigned int zeroCtrlCollectionPafFCF265D8Hits;
+extern volatile unsigned int zeroCtrlCollectionPafFCF265D8NonzeroHits;
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
 extern volatile unsigned int zeroCtrlPostVshEntryHits;
 extern void zeroCtrlStateZeroCompareTrace(void), zeroCtrlStateZeroCompareTraceEnd(void);
@@ -721,6 +727,18 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlPostMinusOneVCall64ArraySnapshot;
 	bsmanClosedRegistration.post_minus_one_vcall64_array_read_hits_addr =
 			(u32)&zeroCtrlPostMinusOneVCall64ArrayReadHits;
+	bsmanClosedRegistration.collection_paf_fcf265d8_leaf_addr =
+			(u32)zeroCtrlCollectionPafFCF265D8Trace;
+	bsmanClosedRegistration.collection_paf_fcf265d8_leaf_end_addr =
+			(u32)zeroCtrlCollectionPafFCF265D8TraceEnd;
+	bsmanClosedRegistration.collection_paf_fcf265d8_last_item_addr =
+			(u32)&zeroCtrlCollectionPafFCF265D8LastItem;
+	bsmanClosedRegistration.collection_paf_fcf265d8_natural_result_addr =
+			(u32)&zeroCtrlCollectionPafFCF265D8NaturalResult;
+	bsmanClosedRegistration.collection_paf_fcf265d8_hits_addr =
+			(u32)&zeroCtrlCollectionPafFCF265D8Hits;
+	bsmanClosedRegistration.collection_paf_fcf265d8_nonzero_hits_addr =
+			(u32)&zeroCtrlCollectionPafFCF265D8NonzeroHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

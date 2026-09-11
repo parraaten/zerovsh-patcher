@@ -662,3 +662,16 @@ After confirming all T30.1–T33 prerequisite records, require:
 A zero count must report `array_read=0` and must not read `p+0x360`. A nonzero
 count permits exactly the natural array-pointer snapshot. T34 performs no
 pointer, object, collection, field, dispatcher, or result substitution.
+
+### T35 — natural scePaf/0xFCF265D8 decision
+
+Enable `PSP1000CollectionPafFCF265D8Trace` only with the complete T34 chain.
+After confirming the prerequisite records, require:
+
+```text
+[collection-paf-fcf265d8] validation=1 install=1 cache_sync=1 hits=... nonzero=... last_item=0x........ natural=0x........
+```
+
+A nonzero natural result proves Sony exits to activation `+0x4C`; zero proves
+that item reaches the second natural PAF call at `+0x178`. No result is
+substituted in T35.

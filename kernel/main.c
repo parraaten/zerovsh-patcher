@@ -101,6 +101,7 @@ static char psp1000ImposeParam8000000DCompat[16];
 static char psp1000PostImposeVCallTrace[16];
 static char psp1000PostMinusOneVCall64Trace[16];
 static char psp1000PostVCall64CollectionTrace[16];
+static char psp1000CollectionPafFCF265D8Trace[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -308,6 +309,16 @@ typedef struct {
     unsigned int post_minus_one_vcall64_array_snapshot_addr;
     unsigned int post_minus_one_vcall64_array_read_hits_addr;
     int post_vcall64_collection_enabled;
+    unsigned int collection_paf_fcf265d8_leaf_addr;
+    unsigned int collection_paf_fcf265d8_leaf_size;
+    unsigned int collection_paf_fcf265d8_last_item_addr;
+    unsigned int collection_paf_fcf265d8_natural_result_addr;
+    unsigned int collection_paf_fcf265d8_hits_addr;
+    unsigned int collection_paf_fcf265d8_nonzero_hits_addr;
+    int collection_paf_fcf265d8_enabled, collection_paf_fcf265d8_validation;
+    int collection_paf_fcf265d8_install, collection_paf_fcf265d8_cache_sync;
+    unsigned int collection_paf_fcf265d8_original[2];
+    unsigned int collection_paf_fcf265d8_replacement;
     unsigned int post_paf_entry_counter_addr[2], post_vsh_entry_hits_addr;
     unsigned int post_original[12], post_replacement[6];
     unsigned int state_zero_leaf_addr[8], state_zero_leaf_size[8];
@@ -1521,6 +1532,13 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(post_minus_one_vcall64_count_snapshot_addr);
     CHECK_POST_SCALAR(post_minus_one_vcall64_array_snapshot_addr);
     CHECK_POST_SCALAR(post_minus_one_vcall64_array_read_hits_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper,
+                copied.collection_paf_fcf265d8_leaf_addr,
+                copied.collection_paf_fcf265d8_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(collection_paf_fcf265d8_last_item_addr);
+    CHECK_POST_SCALAR(collection_paf_fcf265d8_natural_result_addr);
+    CHECK_POST_SCALAR(collection_paf_fcf265d8_hits_addr);
+    CHECK_POST_SCALAR(collection_paf_fcf265d8_nonzero_hits_addr);
 #define CHECK_STATE_ZERO_LEAF(field) \
     if (!zeroCtrlRegistrationLeafValid(helper, copied.field##_addr, \
                 copied.field##_end_addr)) return
@@ -1764,6 +1782,19 @@ void zeroCtrlRegisterBSManClosedShim(
             copied.post_minus_one_vcall64_array_snapshot_addr;
     bsman->post_minus_one_vcall64_array_read_hits_addr =
             copied.post_minus_one_vcall64_array_read_hits_addr;
+    bsman->collection_paf_fcf265d8_leaf_addr =
+            copied.collection_paf_fcf265d8_leaf_addr;
+    bsman->collection_paf_fcf265d8_leaf_size =
+            copied.collection_paf_fcf265d8_leaf_end_addr -
+            copied.collection_paf_fcf265d8_leaf_addr;
+    bsman->collection_paf_fcf265d8_last_item_addr =
+            copied.collection_paf_fcf265d8_last_item_addr;
+    bsman->collection_paf_fcf265d8_natural_result_addr =
+            copied.collection_paf_fcf265d8_natural_result_addr;
+    bsman->collection_paf_fcf265d8_hits_addr =
+            copied.collection_paf_fcf265d8_hits_addr;
+    bsman->collection_paf_fcf265d8_nonzero_hits_addr =
+            copied.collection_paf_fcf265d8_nonzero_hits_addr;
 #define COPY_STATE_ZERO_LEAF(index, field) do { \
     bsman->state_zero_leaf_addr[index] = copied.field##_addr; \
     bsman->state_zero_leaf_size[index] = copied.field##_end_addr - \
@@ -2932,7 +2963,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_state_zero_mask = 0;
     unsigned int observed_topmenu_returns = 0;
     int observed_state_zero_vcall_owner = 0;
-    unsigned int observed_post_counts[15] = {
+    unsigned int observed_post_counts[17] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
     unsigned int fast_poll_until = 0;
@@ -3613,7 +3644,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 }
             }
             {
-                unsigned int counts[15], j;
+                unsigned int counts[17], j;
                 int changed = 0;
                 counts[0] = zeroCtrlReadHelperCounter(bsman->bsman_return_hits_addr);
                 counts[1] = zeroCtrlReadHelperCounter(bsman->post_bs_counter_addr[0]);
@@ -3640,7 +3671,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->post_minus_one_vcall64_hits_addr);
                 counts[14] = zeroCtrlReadHelperCounter(
                         bsman->post_minus_one_vcall64_return_hits_addr);
-                for (j = 0; j < 15; j++)
+                counts[15] = zeroCtrlReadHelperCounter(
+                        bsman->collection_paf_fcf265d8_hits_addr);
+                counts[16] = zeroCtrlReadHelperCounter(
+                        bsman->collection_paf_fcf265d8_nonzero_hits_addr);
+                for (j = 0; j < 17; j++)
                     if (counts[j] != observed_post_counts[j]) changed = 1;
                 if (changed) {
                     unsigned int bs_result = zeroCtrlReadHelperCounter(
@@ -3727,6 +3762,19 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 bsman->post_minus_one_vcall64_array_snapshot_addr),
                             zeroCtrlReadHelperCounter(
                                 bsman->post_minus_one_vcall64_array_read_hits_addr));
+                    zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[collection-paf-fcf265d8] validation=%d install=%d "
+                            "cache_sync=%d hits=%u nonzero=%u last_item=0x%08X "
+                            "natural=0x%08X\n",
+                            bsman->collection_paf_fcf265d8_validation,
+                            bsman->collection_paf_fcf265d8_install,
+                            bsman->collection_paf_fcf265d8_cache_sync,
+                            counts[15], counts[16],
+                            zeroCtrlReadHelperCounter(
+                                bsman->collection_paf_fcf265d8_last_item_addr),
+                            zeroCtrlReadHelperCounter(
+                                bsman->collection_paf_fcf265d8_natural_result_addr));
                     zeroCtrlDiagnosticsText(line);
                 }
             }
@@ -4715,6 +4763,12 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     bsman->post_minus_one_vcall64_return_leaf_size) ||
                 ((bsman->activation_addr + 0x13C) & 0xF0000000) !=
                     (bsman->post_minus_one_vcall64_leaf_addr & 0xF0000000))) return;
+        if (bsman->collection_paf_fcf265d8_enabled &&
+                (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->collection_paf_fcf265d8_leaf_addr,
+                    bsman->collection_paf_fcf265d8_leaf_size) ||
+                ((bsman->activation_addr + 0x174) & 0xF0000000) !=
+                    (bsman->collection_paf_fcf265d8_leaf_addr & 0xF0000000))) return;
         bsman->activation_original[0] = _lw(bsman->activation_addr);
         bsman->activation_original[1] = _lw(bsman->activation_addr + 4);
         bsman->call_original = _lw(bsman->caller_addr);
@@ -4750,6 +4804,12 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 _lw(bsman->activation_addr + 0x13C);
         bsman->post_minus_one_vcall64_replacement = 0x0C000000 |
                 ((bsman->post_minus_one_vcall64_leaf_addr >> 2) & 0x03FFFFFF);
+        bsman->collection_paf_fcf265d8_original[0] =
+                _lw(bsman->activation_addr + 0x170);
+        bsman->collection_paf_fcf265d8_original[1] =
+                _lw(bsman->activation_addr + 0x174);
+        bsman->collection_paf_fcf265d8_replacement = 0x0C000000 |
+                ((bsman->collection_paf_fcf265d8_leaf_addr >> 2) & 0x03FFFFFF);
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
                 0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8
@@ -4839,6 +4899,12 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x138,
                         bsman->post_minus_one_vcall64_replacement) !=
                             bsman->post_minus_one_vcall64_leaf_addr)) ||
+                (bsman->collection_paf_fcf265d8_enabled &&
+                    (bsman->collection_paf_fcf265d8_original[0] != 0x1440FFB6 ||
+                    bsman->collection_paf_fcf265d8_original[1] != 0x02002021 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x170,
+                        bsman->collection_paf_fcf265d8_replacement) !=
+                            bsman->collection_paf_fcf265d8_leaf_addr)) ||
                 bsman->state_zero_original[0] != 0x1243FF73 ||
                 (bsman->state_zero_original[1] & 0xFFFF0000) != 0x3C020000 ||
                 bsman->state_zero_original[2] != 0x1460FF71 ||
@@ -4877,6 +4943,8 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             bsman->post_impose_vcall_validation = 1;
         if (bsman->post_minus_one_vcall64_enabled)
             bsman->post_minus_one_vcall64_validation = 1;
+        if (bsman->collection_paf_fcf265d8_enabled)
+            bsman->collection_paf_fcf265d8_validation = 1;
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
                 0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8
@@ -4957,6 +5025,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         _sw(0xFFFFFFFF, bsman->post_minus_one_vcall64_count_snapshot_addr);
         _sw(0, bsman->post_minus_one_vcall64_array_snapshot_addr);
         _sw(0, bsman->post_minus_one_vcall64_array_read_hits_addr);
+        _sw(0, bsman->collection_paf_fcf265d8_last_item_addr);
+        _sw(0xFFFFFFFF, bsman->collection_paf_fcf265d8_natural_result_addr);
+        _sw(0, bsman->collection_paf_fcf265d8_hits_addr);
+        _sw(0, bsman->collection_paf_fcf265d8_nonzero_hits_addr);
         _sw(0, bsman->post_paf_entry_counter_addr[0]);
         _sw(0, bsman->post_paf_entry_counter_addr[1]);
         _sw(0, bsman->post_vsh_entry_hits_addr);
@@ -5061,6 +5133,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         SYNC_POST_SCALAR(bsman->post_minus_one_vcall64_count_snapshot_addr);
         SYNC_POST_SCALAR(bsman->post_minus_one_vcall64_array_snapshot_addr);
         SYNC_POST_SCALAR(bsman->post_minus_one_vcall64_array_read_hits_addr);
+        SYNC_POST_SCALAR(bsman->collection_paf_fcf265d8_last_item_addr);
+        SYNC_POST_SCALAR(bsman->collection_paf_fcf265d8_natural_result_addr);
+        SYNC_POST_SCALAR(bsman->collection_paf_fcf265d8_hits_addr);
+        SYNC_POST_SCALAR(bsman->collection_paf_fcf265d8_nonzero_hits_addr);
         SYNC_POST_SCALAR(bsman->state_zero_path_mask_addr);
         SYNC_POST_SCALAR(bsman->state_zero_15to14_compat_mode_addr);
         SYNC_POST_SCALAR(bsman->state_zero_15to14_effective_result_addr);
@@ -5093,6 +5169,11 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             _sw(bsman->post_minus_one_vcall64_replacement,
                     bsman->activation_addr + 0x138);
             bsman->post_minus_one_vcall64_install = 1;
+        }
+        if (bsman->collection_paf_fcf265d8_enabled) {
+            _sw(bsman->collection_paf_fcf265d8_replacement,
+                    bsman->activation_addr + 0x170);
+            bsman->collection_paf_fcf265d8_install = 1;
         }
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
@@ -5156,6 +5237,13 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             sceKernelIcacheInvalidateRange(
                     (const void *)(bsman->activation_addr + 0x138), 4);
             bsman->post_minus_one_vcall64_cache_sync = 1;
+        }
+        if (bsman->collection_paf_fcf265d8_enabled) {
+            sceKernelDcacheWritebackInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x170), 4);
+            sceKernelIcacheInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x170), 4);
+            bsman->collection_paf_fcf265d8_cache_sync = 1;
         }
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)(bsman->activation_addr + 0x27C), 0x50);
@@ -5540,6 +5628,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	ini_gets("Experimental", "PSP1000PostVCall64CollectionTrace", "Disabled",
 			psp1000PostVCall64CollectionTrace,
 			sizeof(psp1000PostVCall64CollectionTrace), config);
+	ini_gets("Experimental", "PSP1000CollectionPafFCF265D8Trace", "Disabled",
+			psp1000CollectionPafFCF265D8Trace,
+			sizeof(psp1000CollectionPafFCF265D8Trace), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -5620,6 +5711,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		slide_diag.bsman.post_vcall64_collection_enabled =
 			slide_diag.bsman.post_minus_one_vcall64_enabled &&
 			strcmp(psp1000PostVCall64CollectionTrace, "Enabled") == 0;
+		slide_diag.bsman.collection_paf_fcf265d8_enabled =
+			slide_diag.bsman.post_vcall64_collection_enabled &&
+			strcmp(psp1000CollectionPafFCF265D8Trace, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,
