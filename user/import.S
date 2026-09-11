@@ -6,7 +6,7 @@
 	STUB_FUNC 0x1C90BECB, sctrlHENSetStartModuleHandler	
 	STUB_END
 
-	STUB_START "ZeroCtrlForUser" 0x40090000, 0x000D0005
+	STUB_START "ZeroCtrlForUser" 0x40090000, 0x000E0005
 	STUB_FUNC 0x13373570, zeroCtrlGetSlideState
 	STUB_FUNC 0x13373571, zeroCtrlSetSlideState
 	STUB_FUNC 0x13373572, zeroCtrlGetSlideConfig
@@ -20,6 +20,7 @@
 	STUB_FUNC 0x1337357A, zeroCtrlRecordVshSlideTarget
 	STUB_FUNC 0x1337357B, zeroCtrlRegisterSonyStartTrace
 	STUB_FUNC 0x1337357C, zeroCtrlRegisterBSManClosedShim
+	STUB_FUNC 0x1337357D, zeroCtrlRegisterActivationWide
 	STUB_END
 
 	STUB_START "sceRtc" 0x40090000, 0x00010005

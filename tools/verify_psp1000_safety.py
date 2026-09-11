@@ -1288,17 +1288,18 @@ def check_sources(root):
             "post_minus_one_vcall64_return_hits_addr"):
         if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
             fail("T33 registration does not range-validate " + field)
-    if "sizeof(ZeroCtrlBSManClosedRegistration) == 1300" not in bsman_header:
-        fail("registration ABI is not exactly 1300 bytes")
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header:
+        fail("legacy registration ABI is not exactly 1012 bytes")
     # T40 is one default-disabled, all-or-none, observation-only bundle.
     if "PSP1000ActivationWideTrace = Disabled" not in sample_config or \
             '"PSP1000ActivationWideTrace", "Disabled"' not in kernel:
         fail("T40 wide activation trace is not default-disabled")
-    if "activation_wide_scalar_addr[52]" not in bsman_header or \
-            "activation_wide_leaf_addr[10]" not in bsman_header:
-        fail("T40 registration fields are incomplete")
-    for token in ("copied.activation_wide_leaf_addr[wide_index]",
-            "copied.activation_wide_scalar_addr[wide_index], 4",
+    if "scalar_addr[52]" not in bsman_header or \
+            "leaf_addr[10]" not in bsman_header or \
+            "sizeof(ZeroCtrlActivationWideRegistration) == 288" not in bsman_header:
+        fail("optional T40 registration fields are incomplete")
+    for token in ("copied.leaf_addr[wide_index]",
+            "copied.scalar_addr[wide_index], 4",
             "zeroCtrlVshModuleRangeValid(helper,\n"
             "                        bsman->activation_wide_leaf_addr[wide_index]",
             "bsman->activation_wide_validation = 1",
@@ -1306,6 +1307,28 @@ def check_sources(root):
             "bsman->activation_wide_cache_sync = 1"):
         if token not in kernel:
             fail("T40 registration/transaction lacks " + token)
+    legacy_register = kernel[kernel.find("void zeroCtrlRegisterBSManClosedShim("):
+            kernel.find("int zeroCtrlRegisterActivationWide(")]
+    optional_register = kernel[kernel.find("int zeroCtrlRegisterActivationWide("):
+            kernel.find("void zeroCtrlRecordVshSlideTarget(")]
+    if "ZeroCtrlBSManClosedRegistration copied;" not in legacy_register or \
+            "activation_wide" in legacy_register:
+        fail("disabled T40 still changes or can block legacy registration")
+    if "if (!registration) return bsman->activation_wide_enabled;" not in \
+            optional_register or \
+            optional_register.find("if (!registration)") > optional_register.find("memcpy("):
+        fail("optional T40 registration does not gate before descriptor copying")
+    legacy_call = user.find("zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);")
+    t40_query = user.find("if (zeroCtrlRegisterActivationWide(NULL))")
+    t40_population = user.find("activationWideRegistration.leaf_addr[0]")
+    handler_install = user.find("sctrlHENSetStartModuleHandler(OnModuleStart)", t40_population)
+    if min(legacy_call, t40_query, t40_population, handler_install) < 0 or not \
+            legacy_call < t40_query < t40_population < handler_install:
+        fail("user T40 population is not optional and after legacy registration")
+    if "PSP_EXPORT_FUNC_NID(zeroCtrlRegisterActivationWide, 0x1337357D)" not in \
+            kernel_exports or \
+            "STUB_FUNC 0x1337357D, zeroCtrlRegisterActivationWide" not in user_imports:
+        fail("optional T40 registration export/import is missing")
     if "zeroCtrlTextRangeValid" in kernel or "bsman->helper" in kernel:
         fail("T40 uses an invented helper range API or evidence member")
     if "static const unsigned int offset[7]" in kernel or \
@@ -1567,8 +1590,8 @@ def check_sources(root):
             writer.find("[t37-validation]") > writer.find(
                 "[post-collection-paf-fcf265d8]"):
         fail("T37.1 deferred failure diagnostic is not outside success-only tracing")
-    if "sizeof(ZeroCtrlBSManClosedRegistration) == 1300" not in bsman_header:
-        fail("registration ABI is not exactly 1300 bytes")
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header:
+        fail("legacy registration ABI is not exactly 1012 bytes")
     if "post_collection_paf_fcf265d8_original[2] != 0x8C440DC4" in kernel:
         fail("T37.2 retains the invalid literal relocated LW comparison")
     t372 = bsman_install[bsman_install.rfind(

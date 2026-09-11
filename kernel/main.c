@@ -1648,16 +1648,6 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_nonzero_hits_addr);
     CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_zero_resume_target_addr);
     CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_nonzero_target_addr);
-    {
-        unsigned int wide_index;
-        for (wide_index = 0; wide_index < 10; wide_index++)
-            if (!zeroCtrlRegistrationLeafValid(helper,
-                    copied.activation_wide_leaf_addr[wide_index],
-                    copied.activation_wide_leaf_end_addr[wide_index])) return;
-        for (wide_index = 0; wide_index < 52; wide_index++)
-            if (!zeroCtrlVshModuleRangeValid(helper,
-                    copied.activation_wide_scalar_addr[wide_index], 4)) return;
-    }
 #define CHECK_STATE_ZERO_LEAF(field) \
     if (!zeroCtrlRegistrationLeafValid(helper, copied.field##_addr, \
                 copied.field##_end_addr)) return
@@ -1943,19 +1933,6 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->masked_paf_c59fc3d0_second_nonzero_hits_addr = copied.masked_paf_c59fc3d0_second_nonzero_hits_addr;
     bsman->masked_paf_c59fc3d0_second_zero_resume_target_addr = copied.masked_paf_c59fc3d0_second_zero_resume_target_addr;
     bsman->masked_paf_c59fc3d0_second_nonzero_target_addr = copied.masked_paf_c59fc3d0_second_nonzero_target_addr;
-    {
-        unsigned int wide_index;
-        for (wide_index = 0; wide_index < 10; wide_index++) {
-            bsman->activation_wide_leaf_addr[wide_index] =
-                    copied.activation_wide_leaf_addr[wide_index];
-            bsman->activation_wide_leaf_size[wide_index] =
-                    copied.activation_wide_leaf_end_addr[wide_index] -
-                    copied.activation_wide_leaf_addr[wide_index];
-        }
-        for (wide_index = 0; wide_index < 52; wide_index++)
-            bsman->activation_wide_scalar_addr[wide_index] =
-                    copied.activation_wide_scalar_addr[wide_index];
-    }
 #define COPY_STATE_ZERO_LEAF(index, field) do { \
     bsman->state_zero_leaf_addr[index] = copied.field##_addr; \
     bsman->state_zero_leaf_size[index] = copied.field##_end_addr - \
@@ -2063,6 +2040,43 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->paf_mask_effective_addr = copied.paf_mask_effective_addr;
     bsman->paf_mask_substitution_hits_addr = copied.paf_mask_substitution_hits_addr;
     bsman->registered = 1;
+}
+
+int zeroCtrlRegisterActivationWide(
+        const ZeroCtrlActivationWideRegistration *registration) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    ZeroCtrlActivationWideRegistration copied;
+    SceModule2 *helper;
+    unsigned int wide_index;
+    int k1;
+
+    /* A NULL call is the user helper's cheap, pre-population gate query. */
+    if (!registration) return bsman->activation_wide_enabled;
+    if (!bsman->activation_wide_enabled || !bsman->registered) return 0;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!helper || !zeroCtrlVshModuleRangeValid(helper,
+                (unsigned int)registration, sizeof(copied))) return 0;
+    k1 = pspSdkSetK1(0);
+    memcpy(&copied, registration, sizeof(copied));
+    pspSdkSetK1(k1);
+    for (wide_index = 0; wide_index < 10; wide_index++) {
+        if (!zeroCtrlRegistrationLeafValid(helper, copied.leaf_addr[wide_index],
+                    copied.leaf_end_addr[wide_index])) return 0;
+    }
+    for (wide_index = 0; wide_index < 52; wide_index++) {
+        if (!zeroCtrlVshModuleRangeValid(helper,
+                    copied.scalar_addr[wide_index], 4)) return 0;
+    }
+    for (wide_index = 0; wide_index < 10; wide_index++) {
+        bsman->activation_wide_leaf_addr[wide_index] =
+                copied.leaf_addr[wide_index];
+        bsman->activation_wide_leaf_size[wide_index] =
+                copied.leaf_end_addr[wide_index] - copied.leaf_addr[wide_index];
+    }
+    for (wide_index = 0; wide_index < 52; wide_index++)
+        bsman->activation_wide_scalar_addr[wide_index] =
+                copied.scalar_addr[wide_index];
+    return 1;
 }
 
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
