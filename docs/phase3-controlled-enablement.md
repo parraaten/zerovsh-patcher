@@ -1912,3 +1912,19 @@ thread, polling, or wrapper I/O is added.
 The deferred writer reports the target, natural result, and an interpreted
 `equals_minus_one` comparison. Whether this natural interface result is the
 next blocker remains **HYPOTHESIS / UNKNOWN** pending hardware evidence.
+
+### T33 post-minus-one interface +0x64 trace
+
+**PROVEN BY HARDWARE — T32:** the `s0+0x50` target was VSH `+0x1F610` and
+returned `0xFFFFFFFF`, so Sony's exact minus-one comparison naturally permits
+the following `s0+0x64` call. T33 observes only that next call. It validates
+the original `jalr v0` at activation `+0x138` and the non-NOP
+`move s4,zero` delay slot at `+0x13C`, replaces only the call word, and leaves
+the delay slot untouched.
+
+The paired wrappers preserve `t0`, `t1`, `sp`, the untouched target/result,
+and Sony's resume address at activation `+0x140`. Deferred diagnostics compute
+the target offset from the current dynamic VSH text address. Whether the
+expected VSH `+0x1F8E0` function's natural `context+0xA6C` value permits later
+SlidePlugin processing is **HYPOTHESIS / UNKNOWN**. No semantic name is
+assigned to the interface entry or context field.

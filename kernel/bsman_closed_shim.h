@@ -199,9 +199,18 @@ typedef struct {
     u32 post_impose_vcall_natural_result_addr;
     u32 post_impose_vcall_hits_addr;
     u32 post_impose_vcall_return_hits_addr;
+    u32 post_minus_one_vcall64_leaf_addr;
+    u32 post_minus_one_vcall64_leaf_end_addr;
+    u32 post_minus_one_vcall64_return_leaf_addr;
+    u32 post_minus_one_vcall64_return_leaf_end_addr;
+    u32 post_minus_one_vcall64_target_addr;
+    u32 post_minus_one_vcall64_saved_ra_addr;
+    u32 post_minus_one_vcall64_natural_result_addr;
+    u32 post_minus_one_vcall64_hits_addr;
+    u32 post_minus_one_vcall64_return_hits_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 820 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 856 ? 1 : -1];
 
 #endif

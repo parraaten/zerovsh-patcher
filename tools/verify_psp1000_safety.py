@@ -87,6 +87,13 @@ T27_MASK_SYMBOLS = ("zeroCtrlPafCapabilityMaskTrace",
     "zeroCtrlPafCapabilityMaskHits", "zeroCtrlPafCapabilityMaskNatural",
     "zeroCtrlPafCapabilityMaskCompatMode", "zeroCtrlPafCapabilityMaskEffective",
     "zeroCtrlPafCapabilityMaskSubstitutionHits")
+T33_SYMBOLS = ("zeroCtrlPostMinusOneVCall64Trace",
+    "zeroCtrlPostMinusOneVCall64TraceEnd",
+    "zeroCtrlPostMinusOneVCall64ReturnTrace",
+    "zeroCtrlPostMinusOneVCall64ReturnTraceEnd",
+    "zeroCtrlPostMinusOneVCall64Target", "zeroCtrlPostMinusOneVCall64SavedRA",
+    "zeroCtrlPostMinusOneVCall64NaturalResult", "zeroCtrlPostMinusOneVCall64Hits",
+    "zeroCtrlPostMinusOneVCall64ReturnHits")
 T32_SYMBOLS = ("zeroCtrlPostImposeVCallTrace",
     "zeroCtrlPostImposeVCallTraceEnd", "zeroCtrlPostImposeVCallReturnTrace",
     "zeroCtrlPostImposeVCallReturnTraceEnd", "zeroCtrlPostImposeVCallTarget",
@@ -198,6 +205,7 @@ def check_sources(root):
     kernel_exports = (root / "kernel/exports.exp").read_text()
     user_imports = (root / "user/import.S").read_text()
     registration_header = (root / "kernel/sony_start_trace.h").read_text()
+    bsman_header = (root / "kernel/bsman_closed_shim.h").read_text()
     assembly = (root / "user/stub.S").read_text()
     build = (root / "build_linux.sh").read_text()
     sample_config = (root / "bin/zerovsh.ini").read_text()
@@ -546,6 +554,23 @@ def check_sources(root):
     if post_impose_return.count("$v0") != 1 or any(token in post_impose_return for token in
             ("jal ", "jalr", "$gp", "sceIo", "Alloc", "malloc")):
         fail("T32 return wrapper transforms v0 or performs a call/I/O/allocation")
+    t33_call = assembly[assembly.find("zeroCtrlPostMinusOneVCall64Trace:"):
+        assembly.find("zeroCtrlPostMinusOneVCall64TraceEnd:")]
+    t33_return = assembly[assembly.find("zeroCtrlPostMinusOneVCall64ReturnTrace:"):
+        assembly.find("zeroCtrlPostMinusOneVCall64ReturnTraceEnd:")]
+    for body, role in ((t33_call, "call"), (t33_return, "return")):
+        for token in ("addiu   $sp, $sp, -8", "sw      $t0, 0($sp)",
+                "sw      $t1, 4($sp)", "lw      $t1, 4($sp)",
+                "lw      $t0, 0($sp)", "addiu   $sp, $sp, 8"):
+            if body.count(token) != 1:
+                fail("T33 " + role + " wrapper lacks exact frame operation " + token)
+        if any(token in body for token in ("jal ", "jalr", "$gp", "sceIo",
+                "Alloc", "malloc")):
+            fail("T33 " + role + " wrapper calls code or performs I/O/allocation")
+    if t33_call.count("$v0") != 2 or "jr      $v0" not in t33_call or \
+            t33_return.count("$v0") != 1 or \
+            "sw      $v0, %lo(zeroCtrlPostMinusOneVCall64NaturalResult)" not in t33_return:
+        fail("T33 wrappers transform the indirect target or natural result")
     post_paf_source = assembly[assembly.find("zeroCtrlPostPafReturnTrace:"):
         assembly.find("zeroCtrlPostPafReturnTraceEnd:")]
     for result_symbol in ("zeroCtrlPostPafResult0", "zeroCtrlPostPafResult1"):
@@ -1193,6 +1218,36 @@ def check_sources(root):
         fail("T32 does not retain one validated activation+0x120 patch owner")
     if "[post-impose-vcall-50]" not in writer:
         fail("T32 deferred diagnostic is missing")
+    if "PSP1000PostMinusOneVCall64Trace = Disabled" not in sample_config or \
+            '"PSP1000PostMinusOneVCall64Trace", "Disabled"' not in kernel:
+        fail("T33 trace is not default-disabled")
+    t33_gate = kernel[kernel.find("post_minus_one_vcall64_enabled ="):
+        kernel.find(";", kernel.find("post_minus_one_vcall64_enabled ="))]
+    if "post_impose_vcall_enabled" not in t33_gate or \
+            'strcmp(psp1000PostMinusOneVCall64Trace, "Enabled") == 0' not in t33_gate:
+        fail("T33 trace does not require the T32/T31 gate and explicit opt-in")
+    for token in ("post_minus_one_vcall64_original[0] != 0x0040F809",
+            "post_minus_one_vcall64_original[1] != 0x0000A021",
+            "bsman->activation_addr + 0x138",
+            "bsman->post_minus_one_vcall64_validation = 1"):
+        if token not in bsman_install:
+            fail("T33 activation transaction lacks " + token)
+    if bsman_install.count("_sw(bsman->post_minus_one_vcall64_replacement,") != 1 or \
+            "bsman->activation_addr + 0x13C" in bsman_install[bsman_install.find(
+                "/* Transaction commit"):]:
+        fail("T33 does not retain one +0x138 owner or overwrites its delay slot")
+    if "[post-minus-one-vcall-64]" not in writer or \
+            "target_offset == 0x1F8E0" not in writer:
+        fail("T33 deferred target-offset diagnostic is missing")
+    for field in ("post_minus_one_vcall64_target_addr",
+            "post_minus_one_vcall64_saved_ra_addr",
+            "post_minus_one_vcall64_natural_result_addr",
+            "post_minus_one_vcall64_hits_addr",
+            "post_minus_one_vcall64_return_hits_addr"):
+        if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
+            fail("T33 registration does not range-validate " + field)
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 856" not in bsman_header:
+        fail("T33 registration ABI is not exactly 856 bytes")
     for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
         if record not in writer:
             fail("T27 deferred diagnostic is missing " + record)
@@ -1925,6 +1980,43 @@ def check_t32_linked(disassembly, symbol_addresses):
         fail("T32 linked return wrapper does not preserve t0/t1 in one balanced frame")
 
 
+
+def check_t32_linked_pair(disassembly, symbol_addresses, prefix):
+    """Prove a T32.1-style transparent pair using its final linked words."""
+    call = function_body(disassembly, prefix + "Trace")
+    returned = function_body(disassembly, prefix + "ReturnTrace")
+    linked_scalar_uses(call, prefix + "Target", symbol_addresses[prefix + "Target"],
+            [("sw", 2, 8)])
+    linked_scalar_uses(call, prefix + "SavedRA", symbol_addresses[prefix + "SavedRA"],
+            [("sw", 31, 8)])
+    linked_scalar_uses(call, prefix + "Hits", symbol_addresses[prefix + "Hits"],
+            [("lw", 9, 8), ("sw", 9, 8)])
+    linked_scalar_uses(returned, prefix + "NaturalResult",
+            symbol_addresses[prefix + "NaturalResult"], [("sw", 2, 8)])
+    linked_scalar_uses(returned, prefix + "ReturnHits",
+            symbol_addresses[prefix + "ReturnHits"], [("lw", 9, 8), ("sw", 9, 8)])
+    linked_scalar_uses(returned, prefix + "SavedRA",
+            symbol_addresses[prefix + "SavedRA"], [("lw", 31, 8)])
+    call_words = [word for _pc, word in linked_instructions(call)]
+    return_words = [word for _pc, word in linked_instructions(returned)]
+    frame = (0x27BDFFF8, 0xAFA80000, 0xAFA90004)
+    call_tail = (0x8FA90004, 0x8FA80000, 0x27BD0008, 0x00400008, 0)
+    return_tail = (0x8FA90004, 0x8FA80000, 0x27BD0008, 0x03E00008, 0)
+    if tuple(call_words[:3]) != frame or tuple(call_words[-5:]) != call_tail or \
+            tuple(return_words[:3]) != frame or tuple(return_words[-5:]) != return_tail:
+        fail(prefix + " linked wrappers do not preserve transparent frames")
+    return_addr = symbol_addresses[prefix + "ReturnTrace"]
+    routed = []
+    for first, second in zip(call_words, call_words[1:]):
+        if first >> 26 == 0x0F and (first >> 16) & 0x1F == 31 and \
+                second >> 26 == 0x09 and (second >> 21) & 0x1F == 31 and \
+                (second >> 16) & 0x1F == 31:
+            low = second & 0xFFFF
+            if low & 0x8000: low -= 0x10000
+            routed.append((((first & 0xFFFF) << 16) + low) & 0xFFFFFFFF)
+    if routed != [return_addr]:
+        fail(prefix + " does not route RA to its linked return tracer")
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -2059,6 +2151,9 @@ def check_elf(elf):
     for symbol in T32_SYMBOLS:
         if symbol not in symbol_addresses:
             fail("missing linked T32 symbol " + symbol)
+    for symbol in T33_SYMBOLS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T33 symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
     check_t311_linked(disassembly, symbol_addresses)
     check_t32_linked(disassembly, symbol_addresses)
@@ -2130,6 +2225,11 @@ def check_elf(elf):
     check_t32_vcall_semantics(function_body(disassembly,
         "zeroCtrlPostImposeVCallTrace"), function_body(disassembly,
         "zeroCtrlPostImposeVCallReturnTrace"))
+    check_t32_vcall_semantics(function_body(disassembly,
+        "zeroCtrlPostMinusOneVCall64Trace"), function_body(disassembly,
+        "zeroCtrlPostMinusOneVCall64ReturnTrace"))
+    check_t32_linked_pair(disassembly, symbol_addresses,
+        "zeroCtrlPostMinusOneVCall64")
 
 
 def check_stub_object(stub_object):
@@ -2171,6 +2271,26 @@ def check_stub_object(stub_object):
             r"R_MIPS_LO16\s+zeroCtrlPostImposeVCallReturnTrace\b",
             post_impose_call)) != 1:
         fail("T32 call wrapper does not bind its dedicated return tracer")
+    t33_call = function_body(disassembly, "zeroCtrlPostMinusOneVCall64Trace")
+    t33_return = function_body(disassembly, "zeroCtrlPostMinusOneVCall64ReturnTrace")
+    check_t32_vcall_semantics(t33_call, t33_return)
+    for body, scalar, hi, lo, op in (
+        (t33_call, "zeroCtrlPostMinusOneVCall64Target", 1, 1, r"\bsw\s+v0,"),
+        (t33_call, "zeroCtrlPostMinusOneVCall64SavedRA", 1, 1, r"\bsw\s+ra,"),
+        (t33_call, "zeroCtrlPostMinusOneVCall64Hits", 1, 2, None),
+        (t33_return, "zeroCtrlPostMinusOneVCall64NaturalResult", 1, 1, r"\bsw\s+v0,"),
+        (t33_return, "zeroCtrlPostMinusOneVCall64ReturnHits", 1, 2, None),
+        (t33_return, "zeroCtrlPostMinusOneVCall64SavedRA", 1, 1, r"\blw\s+ra,")):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo:
+            fail("T33 wrapper has wrong relocation counts for " + scalar)
+        if op and not relocation_bound_to_instruction(body, scalar, op):
+            fail("T33 wrapper does not bind relocation for " + scalar)
+    if len(re.findall(r"R_MIPS_HI16\s+zeroCtrlPostMinusOneVCall64ReturnTrace\b",
+            t33_call)) != 1 or len(re.findall(
+            r"R_MIPS_LO16\s+zeroCtrlPostMinusOneVCall64ReturnTrace\b",
+            t33_call)) != 1:
+        fail("T33 call wrapper does not bind its return tracer")
     for symbol, counter in zip(STUBS, COUNTERS):
         body = function_body(disassembly, symbol)
         if not re.search(r"R_MIPS_HI16\s+" + counter + r"\b", body):

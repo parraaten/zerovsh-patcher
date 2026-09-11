@@ -465,6 +465,56 @@ zeroCtrlPostImposeVCallTrace:
 zeroCtrlPostImposeVCallTraceEnd:
 .end zeroCtrlPostImposeVCallTrace
 
+.globl zeroCtrlPostMinusOneVCall64Trace
+.type zeroCtrlPostMinusOneVCall64Trace @function
+.ent zeroCtrlPostMinusOneVCall64Trace, 0
+zeroCtrlPostMinusOneVCall64Trace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlPostMinusOneVCall64Target)
+    sw      $v0, %lo(zeroCtrlPostMinusOneVCall64Target)($t0)
+    lui     $t0, %hi(zeroCtrlPostMinusOneVCall64SavedRA)
+    sw      $ra, %lo(zeroCtrlPostMinusOneVCall64SavedRA)($t0)
+    lui     $t0, %hi(zeroCtrlPostMinusOneVCall64Hits)
+    lw      $t1, %lo(zeroCtrlPostMinusOneVCall64Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostMinusOneVCall64Hits)($t0)
+    lui     $ra, %hi(zeroCtrlPostMinusOneVCall64ReturnTrace)
+    addiu   $ra, $ra, %lo(zeroCtrlPostMinusOneVCall64ReturnTrace)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 8
+    jr      $v0
+    nop
+.globl zeroCtrlPostMinusOneVCall64TraceEnd
+zeroCtrlPostMinusOneVCall64TraceEnd:
+.end zeroCtrlPostMinusOneVCall64Trace
+
+.globl zeroCtrlPostMinusOneVCall64ReturnTrace
+.type zeroCtrlPostMinusOneVCall64ReturnTrace @function
+.ent zeroCtrlPostMinusOneVCall64ReturnTrace, 0
+zeroCtrlPostMinusOneVCall64ReturnTrace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlPostMinusOneVCall64NaturalResult)
+    sw      $v0, %lo(zeroCtrlPostMinusOneVCall64NaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlPostMinusOneVCall64ReturnHits)
+    lw      $t1, %lo(zeroCtrlPostMinusOneVCall64ReturnHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostMinusOneVCall64ReturnHits)($t0)
+    lui     $t0, %hi(zeroCtrlPostMinusOneVCall64SavedRA)
+    lw      $ra, %lo(zeroCtrlPostMinusOneVCall64SavedRA)($t0)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 8
+    jr      $ra
+    nop
+.globl zeroCtrlPostMinusOneVCall64ReturnTraceEnd
+zeroCtrlPostMinusOneVCall64ReturnTraceEnd:
+.end zeroCtrlPostMinusOneVCall64ReturnTrace
+
 .globl zeroCtrlPostImposeVCallReturnTrace
 .type zeroCtrlPostImposeVCallReturnTrace @function
 .ent zeroCtrlPostImposeVCallReturnTrace, 0
@@ -1270,6 +1320,16 @@ zeroCtrlPostImposeVCallNaturalResult: .space 4
 zeroCtrlPostImposeVCallHits: .space 4
 .globl zeroCtrlPostImposeVCallReturnHits
 zeroCtrlPostImposeVCallReturnHits: .space 4
+.globl zeroCtrlPostMinusOneVCall64Target
+zeroCtrlPostMinusOneVCall64Target: .space 4
+.globl zeroCtrlPostMinusOneVCall64SavedRA
+zeroCtrlPostMinusOneVCall64SavedRA: .space 4
+.globl zeroCtrlPostMinusOneVCall64NaturalResult
+zeroCtrlPostMinusOneVCall64NaturalResult: .space 4
+.globl zeroCtrlPostMinusOneVCall64Hits
+zeroCtrlPostMinusOneVCall64Hits: .space 4
+.globl zeroCtrlPostMinusOneVCall64ReturnHits
+zeroCtrlPostMinusOneVCall64ReturnHits: .space 4
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits

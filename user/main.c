@@ -227,6 +227,14 @@ extern volatile unsigned int zeroCtrlPostImposeVCallSavedRA;
 extern volatile unsigned int zeroCtrlPostImposeVCallNaturalResult;
 extern volatile unsigned int zeroCtrlPostImposeVCallHits;
 extern volatile unsigned int zeroCtrlPostImposeVCallReturnHits;
+extern void zeroCtrlPostMinusOneVCall64Trace(void), zeroCtrlPostMinusOneVCall64TraceEnd(void);
+extern void zeroCtrlPostMinusOneVCall64ReturnTrace(void);
+extern void zeroCtrlPostMinusOneVCall64ReturnTraceEnd(void);
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64Target;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64SavedRA;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64NaturalResult;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64Hits;
+extern volatile unsigned int zeroCtrlPostMinusOneVCall64ReturnHits;
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
 extern volatile unsigned int zeroCtrlPostVshEntryHits;
 extern void zeroCtrlStateZeroCompareTrace(void), zeroCtrlStateZeroCompareTraceEnd(void);
@@ -683,6 +691,24 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlPostImposeVCallHits;
 	bsmanClosedRegistration.post_impose_vcall_return_hits_addr =
 			(u32)&zeroCtrlPostImposeVCallReturnHits;
+	bsmanClosedRegistration.post_minus_one_vcall64_leaf_addr =
+			(u32)zeroCtrlPostMinusOneVCall64Trace;
+	bsmanClosedRegistration.post_minus_one_vcall64_leaf_end_addr =
+			(u32)zeroCtrlPostMinusOneVCall64TraceEnd;
+	bsmanClosedRegistration.post_minus_one_vcall64_return_leaf_addr =
+			(u32)zeroCtrlPostMinusOneVCall64ReturnTrace;
+	bsmanClosedRegistration.post_minus_one_vcall64_return_leaf_end_addr =
+			(u32)zeroCtrlPostMinusOneVCall64ReturnTraceEnd;
+	bsmanClosedRegistration.post_minus_one_vcall64_target_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64Target;
+	bsmanClosedRegistration.post_minus_one_vcall64_saved_ra_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64SavedRA;
+	bsmanClosedRegistration.post_minus_one_vcall64_natural_result_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64NaturalResult;
+	bsmanClosedRegistration.post_minus_one_vcall64_hits_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64Hits;
+	bsmanClosedRegistration.post_minus_one_vcall64_return_hits_addr =
+			(u32)&zeroCtrlPostMinusOneVCall64ReturnHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

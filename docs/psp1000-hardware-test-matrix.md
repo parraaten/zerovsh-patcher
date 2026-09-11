@@ -636,3 +636,16 @@ Natural `0xFFFFFFFF` proves Sony's exact condition is satisfied and makes the
 second indirect call at `s0+0x64` the next diagnostic boundary. Any other
 natural result proves this return is the immediate retry blocker, but must not
 be substituted in T32.
+
+### T33 — diagnostic `s0+0x64` indirect call
+
+Enable `PSP1000PostMinusOneVCall64Trace` only with the T30.1, T31, and T32
+prerequisites. First confirm T32 still reports natural `0xFFFFFFFF`, then
+require:
+
+```text
+[post-minus-one-vcall-64] validation=1 install=1 cache_sync=1 hits=... returns=... target=0x........ target_offset=0x0001F8E0 target_matches_1f8e0=1 natural=0x........
+```
+
+This record is observation only. Do not substitute a zero or pointer-like
+result; first identify the natural `+0x14C` branch and accessed object fields.
