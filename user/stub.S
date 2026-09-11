@@ -824,12 +824,27 @@ CONSUMER_6F84_TRACE zeroCtrlCapability7004Trace, zeroCtrlCapability7004Hits, zer
 .type zeroCtrlPafCapabilityMaskTrace @function
 .ent zeroCtrlPafCapabilityMaskTrace, 0
 zeroCtrlPafCapabilityMaskTrace:
-    lui     $t0, %hi(zeroCtrlPafCapabilityMask)
-    sw      $a0, %lo(zeroCtrlPafCapabilityMask)($t0)
+    lui     $t0, %hi(zeroCtrlPafCapabilityMaskNatural)
+    sw      $a0, %lo(zeroCtrlPafCapabilityMaskNatural)($t0)
     lui     $t0, %hi(zeroCtrlPafCapabilityMaskHits)
     lw      $t1, %lo(zeroCtrlPafCapabilityMaskHits)($t0)
     addiu   $t1, $t1, 1
     sw      $t1, %lo(zeroCtrlPafCapabilityMaskHits)($t0)
+    lui     $t0, %hi(zeroCtrlPafCapabilityMaskCompatMode)
+    lw      $t1, %lo(zeroCtrlPafCapabilityMaskCompatMode)($t0)
+    beqz    $t1, 64f
+    nop
+    addiu   $t2, $zero, 2
+    bne     $a0, $t2, 64f
+    nop
+    addiu   $a0, $zero, 0x1E9
+    lui     $t0, %hi(zeroCtrlPafCapabilityMaskSubstitutionHits)
+    lw      $t1, %lo(zeroCtrlPafCapabilityMaskSubstitutionHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPafCapabilityMaskSubstitutionHits)($t0)
+64:
+    lui     $t0, %hi(zeroCtrlPafCapabilityMaskEffective)
+    sw      $a0, %lo(zeroCtrlPafCapabilityMaskEffective)($t0)
     lui     $t0, %hi(zeroCtrlPafCapabilityMaskTarget)
     lw      $t2, %lo(zeroCtrlPafCapabilityMaskTarget)($t0)
     jr      $t2
@@ -1278,9 +1293,15 @@ zeroCtrlCapability6F44Target: .space 4
 zeroCtrlCapability6FC4Target: .space 4
 .globl zeroCtrlCapability7004Target
 zeroCtrlCapability7004Target: .space 4
-.globl zeroCtrlPafCapabilityMask
-zeroCtrlPafCapabilityMask: .space 4
+.globl zeroCtrlPafCapabilityMaskNatural
+zeroCtrlPafCapabilityMaskNatural: .space 4
 .globl zeroCtrlPafCapabilityMaskHits
 zeroCtrlPafCapabilityMaskHits: .space 4
 .globl zeroCtrlPafCapabilityMaskTarget
 zeroCtrlPafCapabilityMaskTarget: .space 4
+.globl zeroCtrlPafCapabilityMaskCompatMode
+zeroCtrlPafCapabilityMaskCompatMode: .space 4
+.globl zeroCtrlPafCapabilityMaskEffective
+zeroCtrlPafCapabilityMaskEffective: .space 4
+.globl zeroCtrlPafCapabilityMaskSubstitutionHits
+zeroCtrlPafCapabilityMaskSubstitutionHits: .space 4

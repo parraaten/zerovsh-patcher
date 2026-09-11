@@ -179,10 +179,13 @@ typedef struct {
     u32 paf_mask_leaf_end_addr;
     u32 paf_mask_target_addr;
     u32 paf_mask_hits_addr;
-    u32 paf_mask_value_addr;
+    u32 paf_mask_natural_addr;
+    u32 paf_mask_compat_mode_addr;
+    u32 paf_mask_effective_addr;
+    u32 paf_mask_substitution_hits_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 744 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 756 ? 1 : -1];
 
 #endif

@@ -95,6 +95,7 @@ static char psp1000PafPresentCompat[16];
 static char psp1000BSManNotLinkedCompat[16];
 static char psp1000Consumer14020Compat[16];
 static char psp1000Consumer13F6CCompat[16];
+static char psp1000PafCapabilityMaskCompat[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -326,11 +327,15 @@ typedef struct {
     unsigned int capability_target_addr[3], capability_hits_addr[3];
     unsigned int capability_result_addr[3];
     unsigned int paf_mask_leaf_addr, paf_mask_leaf_size, paf_mask_target_addr;
-    unsigned int paf_mask_hits_addr, paf_mask_value_addr;
+    unsigned int paf_mask_hits_addr, paf_mask_natural_addr;
+    unsigned int paf_mask_compat_mode_addr, paf_mask_effective_addr;
+    unsigned int paf_mask_substitution_hits_addr;
+    int paf_mask_compat_enabled;
     int capability_validation[4], capability_install[4], capability_cache_sync[4];
     unsigned int capability_original[4][2], capability_decoded_target[4];
     unsigned int capability_hits[3], capability_result[3];
-    unsigned int paf_mask_hits, paf_mask_value;
+    unsigned int paf_mask_hits, paf_mask_natural, paf_mask_effective;
+    unsigned int paf_mask_substitutions;
     int capability_captured;
     unsigned int state_zero_original[14], state_zero_replacement[7];
 } ZeroCtrlBSManEvidence;
@@ -1533,7 +1538,11 @@ void zeroCtrlRegisterBSManClosedShim(
                 copied.paf_mask_leaf_end_addr) ||
             !zeroCtrlVshModuleRangeValid(helper, copied.paf_mask_target_addr, 4) ||
             !zeroCtrlVshModuleRangeValid(helper, copied.paf_mask_hits_addr, 4) ||
-            !zeroCtrlVshModuleRangeValid(helper, copied.paf_mask_value_addr, 4)) return;
+            !zeroCtrlVshModuleRangeValid(helper, copied.paf_mask_natural_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.paf_mask_compat_mode_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.paf_mask_effective_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                copied.paf_mask_substitution_hits_addr, 4)) return;
 #undef CHECK_POST_SCALAR
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -1733,7 +1742,10 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->paf_mask_leaf_size = copied.paf_mask_leaf_end_addr - copied.paf_mask_leaf_addr;
     bsman->paf_mask_target_addr = copied.paf_mask_target_addr;
     bsman->paf_mask_hits_addr = copied.paf_mask_hits_addr;
-    bsman->paf_mask_value_addr = copied.paf_mask_value_addr;
+    bsman->paf_mask_natural_addr = copied.paf_mask_natural_addr;
+    bsman->paf_mask_compat_mode_addr = copied.paf_mask_compat_mode_addr;
+    bsman->paf_mask_effective_addr = copied.paf_mask_effective_addr;
+    bsman->paf_mask_substitution_hits_addr = copied.paf_mask_substitution_hits_addr;
     bsman->registered = 1;
 }
 
@@ -3072,11 +3084,14 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     }
                     snprintf(line, sizeof(line),
                             "[vsh-paf-capability-mask] validation=%d install=%d "
-                            "cache_sync=%d hits=%u mask=0x%08X\n",
+                            "cache_sync=%d enabled=%d hits=%u natural=0x%08X "
+                            "effective=0x%08X substitutions=%u\n",
                             bsman->capability_validation[3],
                             bsman->capability_install[3],
-                            bsman->capability_cache_sync[3], bsman->paf_mask_hits,
-                            bsman->paf_mask_value);
+                            bsman->capability_cache_sync[3],
+                            bsman->paf_mask_compat_enabled, bsman->paf_mask_hits,
+                            bsman->paf_mask_natural, bsman->paf_mask_effective,
+                            bsman->paf_mask_substitutions);
                     zeroCtrlDiagnosticsText(line);
                 }
                 observed_consumer_pre_slide = 1;
@@ -3969,7 +3984,7 @@ static void zeroCtrlInstallCapabilityMaskTraces(void) {
     leaf_size[3] = bsman->paf_mask_leaf_size;
     target_scalar[3] = bsman->paf_mask_target_addr;
     hits_scalar[3] = bsman->paf_mask_hits_addr;
-    value_scalar[3] = bsman->paf_mask_value_addr;
+    value_scalar[3] = bsman->paf_mask_natural_addr;
     for (i = 0; i < 4; i++) {
         callsite[i] = vsh->text_addr + offsets[i];
         target[i] = vsh->text_addr + target_offsets[i];
@@ -3990,6 +4005,10 @@ static void zeroCtrlInstallCapabilityMaskTraces(void) {
         replacement[i] = 0x0C000000 | ((leaf[i] >> 2) & 0x03FFFFFF);
         if (zeroCtrlMipsJumpTarget(callsite[i], replacement[i]) != leaf[i]) return;
     }
+    if (!zeroCtrlVshModuleRangeValid(helper, bsman->paf_mask_compat_mode_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->paf_mask_effective_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                bsman->paf_mask_substitution_hits_addr, 4)) return;
     for (i = 0; i < 4; i++) bsman->capability_validation[i] = 1;
     for (i = 0; i < 4; i++) {
         _sw(target[i], target_scalar[i]);
@@ -3999,6 +4018,15 @@ static void zeroCtrlInstallCapabilityMaskTraces(void) {
         sceKernelDcacheWritebackInvalidateRange((const void *)hits_scalar[i], 4);
         sceKernelDcacheWritebackInvalidateRange((const void *)value_scalar[i], 4);
     }
+    _sw(bsman->paf_mask_compat_enabled ? 1 : 0, bsman->paf_mask_compat_mode_addr);
+    _sw(0xFFFFFFFF, bsman->paf_mask_effective_addr);
+    _sw(0, bsman->paf_mask_substitution_hits_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->paf_mask_compat_mode_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->paf_mask_effective_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)bsman->paf_mask_substitution_hits_addr, 4);
     for (i = 0; i < 4; i++) {
         _sw(replacement[i], callsite[i]);
         sceKernelDcacheWritebackInvalidateRange((const void *)callsite[i], 4);
@@ -4284,7 +4312,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 bsman->capability_result_addr[snapshot_index]);
     }
     bsman->paf_mask_hits = zeroCtrlReadHelperCounter(bsman->paf_mask_hits_addr);
-    bsman->paf_mask_value = zeroCtrlReadHelperCounter(bsman->paf_mask_value_addr);
+    bsman->paf_mask_natural = zeroCtrlReadHelperCounter(bsman->paf_mask_natural_addr);
+    bsman->paf_mask_effective = zeroCtrlReadHelperCounter(bsman->paf_mask_effective_addr);
+    bsman->paf_mask_substitutions = zeroCtrlReadHelperCounter(
+            bsman->paf_mask_substitution_hits_addr);
     bsman->capability_captured = 1;
     {
         SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
@@ -5176,6 +5207,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	ini_gets("Experimental", "PSP1000Consumer13F6CCompat", "Disabled",
 			psp1000Consumer13F6CCompat,
 			sizeof(psp1000Consumer13F6CCompat), config);
+	ini_gets("Experimental", "PSP1000PafCapabilityMaskCompat", "Disabled",
+			psp1000PafCapabilityMaskCompat,
+			sizeof(psp1000PafCapabilityMaskCompat), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -5231,6 +5265,12 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0 &&
 			strcmp(psp1000Consumer13F6CCompat, "Enabled") == 0;
+		slide_diag.bsman.paf_mask_compat_enabled =
+			devkit == 0x06060110 &&
+			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
+			strcmp(psp1000SlideTriggerMode,
+					"DangerousCaller58D4") == 0 &&
+			strcmp(psp1000PafCapabilityMaskCompat, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,

@@ -273,7 +273,11 @@ extern volatile unsigned int zeroCtrlCapability6F44Hits, zeroCtrlCapability6FC4H
 extern volatile unsigned int zeroCtrlCapability7004Hits, zeroCtrlPafCapabilityMaskHits;
 extern volatile unsigned int zeroCtrlCapability6F44NaturalResult;
 extern volatile unsigned int zeroCtrlCapability6FC4NaturalResult;
-extern volatile unsigned int zeroCtrlCapability7004NaturalResult, zeroCtrlPafCapabilityMask;
+extern volatile unsigned int zeroCtrlCapability7004NaturalResult;
+extern volatile unsigned int zeroCtrlPafCapabilityMaskNatural;
+extern volatile unsigned int zeroCtrlPafCapabilityMaskCompatMode;
+extern volatile unsigned int zeroCtrlPafCapabilityMaskEffective;
+extern volatile unsigned int zeroCtrlPafCapabilityMaskSubstitutionHits;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -630,7 +634,11 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.paf_mask_leaf_end_addr = (u32)zeroCtrlPafCapabilityMaskTraceEnd;
 	bsmanClosedRegistration.paf_mask_target_addr = (u32)&zeroCtrlPafCapabilityMaskTarget;
 	bsmanClosedRegistration.paf_mask_hits_addr = (u32)&zeroCtrlPafCapabilityMaskHits;
-	bsmanClosedRegistration.paf_mask_value_addr = (u32)&zeroCtrlPafCapabilityMask;
+	bsmanClosedRegistration.paf_mask_natural_addr = (u32)&zeroCtrlPafCapabilityMaskNatural;
+	bsmanClosedRegistration.paf_mask_compat_mode_addr = (u32)&zeroCtrlPafCapabilityMaskCompatMode;
+	bsmanClosedRegistration.paf_mask_effective_addr = (u32)&zeroCtrlPafCapabilityMaskEffective;
+	bsmanClosedRegistration.paf_mask_substitution_hits_addr =
+			(u32)&zeroCtrlPafCapabilityMaskSubstitutionHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

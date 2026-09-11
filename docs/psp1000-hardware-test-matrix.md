@@ -536,3 +536,28 @@ stop and audit the delay-slot interpretation. Natural zero at `+0x6F44` or
 `+0x6FC4` identifies candidate bits `0x20` or `0x80` for later analysis only;
 do not force them in T27. If those bits are already present naturally, do not
 pursue those predicates.
+
+## T28 — isolated exact PAF capability-mask compatibility
+
+Use the controlled configuration with `DangerousCaller58D4`, diagnostics,
+Sony-start and activation traces, exact PAF/BSMan controls, and broad BSMan shim
+disabled. Isolate T28 with:
+
+```ini
+PSP1000Consumer13F6CCompat = Disabled
+PSP1000Consumer14020Compat = Disabled
+PSP1000PafCapabilityMaskCompat = Enabled
+```
+
+First require both consumer records to show disabled, natural/effective zero,
+and zero substitutions. Then require:
+
+```text
+[vsh-paf-capability-mask] validation=1 install=1 cache_sync=1 enabled=1 hits=1 natural=0x00000002 effective=0x000001E9 substitutions=1
+```
+
+Compare every prefix, post-BSMan, state-zero, topmenu, field-writer, dispatcher,
+post-PAF, and post-VshBridge record against the natural T27 control. A first
+changed boundary is strong evidence the mask contributes to missing setup;
+unchanged state proves `0x1E9` alone insufficient; freeze or crash makes the
+isolated substitution unsafe. Do not add another compatibility in this run.

@@ -1782,3 +1782,30 @@ untouched. No thread, allocation, I/O, data write, or compatibility is added.
 predicates feeding the PAF initialization mask expose the missing PSP-1000
 prerequisite. Direct call-time results and the exact mask must be reviewed
 before considering any later controlled experiment.
+
+### T27 natural control and T28 exact PAF-mask compatibility
+
+**PROVEN BY HARDWARE:** with both consumer compatibilities disabled, the three
+adjacent predicates at `+0x6F44`, `+0x6FC4`, and `+0x7004` each returned zero,
+and the exact natural capability mask passed at `+0x1404C` was `0x00000002`.
+The earlier T27 run with only the existing effective `+0x6F84` contribution
+produced `0x00000042`, confirming candidate bit `0x40` reaches this mask.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** the complete predicate chain maps its
+nine results to bits `0x001` through `0x100`, and shared selector value 4 yields
+mask `0x000001E9`. The selector has no established official model semantic, and
+`0x1E9` is not hardware-proven to be a PSP Go mask.
+
+T28 extends the existing `+0x1404C` tail wrapper only. It records untouched
+incoming `$a0`, and when its dedicated default-disabled mode is enabled changes
+only exact natural `0x00000002` to effective `0x000001E9`, incrementing a fixed
+substitution counter. Every other mask is preserved exactly. The wrapper stores
+the effective value and tail-transfers to the already validated
+`scePaf/0xF48A9040` stub without a frame, nested call, `$ra` change, or `$v0`
+use. The existing four-callsite T27 transaction remains the only owner and
+still leaves the `+0x14050` delay word untouched.
+
+**HYPOTHESIS / UNKNOWN:** whether presenting `0x000001E9` to PAF reproduces a
+missing prerequisite needed for Sony SlidePlugin state progression on
+PSP-1000. T28 must disable both separate consumer compatibilities and compare
+the first changed downstream boundary; substitution alone is not success.
