@@ -1311,6 +1311,40 @@ def check_sources(root):
     if "static const unsigned int offset[7]" in kernel or \
             "static const unsigned int offset[8]" in kernel:
         fail("masked PAF offset arrays shadow the installer's offset local")
+    t40_initialize = kernel.find(
+            "for (wide_index = 0; wide_index < 52; wide_index++)\n"
+            "                _sw(0, bsman->activation_wide_scalar_addr[wide_index]);")
+    t40_scalar_sync = kernel.find(
+            "/* Routing and counters must be coherent before any owner is live. */",
+            t40_initialize)
+    t40_patch_write = kernel.find(
+            "_sw(bsman->activation_wide_replacement[wide_index]",
+            t40_scalar_sync)
+    t40_code_sync = kernel.find(
+            "sceKernelIcacheInvalidateRange(\n"
+            "                        (const void *)(bsman->activation_addr +\n"
+            "                            wide_offset[wide_index]), 4);",
+            t40_patch_write)
+    t40_install_flag = kernel.find("bsman->activation_wide_install = 1;",
+            t40_code_sync)
+    t40_cache_flag = kernel.find("bsman->activation_wide_cache_sync = 1;",
+            t40_install_flag)
+    if min(t40_initialize, t40_scalar_sync, t40_patch_write, t40_code_sync,
+            t40_install_flag, t40_cache_flag) < 0 or not (
+            t40_initialize < t40_scalar_sync < t40_patch_write < t40_code_sync <
+            t40_install_flag < t40_cache_flag):
+        fail("T40 scalar initialization/cache and code commit ordering is unsafe")
+    scalar_sync = kernel[t40_scalar_sync:t40_patch_write]
+    if "for (wide_index = 0; wide_index < 52; wide_index++)" not in scalar_sync or \
+            "sceKernelDcacheWritebackInvalidateRange(" not in scalar_sync or \
+            "activation_wide_scalar_addr[\n                            wide_index], 4" not in scalar_sync or \
+            "sceKernelIcacheInvalidateRange" in scalar_sync:
+        fail("T40 does not D-cache synchronize all 52 data scalars")
+    code_commit = kernel[t40_patch_write:t40_install_flag]
+    if "for (wide_index = 0; wide_index < 6; wide_index++)" not in \
+            code_commit or "sceKernelDcacheWritebackInvalidateRange(" not in \
+            code_commit or "sceKernelIcacheInvalidateRange(" not in code_commit:
+        fail("T40 does not synchronize all six code patches before success")
     for word in ("0x1040000C", "0x1040FFF2", "0x26100001",
             "0x8FBF001C", "0x00002021"):
         if word not in kernel:

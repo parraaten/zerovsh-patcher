@@ -5602,6 +5602,11 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     bsman->activation_wide_scalar_addr[43]);
             _sw(bsman->activation_addr + 0x234,
                     bsman->activation_wide_scalar_addr[45]);
+            /* Routing and counters must be coherent before any owner is live. */
+            for (wide_index = 0; wide_index < 52; wide_index++)
+                sceKernelDcacheWritebackInvalidateRange(
+                        (const void *)bsman->activation_wide_scalar_addr[
+                            wide_index], 4);
         }
         _sw(0, bsman->post_paf_entry_counter_addr[0]);
         _sw(0, bsman->post_paf_entry_counter_addr[1]);
@@ -5799,7 +5804,6 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             for (wide_index = 0; wide_index < 6; wide_index++)
                 _sw(bsman->activation_wide_replacement[wide_index],
                         bsman->activation_addr + wide_offset[wide_index]);
-            bsman->activation_wide_install = 1;
         }
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
@@ -5899,7 +5903,8 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     (const void *)(bsman->activation_addr + 0x1E0), 4);
             bsman->masked_paf_c59fc3d0_second_cache_sync = 1;
         }
-        if (bsman->activation_wide_install) {
+        if (bsman->activation_wide_enabled &&
+                bsman->activation_wide_validation) {
             static const unsigned int wide_offset[6] = {
                 0x1F8, 0x200, 0x20C, 0x214, 0x21C, 0x22C
             };
@@ -5912,6 +5917,7 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                         (const void *)(bsman->activation_addr +
                             wide_offset[wide_index]), 4);
             }
+            bsman->activation_wide_install = 1;
             bsman->activation_wide_cache_sync = 1;
         }
         sceKernelDcacheWritebackInvalidateRange(
