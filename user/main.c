@@ -219,6 +219,14 @@ extern volatile unsigned int zeroCtrlPostVshNaturalResult, zeroCtrlPostVshReturn
 extern volatile unsigned int zeroCtrlPostVshArgument, zeroCtrlPostVshCompatMode;
 extern volatile unsigned int zeroCtrlPostVshEffectiveResult;
 extern volatile unsigned int zeroCtrlPostVshSubstitutionHits;
+extern void zeroCtrlPostImposeVCallTrace(void), zeroCtrlPostImposeVCallTraceEnd(void);
+extern void zeroCtrlPostImposeVCallReturnTrace(void);
+extern void zeroCtrlPostImposeVCallReturnTraceEnd(void);
+extern volatile unsigned int zeroCtrlPostImposeVCallTarget;
+extern volatile unsigned int zeroCtrlPostImposeVCallSavedRA;
+extern volatile unsigned int zeroCtrlPostImposeVCallNaturalResult;
+extern volatile unsigned int zeroCtrlPostImposeVCallHits;
+extern volatile unsigned int zeroCtrlPostImposeVCallReturnHits;
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
 extern volatile unsigned int zeroCtrlPostVshEntryHits;
 extern void zeroCtrlStateZeroCompareTrace(void), zeroCtrlStateZeroCompareTraceEnd(void);
@@ -657,6 +665,24 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlPostVshEffectiveResult;
 	bsmanClosedRegistration.post_vsh_substitution_hits_addr =
 			(u32)&zeroCtrlPostVshSubstitutionHits;
+	bsmanClosedRegistration.post_impose_vcall_leaf_addr =
+			(u32)zeroCtrlPostImposeVCallTrace;
+	bsmanClosedRegistration.post_impose_vcall_leaf_end_addr =
+			(u32)zeroCtrlPostImposeVCallTraceEnd;
+	bsmanClosedRegistration.post_impose_vcall_return_leaf_addr =
+			(u32)zeroCtrlPostImposeVCallReturnTrace;
+	bsmanClosedRegistration.post_impose_vcall_return_leaf_end_addr =
+			(u32)zeroCtrlPostImposeVCallReturnTraceEnd;
+	bsmanClosedRegistration.post_impose_vcall_target_addr =
+			(u32)&zeroCtrlPostImposeVCallTarget;
+	bsmanClosedRegistration.post_impose_vcall_saved_ra_addr =
+			(u32)&zeroCtrlPostImposeVCallSavedRA;
+	bsmanClosedRegistration.post_impose_vcall_natural_result_addr =
+			(u32)&zeroCtrlPostImposeVCallNaturalResult;
+	bsmanClosedRegistration.post_impose_vcall_hits_addr =
+			(u32)&zeroCtrlPostImposeVCallHits;
+	bsmanClosedRegistration.post_impose_vcall_return_hits_addr =
+			(u32)&zeroCtrlPostImposeVCallReturnHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

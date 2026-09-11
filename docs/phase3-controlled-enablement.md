@@ -1885,3 +1885,30 @@ profile for which Sony designed this private impose-parameter path, and whether
 presenting it advances beyond the `activation+0x114` retry branch. No dispatcher
 invocation, Sony context/global write, new callsite, or additional compatibility
 is part of T31.
+
+### T31 hardware result and T32 post-impose indirect-call trace
+
+**PROVEN BY HARDWARE — T31:** T30.1 again presented effective state 14 and
+rejoined the post-state path. The exact impose control captured argument
+`0x8000000D`, natural result `0x80000107`, and presented effective zero once,
+so Sony did not take the `activation+0x114` retry branch.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** the newly exposed sequence loads an
+unknown interface target from `s0+0x50`, calls it at `activation+0x120`, and
+returns to `activation+0x128`. Sony continues beyond `activation+0x12C` only
+when that untouched result equals `0xFFFFFFFF`. The interface entry has no
+established official semantic name.
+
+T32 is diagnostic-only and explicitly depends on the T31 gate. It extends the
+existing activation transaction with one optional JAL owner at `+0x120` after
+validating exact `jalr v0`/NOP words, helper ranges, and pseudodirect reachability.
+The call wrapper records the untouched `$v0` target and Sony `$ra`, counts the
+call, redirects `$ra` to a dedicated return tracer, restores temporaries, and
+jumps to the original target. The return tracer records natural `$v0`, counts
+the return, restores the saved Sony `$ra`, and returns without changing `$v0`.
+No compatibility, dispatcher invocation, context/global write, allocation,
+thread, polling, or wrapper I/O is added.
+
+The deferred writer reports the target, natural result, and an interpreted
+`equals_minus_one` comparison. Whether this natural interface result is the
+next blocker remains **HYPOTHESIS / UNKNOWN** pending hardware evidence.

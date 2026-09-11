@@ -616,3 +616,23 @@ The substitution count may exceed one. Compare the first boundary after Sony's
 `activation+0x114` branch along with activation, post-BSMan, field-writer,
 dispatcher/case14, and post-PAF/VshBridge evidence. Do not invoke the dispatcher
 or add another compatibility.
+
+## T32 — diagnostic trace of the `s0+0x50` indirect call
+
+Keep the valid isolated T31 configuration and additionally enable:
+
+```ini
+PSP1000PostImposeVCallTrace = Enabled
+```
+
+First require T30.1 mask `0x01D5` with nonzero rejoin and the exact T31 impose
+substitution. Then require:
+
+```text
+[post-impose-vcall-50] validation=1 install=1 cache_sync=1 hits=... returns=... target=0x........ natural=0x........ equals_minus_one=...
+```
+
+Natural `0xFFFFFFFF` proves Sony's exact condition is satisfied and makes the
+second indirect call at `s0+0x64` the next diagnostic boundary. Any other
+natural result proves this return is the immediate retry blocker, but must not
+be substituted in T32.

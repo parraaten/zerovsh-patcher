@@ -98,6 +98,7 @@ static char psp1000Consumer13F6CCompat[16];
 static char psp1000PafCapabilityMaskCompat[16];
 static char psp1000StateZero15To14Compat[16];
 static char psp1000ImposeParam8000000DCompat[16];
+static char psp1000PostImposeVCallTrace[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -278,6 +279,15 @@ typedef struct {
     unsigned int post_vsh_argument_addr, post_vsh_compat_mode_addr;
     unsigned int post_vsh_effective_result_addr, post_vsh_substitution_hits_addr;
     int post_vsh_compat_enabled;
+    unsigned int post_impose_vcall_leaf_addr, post_impose_vcall_leaf_size;
+    unsigned int post_impose_vcall_return_leaf_addr;
+    unsigned int post_impose_vcall_return_leaf_size;
+    unsigned int post_impose_vcall_target_addr, post_impose_vcall_saved_ra_addr;
+    unsigned int post_impose_vcall_natural_result_addr;
+    unsigned int post_impose_vcall_hits_addr, post_impose_vcall_return_hits_addr;
+    int post_impose_vcall_enabled, post_impose_vcall_validation;
+    int post_impose_vcall_install, post_impose_vcall_cache_sync;
+    unsigned int post_impose_vcall_original[2], post_impose_vcall_replacement;
     unsigned int post_paf_entry_counter_addr[2], post_vsh_entry_hits_addr;
     unsigned int post_original[12], post_replacement[6];
     unsigned int state_zero_leaf_addr[8], state_zero_leaf_size[8];
@@ -1466,6 +1476,16 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(post_vsh_compat_mode_addr);
     CHECK_POST_SCALAR(post_vsh_effective_result_addr);
     CHECK_POST_SCALAR(post_vsh_substitution_hits_addr);
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.post_impose_vcall_leaf_addr,
+                copied.post_impose_vcall_leaf_end_addr) ||
+            !zeroCtrlRegistrationLeafValid(helper,
+                copied.post_impose_vcall_return_leaf_addr,
+                copied.post_impose_vcall_return_leaf_end_addr)) return;
+    CHECK_POST_SCALAR(post_impose_vcall_target_addr);
+    CHECK_POST_SCALAR(post_impose_vcall_saved_ra_addr);
+    CHECK_POST_SCALAR(post_impose_vcall_natural_result_addr);
+    CHECK_POST_SCALAR(post_impose_vcall_hits_addr);
+    CHECK_POST_SCALAR(post_impose_vcall_return_hits_addr);
 #define CHECK_STATE_ZERO_LEAF(field) \
     if (!zeroCtrlRegistrationLeafValid(helper, copied.field##_addr, \
                 copied.field##_end_addr)) return
@@ -1666,6 +1686,21 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->post_vsh_compat_mode_addr = copied.post_vsh_compat_mode_addr;
     bsman->post_vsh_effective_result_addr = copied.post_vsh_effective_result_addr;
     bsman->post_vsh_substitution_hits_addr = copied.post_vsh_substitution_hits_addr;
+    bsman->post_impose_vcall_leaf_addr = copied.post_impose_vcall_leaf_addr;
+    bsman->post_impose_vcall_leaf_size = copied.post_impose_vcall_leaf_end_addr -
+            copied.post_impose_vcall_leaf_addr;
+    bsman->post_impose_vcall_return_leaf_addr =
+            copied.post_impose_vcall_return_leaf_addr;
+    bsman->post_impose_vcall_return_leaf_size =
+            copied.post_impose_vcall_return_leaf_end_addr -
+            copied.post_impose_vcall_return_leaf_addr;
+    bsman->post_impose_vcall_target_addr = copied.post_impose_vcall_target_addr;
+    bsman->post_impose_vcall_saved_ra_addr = copied.post_impose_vcall_saved_ra_addr;
+    bsman->post_impose_vcall_natural_result_addr =
+            copied.post_impose_vcall_natural_result_addr;
+    bsman->post_impose_vcall_hits_addr = copied.post_impose_vcall_hits_addr;
+    bsman->post_impose_vcall_return_hits_addr =
+            copied.post_impose_vcall_return_hits_addr;
 #define COPY_STATE_ZERO_LEAF(index, field) do { \
     bsman->state_zero_leaf_addr[index] = copied.field##_addr; \
     bsman->state_zero_leaf_size[index] = copied.field##_end_addr - \
@@ -2834,8 +2869,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_state_zero_mask = 0;
     unsigned int observed_topmenu_returns = 0;
     int observed_state_zero_vcall_owner = 0;
-    unsigned int observed_post_counts[11] = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    unsigned int observed_post_counts[13] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
@@ -3515,7 +3550,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 }
             }
             {
-                unsigned int counts[11], j;
+                unsigned int counts[13], j;
                 int changed = 0;
                 counts[0] = zeroCtrlReadHelperCounter(bsman->bsman_return_hits_addr);
                 counts[1] = zeroCtrlReadHelperCounter(bsman->post_bs_counter_addr[0]);
@@ -3534,7 +3569,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->post_vsh_entry_hits_addr);
                 counts[10] = zeroCtrlReadHelperCounter(
                         bsman->post_vsh_return_hits_addr);
-                for (j = 0; j < 11; j++)
+                counts[11] = zeroCtrlReadHelperCounter(
+                        bsman->post_impose_vcall_hits_addr);
+                counts[12] = zeroCtrlReadHelperCounter(
+                        bsman->post_impose_vcall_return_hits_addr);
+                for (j = 0; j < 13; j++)
                     if (counts[j] != observed_post_counts[j]) changed = 1;
                 if (changed) {
                     unsigned int bs_result = zeroCtrlReadHelperCounter(
@@ -3575,6 +3614,22 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             zeroCtrlReadHelperCounter(
                                 bsman->post_vsh_substitution_hits_addr));
                     zeroCtrlDiagnosticsText(line);
+                    {
+                        unsigned int natural = zeroCtrlReadHelperCounter(
+                                bsman->post_impose_vcall_natural_result_addr);
+                        snprintf(line, sizeof(line),
+                                "[post-impose-vcall-50] validation=%d install=%d "
+                                "cache_sync=%d hits=%u returns=%u target=0x%08X "
+                                "natural=0x%08X equals_minus_one=%d\n",
+                                bsman->post_impose_vcall_validation,
+                                bsman->post_impose_vcall_install,
+                                bsman->post_impose_vcall_cache_sync,
+                                counts[11], counts[12],
+                                zeroCtrlReadHelperCounter(
+                                    bsman->post_impose_vcall_target_addr),
+                                natural, natural == 0xFFFFFFFF);
+                        zeroCtrlDiagnosticsText(line);
+                    }
                 }
             }
             {
@@ -4544,6 +4599,15 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             if (!zeroCtrlVshModuleRangeValid(helper,
                         bsman->state_zero_leaf_addr[pc],
                         bsman->state_zero_leaf_size[pc])) return;
+        if (bsman->post_impose_vcall_enabled &&
+                (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->post_impose_vcall_leaf_addr,
+                    bsman->post_impose_vcall_leaf_size) ||
+                !zeroCtrlVshModuleRangeValid(helper,
+                    bsman->post_impose_vcall_return_leaf_addr,
+                    bsman->post_impose_vcall_return_leaf_size) ||
+                ((bsman->activation_addr + 0x124) & 0xF0000000) !=
+                    (bsman->post_impose_vcall_leaf_addr & 0xF0000000))) return;
         bsman->activation_original[0] = _lw(bsman->activation_addr);
         bsman->activation_original[1] = _lw(bsman->activation_addr + 4);
         bsman->call_original = _lw(bsman->caller_addr);
@@ -4567,6 +4631,12 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         bsman->post_original[9] = _lw(bsman->activation_addr + 0x110);
         bsman->post_original[10] = _lw(bsman->activation_addr + 0x114);
         bsman->post_original[11] = _lw(bsman->activation_addr + 0x118);
+        bsman->post_impose_vcall_original[0] =
+                _lw(bsman->activation_addr + 0x120);
+        bsman->post_impose_vcall_original[1] =
+                _lw(bsman->activation_addr + 0x124);
+        bsman->post_impose_vcall_replacement = 0x0C000000 |
+                ((bsman->post_impose_vcall_leaf_addr >> 2) & 0x03FFFFFF);
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
                 0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8
@@ -4644,6 +4714,12 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 bsman->post_original[9] != 0x3484000D ||
                 bsman->post_original[10] != 0x1440FFCE ||
                 bsman->post_original[11] != 0x8FBF001C ||
+                (bsman->post_impose_vcall_enabled &&
+                    (bsman->post_impose_vcall_original[0] != 0x0040F809 ||
+                    bsman->post_impose_vcall_original[1] != 0 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x120,
+                        bsman->post_impose_vcall_replacement) !=
+                            bsman->post_impose_vcall_leaf_addr)) ||
                 bsman->state_zero_original[0] != 0x1243FF73 ||
                 (bsman->state_zero_original[1] & 0xFFFF0000) != 0x3C020000 ||
                 bsman->state_zero_original[2] != 0x1460FF71 ||
@@ -4678,6 +4754,8 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x10C,
                     bsman->post_replacement[4]) !=
                         bsman->post_vsh_call_leaf_addr) return;
+        if (bsman->post_impose_vcall_enabled)
+            bsman->post_impose_vcall_validation = 1;
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
                 0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8
@@ -4743,6 +4821,11 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 bsman->post_vsh_compat_mode_addr);
         _sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr);
         _sw(0, bsman->post_vsh_substitution_hits_addr);
+        _sw(0, bsman->post_impose_vcall_target_addr);
+        _sw(0, bsman->post_impose_vcall_saved_ra_addr);
+        _sw(0xFFFFFFFF, bsman->post_impose_vcall_natural_result_addr);
+        _sw(0, bsman->post_impose_vcall_hits_addr);
+        _sw(0, bsman->post_impose_vcall_return_hits_addr);
         _sw(0, bsman->post_paf_entry_counter_addr[0]);
         _sw(0, bsman->post_paf_entry_counter_addr[1]);
         _sw(0, bsman->post_vsh_entry_hits_addr);
@@ -4833,6 +4916,11 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         SYNC_POST_SCALAR(bsman->post_vsh_compat_mode_addr);
         SYNC_POST_SCALAR(bsman->post_vsh_effective_result_addr);
         SYNC_POST_SCALAR(bsman->post_vsh_substitution_hits_addr);
+        SYNC_POST_SCALAR(bsman->post_impose_vcall_target_addr);
+        SYNC_POST_SCALAR(bsman->post_impose_vcall_saved_ra_addr);
+        SYNC_POST_SCALAR(bsman->post_impose_vcall_natural_result_addr);
+        SYNC_POST_SCALAR(bsman->post_impose_vcall_hits_addr);
+        SYNC_POST_SCALAR(bsman->post_impose_vcall_return_hits_addr);
         SYNC_POST_SCALAR(bsman->state_zero_path_mask_addr);
         SYNC_POST_SCALAR(bsman->state_zero_15to14_compat_mode_addr);
         SYNC_POST_SCALAR(bsman->state_zero_15to14_effective_result_addr);
@@ -4856,6 +4944,11 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         _sw(bsman->post_replacement[2], bsman->activation_addr + 0xE8);
         _sw(bsman->post_replacement[3], bsman->activation_addr + 0xF8);
         _sw(bsman->post_replacement[4], bsman->activation_addr + 0x10C);
+        if (bsman->post_impose_vcall_enabled) {
+            _sw(bsman->post_impose_vcall_replacement,
+                    bsman->activation_addr + 0x120);
+            bsman->post_impose_vcall_install = 1;
+        }
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
                 0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8
@@ -4905,6 +4998,13 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 (const void *)(bsman->activation_addr + 0x10C), 4);
         sceKernelIcacheInvalidateRange(
                 (const void *)(bsman->activation_addr + 0x10C), 4);
+        if (bsman->post_impose_vcall_enabled) {
+            sceKernelDcacheWritebackInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x120), 4);
+            sceKernelIcacheInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x120), 4);
+            bsman->post_impose_vcall_cache_sync = 1;
+        }
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)(bsman->activation_addr + 0x27C), 0x50);
         sceKernelIcacheInvalidateRange(
@@ -5279,6 +5379,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	ini_gets("Experimental", "PSP1000ImposeParam8000000DCompat", "Disabled",
 			psp1000ImposeParam8000000DCompat,
 			sizeof(psp1000ImposeParam8000000DCompat), config);
+	ini_gets("Experimental", "PSP1000PostImposeVCallTrace", "Disabled",
+			psp1000PostImposeVCallTrace,
+			sizeof(psp1000PostImposeVCallTrace), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -5350,6 +5453,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			slide_diag.bsman.activation_enabled &&
 			slide_diag.bsman.state_zero_15to14_compat_enabled &&
 			strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0;
+		slide_diag.bsman.post_impose_vcall_enabled =
+			slide_diag.bsman.post_vsh_compat_enabled &&
+			strcmp(psp1000PostImposeVCallTrace, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,

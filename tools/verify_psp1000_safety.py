@@ -87,6 +87,11 @@ T27_MASK_SYMBOLS = ("zeroCtrlPafCapabilityMaskTrace",
     "zeroCtrlPafCapabilityMaskHits", "zeroCtrlPafCapabilityMaskNatural",
     "zeroCtrlPafCapabilityMaskCompatMode", "zeroCtrlPafCapabilityMaskEffective",
     "zeroCtrlPafCapabilityMaskSubstitutionHits")
+T32_SYMBOLS = ("zeroCtrlPostImposeVCallTrace",
+    "zeroCtrlPostImposeVCallTraceEnd", "zeroCtrlPostImposeVCallReturnTrace",
+    "zeroCtrlPostImposeVCallReturnTraceEnd", "zeroCtrlPostImposeVCallTarget",
+    "zeroCtrlPostImposeVCallSavedRA", "zeroCtrlPostImposeVCallNaturalResult",
+    "zeroCtrlPostImposeVCallHits", "zeroCtrlPostImposeVCallReturnHits")
 
 
 def fail(message):
@@ -515,6 +520,28 @@ def check_sources(root):
             post_vsh_return.find("\n66:") <
             post_vsh_return.find("zeroCtrlPostVshEffectiveResult")):
         fail("T31 natural/guard/substitution/effective ordering is invalid")
+    post_impose_call = assembly[assembly.find("zeroCtrlPostImposeVCallTrace:"):
+        assembly.find("zeroCtrlPostImposeVCallTraceEnd:")]
+    post_impose_return = assembly[assembly.find(
+        "zeroCtrlPostImposeVCallReturnTrace:"):assembly.find(
+        "zeroCtrlPostImposeVCallReturnTraceEnd:")]
+    for token in ("sw      $v0, %lo(zeroCtrlPostImposeVCallTarget)",
+            "sw      $ra, %lo(zeroCtrlPostImposeVCallSavedRA)",
+            "zeroCtrlPostImposeVCallHits", "zeroCtrlPostImposeVCallReturnTrace",
+            "jr      $v0"):
+        if token not in post_impose_call:
+            fail("T32 indirect call wrapper lacks " + token)
+    if post_impose_call.count("$v0") != 2 or any(token in post_impose_call for token in
+            ("jal ", "jalr", "$gp", "sceIo", "Alloc", "malloc")):
+        fail("T32 indirect call wrapper changes target or performs a call/I/O/allocation")
+    for token in ("sw      $v0, %lo(zeroCtrlPostImposeVCallNaturalResult)",
+            "zeroCtrlPostImposeVCallReturnHits",
+            "lw      $ra, %lo(zeroCtrlPostImposeVCallSavedRA)", "jr      $ra"):
+        if token not in post_impose_return:
+            fail("T32 indirect return wrapper lacks " + token)
+    if post_impose_return.count("$v0") != 1 or any(token in post_impose_return for token in
+            ("jal ", "jalr", "$gp", "$sp", "sceIo", "Alloc", "malloc")):
+        fail("T32 return wrapper transforms v0 or performs a call/I/O/allocation")
     post_paf_source = assembly[assembly.find("zeroCtrlPostPafReturnTrace:"):
         assembly.find("zeroCtrlPostPafReturnTraceEnd:")]
     for result_symbol in ("zeroCtrlPostPafResult0", "zeroCtrlPostPafResult1"):
@@ -1135,6 +1162,33 @@ def check_sources(root):
             "_sw(0, bsman->post_vsh_substitution_hits_addr)"):
         if initialization not in bsman_install:
             fail("T31 scalar initialization is missing " + initialization)
+    if "PSP1000PostImposeVCallTrace = Disabled" not in sample_config or \
+            '"PSP1000PostImposeVCallTrace", "Disabled"' not in kernel:
+        fail("T32 trace is not default-disabled")
+    t32_gate = kernel[kernel.find("post_impose_vcall_enabled ="):
+        kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
+            "post_impose_vcall_enabled ="))]
+    if "slide_diag.bsman.post_vsh_compat_enabled" not in t32_gate or \
+            'strcmp(psp1000PostImposeVCallTrace, "Enabled") == 0' not in t32_gate:
+        fail("T32 trace does not require the exact T31 gate and explicit opt-in")
+    for token in ("post_impose_vcall_original[0] != 0x0040F809",
+            "post_impose_vcall_original[1] != 0",
+            "bsman->activation_addr + 0x120",
+            "bsman->post_impose_vcall_validation = 1"):
+        if token not in bsman_install:
+            fail("T32 activation transaction lacks " + token)
+    for field in ("post_impose_vcall_target_addr",
+            "post_impose_vcall_saved_ra_addr",
+            "post_impose_vcall_natural_result_addr",
+            "post_impose_vcall_hits_addr",
+            "post_impose_vcall_return_hits_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T32 registration does not range-validate " + field)
+    if bsman_install.count("bsman->activation_addr + 0x120") < 4 or \
+            bsman_install.count("_sw(bsman->post_impose_vcall_replacement,") != 1:
+        fail("T32 does not retain one validated activation+0x120 patch owner")
+    if "[post-impose-vcall-50]" not in writer:
+        fail("T32 deferred diagnostic is missing")
     for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
         if record not in writer:
             fail("T27 deferred diagnostic is missing " + record)
@@ -1679,6 +1733,38 @@ def check_t31_vsh_return_semantics(body):
         fail(symbol + " has an unintended v0 substitution or return")
 
 
+def check_t32_vcall_semantics(call, returned):
+    """Prove T32 transparently calls the captured v0 target and returns it."""
+    call_order = (r"\baddiu\s+sp,\s*sp,\s*-8", r"\bsw\s+t0,",
+        r"\bsw\s+t1,", r"\bsw\s+v0,", r"\bsw\s+ra,",
+        r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\blw\s+t1,", r"\blw\s+t0,", r"\baddiu\s+sp,\s*sp,\s*8",
+        r"\bjr\s+v0\b", r"\bnop\b")
+    cursor = 0
+    for pattern in call_order:
+        match = re.search(pattern, call[cursor:], re.I)
+        if not match:
+            fail("T32 call wrapper lacks ordered operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in call.splitlines() if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 2 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
+            not re.search(r"\bjr\s+v0\b", v0_lines[1]):
+        fail("T32 call wrapper transforms its v0 target")
+    return_order = (r"\bsw\s+v0,", r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\blw\s+ra,", r"\bjr\s+ra\b", r"\bnop\b")
+    cursor = 0
+    for pattern in return_order:
+        match = re.search(pattern, returned[cursor:], re.I)
+        if not match:
+            fail("T32 return wrapper lacks ordered operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in returned.splitlines() if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
+            re.search(r"\bgp\b|\bsp\b|\bjalr?\b", returned):
+        fail("T32 return wrapper transforms v0 or uses a frame/call")
+
+
 def linked_instructions(body):
     """Return final linked instruction addresses/words, excluding relocations."""
     instructions = []
@@ -1773,6 +1859,46 @@ def check_t311_linked(disassembly, symbol_addresses):
         fail("T31 linked natural/effective/saved-RA order is invalid")
     if sum(1 for _pc, word in instructions if word == 0x03E00008) != 1:
         fail("T31 linked return wrapper does not have exactly one jr ra")
+
+
+def check_t32_linked(disassembly, symbol_addresses):
+    """Independently prove T32 scalar resolution and transparent RA routing."""
+    call = function_body(disassembly, "zeroCtrlPostImposeVCallTrace")
+    returned = function_body(disassembly, "zeroCtrlPostImposeVCallReturnTrace")
+    linked_scalar_uses(call, "zeroCtrlPostImposeVCallTarget",
+            symbol_addresses["zeroCtrlPostImposeVCallTarget"], [("sw", 2, 8)])
+    linked_scalar_uses(call, "zeroCtrlPostImposeVCallSavedRA",
+            symbol_addresses["zeroCtrlPostImposeVCallSavedRA"], [("sw", 31, 8)])
+    linked_scalar_uses(call, "zeroCtrlPostImposeVCallHits",
+            symbol_addresses["zeroCtrlPostImposeVCallHits"],
+            [("lw", 9, 8), ("sw", 9, 8)])
+    linked_scalar_uses(returned, "zeroCtrlPostImposeVCallNaturalResult",
+            symbol_addresses["zeroCtrlPostImposeVCallNaturalResult"],
+            [("sw", 2, 8)])
+    linked_scalar_uses(returned, "zeroCtrlPostImposeVCallReturnHits",
+            symbol_addresses["zeroCtrlPostImposeVCallReturnHits"],
+            [("lw", 9, 8), ("sw", 9, 8)])
+    linked_scalar_uses(returned, "zeroCtrlPostImposeVCallSavedRA",
+            symbol_addresses["zeroCtrlPostImposeVCallSavedRA"], [("lw", 31, 8)])
+    words = linked_instructions(call)
+    return_addr = symbol_addresses["zeroCtrlPostImposeVCallReturnTrace"]
+    routed = []
+    for index, (pc, word) in enumerate(words[:-1]):
+        next_word = words[index + 1][1]
+        if (word >> 26) == 0x0F and ((word >> 16) & 0x1F) == 31 and \
+                (next_word >> 26) == 0x09 and \
+                ((next_word >> 21) & 0x1F) == 31 and \
+                ((next_word >> 16) & 0x1F) == 31:
+            low = next_word & 0xFFFF
+            if low & 0x8000:
+                low -= 0x10000
+            routed.append((((word & 0xFFFF) << 16) + low) & 0xFFFFFFFF)
+    if routed != [return_addr] or sum(1 for _pc, word in words
+            if word == 0x00400008) != 1:
+        fail("T32 linked call wrapper does not route RA then jr untouched v0")
+    if sum(1 for _pc, word in linked_instructions(returned)
+            if word == 0x03E00008) != 1:
+        fail("T32 linked return wrapper does not return once through saved RA")
 
 
 def check_post_bsman_branch_semantics(body, relocatable=False):
@@ -1906,8 +2032,12 @@ def check_elf(elf):
     for symbol in T27_MASK_SYMBOLS:
         if symbol not in symbol_addresses:
             fail("missing linked T27 mask symbol " + symbol)
+    for symbol in T32_SYMBOLS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T32 symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
     check_t311_linked(disassembly, symbol_addresses)
+    check_t32_linked(disassembly, symbol_addresses)
     effective_addr = symbol_addresses["zeroCtrlStateZero15To14EffectiveResult"]
     for symbol in ("zeroCtrlStateZeroClass15Trace",
             "zeroCtrlStateZeroClass17Trace"):
@@ -1973,6 +2103,9 @@ def check_elf(elf):
         "zeroCtrlStateZeroVReturnTrace"))
     check_t31_vsh_return_semantics(function_body(disassembly,
         "zeroCtrlPostVshReturnTrace"))
+    check_t32_vcall_semantics(function_body(disassembly,
+        "zeroCtrlPostImposeVCallTrace"), function_body(disassembly,
+        "zeroCtrlPostImposeVCallReturnTrace"))
 
 
 def check_stub_object(stub_object):
@@ -1983,6 +2116,37 @@ def check_stub_object(stub_object):
             "zeroCtrlStateZeroClass17Trace"):
         check_t301_class_input(function_body(disassembly, symbol), symbol,
                 relocatable=True)
+    post_impose_call = function_body(disassembly, "zeroCtrlPostImposeVCallTrace")
+    post_impose_return = function_body(disassembly,
+            "zeroCtrlPostImposeVCallReturnTrace")
+    check_t32_vcall_semantics(post_impose_call, post_impose_return)
+    t32_relocations = (
+        (post_impose_call, "zeroCtrlPostImposeVCallTarget", 1, 1, r"\bsw\s+v0,"),
+        (post_impose_call, "zeroCtrlPostImposeVCallSavedRA", 1, 1, r"\bsw\s+ra,"),
+        (post_impose_call, "zeroCtrlPostImposeVCallHits", 1, 2, None),
+        (post_impose_return, "zeroCtrlPostImposeVCallNaturalResult", 1, 1,
+            r"\bsw\s+v0,"),
+        (post_impose_return, "zeroCtrlPostImposeVCallReturnHits", 1, 2, None),
+        (post_impose_return, "zeroCtrlPostImposeVCallSavedRA", 1, 1, r"\blw\s+ra,"),
+    )
+    for body, scalar, hi_count, lo_count, instruction in t32_relocations:
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi_count or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo_count:
+            fail("T32 wrapper has wrong exact relocation counts for " + scalar)
+        if instruction and not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                scalar + r"\b", body):
+            fail("T32 wrapper does not bind relocation for " + scalar)
+    for body, counter in ((post_impose_call, "zeroCtrlPostImposeVCallHits"),
+            (post_impose_return, "zeroCtrlPostImposeVCallReturnHits")):
+        for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                    counter + r"\b", body):
+                fail("T32 wrapper does not bind counter relocation for " + counter)
+    if len(re.findall(r"R_MIPS_HI16\s+zeroCtrlPostImposeVCallReturnTrace\b",
+            post_impose_call)) != 1 or len(re.findall(
+            r"R_MIPS_LO16\s+zeroCtrlPostImposeVCallReturnTrace\b",
+            post_impose_call)) != 1:
+        fail("T32 call wrapper does not bind its dedicated return tracer")
     for symbol, counter in zip(STUBS, COUNTERS):
         body = function_body(disassembly, symbol)
         if not re.search(r"R_MIPS_HI16\s+" + counter + r"\b", body):

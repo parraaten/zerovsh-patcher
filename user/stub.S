@@ -439,6 +439,50 @@ zeroCtrlPostVshReturnTrace:
 zeroCtrlPostVshReturnTraceEnd:
 .end zeroCtrlPostVshReturnTrace
 
+.globl zeroCtrlPostImposeVCallTrace
+.type zeroCtrlPostImposeVCallTrace @function
+.ent zeroCtrlPostImposeVCallTrace, 0
+zeroCtrlPostImposeVCallTrace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlPostImposeVCallTarget)
+    sw      $v0, %lo(zeroCtrlPostImposeVCallTarget)($t0)
+    lui     $t0, %hi(zeroCtrlPostImposeVCallSavedRA)
+    sw      $ra, %lo(zeroCtrlPostImposeVCallSavedRA)($t0)
+    lui     $t0, %hi(zeroCtrlPostImposeVCallHits)
+    lw      $t1, %lo(zeroCtrlPostImposeVCallHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostImposeVCallHits)($t0)
+    lui     $ra, %hi(zeroCtrlPostImposeVCallReturnTrace)
+    addiu   $ra, $ra, %lo(zeroCtrlPostImposeVCallReturnTrace)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 8
+    jr      $v0
+    nop
+.globl zeroCtrlPostImposeVCallTraceEnd
+zeroCtrlPostImposeVCallTraceEnd:
+.end zeroCtrlPostImposeVCallTrace
+
+.globl zeroCtrlPostImposeVCallReturnTrace
+.type zeroCtrlPostImposeVCallReturnTrace @function
+.ent zeroCtrlPostImposeVCallReturnTrace, 0
+zeroCtrlPostImposeVCallReturnTrace:
+    lui     $t0, %hi(zeroCtrlPostImposeVCallNaturalResult)
+    sw      $v0, %lo(zeroCtrlPostImposeVCallNaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlPostImposeVCallReturnHits)
+    lw      $t1, %lo(zeroCtrlPostImposeVCallReturnHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostImposeVCallReturnHits)($t0)
+    lui     $t0, %hi(zeroCtrlPostImposeVCallSavedRA)
+    lw      $ra, %lo(zeroCtrlPostImposeVCallSavedRA)($t0)
+    jr      $ra
+    nop
+.globl zeroCtrlPostImposeVCallReturnTraceEnd
+zeroCtrlPostImposeVCallReturnTraceEnd:
+.end zeroCtrlPostImposeVCallReturnTrace
+
 /* T15 state-zero path leaves preserve relocated delay slots at each patch. */
 .globl zeroCtrlStateZeroCompareTrace
 .type zeroCtrlStateZeroCompareTrace @function
@@ -1210,6 +1254,16 @@ zeroCtrlPostVshCompatMode: .space 4
 zeroCtrlPostVshEffectiveResult: .space 4
 .globl zeroCtrlPostVshSubstitutionHits
 zeroCtrlPostVshSubstitutionHits: .space 4
+.globl zeroCtrlPostImposeVCallTarget
+zeroCtrlPostImposeVCallTarget: .space 4
+.globl zeroCtrlPostImposeVCallSavedRA
+zeroCtrlPostImposeVCallSavedRA: .space 4
+.globl zeroCtrlPostImposeVCallNaturalResult
+zeroCtrlPostImposeVCallNaturalResult: .space 4
+.globl zeroCtrlPostImposeVCallHits
+zeroCtrlPostImposeVCallHits: .space 4
+.globl zeroCtrlPostImposeVCallReturnHits
+zeroCtrlPostImposeVCallReturnHits: .space 4
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits
