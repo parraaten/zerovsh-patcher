@@ -247,9 +247,13 @@ typedef struct {
     u32 masked_paf_c59fc3d0_second_nonzero_hits_addr;
     u32 masked_paf_c59fc3d0_second_zero_resume_target_addr;
     u32 masked_paf_c59fc3d0_second_nonzero_target_addr;
+    /* T40 wide, observation-only activation bundle (six patch owners). */
+    u32 activation_wide_leaf_addr[10];
+    u32 activation_wide_leaf_end_addr[10];
+    u32 activation_wide_scalar_addr[52];
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 1012 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 1300 ? 1 : -1];
 
 #endif

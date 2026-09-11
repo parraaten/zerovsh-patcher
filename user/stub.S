@@ -1580,6 +1580,179 @@ zeroCtrlMaskedPafC59FC3D0SecondNonzeroHits: .space 4
 zeroCtrlMaskedPafC59FC3D0SecondZeroResumeTarget: .space 4
 .globl zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget
 zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget: .space 4
+
+/*
+ * T40 wide activation diagnostics.  The two decision leaves replace only the
+ * branch word; Sony's original delay slot executes before entry.  The four
+ * call pairs replace only JAL and preserve its original delay slot, raw v0,
+ * caller RA, and natural continuation.  All hot-path state is scalar.
+ */
+.section .text
+.set noreorder
+.macro WIDE_DECISION name, hits, zero_hits, nonzero_hits, first, last, changes, zero_target, nonzero_target
+.globl \name
+.globl \name\()End
+.ent \name, 0
+\name:
+    addiu $sp, $sp, -8
+    sw $t0, 0($sp)
+    sw $t1, 4($sp)
+    lui $t0, %hi(\hits)
+    lw $t1, %lo(\hits)($t0)
+    bnez $t1, 1f
+    nop
+    lui $t0, %hi(\first)
+    sw $v0, %lo(\first)($t0)
+    b 2f
+    nop
+1:  lui $t0, %hi(\last)
+    lw $t0, %lo(\last)($t0)
+    beq $t0, $v0, 2f
+    nop
+    lui $t0, %hi(\changes)
+    lw $t1, %lo(\changes)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(\changes)($t0)
+2:  lui $t0, %hi(\hits)
+    lw $t1, %lo(\hits)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(\hits)($t0)
+    lui $t0, %hi(\last)
+    sw $v0, %lo(\last)($t0)
+    bnez $v0, 3f
+    nop
+    lui $t0, %hi(\zero_hits)
+    lw $t1, %lo(\zero_hits)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(\zero_hits)($t0)
+    lui $t0, %hi(\zero_target)
+    b 4f
+    lw $t0, %lo(\zero_target)($t0)
+3:  lui $t0, %hi(\nonzero_hits)
+    lw $t1, %lo(\nonzero_hits)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(\nonzero_hits)($t0)
+    lui $t0, %hi(\nonzero_target)
+    lw $t0, %lo(\nonzero_target)($t0)
+4:  lw $t1, 4($sp)
+    addiu $sp, $sp, 8
+    jr $t0
+    lw $t0, -8($sp)
+\name\()End:
+.end \name
+.endm
+
+.macro WIDE_CALL name, retname, target, savedra, resume, hits, first, last, changes, zero_hits, nonzero_hits
+.globl \name
+.globl \name\()End
+.ent \name, 0
+\name:
+    lui $t0, %hi(\savedra)
+    sw $ra, %lo(\savedra)($t0)
+    lui $ra, %hi(\retname)
+    addiu $ra, $ra, %lo(\retname)
+    lui $t0, %hi(\target)
+    lw $t9, %lo(\target)($t0)
+    jr $t9
+    nop
+\name\()End:
+.end \name
+.globl \retname
+.globl \retname\()End
+.ent \retname, 0
+\retname:
+    addiu $sp, $sp, -8
+    sw $t0, 0($sp)
+    sw $t1, 4($sp)
+    lui $t0, %hi(\hits)
+    lw $t1, %lo(\hits)($t0)
+    bnez $t1, 5f
+    nop
+    lui $t0, %hi(\first)
+    sw $v0, %lo(\first)($t0)
+    b 6f
+    nop
+5:  lui $t0, %hi(\last)
+    lw $t0, %lo(\last)($t0)
+    beq $t0, $v0, 6f
+    nop
+    lui $t0, %hi(\changes)
+    lw $t1, %lo(\changes)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(\changes)($t0)
+6:  lui $t0, %hi(\hits)
+    lw $t1, %lo(\hits)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(\hits)($t0)
+    lui $t0, %hi(\last)
+    sw $v0, %lo(\last)($t0)
+    bnez $v0, 7f
+    nop
+    lui $t0, %hi(\zero_hits)
+    lw $t1, %lo(\zero_hits)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(\zero_hits)($t0)
+    b 8f
+    nop
+7:  lui $t0, %hi(\nonzero_hits)
+    lw $t1, %lo(\nonzero_hits)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(\nonzero_hits)($t0)
+8:  lui $t0, %hi(\resume)
+    lw $ra, %lo(\resume)($t0)
+    addu $t0, $ra, $zero
+    lw $t1, 4($sp)
+    addiu $sp, $sp, 8
+    jr $t0
+    lw $t0, -8($sp)
+\retname\()End:
+.end \retname
+.endm
+
+WIDE_DECISION zeroCtrlActivationWideCompareTrace, zeroCtrlWideCompareHits, zeroCtrlWideCompareZero, zeroCtrlWideCompareNonzero, zeroCtrlWideCompareFirst, zeroCtrlWideCompareLast, zeroCtrlWideCompareChanges, zeroCtrlWideCompareZeroTarget, zeroCtrlWideCompareNonzeroTarget
+WIDE_CALL zeroCtrlWide662Call, zeroCtrlWide662Return, zeroCtrlWide662Target, zeroCtrlWide662RA, zeroCtrlWide662Resume, zeroCtrlWide662Hits, zeroCtrlWide662First, zeroCtrlWide662Last, zeroCtrlWide662Changes, zeroCtrlWide662Zero, zeroCtrlWide662Nonzero
+WIDE_CALL zeroCtrlWide440Call, zeroCtrlWide440Return, zeroCtrlWide440Target, zeroCtrlWide440RA, zeroCtrlWide440Resume, zeroCtrlWide440Hits, zeroCtrlWide440First, zeroCtrlWide440Last, zeroCtrlWide440Changes, zeroCtrlWide440Zero, zeroCtrlWide440Nonzero
+WIDE_CALL zeroCtrlWideFCFCall, zeroCtrlWideFCFReturn, zeroCtrlWideFCFTarget, zeroCtrlWideFCFRA, zeroCtrlWideFCFResume, zeroCtrlWideFCFHits, zeroCtrlWideFCFFirst, zeroCtrlWideFCFLast, zeroCtrlWideFCFChanges, zeroCtrlWideFCFZero, zeroCtrlWideFCFNonzero
+WIDE_DECISION zeroCtrlActivationWideLoopTrace, zeroCtrlWideLoopHits, zeroCtrlWideLoopBack, zeroCtrlWideLoopExit, zeroCtrlWideLoopFirst, zeroCtrlWideLoopLast, zeroCtrlWideLoopChanges, zeroCtrlWideLoopBackTarget, zeroCtrlWideLoopExitTarget
+WIDE_CALL zeroCtrlWide090Call, zeroCtrlWide090Return, zeroCtrlWide090Target, zeroCtrlWide090RA, zeroCtrlWide090Resume, zeroCtrlWide090Hits, zeroCtrlWide090First, zeroCtrlWide090Last, zeroCtrlWide090Changes, zeroCtrlWide090Zero, zeroCtrlWide090Nonzero
+
+.section .bss
+.align 2
+.macro WIDE_SCALAR name
+.globl \name
+\name: .space 4
+.endm
+WIDE_SCALAR zeroCtrlWideCompareHits
+WIDE_SCALAR zeroCtrlWideCompareZero
+WIDE_SCALAR zeroCtrlWideCompareNonzero
+WIDE_SCALAR zeroCtrlWideCompareFirst
+WIDE_SCALAR zeroCtrlWideCompareLast
+WIDE_SCALAR zeroCtrlWideCompareChanges
+WIDE_SCALAR zeroCtrlWideCompareZeroTarget
+WIDE_SCALAR zeroCtrlWideCompareNonzeroTarget
+.macro WIDE_CALL_SCALARS tag
+WIDE_SCALAR zeroCtrlWide\tag\()Target
+WIDE_SCALAR zeroCtrlWide\tag\()RA
+WIDE_SCALAR zeroCtrlWide\tag\()Resume
+WIDE_SCALAR zeroCtrlWide\tag\()Hits
+WIDE_SCALAR zeroCtrlWide\tag\()First
+WIDE_SCALAR zeroCtrlWide\tag\()Last
+WIDE_SCALAR zeroCtrlWide\tag\()Changes
+WIDE_SCALAR zeroCtrlWide\tag\()Zero
+WIDE_SCALAR zeroCtrlWide\tag\()Nonzero
+.endm
+WIDE_CALL_SCALARS 662
+WIDE_CALL_SCALARS 440
+WIDE_CALL_SCALARS FCF
+WIDE_SCALAR zeroCtrlWideLoopHits
+WIDE_SCALAR zeroCtrlWideLoopBack
+WIDE_SCALAR zeroCtrlWideLoopExit
+WIDE_SCALAR zeroCtrlWideLoopFirst
+WIDE_SCALAR zeroCtrlWideLoopLast
+WIDE_SCALAR zeroCtrlWideLoopChanges
+WIDE_SCALAR zeroCtrlWideLoopBackTarget
+WIDE_SCALAR zeroCtrlWideLoopExitTarget
+WIDE_CALL_SCALARS 090
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits

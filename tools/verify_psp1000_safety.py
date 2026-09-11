@@ -1288,8 +1288,42 @@ def check_sources(root):
             "post_minus_one_vcall64_return_hits_addr"):
         if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
             fail("T33 registration does not range-validate " + field)
-    if "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header:
-        fail("T39 registration ABI is not exactly 1012 bytes")
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 1300" not in bsman_header:
+        fail("registration ABI is not exactly 1300 bytes")
+    # T40 is one default-disabled, all-or-none, observation-only bundle.
+    if "PSP1000ActivationWideTrace = Disabled" not in sample_config or \
+            '"PSP1000ActivationWideTrace", "Disabled"' not in kernel:
+        fail("T40 wide activation trace is not default-disabled")
+    if "activation_wide_scalar_addr[52]" not in bsman_header or \
+            "activation_wide_leaf_addr[10]" not in bsman_header:
+        fail("T40 registration fields are incomplete")
+    for token in ("copied.activation_wide_leaf_addr[wide_index]",
+            "copied.activation_wide_scalar_addr[wide_index], 4",
+            "bsman->activation_wide_validation = 1",
+            "bsman->activation_wide_install = 1",
+            "bsman->activation_wide_cache_sync = 1"):
+        if token not in kernel:
+            fail("T40 registration/transaction lacks " + token)
+    for word in ("0x1040000C", "0x1040FFF2", "0x26100001",
+            "0x8FBF001C", "0x00002021"):
+        if word not in kernel:
+            fail("T40 Sony fingerprint lacks " + word)
+    for offset in ("0x1F8", "0x200", "0x20C", "0x214", "0x21C", "0x22C"):
+        if kernel.count(offset) < 2:
+            fail("T40 lacks unique validated patch owner for " + offset)
+    for helper in ("zeroCtrlActivationWideCompareTrace", "zeroCtrlWide662Call",
+            "zeroCtrlWide440Call", "zeroCtrlWideFCFCall",
+            "zeroCtrlActivationWideLoopTrace", "zeroCtrlWide090Call"):
+        if helper not in assembly or helper not in user:
+            fail("T40 helper is not declared/registered: " + helper)
+    if "WIDE_DECISION" not in assembly or "WIDE_CALL" not in assembly or \
+            "jal " in assembly[assembly.find("/* T40 wide activation diagnostics"):] or \
+            "zeroCtrlMipsBranchTarget" not in kernel:
+        fail("T40 transparency or branch-target validation regressed")
+    for label in ("[activation-wide-compare]", "662922b9", "440665db",
+            "fcf265d8", "[activation-wide-loop]", "090ccb3f"):
+        if label not in kernel:
+            fail("T40 deferred diagnostic missing " + label)
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")
@@ -1492,8 +1526,8 @@ def check_sources(root):
             writer.find("[t37-validation]") > writer.find(
                 "[post-collection-paf-fcf265d8]"):
         fail("T37.1 deferred failure diagnostic is not outside success-only tracing")
-    if "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header:
-        fail("T39 registration ABI is not exactly 1012 bytes")
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 1300" not in bsman_header:
+        fail("registration ABI is not exactly 1300 bytes")
     if "post_collection_paf_fcf265d8_original[2] != 0x8C440DC4" in kernel:
         fail("T37.2 retains the invalid literal relocated LW comparison")
     t372 = bsman_install[bsman_install.rfind(

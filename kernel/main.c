@@ -106,6 +106,7 @@ static char psp1000CollectionPaf9A285882Trace[16];
 static char psp1000PostCollectionPafFCF265D8Trace[16];
 static char psp1000MaskedPafC59FC3D0Trace[16];
 static char psp1000MaskedPafC59FC3D0SecondTrace[16];
+static char psp1000ActivationWideTrace[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -384,6 +385,11 @@ typedef struct {
     int masked_paf_c59fc3d0_second_install, masked_paf_c59fc3d0_second_cache_sync;
     unsigned int masked_paf_c59fc3d0_second_original[8];
     unsigned int masked_paf_c59fc3d0_second_replacement;
+    int activation_wide_enabled, activation_wide_validation;
+    int activation_wide_install, activation_wide_cache_sync;
+    unsigned int activation_wide_leaf_addr[10], activation_wide_leaf_size[10];
+    unsigned int activation_wide_scalar_addr[52];
+    unsigned int activation_wide_original[6], activation_wide_replacement[6];
     unsigned int post_paf_entry_counter_addr[2], post_vsh_entry_hits_addr;
     unsigned int post_original[12], post_replacement[6];
     unsigned int state_zero_leaf_addr[8], state_zero_leaf_size[8];
@@ -999,6 +1005,11 @@ static int zeroCtrlVshGlobalAccessKind(unsigned int instruction) {
     if (opcode == 0x20 || opcode == 0x21 || opcode == 0x23 ||
             opcode == 0x24 || opcode == 0x25) return 1;
     return 0;
+}
+
+static unsigned int zeroCtrlMipsBranchTarget(unsigned int pc,
+        unsigned int instruction) {
+    return pc + 4 + ((int)(short)(instruction & 0xFFFF) << 2);
 }
 
 static void zeroCtrlCaptureVshFixedWindow(unsigned int text_addr,
@@ -1637,6 +1648,16 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_nonzero_hits_addr);
     CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_zero_resume_target_addr);
     CHECK_POST_SCALAR(masked_paf_c59fc3d0_second_nonzero_target_addr);
+    {
+        unsigned int wide_index;
+        for (wide_index = 0; wide_index < 10; wide_index++)
+            if (!zeroCtrlRegistrationLeafValid(helper,
+                    copied.activation_wide_leaf_addr[wide_index],
+                    copied.activation_wide_leaf_end_addr[wide_index])) return;
+        for (wide_index = 0; wide_index < 52; wide_index++)
+            if (!zeroCtrlVshModuleRangeValid(helper,
+                    copied.activation_wide_scalar_addr[wide_index], 4)) return;
+    }
 #define CHECK_STATE_ZERO_LEAF(field) \
     if (!zeroCtrlRegistrationLeafValid(helper, copied.field##_addr, \
                 copied.field##_end_addr)) return
@@ -1922,6 +1943,19 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->masked_paf_c59fc3d0_second_nonzero_hits_addr = copied.masked_paf_c59fc3d0_second_nonzero_hits_addr;
     bsman->masked_paf_c59fc3d0_second_zero_resume_target_addr = copied.masked_paf_c59fc3d0_second_zero_resume_target_addr;
     bsman->masked_paf_c59fc3d0_second_nonzero_target_addr = copied.masked_paf_c59fc3d0_second_nonzero_target_addr;
+    {
+        unsigned int wide_index;
+        for (wide_index = 0; wide_index < 10; wide_index++) {
+            bsman->activation_wide_leaf_addr[wide_index] =
+                    copied.activation_wide_leaf_addr[wide_index];
+            bsman->activation_wide_leaf_size[wide_index] =
+                    copied.activation_wide_leaf_end_addr[wide_index] -
+                    copied.activation_wide_leaf_addr[wide_index];
+        }
+        for (wide_index = 0; wide_index < 52; wide_index++)
+            bsman->activation_wide_scalar_addr[wide_index] =
+                    copied.activation_wide_scalar_addr[wide_index];
+    }
 #define COPY_STATE_ZERO_LEAF(index, field) do { \
     bsman->state_zero_leaf_addr[index] = copied.field##_addr; \
     bsman->state_zero_leaf_size[index] = copied.field##_end_addr - \
@@ -3875,6 +3909,39 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             counts[9], counts[10], bs_result, bs_substitutions,
                             bs_effective, paf0, paf1, vsh_result);
                     zeroCtrlDiagnosticsText(line);
+                    if (bsman->activation_wide_enabled) {
+                        unsigned int *w = bsman->activation_wide_scalar_addr;
+#define WREAD(i) zeroCtrlReadHelperCounter(w[(i)])
+                        snprintf(line, sizeof(line),
+                                "[activation-wide-compare] validation=%d install=%d cache_sync=%d "
+                                "hits=%u zero=%u nonzero=%u first_compare=%u last_compare=%u changes=%u\n",
+                                bsman->activation_wide_validation,
+                                bsman->activation_wide_install,
+                                bsman->activation_wide_cache_sync,
+                                WREAD(0), WREAD(1), WREAD(2), WREAD(3), WREAD(4), WREAD(5));
+                        zeroCtrlDiagnosticsText(line);
+#define WIDE_RAW_LINE(label, base) do { \
+    snprintf(line, sizeof(line), "[activation-wide-" label "] validation=%d install=%d cache_sync=%d hits=%u zero=%u nonzero=%u first_raw=0x%08X last_raw=0x%08X changes=%u\n", \
+        bsman->activation_wide_validation, bsman->activation_wide_install, \
+        bsman->activation_wide_cache_sync, WREAD((base)+3), WREAD((base)+7), \
+        WREAD((base)+8), WREAD((base)+4), WREAD((base)+5), WREAD((base)+6)); \
+    zeroCtrlDiagnosticsText(line); \
+} while (0)
+                        WIDE_RAW_LINE("662922b9", 8);
+                        WIDE_RAW_LINE("440665db", 17);
+                        WIDE_RAW_LINE("fcf265d8", 26);
+                        snprintf(line, sizeof(line),
+                                "[activation-wide-loop] validation=%d install=%d cache_sync=%d "
+                                "hits=%u loop_back=%u exit=%u first_decision=%u last_decision=%u changes=%u\n",
+                                bsman->activation_wide_validation,
+                                bsman->activation_wide_install,
+                                bsman->activation_wide_cache_sync,
+                                WREAD(35), WREAD(36), WREAD(37), WREAD(38), WREAD(39), WREAD(40));
+                        zeroCtrlDiagnosticsText(line);
+                        WIDE_RAW_LINE("090ccb3f", 43);
+#undef WIDE_RAW_LINE
+#undef WREAD
+                    }
                     snprintf(line, sizeof(line),
                             "[masked-paf-c59fc3d0-second] validation=%d "
                             "install=%d cache_sync=%d hits=%u nonzero=%u "
@@ -5170,6 +5237,64 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                             bsman->masked_paf_c59fc3d0_second_leaf_addr) return;
             bsman->masked_paf_c59fc3d0_second_validation = 1;
         }
+        if (bsman->activation_wide_enabled) {
+            static const unsigned int wide_offset[6] = {
+                0x1F8, 0x200, 0x20C, 0x214, 0x21C, 0x22C
+            };
+            static const unsigned int wide_word[6] = {
+                0x1040000C, 0, 0, 0, 0x1040FFF2, 0
+            };
+            static const unsigned int wide_helper[6] = { 0, 1, 3, 5, 7, 8 };
+            unsigned int wide_index;
+            for (wide_index = 0; wide_index < 10; wide_index++)
+                if (!zeroCtrlTextRangeValid(bsman->helper,
+                        bsman->activation_wide_leaf_addr[wide_index],
+                        bsman->activation_wide_leaf_size[wide_index])) return;
+            for (wide_index = 0; wide_index < 6; wide_index++) {
+                unsigned int site = bsman->activation_addr + wide_offset[wide_index];
+                bsman->activation_wide_original[wide_index] = _lw(site);
+                bsman->activation_wide_replacement[wide_index] = 0x08000000 |
+                        ((bsman->activation_wide_leaf_addr[
+                            wide_helper[wide_index]] >> 2) & 0x03FFFFFF);
+                if (((wide_index == 0 || wide_index == 4) &&
+                            bsman->activation_wide_original[wide_index] !=
+                                wide_word[wide_index]) ||
+                        ((wide_index != 0 && wide_index != 4) &&
+                            (bsman->activation_wide_original[wide_index] >> 26) != 3) ||
+                        ((site + 4) & 0xF0000000) !=
+                            (bsman->activation_wide_leaf_addr[
+                                wide_helper[wide_index]] & 0xF0000000) ||
+                        zeroCtrlMipsJumpTarget(site,
+                            bsman->activation_wide_replacement[wide_index]) !=
+                            bsman->activation_wide_leaf_addr[
+                                wide_helper[wide_index]]) return;
+            }
+            if (zeroCtrlMipsBranchTarget(bsman->activation_addr + 0x1F8,
+                        bsman->activation_wide_original[0]) !=
+                            bsman->activation_addr + 0x22C ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x200,
+                        bsman->activation_wide_original[1]) !=
+                            bsman->activation_addr - 0x9304 + 0x2A380 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x20C,
+                        bsman->activation_wide_original[2]) !=
+                            bsman->activation_addr - 0x9304 + 0x2A290 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x214,
+                        bsman->activation_wide_original[3]) !=
+                            bsman->activation_addr - 0x9304 + 0x2A698 ||
+                    zeroCtrlMipsBranchTarget(bsman->activation_addr + 0x21C,
+                        bsman->activation_wide_original[4]) !=
+                            bsman->activation_addr + 0x1E8 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x22C,
+                        bsman->activation_wide_original[5]) !=
+                            bsman->activation_addr - 0x9304 + 0x2A6F8 ||
+                    _lw(bsman->activation_addr + 0x1FC) != 0x26100001 ||
+                    _lw(bsman->activation_addr + 0x204) != 0 ||
+                    _lw(bsman->activation_addr + 0x210) != 0x00002821 ||
+                    _lw(bsman->activation_addr + 0x218) != 0x00402021 ||
+                    _lw(bsman->activation_addr + 0x220) != 0x8FBF001C ||
+                    _lw(bsman->activation_addr + 0x230) != 0x00002021) return;
+            bsman->activation_wide_validation = 1;
+        }
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
                 0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8
@@ -5445,6 +5570,38 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 bsman->masked_paf_c59fc3d0_second_zero_resume_target_addr);
         _sw(bsman->activation_addr + 0x4C,
                 bsman->masked_paf_c59fc3d0_second_nonzero_target_addr);
+        if (bsman->activation_wide_enabled) {
+            unsigned int wide_index;
+            for (wide_index = 0; wide_index < 52; wide_index++)
+                _sw(0, bsman->activation_wide_scalar_addr[wide_index]);
+            /* Compare: zero exits the body; nonzero enters it. */
+            _sw(bsman->activation_addr + 0x22C,
+                    bsman->activation_wide_scalar_addr[6]);
+            _sw(bsman->activation_addr + 0x200,
+                    bsman->activation_wide_scalar_addr[7]);
+            /* Four natural PAF call targets, saved RAs, and continuations. */
+            _sw(bsman->activation_addr - 0x9304 + 0x2A380,
+                    bsman->activation_wide_scalar_addr[8]);
+            _sw(bsman->activation_addr + 0x208,
+                    bsman->activation_wide_scalar_addr[10]);
+            _sw(bsman->activation_addr - 0x9304 + 0x2A290,
+                    bsman->activation_wide_scalar_addr[17]);
+            _sw(bsman->activation_addr + 0x214,
+                    bsman->activation_wide_scalar_addr[19]);
+            _sw(bsman->activation_addr - 0x9304 + 0x2A698,
+                    bsman->activation_wide_scalar_addr[26]);
+            _sw(bsman->activation_addr + 0x21C,
+                    bsman->activation_wide_scalar_addr[28]);
+            /* At +0x21C zero loops; nonzero takes Sony's +0x224 exit. */
+            _sw(bsman->activation_addr + 0x1E8,
+                    bsman->activation_wide_scalar_addr[41]);
+            _sw(bsman->activation_addr + 0x224,
+                    bsman->activation_wide_scalar_addr[42]);
+            _sw(bsman->activation_addr - 0x9304 + 0x2A6F8,
+                    bsman->activation_wide_scalar_addr[43]);
+            _sw(bsman->activation_addr + 0x234,
+                    bsman->activation_wide_scalar_addr[45]);
+        }
         _sw(0, bsman->post_paf_entry_counter_addr[0]);
         _sw(0, bsman->post_paf_entry_counter_addr[1]);
         _sw(0, bsman->post_vsh_entry_hits_addr);
@@ -5632,6 +5789,17 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     bsman->activation_addr + 0x1E0);
             bsman->masked_paf_c59fc3d0_second_install = 1;
         }
+        if (bsman->activation_wide_enabled &&
+                bsman->activation_wide_validation) {
+            static const unsigned int wide_offset[6] = {
+                0x1F8, 0x200, 0x20C, 0x214, 0x21C, 0x22C
+            };
+            unsigned int wide_index;
+            for (wide_index = 0; wide_index < 6; wide_index++)
+                _sw(bsman->activation_wide_replacement[wide_index],
+                        bsman->activation_addr + wide_offset[wide_index]);
+            bsman->activation_wide_install = 1;
+        }
         for (pc = 0; pc < 7; pc++) {
             static const unsigned int site_offset[7] = {
                 0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8
@@ -5729,6 +5897,21 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             sceKernelIcacheInvalidateRange(
                     (const void *)(bsman->activation_addr + 0x1E0), 4);
             bsman->masked_paf_c59fc3d0_second_cache_sync = 1;
+        }
+        if (bsman->activation_wide_install) {
+            static const unsigned int wide_offset[6] = {
+                0x1F8, 0x200, 0x20C, 0x214, 0x21C, 0x22C
+            };
+            unsigned int wide_index;
+            for (wide_index = 0; wide_index < 6; wide_index++) {
+                sceKernelDcacheWritebackInvalidateRange(
+                        (const void *)(bsman->activation_addr +
+                            wide_offset[wide_index]), 4);
+                sceKernelIcacheInvalidateRange(
+                        (const void *)(bsman->activation_addr +
+                            wide_offset[wide_index]), 4);
+            }
+            bsman->activation_wide_cache_sync = 1;
         }
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)(bsman->activation_addr + 0x27C), 0x50);
@@ -6128,6 +6311,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	ini_gets("Experimental", "PSP1000MaskedPafC59FC3D0SecondTrace", "Disabled",
 			psp1000MaskedPafC59FC3D0SecondTrace,
 			sizeof(psp1000MaskedPafC59FC3D0SecondTrace), config);
+	ini_gets("Experimental", "PSP1000ActivationWideTrace", "Disabled",
+			psp1000ActivationWideTrace,
+			sizeof(psp1000ActivationWideTrace), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -6223,6 +6409,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		slide_diag.bsman.masked_paf_c59fc3d0_second_enabled =
 			slide_diag.bsman.masked_paf_c59fc3d0_enabled &&
 			strcmp(psp1000MaskedPafC59FC3D0SecondTrace, "Enabled") == 0;
+		slide_diag.bsman.activation_wide_enabled =
+			slide_diag.bsman.masked_paf_c59fc3d0_second_enabled &&
+			strcmp(psp1000ActivationWideTrace, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,

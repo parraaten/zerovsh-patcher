@@ -274,6 +274,32 @@ extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondHits;
 extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondNonzeroHits;
 extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondZeroResumeTarget;
 extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget;
+#define WIDE_HELPER_DECL(name) extern void name(void), name##End(void)
+WIDE_HELPER_DECL(zeroCtrlActivationWideCompareTrace);
+WIDE_HELPER_DECL(zeroCtrlWide662Call); WIDE_HELPER_DECL(zeroCtrlWide662Return);
+WIDE_HELPER_DECL(zeroCtrlWide440Call); WIDE_HELPER_DECL(zeroCtrlWide440Return);
+WIDE_HELPER_DECL(zeroCtrlWideFCFCall); WIDE_HELPER_DECL(zeroCtrlWideFCFReturn);
+WIDE_HELPER_DECL(zeroCtrlActivationWideLoopTrace);
+WIDE_HELPER_DECL(zeroCtrlWide090Call); WIDE_HELPER_DECL(zeroCtrlWide090Return);
+#undef WIDE_HELPER_DECL
+#define WIDE_SCALAR_DECL(name) extern volatile unsigned int name
+WIDE_SCALAR_DECL(zeroCtrlWideCompareHits); WIDE_SCALAR_DECL(zeroCtrlWideCompareZero);
+WIDE_SCALAR_DECL(zeroCtrlWideCompareNonzero); WIDE_SCALAR_DECL(zeroCtrlWideCompareFirst);
+WIDE_SCALAR_DECL(zeroCtrlWideCompareLast); WIDE_SCALAR_DECL(zeroCtrlWideCompareChanges);
+WIDE_SCALAR_DECL(zeroCtrlWideCompareZeroTarget); WIDE_SCALAR_DECL(zeroCtrlWideCompareNonzeroTarget);
+#define WIDE_CALL_DECL(tag) \
+ WIDE_SCALAR_DECL(zeroCtrlWide##tag##Target); WIDE_SCALAR_DECL(zeroCtrlWide##tag##RA); \
+ WIDE_SCALAR_DECL(zeroCtrlWide##tag##Resume); WIDE_SCALAR_DECL(zeroCtrlWide##tag##Hits); \
+ WIDE_SCALAR_DECL(zeroCtrlWide##tag##First); WIDE_SCALAR_DECL(zeroCtrlWide##tag##Last); \
+ WIDE_SCALAR_DECL(zeroCtrlWide##tag##Changes); WIDE_SCALAR_DECL(zeroCtrlWide##tag##Zero); \
+ WIDE_SCALAR_DECL(zeroCtrlWide##tag##Nonzero)
+WIDE_CALL_DECL(662); WIDE_CALL_DECL(440); WIDE_CALL_DECL(FCF); WIDE_CALL_DECL(090);
+WIDE_SCALAR_DECL(zeroCtrlWideLoopHits); WIDE_SCALAR_DECL(zeroCtrlWideLoopBack);
+WIDE_SCALAR_DECL(zeroCtrlWideLoopExit); WIDE_SCALAR_DECL(zeroCtrlWideLoopFirst);
+WIDE_SCALAR_DECL(zeroCtrlWideLoopLast); WIDE_SCALAR_DECL(zeroCtrlWideLoopChanges);
+WIDE_SCALAR_DECL(zeroCtrlWideLoopBackTarget); WIDE_SCALAR_DECL(zeroCtrlWideLoopExitTarget);
+#undef WIDE_CALL_DECL
+#undef WIDE_SCALAR_DECL
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
 extern volatile unsigned int zeroCtrlPostVshEntryHits;
 extern void zeroCtrlStateZeroCompareTrace(void), zeroCtrlStateZeroCompareTraceEnd(void);
@@ -797,6 +823,78 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.masked_paf_c59fc3d0_second_nonzero_hits_addr = (u32)&zeroCtrlMaskedPafC59FC3D0SecondNonzeroHits;
 	bsmanClosedRegistration.masked_paf_c59fc3d0_second_zero_resume_target_addr = (u32)&zeroCtrlMaskedPafC59FC3D0SecondZeroResumeTarget;
 	bsmanClosedRegistration.masked_paf_c59fc3d0_second_nonzero_target_addr = (u32)&zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget;
+	bsmanClosedRegistration.activation_wide_leaf_addr[0] = (u32)zeroCtrlActivationWideCompareTrace;
+	bsmanClosedRegistration.activation_wide_leaf_end_addr[0] = (u32)zeroCtrlActivationWideCompareTraceEnd;
+	bsmanClosedRegistration.activation_wide_leaf_addr[1] = (u32)zeroCtrlWide662Call;
+	bsmanClosedRegistration.activation_wide_leaf_end_addr[1] = (u32)zeroCtrlWide662CallEnd;
+	bsmanClosedRegistration.activation_wide_leaf_addr[2] = (u32)zeroCtrlWide662Return;
+	bsmanClosedRegistration.activation_wide_leaf_end_addr[2] = (u32)zeroCtrlWide662ReturnEnd;
+	bsmanClosedRegistration.activation_wide_leaf_addr[3] = (u32)zeroCtrlWide440Call;
+	bsmanClosedRegistration.activation_wide_leaf_end_addr[3] = (u32)zeroCtrlWide440CallEnd;
+	bsmanClosedRegistration.activation_wide_leaf_addr[4] = (u32)zeroCtrlWide440Return;
+	bsmanClosedRegistration.activation_wide_leaf_end_addr[4] = (u32)zeroCtrlWide440ReturnEnd;
+	bsmanClosedRegistration.activation_wide_leaf_addr[5] = (u32)zeroCtrlWideFCFCall;
+	bsmanClosedRegistration.activation_wide_leaf_end_addr[5] = (u32)zeroCtrlWideFCFCallEnd;
+	bsmanClosedRegistration.activation_wide_leaf_addr[6] = (u32)zeroCtrlWideFCFReturn;
+	bsmanClosedRegistration.activation_wide_leaf_end_addr[6] = (u32)zeroCtrlWideFCFReturnEnd;
+	bsmanClosedRegistration.activation_wide_leaf_addr[7] = (u32)zeroCtrlActivationWideLoopTrace;
+	bsmanClosedRegistration.activation_wide_leaf_end_addr[7] = (u32)zeroCtrlActivationWideLoopTraceEnd;
+	bsmanClosedRegistration.activation_wide_leaf_addr[8] = (u32)zeroCtrlWide090Call;
+	bsmanClosedRegistration.activation_wide_leaf_end_addr[8] = (u32)zeroCtrlWide090CallEnd;
+	bsmanClosedRegistration.activation_wide_leaf_addr[9] = (u32)zeroCtrlWide090Return;
+	bsmanClosedRegistration.activation_wide_leaf_end_addr[9] = (u32)zeroCtrlWide090ReturnEnd;
+	bsmanClosedRegistration.activation_wide_scalar_addr[0] = (u32)&zeroCtrlWideCompareHits;
+	bsmanClosedRegistration.activation_wide_scalar_addr[1] = (u32)&zeroCtrlWideCompareZero;
+	bsmanClosedRegistration.activation_wide_scalar_addr[2] = (u32)&zeroCtrlWideCompareNonzero;
+	bsmanClosedRegistration.activation_wide_scalar_addr[3] = (u32)&zeroCtrlWideCompareFirst;
+	bsmanClosedRegistration.activation_wide_scalar_addr[4] = (u32)&zeroCtrlWideCompareLast;
+	bsmanClosedRegistration.activation_wide_scalar_addr[5] = (u32)&zeroCtrlWideCompareChanges;
+	bsmanClosedRegistration.activation_wide_scalar_addr[6] = (u32)&zeroCtrlWideCompareZeroTarget;
+	bsmanClosedRegistration.activation_wide_scalar_addr[7] = (u32)&zeroCtrlWideCompareNonzeroTarget;
+	bsmanClosedRegistration.activation_wide_scalar_addr[8] = (u32)&zeroCtrlWide662Target;
+	bsmanClosedRegistration.activation_wide_scalar_addr[9] = (u32)&zeroCtrlWide662RA;
+	bsmanClosedRegistration.activation_wide_scalar_addr[10] = (u32)&zeroCtrlWide662Resume;
+	bsmanClosedRegistration.activation_wide_scalar_addr[11] = (u32)&zeroCtrlWide662Hits;
+	bsmanClosedRegistration.activation_wide_scalar_addr[12] = (u32)&zeroCtrlWide662First;
+	bsmanClosedRegistration.activation_wide_scalar_addr[13] = (u32)&zeroCtrlWide662Last;
+	bsmanClosedRegistration.activation_wide_scalar_addr[14] = (u32)&zeroCtrlWide662Changes;
+	bsmanClosedRegistration.activation_wide_scalar_addr[15] = (u32)&zeroCtrlWide662Zero;
+	bsmanClosedRegistration.activation_wide_scalar_addr[16] = (u32)&zeroCtrlWide662Nonzero;
+	bsmanClosedRegistration.activation_wide_scalar_addr[17] = (u32)&zeroCtrlWide440Target;
+	bsmanClosedRegistration.activation_wide_scalar_addr[18] = (u32)&zeroCtrlWide440RA;
+	bsmanClosedRegistration.activation_wide_scalar_addr[19] = (u32)&zeroCtrlWide440Resume;
+	bsmanClosedRegistration.activation_wide_scalar_addr[20] = (u32)&zeroCtrlWide440Hits;
+	bsmanClosedRegistration.activation_wide_scalar_addr[21] = (u32)&zeroCtrlWide440First;
+	bsmanClosedRegistration.activation_wide_scalar_addr[22] = (u32)&zeroCtrlWide440Last;
+	bsmanClosedRegistration.activation_wide_scalar_addr[23] = (u32)&zeroCtrlWide440Changes;
+	bsmanClosedRegistration.activation_wide_scalar_addr[24] = (u32)&zeroCtrlWide440Zero;
+	bsmanClosedRegistration.activation_wide_scalar_addr[25] = (u32)&zeroCtrlWide440Nonzero;
+	bsmanClosedRegistration.activation_wide_scalar_addr[26] = (u32)&zeroCtrlWideFCFTarget;
+	bsmanClosedRegistration.activation_wide_scalar_addr[27] = (u32)&zeroCtrlWideFCFRA;
+	bsmanClosedRegistration.activation_wide_scalar_addr[28] = (u32)&zeroCtrlWideFCFResume;
+	bsmanClosedRegistration.activation_wide_scalar_addr[29] = (u32)&zeroCtrlWideFCFHits;
+	bsmanClosedRegistration.activation_wide_scalar_addr[30] = (u32)&zeroCtrlWideFCFFirst;
+	bsmanClosedRegistration.activation_wide_scalar_addr[31] = (u32)&zeroCtrlWideFCFLast;
+	bsmanClosedRegistration.activation_wide_scalar_addr[32] = (u32)&zeroCtrlWideFCFChanges;
+	bsmanClosedRegistration.activation_wide_scalar_addr[33] = (u32)&zeroCtrlWideFCFZero;
+	bsmanClosedRegistration.activation_wide_scalar_addr[34] = (u32)&zeroCtrlWideFCFNonzero;
+	bsmanClosedRegistration.activation_wide_scalar_addr[35] = (u32)&zeroCtrlWideLoopHits;
+	bsmanClosedRegistration.activation_wide_scalar_addr[36] = (u32)&zeroCtrlWideLoopBack;
+	bsmanClosedRegistration.activation_wide_scalar_addr[37] = (u32)&zeroCtrlWideLoopExit;
+	bsmanClosedRegistration.activation_wide_scalar_addr[38] = (u32)&zeroCtrlWideLoopFirst;
+	bsmanClosedRegistration.activation_wide_scalar_addr[39] = (u32)&zeroCtrlWideLoopLast;
+	bsmanClosedRegistration.activation_wide_scalar_addr[40] = (u32)&zeroCtrlWideLoopChanges;
+	bsmanClosedRegistration.activation_wide_scalar_addr[41] = (u32)&zeroCtrlWideLoopBackTarget;
+	bsmanClosedRegistration.activation_wide_scalar_addr[42] = (u32)&zeroCtrlWideLoopExitTarget;
+	bsmanClosedRegistration.activation_wide_scalar_addr[43] = (u32)&zeroCtrlWide090Target;
+	bsmanClosedRegistration.activation_wide_scalar_addr[44] = (u32)&zeroCtrlWide090RA;
+	bsmanClosedRegistration.activation_wide_scalar_addr[45] = (u32)&zeroCtrlWide090Resume;
+	bsmanClosedRegistration.activation_wide_scalar_addr[46] = (u32)&zeroCtrlWide090Hits;
+	bsmanClosedRegistration.activation_wide_scalar_addr[47] = (u32)&zeroCtrlWide090First;
+	bsmanClosedRegistration.activation_wide_scalar_addr[48] = (u32)&zeroCtrlWide090Last;
+	bsmanClosedRegistration.activation_wide_scalar_addr[49] = (u32)&zeroCtrlWide090Changes;
+	bsmanClosedRegistration.activation_wide_scalar_addr[50] = (u32)&zeroCtrlWide090Zero;
+	bsmanClosedRegistration.activation_wide_scalar_addr[51] = (u32)&zeroCtrlWide090Nonzero;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        
