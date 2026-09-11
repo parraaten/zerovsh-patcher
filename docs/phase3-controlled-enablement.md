@@ -1809,3 +1809,32 @@ still leaves the `+0x14050` delay word untouched.
 missing prerequisite needed for Sony SlidePlugin state progression on
 PSP-1000. T28 must disable both separate consumer compatibilities and compare
 the first changed downstream boundary; substitution alone is not success.
+
+### T29 hardware result and T30 state-zero return control
+
+**PROVEN BY HARDWARE — T29:** isolated `+0x13F6C` compatibility and exact PAF
+mask `0x00000002` to `0x000001E9` substitution both executed, while the
+`+0x14020` control remained disabled. Sony still reported `field_12C=15`, a
+state-zero virtual-call result of 15, zero field-writer hits, zero dispatcher
+hits, and zero case14 requests. The combined `0x828` path and `0x1E9` mask are
+therefore insufficient on the tested PSP-1000.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** ignoring stack accesses, the relevant
+VSH context field is initialized to 15 at `+0x1FC98`, written at runtime only by
+the dispatcher at `+0x1DEAC`, and read at `+0x1E2C4`. Dispatcher case 14 reaches
+that writer with the original entry value and naturally stores 14. Hardware has
+not reached the dispatcher or writer.
+
+T30 extends only the existing state-zero virtual-return owner. It retains the
+untouched natural result, and under a new default-disabled exact gate converts
+only natural 15 to effective 14, counts substitutions, stores the effective
+result, and returns through the already saved Sony `$ra`. Every other result is
+preserved exactly. It does not invoke the dispatcher, write the Sony context,
+modify a selector/global, add a callsite, or add any PAF, predicate, or
+VshBridge compatibility.
+
+**HYPOTHESIS / UNKNOWN:** whether effective state value 14 alone is sufficient
+to leave or alter the stuck state-zero path. A changed boundary would identify
+15 as an immediate blocker but would not justify retaining the substitution;
+an unchanged path would show that case14 side effects or another prerequisite
+are still required.

@@ -561,3 +561,27 @@ post-PAF, and post-VshBridge record against the natural T27 control. A first
 changed boundary is strong evidence the mask contributes to missing setup;
 unchanged state proves `0x1E9` alone insufficient; freeze or crash makes the
 isolated substitution unsafe. Do not add another compatibility in this run.
+
+## T30 — isolated exact state-zero return 15-to-14 control
+
+Retain the activation-required exact PAF-present and BSMan-not-linked controls,
+`DangerousCaller58D4`, diagnostics, and all traces. Isolate T30 with:
+
+```ini
+PSP1000Consumer13F6CCompat = Disabled
+PSP1000Consumer14020Compat = Disabled
+PSP1000PafCapabilityMaskCompat = Disabled
+PSP1000StateZero15To14Compat = Enabled
+```
+
+Require both consumer records and the PAF-mask record to prove their
+compatibilities are disabled. Then require:
+
+```text
+[state-zero-15to14-compat] enabled=1 natural=0x0000000F effective=0x0000000E substitutions=...
+```
+
+The substitution count may exceed one. Compare state-zero mask/rejoin,
+activation and post-BSMan paths, field-writer values, dispatcher/case14 counts,
+and post-PAF/VshBridge results. Do not invoke the dispatcher or write
+`context+0x12C`; substitution alone is not success.

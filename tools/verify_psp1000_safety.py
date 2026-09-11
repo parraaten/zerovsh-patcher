@@ -459,6 +459,17 @@ def check_sources(root):
             "sw      $v0, %lo(zeroCtrlStateZeroVCallResult)" not in vreturn or \
             "lw      $ra, %lo(zeroCtrlStateZeroVCallRA)" not in vreturn:
         fail("T15 virtual-call trace does not preserve target/result/ra")
+    for token in ("zeroCtrlStateZero15To14CompatMode", "beqz    $t1, 65f",
+            "addiu   $t1, $zero, 15", "bne     $v0, $t1, 65f",
+            "addiu   $v0, $zero, 14", "zeroCtrlStateZero15To14SubstitutionHits",
+            "\n65:", "zeroCtrlStateZero15To14EffectiveResult"):
+        if token not in vreturn:
+            fail("T30 state-zero return source lacks " + token)
+    if not (vreturn.find("beqz    $t1, 65f") <
+            vreturn.find("bne     $v0, $t1, 65f") <
+            vreturn.find("addiu   $v0, $zero, 14") < vreturn.find("\n65:") <
+            vreturn.find("zeroCtrlStateZero15To14EffectiveResult")):
+        fail("T30 source does not guard the exact 15-to-14 substitution")
     for symbol in ("zeroCtrlPostPafReturnTrace", "zeroCtrlPostVshReturnTrace"):
         start = assembly.find(symbol + ":")
         end = assembly.find(symbol + "End:", start)
@@ -1042,6 +1053,31 @@ def check_sources(root):
             'strcmp(psp1000PafCapabilityMaskCompat, "Enabled") == 0'):
         if gate not in t28_gate:
             fail("T28 mask compatibility gating lacks " + gate)
+    if "PSP1000StateZero15To14Compat = Disabled" not in sample_config or \
+            '"PSP1000StateZero15To14Compat", "Disabled"' not in kernel:
+        fail("T30 state-zero compatibility is not default-disabled")
+    t30_gate = kernel[kernel.find("state_zero_15to14_compat_enabled ="):
+        kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
+            "state_zero_15to14_compat_enabled ="))]
+    for gate in ('devkit == 0x06060110',
+            'strcmp(psp1000Diagnostics, "Enabled") == 0',
+            '"DangerousCaller58D4"',
+            'strcmp(psp1000StateZero15To14Compat, "Enabled") == 0'):
+        if gate not in t30_gate:
+            fail("T30 state-zero compatibility gating lacks " + gate)
+    if "[state-zero-15to14-compat]" not in writer:
+        fail("T30 deferred state-zero compatibility diagnostic is missing")
+    for field in ("state_zero_15to14_compat_mode_addr",
+            "state_zero_15to14_effective_result_addr",
+            "state_zero_15to14_substitution_hits_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T30 registration does not range-validate " + field)
+    for initialization in (
+            "_sw(bsman->state_zero_15to14_compat_enabled ? 1 : 0,",
+            "_sw(0xFFFFFFFF, bsman->state_zero_15to14_effective_result_addr)",
+            "_sw(0, bsman->state_zero_15to14_substitution_hits_addr)"):
+        if initialization not in bsman_install:
+            fail("T30 scalar initialization is missing " + initialization)
     for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
         if record not in writer:
             fail("T27 deferred diagnostic is missing " + record)
@@ -1493,6 +1529,43 @@ def check_t27_mask_semantics(body):
         fail(symbol + " has an unintended a0, memory, or control operation")
 
 
+def check_t30_state_zero_return_semantics(body):
+    """Prove the existing return owner performs only exact 15-to-14 compat."""
+    symbol = "zeroCtrlStateZeroVReturnTrace"
+    set_v0_14 = r"\b(?:li\s+v0,\s*14|addiu\s+v0,\s*zero,\s*14)\b"
+    set_t1_15 = r"\b(?:li\s+t1,\s*15|addiu\s+t1,\s*zero,\s*15)\b"
+    forbidden = r"\b(?:at|v1|a[0-3]|t[2-9]|s[0-7]|k[01]|gp|fp)\b"
+    if re.search(forbidden, body) or re.search(r"\bjalr?\b", body):
+        fail(symbol + " uses a forbidden register or call")
+    ordered = (r"\baddiu\s+sp,\s*sp,\s*-8\b", r"\bsw\s+t0,",
+        r"\bsw\s+t1,", r"\bsw\s+v0,", r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b", r"\bsw\s+t1,",
+        r"\blw\s+t1,", r"\bbeqz\s+t1,", set_t1_15,
+        r"\bbne\s+v0,\s*t1,", set_v0_14, r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b", r"\bsw\s+t1,",
+        r"\bsw\s+v0,", r"\blw\s+t1,", r"\bori\s+t1,",
+        r"\bsw\s+t1,", r"\blw\s+ra,", r"\blw\s+t1,",
+        r"\blw\s+t0,", r"\baddiu\s+sp,\s*sp,\s*8\b",
+        r"\bjr\s+ra\b", r"\bnop\b")
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail(symbol + " lacks ordered T30 operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    expected_v0 = (r"\bsw\s+v0,", r"\bbne\s+v0,\s*t1,", set_v0_14,
+                   r"\bsw\s+v0,")
+    if len(v0_lines) != 4 or any(not re.search(pattern, line, re.I)
+            for pattern, line in zip(expected_v0, v0_lines)) or \
+            len(re.findall(set_v0_14, body, re.I)) != 1 or \
+            len(re.findall(r"\blw\s+", body)) != 7 or \
+            len(re.findall(r"\bsw\s+", body)) != 7 or \
+            len(re.findall(r"\baddiu\s+sp,\s*sp,", body)) != 2 or \
+            len(re.findall(r"\bjr\s+ra\b", body)) != 1:
+        fail(symbol + " has unintended T30 result/frame/memory semantics")
+
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -1593,7 +1666,10 @@ def check_elf(elf):
             "zeroCtrlPostBSManSubstitutionHits",
             "zeroCtrlPostBSManEffectiveResult",
             "zeroCtrlPostPafResult0", "zeroCtrlPostPafResult1",
-            "zeroCtrlPostVshNaturalResult"):
+            "zeroCtrlPostVshNaturalResult",
+            "zeroCtrlStateZero15To14CompatMode",
+            "zeroCtrlStateZero15To14EffectiveResult",
+            "zeroCtrlStateZero15To14SubstitutionHits"):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing Sony module_start wrapper symbol " + symbol)
     symbol_addresses = {}
@@ -1677,6 +1753,8 @@ def check_elf(elf):
         check_t22_consumer_semantics(function_body(disassembly, symbol), symbol)
     check_t27_mask_semantics(function_body(disassembly,
         "zeroCtrlPafCapabilityMaskTrace"))
+    check_t30_state_zero_return_semantics(function_body(disassembly,
+        "zeroCtrlStateZeroVReturnTrace"))
 
 
 def check_stub_object(stub_object):
@@ -1793,14 +1871,28 @@ def check_stub_object(stub_object):
             not re.search(r"\bjr\s+v0\b", state_vcall):
         fail("T15 virtual-call wrapper does not preserve target and original ra")
     state_vreturn = function_body(disassembly, "zeroCtrlStateZeroVReturnTrace")
+    check_t30_state_zero_return_semantics(state_vreturn)
     require_result_store_relocation(state_vreturn,
             "zeroCtrlStateZeroVReturnTrace", "zeroCtrlStateZeroVCallResult")
-    v0_lines = [line for line in state_vreturn.splitlines()
-                if re.search(r"\bv0\b", line)]
-    if len(v0_lines) != 1 or not re.search(r"\bsw\s+v0,", v0_lines[0]) or \
-            not re.search(r"R_MIPS_HI16\s+zeroCtrlStateZeroVCallRA\b",
-                          state_vreturn) or not re.search(r"\bjr\s+ra\b", state_vreturn):
-        fail("T15 virtual return does not preserve the natural result and Sony ra")
+    if not re.search(r"R_MIPS_HI16\s+zeroCtrlStateZeroVCallRA\b",
+            state_vreturn) or not re.search(r"\bjr\s+ra\b", state_vreturn):
+        fail("T30 virtual return does not preserve the Sony ra")
+    t30_relocations = (
+        ("zeroCtrlStateZero15To14CompatMode", 1, 1, r"\blw\s+t1,"),
+        ("zeroCtrlStateZero15To14EffectiveResult", 1, 1, r"\bsw\s+v0,"),
+        ("zeroCtrlStateZero15To14SubstitutionHits", 1, 2, None),
+    )
+    for scalar, hi_count, lo_count, instruction in t30_relocations:
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", state_vreturn)) != hi_count or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", state_vreturn)) != lo_count:
+            fail("T30 virtual return has wrong relocation counts for " + scalar)
+        if instruction and not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                scalar + r"\b", state_vreturn):
+            fail("T30 virtual return does not bind relocation for " + scalar)
+    for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+        if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlStateZero15To14SubstitutionHits\b", state_vreturn):
+            fail("T30 virtual return does not bind substitution counter")
     post_paf_return = function_body(disassembly, "zeroCtrlPostPafReturnTrace")
     require_only_natural_result_stores(
             post_paf_return, "zeroCtrlPostPafReturnTrace", 2)

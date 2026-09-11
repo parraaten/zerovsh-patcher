@@ -183,9 +183,12 @@ typedef struct {
     u32 paf_mask_compat_mode_addr;
     u32 paf_mask_effective_addr;
     u32 paf_mask_substitution_hits_addr;
+    u32 state_zero_15to14_compat_mode_addr;
+    u32 state_zero_15to14_effective_result_addr;
+    u32 state_zero_15to14_substitution_hits_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 756 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 768 ? 1 : -1];
 
 #endif

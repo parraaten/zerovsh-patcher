@@ -233,6 +233,9 @@ extern volatile unsigned int zeroCtrlStateZeroVCallTarget, zeroCtrlStateZeroVCal
 extern volatile unsigned int zeroCtrlStateZeroVCallResult;
 extern volatile unsigned int zeroCtrlStateZeroEntryHits, zeroCtrlStateZeroVCallHits;
 extern volatile unsigned int zeroCtrlStateZeroVReturnHits, zeroCtrlStateZeroRejoinHits;
+extern volatile unsigned int zeroCtrlStateZero15To14CompatMode;
+extern volatile unsigned int zeroCtrlStateZero15To14EffectiveResult;
+extern volatile unsigned int zeroCtrlStateZero15To14SubstitutionHits;
 extern volatile unsigned int zeroCtrlStateZeroCompareEqual, zeroCtrlStateZeroCompareUnequal;
 extern volatile unsigned int zeroCtrlStateZeroWordZero, zeroCtrlStateZeroWordNonzero;
 extern volatile unsigned int zeroCtrlStateZeroByteZero, zeroCtrlStateZeroByteNonzero;
@@ -639,6 +642,12 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.paf_mask_effective_addr = (u32)&zeroCtrlPafCapabilityMaskEffective;
 	bsmanClosedRegistration.paf_mask_substitution_hits_addr =
 			(u32)&zeroCtrlPafCapabilityMaskSubstitutionHits;
+	bsmanClosedRegistration.state_zero_15to14_compat_mode_addr =
+			(u32)&zeroCtrlStateZero15To14CompatMode;
+	bsmanClosedRegistration.state_zero_15to14_effective_result_addr =
+			(u32)&zeroCtrlStateZero15To14EffectiveResult;
+	bsmanClosedRegistration.state_zero_15to14_substitution_hits_addr =
+			(u32)&zeroCtrlStateZero15To14SubstitutionHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

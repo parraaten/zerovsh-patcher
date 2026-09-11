@@ -543,6 +543,21 @@ zeroCtrlStateZeroVReturnTrace:
     lw      $t1, %lo(zeroCtrlStateZeroVReturnHits)($t0)
     addiu   $t1, $t1, 1
     sw      $t1, %lo(zeroCtrlStateZeroVReturnHits)($t0)
+    lui     $t0, %hi(zeroCtrlStateZero15To14CompatMode)
+    lw      $t1, %lo(zeroCtrlStateZero15To14CompatMode)($t0)
+    beqz    $t1, 65f
+    nop
+    addiu   $t1, $zero, 15
+    bne     $v0, $t1, 65f
+    nop
+    addiu   $v0, $zero, 14
+    lui     $t0, %hi(zeroCtrlStateZero15To14SubstitutionHits)
+    lw      $t1, %lo(zeroCtrlStateZero15To14SubstitutionHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlStateZero15To14SubstitutionHits)($t0)
+65:
+    lui     $t0, %hi(zeroCtrlStateZero15To14EffectiveResult)
+    sw      $v0, %lo(zeroCtrlStateZero15To14EffectiveResult)($t0)
     lui     $t0, %hi(zeroCtrlStateZeroPathMask)
     lw      $t1, %lo(zeroCtrlStateZeroPathMask)($t0)
     ori     $t1, $t1, 0x0080
@@ -1193,6 +1208,12 @@ zeroCtrlStateZeroEntryHits: .space 4
 zeroCtrlStateZeroVCallHits: .space 4
 .globl zeroCtrlStateZeroVReturnHits
 zeroCtrlStateZeroVReturnHits: .space 4
+.globl zeroCtrlStateZero15To14CompatMode
+zeroCtrlStateZero15To14CompatMode: .space 4
+.globl zeroCtrlStateZero15To14EffectiveResult
+zeroCtrlStateZero15To14EffectiveResult: .space 4
+.globl zeroCtrlStateZero15To14SubstitutionHits
+zeroCtrlStateZero15To14SubstitutionHits: .space 4
 .globl zeroCtrlStateZeroRejoinHits
 zeroCtrlStateZeroRejoinHits: .space 4
 .globl zeroCtrlStateZeroCompareEqual
