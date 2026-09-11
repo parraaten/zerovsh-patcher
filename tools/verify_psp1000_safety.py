@@ -1575,6 +1575,13 @@ def require_result_store_relocation(body, function, result_symbol):
         fail(function + " does not store v0 to " + result_symbol)
 
 
+def relocation_bound_to_instruction(body, scalar, instruction):
+    """Return whether an instruction owns the scalar's following LO16 relocation."""
+    pattern = (instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+               re.escape(scalar) + r"\b")
+    return re.search(pattern, body) is not None
+
+
 def check_t22_consumer_semantics(body, symbol):
     """Prove the assembled T23 wrapper captures but preserves natural v0."""
     forbidden = r"\b(?:at|v1|a[0-3]|t[3-9]|s[0-7]|k[01]|gp|fp)\b"
@@ -2286,6 +2293,13 @@ def check_stub_object(stub_object):
             fail("T33 wrapper has wrong relocation counts for " + scalar)
         if op and not relocation_bound_to_instruction(body, scalar, op):
             fail("T33 wrapper does not bind relocation for " + scalar)
+    for body, counter in (
+            (t33_call, "zeroCtrlPostMinusOneVCall64Hits"),
+            (t33_return, "zeroCtrlPostMinusOneVCall64ReturnHits")):
+        for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not relocation_bound_to_instruction(body, counter, instruction):
+                fail("T33 wrapper does not bind " + instruction +
+                     " to counter " + counter)
     if len(re.findall(r"R_MIPS_HI16\s+zeroCtrlPostMinusOneVCall64ReturnTrace\b",
             t33_call)) != 1 or len(re.findall(
             r"R_MIPS_LO16\s+zeroCtrlPostMinusOneVCall64ReturnTrace\b",
