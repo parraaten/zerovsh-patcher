@@ -729,3 +729,16 @@ Repeat T37 with the full prerequisite chain. Require:
 Confirm `arg_target == expected_arg_target`, followed by T37
 `validation=1 install=1 cache_sync=1`. Only then interpret its natural result.
 T37.2 changes validation only and adds no compatibility.
+
+### T38 — scePaf/0xC59FC3D0 masked decision
+
+Enable `PSP1000MaskedPafC59FC3D0Trace` only with the complete successful T37.2
+chain. Collect:
+
+```text
+[masked-paf-c59fc3d0] validation=1 install=1 cache_sync=1 hits=... nonzero=... decision=0x........
+```
+
+The value is Sony's post-`ANDI 0xFF` decision, not the full raw return. Zero
+continues to `+0x1C8`; nonzero follows Sony's epilogue route. T38 does not alter
+either outcome.

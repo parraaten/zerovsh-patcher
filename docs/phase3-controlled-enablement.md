@@ -2058,3 +2058,29 @@ fields were added, so the ABI remains 956 bytes. This remains validation only;
 there is no compatibility or Sony behavior change. Hardware must first confirm
 a zero failure mask and successful transaction before the natural T37 result is
 interpreted.
+
+### T38 scePaf/0xC59FC3D0 masked decision trace
+
+T37.2 hardware reported a zero validation mask, equal observed/expected argument
+targets, and one natural zero post-collection FCF265D8 result. Together with the
+same-run eight-entry T35/T36 results, this proves all three prior PAF boundaries
+pass naturally and no compatibility is justified there.
+
+T38 is default-disabled and requires the full T37 chain. It validates the exact
+Sony sequence from activation `+0x1AC` through `+0x1C4`, including argument
+setup, a dynamically decoded JAL target of SlidePlugin text plus `0x2A558`, and
+Sony's untouched `andi v0,v0,0x00FF`. It patches only the `+0x1C0` decision with
+a pseudodirect `J`; the untouched `+0x1C4` delay slot restores the caller RA.
+
+The helper records `DecisionValue`, explicitly meaning Sony's already-masked
+low-byte value rather than the full raw PAF return. It branches directly on the
+unchanged `v0`, counts hits/nonzero decisions, and uses kernel-initialized routes
+to `+0x1C8` or `+0x050` with the transparent T36/T37 `t0`/`t1` tail. It makes no
+call, transformation, allocation, I/O, dispatcher invocation, context write,
+or compatibility substitution.
+
+The registration adds seven addresses and is exactly 984 bytes. Hardware must
+retain the full prerequisite chain before interpreting T38. A zero decision
+advances the diagnostic boundary to the distinct masked decision at `+0x1E0`;
+a nonzero decision becomes a candidate for later investigation, not a T38
+compatibility change.

@@ -598,6 +598,40 @@ zeroCtrlPostCollectionPafFCF265D8Trace:
 zeroCtrlPostCollectionPafFCF265D8TraceEnd:
 .end zeroCtrlPostCollectionPafFCF265D8Trace
 
+.globl zeroCtrlMaskedPafC59FC3D0Trace
+.type zeroCtrlMaskedPafC59FC3D0Trace @function
+.ent zeroCtrlMaskedPafC59FC3D0Trace, 0
+zeroCtrlMaskedPafC59FC3D0Trace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlMaskedPafC59FC3D0DecisionValue)
+    sw      $v0, %lo(zeroCtrlMaskedPafC59FC3D0DecisionValue)($t0)
+    lui     $t0, %hi(zeroCtrlMaskedPafC59FC3D0Hits)
+    lw      $t1, %lo(zeroCtrlMaskedPafC59FC3D0Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlMaskedPafC59FC3D0Hits)($t0)
+    beqz    $v0, 73f
+    nop
+    lui     $t0, %hi(zeroCtrlMaskedPafC59FC3D0NonzeroHits)
+    lw      $t1, %lo(zeroCtrlMaskedPafC59FC3D0NonzeroHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlMaskedPafC59FC3D0NonzeroHits)($t0)
+    lui     $t0, %hi(zeroCtrlMaskedPafC59FC3D0NonzeroTarget)
+    b       74f
+    lw      $t0, %lo(zeroCtrlMaskedPafC59FC3D0NonzeroTarget)($t0)
+73:
+    lui     $t0, %hi(zeroCtrlMaskedPafC59FC3D0ZeroResumeTarget)
+    lw      $t0, %lo(zeroCtrlMaskedPafC59FC3D0ZeroResumeTarget)($t0)
+74:
+    lw      $t1, 4($sp)
+    addiu   $sp, $sp, 8
+    jr      $t0
+    lw      $t0, -8($sp)
+.globl zeroCtrlMaskedPafC59FC3D0TraceEnd
+zeroCtrlMaskedPafC59FC3D0TraceEnd:
+.end zeroCtrlMaskedPafC59FC3D0Trace
+
 .globl zeroCtrlPostMinusOneVCall64ReturnTrace
 .type zeroCtrlPostMinusOneVCall64ReturnTrace @function
 .ent zeroCtrlPostMinusOneVCall64ReturnTrace, 0
@@ -1492,6 +1526,16 @@ zeroCtrlPostCollectionPafFCF265D8NonzeroHits: .space 4
 zeroCtrlPostCollectionPafFCF265D8ZeroResumeTarget: .space 4
 .globl zeroCtrlPostCollectionPafFCF265D8NonzeroTarget
 zeroCtrlPostCollectionPafFCF265D8NonzeroTarget: .space 4
+.globl zeroCtrlMaskedPafC59FC3D0DecisionValue
+zeroCtrlMaskedPafC59FC3D0DecisionValue: .space 4
+.globl zeroCtrlMaskedPafC59FC3D0Hits
+zeroCtrlMaskedPafC59FC3D0Hits: .space 4
+.globl zeroCtrlMaskedPafC59FC3D0NonzeroHits
+zeroCtrlMaskedPafC59FC3D0NonzeroHits: .space 4
+.globl zeroCtrlMaskedPafC59FC3D0ZeroResumeTarget
+zeroCtrlMaskedPafC59FC3D0ZeroResumeTarget: .space 4
+.globl zeroCtrlMaskedPafC59FC3D0NonzeroTarget
+zeroCtrlMaskedPafC59FC3D0NonzeroTarget: .space 4
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits
