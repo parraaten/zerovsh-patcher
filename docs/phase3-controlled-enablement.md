@@ -2036,3 +2036,25 @@ natural-result record is meaningful only with a zero mask and successful
 validation/install/cache synchronization. The ABI remains 956 bytes. Build
 status is limited to static verification until PSPDEV and hardware are
 available. The next phase is to decode the T37.1 mask, not add compatibility.
+
+### T37.2 relocation-aware argument-load validation
+
+T37.1 hardware reported only `T37_FAIL_ARG_LOAD_WORD` (`0x008`). The observed
+`lui v0,0x09E5` plus `lw a0,0x9EF4(v0)` reconstructs `0x09E49EF4` when the LW
+LO16 is sign-extended, exactly matching the runtime second-segment address plus
+static offset `0x0DC4`. Thus the former comparison against the unrelocated
+literal `0x8C440DC4` was invalid; every other T37 guard passed on hardware.
+
+T37.2 changes only that validation. Bit `0x008` now proves the instruction shape
+`lw a0,imm16(v0)`. The kernel sign-extends its runtime immediate, combines it
+with the relocated LUI immediate, and requires the resulting address to equal
+`mod->segmentaddr[1] + 0x0DC4`. New append-only bits distinguish target mismatch
+(`0x400`) from a missing second segment (`0x800`). Deferred target diagnostics
+now include both reconstructed and expected argument addresses.
+
+All other T37 guards, its tracer, helper scalars, route targets, single `J` patch
+at `+0x1A4`, and four-byte cache synchronization are unchanged. No registration
+fields were added, so the ABI remains 956 bytes. This remains validation only;
+there is no compatibility or Sony behavior change. Hardware must first confirm
+a zero failure mask and successful transaction before the natural T37 result is
+interpreted.

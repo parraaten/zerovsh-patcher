@@ -123,6 +123,8 @@ static long b_level;
 #define T37_FAIL_REPLACEMENT_TARGET   0x080
 #define T37_FAIL_HELPER_RANGE         0x100
 #define T37_FAIL_PSEUDODIRECT_REGION  0x200
+#define T37_FAIL_ARG_LOAD_TARGET      0x400
+#define T37_FAIL_SEGMENT1_MISSING     0x800
 #define VSH_REFERENCE_LIMIT     32
 #define VSH_REFERENCE_WINDOW_BEFORE 0x30
 #define VSH_REFERENCE_WINDOW_AFTER  0x50
@@ -358,6 +360,8 @@ typedef struct {
     unsigned int post_collection_paf_fcf265d8_decoded_call_target;
     unsigned int post_collection_paf_fcf265d8_expected_call_target;
     unsigned int post_collection_paf_fcf265d8_decoded_replacement_target;
+    unsigned int post_collection_paf_fcf265d8_observed_arg_target;
+    unsigned int post_collection_paf_fcf265d8_expected_arg_target;
     unsigned int post_paf_entry_counter_addr[2], post_vsh_entry_hits_addr;
     unsigned int post_original[12], post_replacement[6];
     unsigned int state_zero_leaf_addr[8], state_zero_leaf_size[8];
@@ -3433,10 +3437,13 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         zeroCtrlDiagnosticsText(line);
                         snprintf(line, sizeof(line),
                                 "[t37-validation-targets] call_target=0x%08X "
-                                "expected_call_target=0x%08X replacement=0x%08X "
+                                "expected_call_target=0x%08X arg_target=0x%08X "
+                                "expected_arg_target=0x%08X replacement=0x%08X "
                                 "replacement_target=0x%08X leaf=0x%08X\n",
                                 bsman->post_collection_paf_fcf265d8_decoded_call_target,
                                 bsman->post_collection_paf_fcf265d8_expected_call_target,
+                                bsman->post_collection_paf_fcf265d8_observed_arg_target,
+                                bsman->post_collection_paf_fcf265d8_expected_arg_target,
                                 bsman->post_collection_paf_fcf265d8_replacement,
                                 bsman->post_collection_paf_fcf265d8_decoded_replacement_target,
                                 bsman->post_collection_paf_fcf265d8_leaf_addr);
@@ -4955,6 +4962,8 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 ((bsman->post_collection_paf_fcf265d8_leaf_addr >> 2) & 0x03FFFFFF);
         if (bsman->post_collection_paf_fcf265d8_enabled) {
             unsigned int fail_mask = 0;
+            int arg_lo = (short)(
+                    bsman->post_collection_paf_fcf265d8_original[2] & 0xFFFF);
             bsman->post_collection_paf_fcf265d8_guard_checked = 1;
             bsman->post_collection_paf_fcf265d8_decoded_call_target =
                     zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x19C,
@@ -4964,6 +4973,11 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             bsman->post_collection_paf_fcf265d8_decoded_replacement_target =
                     zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1A4,
                         bsman->post_collection_paf_fcf265d8_replacement);
+            bsman->post_collection_paf_fcf265d8_observed_arg_target =
+                    ((bsman->post_collection_paf_fcf265d8_original[0] & 0xFFFF)
+                        << 16) + arg_lo;
+            bsman->post_collection_paf_fcf265d8_expected_arg_target =
+                    mod->nsegment >= 2 ? mod->segmentaddr[1] + 0x0DC4 : 0;
             if ((bsman->post_collection_paf_fcf265d8_original[0] & 0xFFFF0000) !=
                     0x3C020000) fail_mask |= T37_FAIL_LUI_SHAPE;
             if ((bsman->post_collection_paf_fcf265d8_original[1] >> 26) != 3)
@@ -4971,8 +4985,14 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             if (bsman->post_collection_paf_fcf265d8_decoded_call_target !=
                     bsman->post_collection_paf_fcf265d8_expected_call_target)
                 fail_mask |= T37_FAIL_CALL_TARGET;
-            if (bsman->post_collection_paf_fcf265d8_original[2] != 0x8C440DC4)
+            if ((bsman->post_collection_paf_fcf265d8_original[2] & 0xFFFF0000) !=
+                    0x8C440000)
                 fail_mask |= T37_FAIL_ARG_LOAD_WORD;
+            if (mod->nsegment < 2)
+                fail_mask |= T37_FAIL_SEGMENT1_MISSING;
+            else if (bsman->post_collection_paf_fcf265d8_observed_arg_target !=
+                    bsman->post_collection_paf_fcf265d8_expected_arg_target)
+                fail_mask |= T37_FAIL_ARG_LOAD_TARGET;
             if (bsman->post_collection_paf_fcf265d8_original[3] != 0x1440FFAA)
                 fail_mask |= T37_FAIL_DECISION_WORD;
             if (bsman->post_collection_paf_fcf265d8_original[4] != 0x8FBF001C)
@@ -5100,7 +5120,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x19C,
                         bsman->post_collection_paf_fcf265d8_original[1]) !=
                             mod->text_addr + 0x2A698 ||
-                    bsman->post_collection_paf_fcf265d8_original[2] != 0x8C440DC4 ||
+                    (bsman->post_collection_paf_fcf265d8_original[2] & 0xFFFF0000) != 0x8C440000 ||
+                    mod->nsegment < 2 ||
+                    bsman->post_collection_paf_fcf265d8_observed_arg_target !=
+                        bsman->post_collection_paf_fcf265d8_expected_arg_target ||
                     bsman->post_collection_paf_fcf265d8_original[3] != 0x1440FFAA ||
                     bsman->post_collection_paf_fcf265d8_original[4] != 0x8FBF001C ||
                     (bsman->post_collection_paf_fcf265d8_replacement >> 26) != 2 ||

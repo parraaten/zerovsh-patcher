@@ -716,3 +716,16 @@ or runtime change. Collect both records even when activation validation is zero:
 Decode only the failure mask. Do not interpret the T37 natural-result record
 unless the mask is zero and validation, installation, and cache sync all equal
 one.
+
+### T37.2 — relocated argument-load validation
+
+Repeat T37 with the full prerequisite chain. Require:
+
+```text
+[t37-validation] enabled=1 checked=1 fail_mask=0x00000000 ...
+[t37-validation-targets] ... arg_target=0x........ expected_arg_target=0x........ ...
+```
+
+Confirm `arg_target == expected_arg_target`, followed by T37
+`validation=1 install=1 cache_sync=1`. Only then interpret its natural result.
+T37.2 changes validation only and adds no compatibility.

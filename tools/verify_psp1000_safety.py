@@ -1406,7 +1406,7 @@ def check_sources(root):
     for token in ("post_collection_paf_fcf265d8_original[0] & 0xFFFF0000",
             "post_collection_paf_fcf265d8_original[1] >> 26) != 3",
             "mod->text_addr + 0x2A698",
-            "post_collection_paf_fcf265d8_original[2] != 0x8C440DC4",
+            "(bsman->post_collection_paf_fcf265d8_original[2] & 0xFFFF0000) != 0x8C440000",
             "post_collection_paf_fcf265d8_original[3] != 0x1440FFAA",
             "post_collection_paf_fcf265d8_original[4] != 0x8FBF001C",
             "(bsman->post_collection_paf_fcf265d8_replacement >> 26) != 2",
@@ -1442,6 +1442,8 @@ def check_sources(root):
         "T37_FAIL_REPLACEMENT_TARGET": "0x080",
         "T37_FAIL_HELPER_RANGE": "0x100",
         "T37_FAIL_PSEUDODIRECT_REGION": "0x200",
+        "T37_FAIL_ARG_LOAD_TARGET": "0x400",
+        "T37_FAIL_SEGMENT1_MISSING": "0x800",
     }
     for name, value in t371_defs.items():
         if ("#define " + name) not in kernel or value not in kernel[
@@ -1478,6 +1480,28 @@ def check_sources(root):
         fail("T37.1 deferred failure diagnostic is not outside success-only tracing")
     if "sizeof(ZeroCtrlBSManClosedRegistration) == 956" not in bsman_header:
         fail("T37.1 unexpectedly changes the registration ABI")
+    if "post_collection_paf_fcf265d8_original[2] != 0x8C440DC4" in kernel:
+        fail("T37.2 retains the invalid literal relocated LW comparison")
+    t372 = bsman_install[bsman_install.rfind(
+        "if (bsman->post_collection_paf_fcf265d8_enabled) {", 0,
+        bsman_install.find("bsman->post_collection_paf_fcf265d8_guard_checked = 1;")):
+        bsman_install.find("if (fail_mask != 0) return;")]
+    for token in (
+            "(bsman->post_collection_paf_fcf265d8_original[2] & 0xFFFF0000) !=",
+            "0x8C440000",
+            "int arg_lo = (short)(",
+            "post_collection_paf_fcf265d8_original[2] & 0xFFFF",
+            "post_collection_paf_fcf265d8_observed_arg_target =",
+            "post_collection_paf_fcf265d8_original[0] & 0xFFFF",
+            "post_collection_paf_fcf265d8_expected_arg_target =",
+            "mod->nsegment >= 2 ? mod->segmentaddr[1] + 0x0DC4 : 0",
+            "post_collection_paf_fcf265d8_observed_arg_target !=",
+            "post_collection_paf_fcf265d8_expected_arg_target"):
+        if token not in t372:
+            fail("T37.2 relocation-aware argument validation lacks " + token)
+    if "arg_target=0x%08X" not in writer or \
+            "expected_arg_target=0x%08X" not in writer:
+        fail("T37.2 deferred argument-target diagnostic is missing")
     for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
         if record not in writer:
             fail("T27 deferred diagnostic is missing " + record)
