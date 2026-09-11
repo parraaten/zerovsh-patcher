@@ -245,6 +245,14 @@ extern volatile unsigned int zeroCtrlCollectionPafFCF265D8LastItem;
 extern volatile unsigned int zeroCtrlCollectionPafFCF265D8NaturalResult;
 extern volatile unsigned int zeroCtrlCollectionPafFCF265D8Hits;
 extern volatile unsigned int zeroCtrlCollectionPafFCF265D8NonzeroHits;
+extern void zeroCtrlCollectionPaf9A285882Trace(void);
+extern void zeroCtrlCollectionPaf9A285882TraceEnd(void);
+extern volatile unsigned int zeroCtrlCollectionPaf9A285882LastItem;
+extern volatile unsigned int zeroCtrlCollectionPaf9A285882NaturalResult;
+extern volatile unsigned int zeroCtrlCollectionPaf9A285882Hits;
+extern volatile unsigned int zeroCtrlCollectionPaf9A285882NonzeroHits;
+extern volatile unsigned int zeroCtrlCollectionPaf9A285882ZeroResumeTarget;
+extern volatile unsigned int zeroCtrlCollectionPaf9A285882NonzeroTarget;
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
 extern volatile unsigned int zeroCtrlPostVshEntryHits;
 extern void zeroCtrlStateZeroCompareTrace(void), zeroCtrlStateZeroCompareTraceEnd(void);
@@ -739,6 +747,14 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlCollectionPafFCF265D8Hits;
 	bsmanClosedRegistration.collection_paf_fcf265d8_nonzero_hits_addr =
 			(u32)&zeroCtrlCollectionPafFCF265D8NonzeroHits;
+	bsmanClosedRegistration.collection_paf_9a285882_leaf_addr = (u32)zeroCtrlCollectionPaf9A285882Trace;
+	bsmanClosedRegistration.collection_paf_9a285882_leaf_end_addr = (u32)zeroCtrlCollectionPaf9A285882TraceEnd;
+	bsmanClosedRegistration.collection_paf_9a285882_last_item_addr = (u32)&zeroCtrlCollectionPaf9A285882LastItem;
+	bsmanClosedRegistration.collection_paf_9a285882_natural_result_addr = (u32)&zeroCtrlCollectionPaf9A285882NaturalResult;
+	bsmanClosedRegistration.collection_paf_9a285882_hits_addr = (u32)&zeroCtrlCollectionPaf9A285882Hits;
+	bsmanClosedRegistration.collection_paf_9a285882_nonzero_hits_addr = (u32)&zeroCtrlCollectionPaf9A285882NonzeroHits;
+	bsmanClosedRegistration.collection_paf_9a285882_zero_resume_target_addr = (u32)&zeroCtrlCollectionPaf9A285882ZeroResumeTarget;
+	bsmanClosedRegistration.collection_paf_9a285882_nonzero_target_addr = (u32)&zeroCtrlCollectionPaf9A285882NonzeroTarget;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

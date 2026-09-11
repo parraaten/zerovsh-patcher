@@ -675,3 +675,17 @@ After confirming the prerequisite records, require:
 A nonzero natural result proves Sony exits to activation `+0x4C`; zero proves
 that item reaches the second natural PAF call at `+0x178`. No result is
 substituted in T35.
+
+### T36 — natural scePaf/0x9A285882 collection decision
+
+Enable `PSP1000CollectionPaf9A285882Trace` only with the complete T35 chain and
+retain the recovery path. Confirm all prerequisite records in the same boot,
+then collect:
+
+```text
+[collection-paf-9a285882] validation=1 install=1 cache_sync=1 hits=... nonzero=... last_item=0x........ natural=0x........
+```
+
+This diagnostic only observes Sony's result. It patches only activation `+0x180`
+with `J`, preserves the `+0x184` RA-loading delay slot, and dynamically follows
+Sony's zero/nonzero routes without modifying an item, result, or VSH context.

@@ -1956,3 +1956,29 @@ The tracer reproduces Sony's exact decision: zero resumes at activation
 resumes at activation `+0x4C`. No PAF call, item, result, collection field,
 context, or dispatcher behavior is modified. Whether this NID naturally blocks
 an item remains **HYPOTHESIS / UNKNOWN** pending hardware evidence.
+
+### T36 natural scePaf/0x9A285882 collection decision trace
+
+T36 is a default-disabled, diagnostic-only continuation of the hardware-confirmed
+T35 chain. It owns only the branch at activation `+0x180`, after the untouched
+`scePaf` NID `0x9A285882` call, and requires Sony's `0x1440FFB3` branch plus its
+untouched `0x8FBF001C` delay slot. The replacement is an unconditional `J` to a
+pseudodirect-reachable helper; it is not a `JAL`, so Sony's delay-slot load leaves
+the activation caller RA intact.
+
+The helper records the natural result and the current item from `s0`, increments
+hit/nonzero counters, and branches on the unchanged `v0`. Kernel-initialized
+scalars route zero to activation `+0x188` and nonzero to activation `+0x050`.
+A private `t0`/`t1` frame and `jr t0` delay-slot restoration preserve both
+temporaries, SP, RA, `v0`, and `s0`. T36 performs no call, I/O, allocation,
+dispatch, context write, item mutation, result substitution, or compatibility.
+
+Hardware interpretation requires same-boot T30.1 through T35 prerequisite
+records. Eight hits with no nonzero result proves all eight natural items pass;
+one nonzero at eight hits identifies the eighth natural result as the next
+compatibility candidate without changing it. Any earlier nonzero result must be
+reconciled against same-run T34/T35 evidence before drawing conclusions.
+
+Build status: source verification passes. A PSPDEV build and real PSP-1000 test
+remain required. The unresolved question is the eighth item's natural decision;
+the recommended next phase depends exclusively on that hardware record.

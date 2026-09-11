@@ -104,6 +104,14 @@ T35_SYMBOLS = ("zeroCtrlCollectionPafFCF265D8Trace",
     "zeroCtrlCollectionPafFCF265D8NaturalResult",
     "zeroCtrlCollectionPafFCF265D8Hits",
     "zeroCtrlCollectionPafFCF265D8NonzeroHits")
+T36_SYMBOLS = ("zeroCtrlCollectionPaf9A285882Trace",
+    "zeroCtrlCollectionPaf9A285882TraceEnd",
+    "zeroCtrlCollectionPaf9A285882LastItem",
+    "zeroCtrlCollectionPaf9A285882NaturalResult",
+    "zeroCtrlCollectionPaf9A285882Hits",
+    "zeroCtrlCollectionPaf9A285882NonzeroHits",
+    "zeroCtrlCollectionPaf9A285882ZeroResumeTarget",
+    "zeroCtrlCollectionPaf9A285882NonzeroTarget")
 T32_SYMBOLS = ("zeroCtrlPostImposeVCallTrace",
     "zeroCtrlPostImposeVCallTraceEnd", "zeroCtrlPostImposeVCallReturnTrace",
     "zeroCtrlPostImposeVCallReturnTraceEnd", "zeroCtrlPostImposeVCallTarget",
@@ -1259,8 +1267,8 @@ def check_sources(root):
             "post_minus_one_vcall64_return_hits_addr"):
         if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
             fail("T33 registration does not range-validate " + field)
-    if "sizeof(ZeroCtrlBSManClosedRegistration) == 896" not in bsman_header:
-        fail("T35 registration ABI is not exactly 896 bytes")
+    if "sizeof(ZeroCtrlBSManClosedRegistration) == 928" not in bsman_header:
+        fail("T36 registration ABI is not exactly 928 bytes")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")
@@ -1337,6 +1345,39 @@ def check_sources(root):
             fail("T35 registration does not range-validate " + field)
     if "zeroCtrlRegistrationLeafValid(helper,\n                copied.collection_paf_fcf265d8_leaf_addr" not in kernel:
         fail("T35 registration does not validate its helper leaf range")
+    if "PSP1000CollectionPaf9A285882Trace = Disabled" not in sample_config or \
+            '"PSP1000CollectionPaf9A285882Trace", "Disabled"' not in kernel:
+        fail("T36 trace is not default-disabled")
+    t36_gate = kernel[kernel.find("collection_paf_9a285882_enabled ="):
+        kernel.find(";", kernel.find("collection_paf_9a285882_enabled ="))]
+    if "collection_paf_fcf265d8_enabled" not in t36_gate or \
+            'strcmp(psp1000CollectionPaf9A285882Trace, "Enabled") == 0' not in t36_gate:
+        fail("T36 does not require T35 and explicit opt-in")
+    t36 = assembly[assembly.find("zeroCtrlCollectionPaf9A285882Trace:"):
+        assembly.find("zeroCtrlCollectionPaf9A285882TraceEnd:")]
+    for token in ("sw      $s0, %lo(zeroCtrlCollectionPaf9A285882LastItem)",
+            "sw      $v0, %lo(zeroCtrlCollectionPaf9A285882NaturalResult)",
+            "beqz    $v0, 69f", "jr      $t0", "lw      $t0, -8($sp)"):
+        if token not in t36:
+            fail("T36 transparent decision tracer lacks " + token)
+    if "$a0" in t36 or "$ra" in t36 or any(x in t36 for x in
+            ("jal ", "jalr", "$gp", "sceIo", "Alloc", "malloc")):
+        fail("T36 touches a0/ra or performs a call, I/O, or allocation")
+    for token in ("collection_paf_9a285882_original[0] != 0x1440FFB3",
+            "collection_paf_9a285882_original[1] != 0x8FBF001C",
+            "(bsman->collection_paf_9a285882_replacement >> 26) != 2",
+            "bsman->activation_addr + 0x188",
+            "bsman->activation_addr + 0x50"):
+        if token not in bsman_install:
+            fail("T36 transaction lacks " + token)
+    if commit.count("_sw(bsman->collection_paf_9a285882_replacement,") != 1 or \
+            "bsman->activation_addr + 0x178" in commit or \
+            "bsman->activation_addr + 0x17C" in commit or \
+            "bsman->activation_addr + 0x184" in commit or \
+            "bsman->activation_addr + 0x188" in commit:
+        fail("T36 does not exclusively own activation+0x180")
+    if "[collection-paf-9a285882]" not in writer:
+        fail("T36 deferred diagnostic is missing")
     for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
         if record not in writer:
             fail("T27 deferred diagnostic is missing " + record)
@@ -2274,6 +2315,35 @@ def check_t35_linked(disassembly, symbol_addresses):
     if len(v0_text) != 2 or len(a0_text) != 1:
         fail("T35 linked tracer modifies natural v0/a0")
 
+
+def check_t36_linked(disassembly, symbol_addresses):
+    """Prove T36 final scalar addresses and transparent dynamic routing."""
+    body = function_body(disassembly, "zeroCtrlCollectionPaf9A285882Trace")
+    prefix = "zeroCtrlCollectionPaf9A285882"
+    for suffix, uses in (("LastItem", [("sw", 16, 8)]),
+            ("NaturalResult", [("sw", 2, 8)]),
+            ("Hits", [("lw", 9, 8), ("sw", 9, 8)]),
+            ("NonzeroHits", [("lw", 9, 8), ("sw", 9, 8)]),
+            ("ZeroResumeTarget", [("lw", 8, 8)]),
+            ("NonzeroTarget", [("lw", 8, 8)])):
+        linked_scalar_uses(body, prefix + suffix,
+                symbol_addresses[prefix + suffix], uses)
+    words = linked_instructions(body)
+    raw = [word for _pc, word in words]
+    if sum(word >> 26 == 4 and (word >> 21) & 0x1F == 2 for word in raw) != 1:
+        fail("T36 linked tracer does not have one natural-result branch")
+    if any(word >> 26 == 3 or (word & 0xFC00003F) == 9 for word in raw):
+        fail("T36 linked tracer contains JAL/JALR")
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    if len(v0_lines) != 2 or any(re.search(r"\bra\b", line)
+            for line in body.splitlines()):
+        fail("T36 linked tracer assigns v0 or ra")
+    tail = [0x8FA90004, 0x27BD0008, 0x01000008, 0x8FA8FFF8]
+    if not any(raw[i:i + 4] == tail for i in range(len(raw) - 3)):
+        fail("T36 linked tracer lacks JR-before-delay-slot-t0-restore tail")
+    if raw.count(0x27BDFFF8) != 1 or raw.count(0x27BD0008) != 1:
+        fail("T36 linked tracer private frame is unbalanced")
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -2414,6 +2484,9 @@ def check_elf(elf):
     for symbol in T35_SYMBOLS:
         if symbol not in symbol_addresses:
             fail("missing linked T35 symbol " + symbol)
+    for symbol in T36_SYMBOLS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T36 symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
     check_t311_linked(disassembly, symbol_addresses)
     check_t32_linked(disassembly, symbol_addresses)
@@ -2494,6 +2567,7 @@ def check_elf(elf):
     t35 = function_body(disassembly, "zeroCtrlCollectionPafFCF265D8Trace")
     check_t35_decision_semantics(t35)
     check_t35_linked(disassembly, symbol_addresses)
+    check_t36_linked(disassembly, symbol_addresses)
 
 
 def check_stub_object(stub_object):
@@ -2596,6 +2670,24 @@ def check_stub_object(stub_object):
         for op in (r"\blw\s+t1,", r"\bsw\s+t1,"):
             if not relocation_bound_to_instruction(t35, counter, op):
                 fail("T35 tracer does not bind counter operation for " + counter)
+    t36 = function_body(disassembly, "zeroCtrlCollectionPaf9A285882Trace")
+    for scalar, hi, lo, op in (
+            ("zeroCtrlCollectionPaf9A285882LastItem", 1, 1, r"\bsw\s+s0,"),
+            ("zeroCtrlCollectionPaf9A285882NaturalResult", 1, 1, r"\bsw\s+v0,"),
+            ("zeroCtrlCollectionPaf9A285882Hits", 1, 2, None),
+            ("zeroCtrlCollectionPaf9A285882NonzeroHits", 1, 2, None),
+            ("zeroCtrlCollectionPaf9A285882ZeroResumeTarget", 1, 1, r"\blw\s+t0,"),
+            ("zeroCtrlCollectionPaf9A285882NonzeroTarget", 1, 1, r"\blw\s+t0,")):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", t36)) != hi or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", t36)) != lo:
+            fail("T36 tracer has wrong exact relocations for " + scalar)
+        if op and not relocation_bound_to_instruction(t36, scalar, op):
+            fail("T36 tracer does not bind relocation for " + scalar)
+    for counter in ("zeroCtrlCollectionPaf9A285882Hits",
+            "zeroCtrlCollectionPaf9A285882NonzeroHits"):
+        for op in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not relocation_bound_to_instruction(t36, counter, op):
+                fail("T36 tracer does not bind t1 counter operation")
     for symbol, counter in zip(STUBS, COUNTERS):
         body = function_body(disassembly, symbol)
         if not re.search(r"R_MIPS_HI16\s+" + counter + r"\b", body):

@@ -528,6 +528,42 @@ zeroCtrlCollectionPafFCF265D8Trace:
 zeroCtrlCollectionPafFCF265D8TraceEnd:
 .end zeroCtrlCollectionPafFCF265D8Trace
 
+ .globl zeroCtrlCollectionPaf9A285882Trace
+.type zeroCtrlCollectionPaf9A285882Trace @function
+.ent zeroCtrlCollectionPaf9A285882Trace, 0
+zeroCtrlCollectionPaf9A285882Trace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlCollectionPaf9A285882LastItem)
+    sw      $s0, %lo(zeroCtrlCollectionPaf9A285882LastItem)($t0)
+    lui     $t0, %hi(zeroCtrlCollectionPaf9A285882NaturalResult)
+    sw      $v0, %lo(zeroCtrlCollectionPaf9A285882NaturalResult)($t0)
+    lui     $t0, %hi(zeroCtrlCollectionPaf9A285882Hits)
+    lw      $t1, %lo(zeroCtrlCollectionPaf9A285882Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlCollectionPaf9A285882Hits)($t0)
+    beqz    $v0, 69f
+    nop
+    lui     $t0, %hi(zeroCtrlCollectionPaf9A285882NonzeroHits)
+    lw      $t1, %lo(zeroCtrlCollectionPaf9A285882NonzeroHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlCollectionPaf9A285882NonzeroHits)($t0)
+    lui     $t0, %hi(zeroCtrlCollectionPaf9A285882NonzeroTarget)
+    b       70f
+    lw      $t0, %lo(zeroCtrlCollectionPaf9A285882NonzeroTarget)($t0)
+69:
+    lui     $t0, %hi(zeroCtrlCollectionPaf9A285882ZeroResumeTarget)
+    lw      $t0, %lo(zeroCtrlCollectionPaf9A285882ZeroResumeTarget)($t0)
+70:
+    lw      $t1, 4($sp)
+    addiu   $sp, $sp, 8
+    jr      $t0
+    lw      $t0, -8($sp)
+.globl zeroCtrlCollectionPaf9A285882TraceEnd
+zeroCtrlCollectionPaf9A285882TraceEnd:
+.end zeroCtrlCollectionPaf9A285882Trace
+
 .globl zeroCtrlPostMinusOneVCall64ReturnTrace
 .type zeroCtrlPostMinusOneVCall64ReturnTrace @function
 .ent zeroCtrlPostMinusOneVCall64ReturnTrace, 0
@@ -1400,6 +1436,18 @@ zeroCtrlCollectionPafFCF265D8NaturalResult: .space 4
 zeroCtrlCollectionPafFCF265D8Hits: .space 4
 .globl zeroCtrlCollectionPafFCF265D8NonzeroHits
 zeroCtrlCollectionPafFCF265D8NonzeroHits: .space 4
+.globl zeroCtrlCollectionPaf9A285882LastItem
+zeroCtrlCollectionPaf9A285882LastItem: .space 4
+.globl zeroCtrlCollectionPaf9A285882NaturalResult
+zeroCtrlCollectionPaf9A285882NaturalResult: .space 4
+.globl zeroCtrlCollectionPaf9A285882Hits
+zeroCtrlCollectionPaf9A285882Hits: .space 4
+.globl zeroCtrlCollectionPaf9A285882NonzeroHits
+zeroCtrlCollectionPaf9A285882NonzeroHits: .space 4
+.globl zeroCtrlCollectionPaf9A285882ZeroResumeTarget
+zeroCtrlCollectionPaf9A285882ZeroResumeTarget: .space 4
+.globl zeroCtrlCollectionPaf9A285882NonzeroTarget
+zeroCtrlCollectionPaf9A285882NonzeroTarget: .space 4
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits
