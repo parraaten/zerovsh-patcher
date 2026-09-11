@@ -696,7 +696,7 @@ zeroCtrlDispatchEntryTrace:
 zeroCtrlDispatchEntryTraceEnd:
 .end zeroCtrlDispatchEntryTrace
 
-.macro CONSUMER_6F84_TRACE name, counter, result
+.macro CONSUMER_6F84_TRACE name, counter, result, target
 .globl \name
 .type \name @function
 .ent \name, 0
@@ -710,8 +710,8 @@ zeroCtrlDispatchEntryTraceEnd:
     lw      $t1, %lo(\counter)($t0)
     addiu   $t1, $t1, 1
     sw      $t1, %lo(\counter)($t0)
-    lui     $t0, %hi(zeroCtrlConsumer6F84Target)
-    lw      $t2, %lo(zeroCtrlConsumer6F84Target)($t0)
+    lui     $t0, %hi(\target)
+    lw      $t2, %lo(\target)($t0)
     jalr    $t2
     nop
     lui     $t0, %hi(\result)
@@ -815,6 +815,28 @@ zeroCtrlConsumer14020Trace:
 .globl zeroCtrlConsumer14020TraceEnd
 zeroCtrlConsumer14020TraceEnd:
 .end zeroCtrlConsumer14020Trace
+
+CONSUMER_6F84_TRACE zeroCtrlCapability6F44Trace, zeroCtrlCapability6F44Hits, zeroCtrlCapability6F44NaturalResult, zeroCtrlCapability6F44Target
+CONSUMER_6F84_TRACE zeroCtrlCapability6FC4Trace, zeroCtrlCapability6FC4Hits, zeroCtrlCapability6FC4NaturalResult, zeroCtrlCapability6FC4Target
+CONSUMER_6F84_TRACE zeroCtrlCapability7004Trace, zeroCtrlCapability7004Hits, zeroCtrlCapability7004NaturalResult, zeroCtrlCapability7004Target
+
+.globl zeroCtrlPafCapabilityMaskTrace
+.type zeroCtrlPafCapabilityMaskTrace @function
+.ent zeroCtrlPafCapabilityMaskTrace, 0
+zeroCtrlPafCapabilityMaskTrace:
+    lui     $t0, %hi(zeroCtrlPafCapabilityMask)
+    sw      $a0, %lo(zeroCtrlPafCapabilityMask)($t0)
+    lui     $t0, %hi(zeroCtrlPafCapabilityMaskHits)
+    lw      $t1, %lo(zeroCtrlPafCapabilityMaskHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPafCapabilityMaskHits)($t0)
+    lui     $t0, %hi(zeroCtrlPafCapabilityMaskTarget)
+    lw      $t2, %lo(zeroCtrlPafCapabilityMaskTarget)($t0)
+    jr      $t2
+    nop
+.globl zeroCtrlPafCapabilityMaskTraceEnd
+zeroCtrlPafCapabilityMaskTraceEnd:
+.end zeroCtrlPafCapabilityMaskTrace
 
 .macro STATE_ZERO_CLASS name, limit, bit_true, bit_false, true_slot, false_slot, rejoin
 .globl \name
@@ -1238,3 +1260,27 @@ zeroCtrlConsumer13F6CCompatMode: .space 4
 zeroCtrlConsumer13F6CEffectiveResult: .space 4
 .globl zeroCtrlConsumer13F6CSubstitutionHits
 zeroCtrlConsumer13F6CSubstitutionHits: .space 4
+.globl zeroCtrlCapability6F44Hits
+zeroCtrlCapability6F44Hits: .space 4
+.globl zeroCtrlCapability6F44NaturalResult
+zeroCtrlCapability6F44NaturalResult: .space 4
+.globl zeroCtrlCapability6FC4Hits
+zeroCtrlCapability6FC4Hits: .space 4
+.globl zeroCtrlCapability6FC4NaturalResult
+zeroCtrlCapability6FC4NaturalResult: .space 4
+.globl zeroCtrlCapability7004Hits
+zeroCtrlCapability7004Hits: .space 4
+.globl zeroCtrlCapability7004NaturalResult
+zeroCtrlCapability7004NaturalResult: .space 4
+.globl zeroCtrlCapability6F44Target
+zeroCtrlCapability6F44Target: .space 4
+.globl zeroCtrlCapability6FC4Target
+zeroCtrlCapability6FC4Target: .space 4
+.globl zeroCtrlCapability7004Target
+zeroCtrlCapability7004Target: .space 4
+.globl zeroCtrlPafCapabilityMask
+zeroCtrlPafCapabilityMask: .space 4
+.globl zeroCtrlPafCapabilityMaskHits
+zeroCtrlPafCapabilityMaskHits: .space 4
+.globl zeroCtrlPafCapabilityMaskTarget
+zeroCtrlPafCapabilityMaskTarget: .space 4

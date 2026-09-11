@@ -170,9 +170,19 @@ typedef struct {
     u32 consumer_13f6c_compat_mode_addr;
     u32 consumer_13f6c_effective_result_addr;
     u32 consumer_13f6c_substitution_hits_addr;
+    u32 capability_leaf_addr[3];
+    u32 capability_leaf_end_addr[3];
+    u32 capability_target_addr[3];
+    u32 capability_hits_addr[3];
+    u32 capability_result_addr[3];
+    u32 paf_mask_leaf_addr;
+    u32 paf_mask_leaf_end_addr;
+    u32 paf_mask_target_addr;
+    u32 paf_mask_hits_addr;
+    u32 paf_mask_value_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 664 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 744 ? 1 : -1];
 
 #endif

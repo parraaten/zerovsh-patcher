@@ -263,6 +263,17 @@ extern volatile unsigned int zeroCtrlConsumer14020SubstitutionHits;
 extern volatile unsigned int zeroCtrlConsumer13F6CCompatMode;
 extern volatile unsigned int zeroCtrlConsumer13F6CEffectiveResult;
 extern volatile unsigned int zeroCtrlConsumer13F6CSubstitutionHits;
+extern void zeroCtrlCapability6F44Trace(void), zeroCtrlCapability6F44TraceEnd(void);
+extern void zeroCtrlCapability6FC4Trace(void), zeroCtrlCapability6FC4TraceEnd(void);
+extern void zeroCtrlCapability7004Trace(void), zeroCtrlCapability7004TraceEnd(void);
+extern void zeroCtrlPafCapabilityMaskTrace(void), zeroCtrlPafCapabilityMaskTraceEnd(void);
+extern volatile unsigned int zeroCtrlCapability6F44Target, zeroCtrlCapability6FC4Target;
+extern volatile unsigned int zeroCtrlCapability7004Target, zeroCtrlPafCapabilityMaskTarget;
+extern volatile unsigned int zeroCtrlCapability6F44Hits, zeroCtrlCapability6FC4Hits;
+extern volatile unsigned int zeroCtrlCapability7004Hits, zeroCtrlPafCapabilityMaskHits;
+extern volatile unsigned int zeroCtrlCapability6F44NaturalResult;
+extern volatile unsigned int zeroCtrlCapability6FC4NaturalResult;
+extern volatile unsigned int zeroCtrlCapability7004NaturalResult, zeroCtrlPafCapabilityMask;
 //OK
 int zeroCtrlGetCurrentClockLocalTime(ScePspDateTime *ptime) {
 	int ret, level;		
@@ -600,6 +611,26 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlConsumer13F6CEffectiveResult;
 	bsmanClosedRegistration.consumer_13f6c_substitution_hits_addr =
 			(u32)&zeroCtrlConsumer13F6CSubstitutionHits;
+	bsmanClosedRegistration.capability_leaf_addr[0] = (u32)zeroCtrlCapability6F44Trace;
+	bsmanClosedRegistration.capability_leaf_addr[1] = (u32)zeroCtrlCapability6FC4Trace;
+	bsmanClosedRegistration.capability_leaf_addr[2] = (u32)zeroCtrlCapability7004Trace;
+	bsmanClosedRegistration.capability_leaf_end_addr[0] = (u32)zeroCtrlCapability6F44TraceEnd;
+	bsmanClosedRegistration.capability_leaf_end_addr[1] = (u32)zeroCtrlCapability6FC4TraceEnd;
+	bsmanClosedRegistration.capability_leaf_end_addr[2] = (u32)zeroCtrlCapability7004TraceEnd;
+	bsmanClosedRegistration.capability_target_addr[0] = (u32)&zeroCtrlCapability6F44Target;
+	bsmanClosedRegistration.capability_target_addr[1] = (u32)&zeroCtrlCapability6FC4Target;
+	bsmanClosedRegistration.capability_target_addr[2] = (u32)&zeroCtrlCapability7004Target;
+	bsmanClosedRegistration.capability_hits_addr[0] = (u32)&zeroCtrlCapability6F44Hits;
+	bsmanClosedRegistration.capability_hits_addr[1] = (u32)&zeroCtrlCapability6FC4Hits;
+	bsmanClosedRegistration.capability_hits_addr[2] = (u32)&zeroCtrlCapability7004Hits;
+	bsmanClosedRegistration.capability_result_addr[0] = (u32)&zeroCtrlCapability6F44NaturalResult;
+	bsmanClosedRegistration.capability_result_addr[1] = (u32)&zeroCtrlCapability6FC4NaturalResult;
+	bsmanClosedRegistration.capability_result_addr[2] = (u32)&zeroCtrlCapability7004NaturalResult;
+	bsmanClosedRegistration.paf_mask_leaf_addr = (u32)zeroCtrlPafCapabilityMaskTrace;
+	bsmanClosedRegistration.paf_mask_leaf_end_addr = (u32)zeroCtrlPafCapabilityMaskTraceEnd;
+	bsmanClosedRegistration.paf_mask_target_addr = (u32)&zeroCtrlPafCapabilityMaskTarget;
+	bsmanClosedRegistration.paf_mask_hits_addr = (u32)&zeroCtrlPafCapabilityMaskHits;
+	bsmanClosedRegistration.paf_mask_value_addr = (u32)&zeroCtrlPafCapabilityMask;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

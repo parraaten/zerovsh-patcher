@@ -71,6 +71,20 @@ T25_SCALARS = (
     "zeroCtrlConsumer13F6CEffectiveResult",
     "zeroCtrlConsumer13F6CSubstitutionHits",
 )
+T27_PREDICATE_WRAPPERS = (
+    ("zeroCtrlCapability6F44Trace", "zeroCtrlCapability6F44TraceEnd",
+     "zeroCtrlCapability6F44Hits", "zeroCtrlCapability6F44NaturalResult",
+     "zeroCtrlCapability6F44Target"),
+    ("zeroCtrlCapability6FC4Trace", "zeroCtrlCapability6FC4TraceEnd",
+     "zeroCtrlCapability6FC4Hits", "zeroCtrlCapability6FC4NaturalResult",
+     "zeroCtrlCapability6FC4Target"),
+    ("zeroCtrlCapability7004Trace", "zeroCtrlCapability7004TraceEnd",
+     "zeroCtrlCapability7004Hits", "zeroCtrlCapability7004NaturalResult",
+     "zeroCtrlCapability7004Target"),
+)
+T27_MASK_SYMBOLS = ("zeroCtrlPafCapabilityMaskTrace",
+    "zeroCtrlPafCapabilityMaskTraceEnd", "zeroCtrlPafCapabilityMaskTarget",
+    "zeroCtrlPafCapabilityMaskHits", "zeroCtrlPafCapabilityMask")
 
 
 def fail(message):
@@ -838,7 +852,7 @@ def check_sources(root):
     for token in ("addiu   $sp, $sp, -16", "sw      $t0, 0($sp)",
             "sw      $t1, 4($sp)", "sw      $t2, 8($sp)",
             "sw      $ra, 12($sp)",
-            "lw      $t2, %lo(zeroCtrlConsumer6F84Target)", "jalr    $t2",
+            "lw      $t2, %lo(\\target)", "jalr    $t2",
             "sw      $v0, %lo(\\result)($t0)", "lw      $t2, 8($sp)",
             "lw      $t1, 4($sp)", "lw      $t0, 0($sp)",
             "lw      $ra, 12($sp)", "addiu   $sp, $sp, 16", "jr      $ra"):
@@ -1014,6 +1028,29 @@ def check_sources(root):
         fail("T24 deferred compatibility diagnostic is missing")
     if "[vsh-6f84-13f6c-compat]" not in writer:
         fail("T25 deferred compatibility diagnostic is missing")
+    for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
+        if record not in writer:
+            fail("T27 deferred diagnostic is missing " + record)
+    if "zeroCtrlInstallCapabilityMaskTraces();" not in vsh_record:
+        fail("T27 transaction is not installed at the bounded early VSH point")
+    t27_install = kernel[kernel.find("static void zeroCtrlInstallCapabilityMaskTraces(void) {"):
+        kernel.find("static void zeroCtrlInstall6F84ConsumerTraces(void) {")]
+    for token in ("0x14014", "0x1402C", "0x14038", "0x1404C",
+            "0x6F44", "0x6FC4", "0x7004", "0x3F778",
+            "0x0062800B", "0x27B10030", "vsh->text_size != 0x556C0"):
+        if token not in t27_install:
+            fail("T27 transaction lacks validated constant " + token)
+    t27_commit = t27_install.find("_sw(replacement[i], callsite[i])")
+    t27_validation = t27_install.find("capability_validation[i] = 1")
+    if t27_install.count("_sw(replacement[i], callsite[i])") != 1 or \
+            not 0 <= t27_validation < t27_commit:
+        fail("T27 callsites are not an all-or-none four-word transaction")
+    mask_source = assembly[assembly.find("zeroCtrlPafCapabilityMaskTrace:"):
+        assembly.find("zeroCtrlPafCapabilityMaskTraceEnd:")]
+    if mask_source.find("sw      $a0") > mask_source.find("lw      $t2") or \
+            mask_source.count("$a0") != 1 or "jr      $t2" not in mask_source or \
+            any(token in mask_source for token in ("$v0", "$gp", "jal", "sceIo", "Alloc")):
+        fail("T27 mask tail wrapper is not transparent")
     stub_validation = bsman.find("bsman->stub_form =")
     caller_proof = bsman.find("Runtime caller proof:")
     if stub_validation < 0 or caller_proof <= stub_validation or \
@@ -1379,6 +1416,29 @@ def check_selective_consumer_semantics(body, symbol):
         fail(symbol + " has a v0 use outside natural store/test/substitute/effective store")
 
 
+def check_t27_mask_semantics(body):
+    """Prove the mask wrapper records a0 and tail-transfers transparently."""
+    symbol = "zeroCtrlPafCapabilityMaskTrace"
+    forbidden = r"\b(?:at|v[01]|a[1-3]|t[3-9]|s[0-7]|k[01]|gp|sp|fp|ra)\b"
+    if re.search(forbidden, body) or re.search(r"\bjalr?\b", body):
+        fail(symbol + " uses a forbidden register, frame, or call")
+    ordered = (r"\bsw\s+a0,", r"\blw\s+t1,",
+        r"\baddiu\s+t1,\s*t1,\s*1\b", r"\bsw\s+t1,",
+        r"\blw\s+t2,", r"\bjr\s+t2\b", r"\bnop\b")
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail(symbol + " lacks ordered tail-transfer operation " + pattern)
+        cursor += match.end()
+    a0_lines = [line for line in body.splitlines() if re.search(r"\ba0\b", line)]
+    if len(a0_lines) != 1 or not re.search(r"\bsw\s+a0,", a0_lines[0]) or \
+            len(re.findall(r"\blw\s+", body)) != 2 or \
+            len(re.findall(r"\bsw\s+", body)) != 2 or \
+            len(re.findall(r"\bjr\s+t2\b", body)) != 1:
+        fail(symbol + " modifies a0 or has unexpected memory/control operations")
+
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -1498,6 +1558,13 @@ def check_elf(elf):
     for symbol in T24_SCALARS + T25_SCALARS:
         if symbol not in symbol_addresses:
             fail("missing linked T24 scalar " + symbol)
+    for wrapper in T27_PREDICATE_WRAPPERS:
+        for symbol in wrapper:
+            if symbol not in symbol_addresses:
+                fail("missing linked T27 predicate symbol " + symbol)
+    for symbol in T27_MASK_SYMBOLS:
+        if symbol not in symbol_addresses:
+            fail("missing linked T27 mask symbol " + symbol)
     disassembly = subprocess.check_output(["psp-objdump", "-dr", str(elf)], text=True)
     for symbol in STUBS:
         body = function_body(disassembly, symbol)
@@ -1552,6 +1619,10 @@ def check_elf(elf):
     for symbol in ("zeroCtrlConsumer13F6CTrace",
             "zeroCtrlConsumer14020Trace"):
         check_selective_consumer_semantics(function_body(disassembly, symbol), symbol)
+    for symbol, _end, _counter, _result, _target in T27_PREDICATE_WRAPPERS:
+        check_t22_consumer_semantics(function_body(disassembly, symbol), symbol)
+    check_t27_mask_semantics(function_body(disassembly,
+        "zeroCtrlPafCapabilityMaskTrace"))
 
 
 def check_stub_object(stub_object):
@@ -1606,6 +1677,36 @@ def check_stub_object(stub_object):
                 tied = instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" + scalar + r"\b"
                 if len(re.findall(tied, body)) != count:
                     fail(symbol + " does not tie " + scalar + " to " + instruction)
+    for symbol, _end, counter, result, target in T27_PREDICATE_WRAPPERS:
+        body = function_body(disassembly, symbol)
+        check_t22_consumer_semantics(body, symbol)
+        expected = ((counter, 1, 2), (result, 1, 1), (target, 1, 1))
+        for scalar, hi_count, lo_count in expected:
+            if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", body)) != hi_count or \
+                    len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", body)) != lo_count:
+                fail(symbol + " has wrong exact relocation counts for " + scalar)
+        if not re.search(r"\bsw\s+v0,[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                result + r"\b", body) or not re.search(
+                r"\blw\s+t2,[^\n]*\n[^\n]*R_MIPS_LO16\s+" + target + r"\b", body):
+            fail(symbol + " does not bind natural result/target relocations")
+    mask_body = function_body(disassembly, "zeroCtrlPafCapabilityMaskTrace")
+    check_t27_mask_semantics(mask_body)
+    mask_relocations = (
+        ("zeroCtrlPafCapabilityMask", 1, 1, r"\bsw\s+a0,"),
+        ("zeroCtrlPafCapabilityMaskHits", 1, 2, None),
+        ("zeroCtrlPafCapabilityMaskTarget", 1, 1, r"\blw\s+t2,"),
+    )
+    for scalar, hi_count, lo_count, instruction in mask_relocations:
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", mask_body)) != hi_count or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", mask_body)) != lo_count:
+            fail("T27 mask wrapper has wrong exact relocation counts for " + scalar)
+        if instruction and not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                scalar + r"\b", mask_body):
+            fail("T27 mask wrapper does not bind relocation for " + scalar)
+    for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+        if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPafCapabilityMaskHits\b", mask_body):
+            fail("T27 mask wrapper does not bind hit-counter relocation")
     bsman_leaf = function_body(disassembly, BSMAN_STUB)
     if not re.search(r"R_MIPS_HI16\s+" + BSMAN_COUNTER + r"\b", bsman_leaf) or \
             len(re.findall(r"R_MIPS_LO16\s+" + BSMAN_COUNTER + r"\b",

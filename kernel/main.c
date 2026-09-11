@@ -322,6 +322,16 @@ typedef struct {
     unsigned int consumer_callsite_words[2][2], consumer_callsite_target[2];
     int consumer_leaf_range_valid[2], consumer_counter_range_valid[2];
     int consumer_target_scalar_range_valid;
+    unsigned int capability_leaf_addr[3], capability_leaf_size[3];
+    unsigned int capability_target_addr[3], capability_hits_addr[3];
+    unsigned int capability_result_addr[3];
+    unsigned int paf_mask_leaf_addr, paf_mask_leaf_size, paf_mask_target_addr;
+    unsigned int paf_mask_hits_addr, paf_mask_value_addr;
+    int capability_validation[4], capability_install[4], capability_cache_sync[4];
+    unsigned int capability_original[4][2], capability_decoded_target[4];
+    unsigned int capability_hits[3], capability_result[3];
+    unsigned int paf_mask_hits, paf_mask_value;
+    int capability_captured;
     unsigned int state_zero_original[14], state_zero_replacement[7];
 } ZeroCtrlBSManEvidence;
 
@@ -393,6 +403,7 @@ static const char *zeroCtrlConsumerGuardReasonName(int reason) {
 
 static void zeroCtrlInstallDispatchEntryTrace(void);
 static void zeroCtrlInstall6F84ConsumerTraces(void);
+static void zeroCtrlInstallCapabilityMaskTraces(void);
 
 enum zeroCtrlBSManStubForm {
     ZERO_BSMAN_STUB_UNKNOWN = 0,
@@ -1303,6 +1314,7 @@ void zeroCtrlRegisterBSManClosedShim(
     ZeroCtrlBSManClosedRegistration copied;
     ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
     int k1;
+    unsigned int i;
 
     bsman->registration_called = 1;
     if ((!bsman->enabled && !bsman->activation_enabled) ||
@@ -1510,6 +1522,18 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(consumer_13f6c_compat_mode_addr);
     CHECK_POST_SCALAR(consumer_13f6c_effective_result_addr);
     CHECK_POST_SCALAR(consumer_13f6c_substitution_hits_addr);
+    for (i = 0; i < 3; i++) {
+        if (!zeroCtrlRegistrationLeafValid(helper, copied.capability_leaf_addr[i],
+                    copied.capability_leaf_end_addr[i])) return;
+        if (!zeroCtrlVshModuleRangeValid(helper, copied.capability_target_addr[i], 4) ||
+                !zeroCtrlVshModuleRangeValid(helper, copied.capability_hits_addr[i], 4) ||
+                !zeroCtrlVshModuleRangeValid(helper, copied.capability_result_addr[i], 4)) return;
+    }
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.paf_mask_leaf_addr,
+                copied.paf_mask_leaf_end_addr) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.paf_mask_target_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.paf_mask_hits_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.paf_mask_value_addr, 4)) return;
 #undef CHECK_POST_SCALAR
     bsman->leaf_addr = copied.leaf_addr;
     bsman->leaf_size = copied.leaf_end_addr - copied.leaf_addr;
@@ -1697,6 +1721,19 @@ void zeroCtrlRegisterBSManClosedShim(
             copied.consumer_13f6c_effective_result_addr;
     bsman->consumer_13f6c_substitution_hits_addr =
             copied.consumer_13f6c_substitution_hits_addr;
+    for (i = 0; i < 3; i++) {
+        bsman->capability_leaf_addr[i] = copied.capability_leaf_addr[i];
+        bsman->capability_leaf_size[i] = copied.capability_leaf_end_addr[i] -
+                copied.capability_leaf_addr[i];
+        bsman->capability_target_addr[i] = copied.capability_target_addr[i];
+        bsman->capability_hits_addr[i] = copied.capability_hits_addr[i];
+        bsman->capability_result_addr[i] = copied.capability_result_addr[i];
+    }
+    bsman->paf_mask_leaf_addr = copied.paf_mask_leaf_addr;
+    bsman->paf_mask_leaf_size = copied.paf_mask_leaf_end_addr - copied.paf_mask_leaf_addr;
+    bsman->paf_mask_target_addr = copied.paf_mask_target_addr;
+    bsman->paf_mask_hits_addr = copied.paf_mask_hits_addr;
+    bsman->paf_mask_value_addr = copied.paf_mask_value_addr;
     bsman->registered = 1;
 }
 
@@ -1897,6 +1934,7 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
     slide_diag.bsman.dispatch_entry_early_attempted = 1;
     slide_diag.bsman.consumer_early_attempted = 1;
     zeroCtrlInstall6F84ConsumerTraces();
+    zeroCtrlInstallCapabilityMaskTraces();
     zeroCtrlInstallDispatchEntryTrace();
     slide_diag.vsh_module_seen = 1;
 }
@@ -3012,6 +3050,35 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->consumer_14020_pre_slide_effective,
                         bsman->consumer_14020_pre_slide_substitutions);
                 zeroCtrlDiagnosticsText(line);
+                if (bsman->capability_captured) {
+                    static const unsigned int offsets[3] = {
+                        0x14014, 0x1402C, 0x14038 };
+                    static const unsigned int targets[3] = {
+                        0x6F44, 0x6FC4, 0x7004 };
+                    unsigned int capability_index;
+                    for (capability_index = 0; capability_index < 3;
+                            capability_index++) {
+                        snprintf(line, sizeof(line),
+                                "[vsh-capability-predicate] offset=0x%05X "
+                                "target=0x%04X validation=%d install=%d "
+                                "cache_sync=%d hits=%u natural=0x%08X\n",
+                                offsets[capability_index], targets[capability_index],
+                                bsman->capability_validation[capability_index],
+                                bsman->capability_install[capability_index],
+                                bsman->capability_cache_sync[capability_index],
+                                bsman->capability_hits[capability_index],
+                                bsman->capability_result[capability_index]);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                    snprintf(line, sizeof(line),
+                            "[vsh-paf-capability-mask] validation=%d install=%d "
+                            "cache_sync=%d hits=%u mask=0x%08X\n",
+                            bsman->capability_validation[3],
+                            bsman->capability_install[3],
+                            bsman->capability_cache_sync[3], bsman->paf_mask_hits,
+                            bsman->paf_mask_value);
+                    zeroCtrlDiagnosticsText(line);
+                }
                 observed_consumer_pre_slide = 1;
             }
             if (bsman->dispatch_entry_early_attempted &&
@@ -3877,6 +3944,70 @@ static void zeroCtrlInstallDispatchEntryTrace(void) {
     bsman->dispatch_entry_cache_sync = 1;
 }
 
+static void zeroCtrlInstallCapabilityMaskTraces(void) {
+    static const unsigned int offsets[4] = { 0x14014, 0x1402C, 0x14038, 0x1404C };
+    static const unsigned int target_offsets[4] = { 0x6F44, 0x6FC4, 0x7004, 0x3F778 };
+    static const unsigned int delays[4] = {
+        0x0062800B, 0x0062800B, 0x0062800B, 0x27B10030 };
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int callsite[4], target[4], leaf[4], leaf_size[4];
+    unsigned int target_scalar[4], hits_scalar[4], value_scalar[4];
+    unsigned int replacement[4], i;
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 || !vsh || !helper ||
+            vsh->text_size != 0x556C0) return;
+    for (i = 0; i < 3; i++) {
+        leaf[i] = bsman->capability_leaf_addr[i];
+        leaf_size[i] = bsman->capability_leaf_size[i];
+        target_scalar[i] = bsman->capability_target_addr[i];
+        hits_scalar[i] = bsman->capability_hits_addr[i];
+        value_scalar[i] = bsman->capability_result_addr[i];
+    }
+    leaf[3] = bsman->paf_mask_leaf_addr;
+    leaf_size[3] = bsman->paf_mask_leaf_size;
+    target_scalar[3] = bsman->paf_mask_target_addr;
+    hits_scalar[3] = bsman->paf_mask_hits_addr;
+    value_scalar[3] = bsman->paf_mask_value_addr;
+    for (i = 0; i < 4; i++) {
+        callsite[i] = vsh->text_addr + offsets[i];
+        target[i] = vsh->text_addr + target_offsets[i];
+        if (!zeroCtrlVshModuleRangeValid(vsh, callsite[i], 8) ||
+                !zeroCtrlVshModuleRangeValid(vsh, target[i], 8) ||
+                !zeroCtrlVshModuleRangeValid(helper, leaf[i], leaf_size[i]) ||
+                !zeroCtrlVshModuleRangeValid(helper, target_scalar[i], 4) ||
+                !zeroCtrlVshModuleRangeValid(helper, hits_scalar[i], 4) ||
+                !zeroCtrlVshModuleRangeValid(helper, value_scalar[i], 4)) return;
+        bsman->capability_original[i][0] = _lw(callsite[i]);
+        bsman->capability_original[i][1] = _lw(callsite[i] + 4);
+        if ((bsman->capability_original[i][0] >> 26) != 3 ||
+                bsman->capability_original[i][1] != delays[i]) return;
+        bsman->capability_decoded_target[i] = zeroCtrlMipsJumpTarget(
+                callsite[i], bsman->capability_original[i][0]);
+        if (bsman->capability_decoded_target[i] != target[i] ||
+                ((callsite[i] + 4) & 0xF0000000) != (leaf[i] & 0xF0000000)) return;
+        replacement[i] = 0x0C000000 | ((leaf[i] >> 2) & 0x03FFFFFF);
+        if (zeroCtrlMipsJumpTarget(callsite[i], replacement[i]) != leaf[i]) return;
+    }
+    for (i = 0; i < 4; i++) bsman->capability_validation[i] = 1;
+    for (i = 0; i < 4; i++) {
+        _sw(target[i], target_scalar[i]);
+        _sw(0, hits_scalar[i]);
+        _sw(0xFFFFFFFF, value_scalar[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)target_scalar[i], 4);
+        sceKernelDcacheWritebackInvalidateRange((const void *)hits_scalar[i], 4);
+        sceKernelDcacheWritebackInvalidateRange((const void *)value_scalar[i], 4);
+    }
+    for (i = 0; i < 4; i++) {
+        _sw(replacement[i], callsite[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)callsite[i], 4);
+        sceKernelIcacheInvalidateRange((const void *)callsite[i], 4);
+        bsman->capability_install[i] = 1;
+        bsman->capability_cache_sync[i] = 1;
+    }
+}
+
 static void zeroCtrlInstall6F84ConsumerTraces(void) {
     static const unsigned int offsets[2] = { 0x13F6C, 0x14020 };
     static const unsigned int delays[2] = { 0x00000000, 0x0062800B };
@@ -4146,6 +4277,15 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             bsman->consumer_13f6c_effective_result_addr);
     bsman->consumer_13f6c_pre_slide_substitutions = zeroCtrlReadHelperCounter(
             bsman->consumer_13f6c_substitution_hits_addr);
+    for (snapshot_index = 0; snapshot_index < 3; snapshot_index++) {
+        bsman->capability_hits[snapshot_index] = zeroCtrlReadHelperCounter(
+                bsman->capability_hits_addr[snapshot_index]);
+        bsman->capability_result[snapshot_index] = zeroCtrlReadHelperCounter(
+                bsman->capability_result_addr[snapshot_index]);
+    }
+    bsman->paf_mask_hits = zeroCtrlReadHelperCounter(bsman->paf_mask_hits_addr);
+    bsman->paf_mask_value = zeroCtrlReadHelperCounter(bsman->paf_mask_value_addr);
+    bsman->capability_captured = 1;
     {
         SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
         if (bsman->shared_global_early_valid && vsh &&

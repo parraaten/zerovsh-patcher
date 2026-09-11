@@ -1750,3 +1750,35 @@ add:
 sufficient to advance Sony SlidePlugin state on PSP-1000. Substitution alone is
 not success; every downstream T24 state, PAF/VshBridge, field-writer, and
 dispatcher record must be compared before considering any later combined test.
+
+### T26 hardware result and T27 capability-mask diagnostics
+
+**PROVEN BY HARDWARE — T26:** the dangerous `+0x58D4` consumer executed once,
+and both selective consumers observed natural zero and returned effective one
+with one substitution. Thus all three known direct `+0x6F84` consumers were
+effectively true. Sony nevertheless retained `field_12C=15`, a state-zero
+virtual result of 15, zero field-writer hits, and zero dispatcher hits. Making
+all known direct `+0x6F84` consumers true is insufficient on the tested
+PSP-1000; T27 adds no further compatibility.
+
+**PROVEN BY DECRYPTED PSP-1000 BINARY:** the mask chain at `+0x14000` uses
+results from `+0x6F44`, `+0x6F84`, `+0x6FC4`, and `+0x7004` to contribute
+candidate bits `0x20`, `0x40`, `0x80`, and `0x100`, respectively. The final
+unchanged `$a0` mask is passed by the unique direct call at `+0x1404C` to the
+`scePaf/0xF48A9040` import. No unofficial semantic name is assigned to that
+NID.
+
+T27 transactionally replaces only the four JAL words at `+0x14014`,
+`+0x1402C`, `+0x14038`, and `+0x1404C` after validating model, firmware, VSH
+text size, JAL forms and targets, exact delay words, helper/scalar ranges, and
+pseudodirect reachability. The predicate wrappers call their natural targets
+once, record untouched results, and return those results exactly. The mask
+wrapper records incoming `$a0` and tail-transfers to the original PAF import
+with the original JAL `$ra`; it does not inspect or transform the return value.
+The delay slots at `+0x14018`, `+0x14030`, `+0x1403C`, and `+0x14050` remain
+untouched. No thread, allocation, I/O, data write, or compatibility is added.
+
+**HYPOTHESIS / UNKNOWN — T27:** whether adjacent natural hardware-capability
+predicates feeding the PAF initialization mask expose the missing PSP-1000
+prerequisite. Direct call-time results and the exact mask must be reviewed
+before considering any later controlled experiment.

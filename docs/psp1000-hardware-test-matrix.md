@@ -517,3 +517,22 @@ records with T23/T24. State advancement is strong evidence only after the exact
 changed boundary is identified. Unchanged state proves isolated 13F6C is
 insufficient; freeze or crash makes it unsafe. Do not enable both consumer
 compatibilities in T25.
+
+## T27 — natural capability predicates and final PAF mask
+
+Retain the T26 configuration, including both existing consumer compatibilities
+and exact `DangerousCaller58D4`; T27 itself is diagnostic-only. Require:
+
+```text
+[vsh-capability-predicate] offset=0x14014 target=0x6F44 validation=1 install=1 cache_sync=1 hits=1 natural=0x........
+[vsh-capability-predicate] offset=0x1402C target=0x6FC4 validation=1 install=1 cache_sync=1 hits=1 natural=0x........
+[vsh-capability-predicate] offset=0x14038 target=0x7004 validation=1 install=1 cache_sync=1 hits=1 natural=0x........
+[vsh-paf-capability-mask] validation=1 install=1 cache_sync=1 hits=1 mask=0x........
+```
+
+Also require the existing 13F6C and 14020 records to retain natural zero,
+effective one, and one substitution. If the mask lacks expected bit `0x40`,
+stop and audit the delay-slot interpretation. Natural zero at `+0x6F44` or
+`+0x6FC4` identifies candidate bits `0x20` or `0x80` for later analysis only;
+do not force them in T27. If those bits are already present naturally, do not
+pursue those predicates.
