@@ -480,7 +480,7 @@ def check_sources(root):
             vreturn.find("addiu   $v0, $zero, 14") < vreturn.find("\n65:") <
             vreturn.find("zeroCtrlStateZero15To14EffectiveResult")):
         fail("T30 source does not guard the exact 15-to-14 substitution")
-    for symbol in ("zeroCtrlPostPafReturnTrace", "zeroCtrlPostVshReturnTrace"):
+    for symbol in ("zeroCtrlPostPafReturnTrace",):
         start = assembly.find(symbol + ":")
         end = assembly.find(symbol + "End:", start)
         leaf = assembly[start:end]
@@ -491,6 +491,30 @@ def check_sources(root):
         if len(v0_lines) != expected_count or any(
                 "sw      $v0," not in line for line in v0_lines):
             fail(symbol + " has unexpected natural-result uses")
+    post_vsh_call = assembly[assembly.find("zeroCtrlPostVshCallTrace:"):
+        assembly.find("zeroCtrlPostVshCallTraceEnd:")]
+    post_vsh_return = assembly[assembly.find("zeroCtrlPostVshReturnTrace:"):
+        assembly.find("zeroCtrlPostVshReturnTraceEnd:")]
+    if post_vsh_call.find("sw      $a0, %lo(zeroCtrlPostVshArgument)") < 0 or \
+            post_vsh_call.count("$a0") != 1:
+        fail("T31 call wrapper does not capture untouched a0 exactly once")
+    for token in ("sw      $v0, %lo(zeroCtrlPostVshNaturalResult)",
+            "lw      $t1, %lo(zeroCtrlPostVshCompatMode)", "beqz    $t1, 66f",
+            "ori     $t2, $t2, 0x000D", "bne     $t1, $t2, 66f",
+            "ori     $t2, $t2, 0x0107", "bne     $v0, $t2, 66f",
+            "addu    $v0, $zero, $zero", "zeroCtrlPostVshSubstitutionHits",
+            "\n66:", "sw      $v0, %lo(zeroCtrlPostVshEffectiveResult)",
+            "lw      $ra, %lo(zeroCtrlPostVshSavedRA)"):
+        if token not in post_vsh_return:
+            fail("T31 exact return source lacks " + token)
+    if not (post_vsh_return.find("zeroCtrlPostVshNaturalResult") <
+            post_vsh_return.find("zeroCtrlPostVshCompatMode") <
+            post_vsh_return.find("bne     $t1, $t2, 66f") <
+            post_vsh_return.find("bne     $v0, $t2, 66f") <
+            post_vsh_return.find("addu    $v0, $zero, $zero") <
+            post_vsh_return.find("\n66:") <
+            post_vsh_return.find("zeroCtrlPostVshEffectiveResult")):
+        fail("T31 natural/guard/substitution/effective ordering is invalid")
     post_paf_source = assembly[assembly.find("zeroCtrlPostPafReturnTrace:"):
         assembly.find("zeroCtrlPostPafReturnTraceEnd:")]
     for result_symbol in ("zeroCtrlPostPafResult0", "zeroCtrlPostPafResult1"):
@@ -1088,6 +1112,29 @@ def check_sources(root):
             "_sw(0, bsman->state_zero_15to14_substitution_hits_addr)"):
         if initialization not in bsman_install:
             fail("T30 scalar initialization is missing " + initialization)
+    if "PSP1000ImposeParam8000000DCompat = Disabled" not in sample_config or \
+            '"PSP1000ImposeParam8000000DCompat", "Disabled"' not in kernel:
+        fail("T31 impose compatibility is not default-disabled")
+    t31_gate = kernel[kernel.find("post_vsh_compat_enabled ="):
+        kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
+            "post_vsh_compat_enabled ="))]
+    for gate in ("slide_diag.bsman.activation_enabled",
+            "slide_diag.bsman.state_zero_15to14_compat_enabled",
+            'strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0'):
+        if gate not in t31_gate:
+            fail("T31 impose compatibility gating lacks " + gate)
+    if "[vsh-impose-param-8000000d-compat]" not in writer:
+        fail("T31 deferred impose diagnostic is missing")
+    for field in ("post_vsh_argument_addr", "post_vsh_compat_mode_addr",
+            "post_vsh_effective_result_addr", "post_vsh_substitution_hits_addr"):
+        if "CHECK_POST_SCALAR(" + field + ")" not in kernel:
+            fail("T31 registration does not range-validate " + field)
+    for initialization in ("_sw(0xFFFFFFFF, bsman->post_vsh_argument_addr)",
+            "_sw(bsman->post_vsh_compat_enabled ? 1 : 0,",
+            "_sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr)",
+            "_sw(0, bsman->post_vsh_substitution_hits_addr)"):
+        if initialization not in bsman_install:
+            fail("T31 scalar initialization is missing " + initialization)
     for record in ("[vsh-capability-predicate]", "[vsh-paf-capability-mask]"):
         if record not in writer:
             fail("T27 deferred diagnostic is missing " + record)
@@ -1604,6 +1651,34 @@ def check_t301_class_input(body, symbol, relocatable=False, expected_addr=None):
             fail(symbol + " linked classification input is not the effective slot")
 
 
+def check_t31_vsh_return_semantics(body):
+    """Prove only the exact impose argument/result pair can become zero."""
+    symbol = "zeroCtrlPostVshReturnTrace"
+    set_v0_zero = r"\b(?:move\s+v0,\s*zero|addu\s+v0,\s*zero,\s*zero)\b"
+    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b", body):
+        fail(symbol + " uses gp, a frame, or a call")
+    ordered = (r"\bsw\s+v0,", r"\blw\s+t1,", r"\bbeqz\s+t1,",
+        r"\blw\s+t1,", r"\blui\s+t2,\s*0x8000", r"\bori\s+t2,.*0xd",
+        r"\bbne\s+t1,\s*t2,", r"\blui\s+t2,\s*0x8000",
+        r"\bori\s+t2,.*0x107", r"\bbne\s+v0,\s*t2,", set_v0_zero,
+        r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\bsw\s+v0,", r"\blw\s+ra,", r"\bjr\s+ra\b", r"\bnop\b")
+    cursor = 0
+    for pattern in ordered:
+        match = re.search(pattern, body[cursor:], re.I)
+        if not match:
+            fail(symbol + " lacks ordered T31 operation " + pattern)
+        cursor += match.end()
+    v0_lines = [line for line in body.splitlines() if re.search(r"\bv0\b", line)]
+    expected_v0 = (r"\bsw\s+v0,", r"\bbne\s+v0,\s*t2,", set_v0_zero,
+                   r"\bsw\s+v0,")
+    if len(v0_lines) != 4 or any(not re.search(pattern, line, re.I)
+            for pattern, line in zip(expected_v0, v0_lines)) or \
+            len(re.findall(set_v0_zero, body, re.I)) != 1 or \
+            len(re.findall(r"\bjr\s+ra\b", body)) != 1:
+        fail(symbol + " has an unintended v0 substitution or return")
+
+
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
@@ -1707,7 +1782,9 @@ def check_elf(elf):
             "zeroCtrlPostVshNaturalResult",
             "zeroCtrlStateZero15To14CompatMode",
             "zeroCtrlStateZero15To14EffectiveResult",
-            "zeroCtrlStateZero15To14SubstitutionHits"):
+            "zeroCtrlStateZero15To14SubstitutionHits",
+            "zeroCtrlPostVshArgument", "zeroCtrlPostVshCompatMode",
+            "zeroCtrlPostVshEffectiveResult", "zeroCtrlPostVshSubstitutionHits"):
         if not re.search(r"^[0-9a-fA-F]+\s+\w\s+" + symbol + r"$", nm, re.M):
             fail("missing Sony module_start wrapper symbol " + symbol)
     symbol_addresses = {}
@@ -1775,9 +1852,8 @@ def check_elf(elf):
                  not re.search(r"\blw\s+ra,", prefix_trace) or
                  not re.search(r"\bjr\s+ra\b", prefix_trace)):
             fail("prefix PAF return trace does not isolate zero-to-one and restore ra")
-        if symbol in ("zeroCtrlPostPafReturnTrace",
-                "zeroCtrlPostVshReturnTrace"):
-            expected_count = 2 if symbol == "zeroCtrlPostPafReturnTrace" else 1
+        if symbol == "zeroCtrlPostPafReturnTrace":
+            expected_count = 2
             require_only_natural_result_stores(
                     prefix_trace, symbol, expected_count)
         if symbol == "zeroCtrlPostPafReturnTrace" and \
@@ -1798,6 +1874,8 @@ def check_elf(elf):
         "zeroCtrlPafCapabilityMaskTrace"))
     check_t30_state_zero_return_semantics(function_body(disassembly,
         "zeroCtrlStateZeroVReturnTrace"))
+    check_t31_vsh_return_semantics(function_body(disassembly,
+        "zeroCtrlPostVshReturnTrace"))
 
 
 def check_stub_object(stub_object):
@@ -1957,8 +2035,7 @@ def check_stub_object(stub_object):
             not re.search(r"\bjr\s+ra\b", post_paf_return):
         fail("post-BSMan PAF return trace violates leaf/RA invariants")
     post_vsh_return = function_body(disassembly, "zeroCtrlPostVshReturnTrace")
-    require_only_natural_result_stores(
-            post_vsh_return, "zeroCtrlPostVshReturnTrace", 1)
+    check_t31_vsh_return_semantics(post_vsh_return)
     require_result_store_relocation(post_vsh_return,
             "zeroCtrlPostVshReturnTrace", "zeroCtrlPostVshNaturalResult")
     if re.search(r"\bgp\b|\bsp\b|\bjalr?\b", post_vsh_return) or \
@@ -1969,6 +2046,29 @@ def check_stub_object(stub_object):
             not re.search(r"\blw\s+ra,", post_vsh_return) or \
             not re.search(r"\bjr\s+ra\b", post_vsh_return):
         fail("post-BSMan VshBridge return trace violates leaf/RA invariants")
+    t31_relocations = (
+        ("zeroCtrlPostVshCompatMode", 1, 1, r"\blw\s+t1,"),
+        ("zeroCtrlPostVshEffectiveResult", 1, 1, r"\bsw\s+v0,"),
+        ("zeroCtrlPostVshSubstitutionHits", 1, 2, None),
+    )
+    for scalar, hi_count, lo_count, instruction in t31_relocations:
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", post_vsh_return)) != hi_count or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", post_vsh_return)) != lo_count:
+            fail("T31 return has wrong exact relocation counts for " + scalar)
+        if instruction and not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
+                scalar + r"\b", post_vsh_return):
+            fail("T31 return does not bind relocation for " + scalar)
+    for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+        if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPostVshSubstitutionHits\b", post_vsh_return):
+            fail("T31 return does not bind substitution counter")
+    post_vsh_call = function_body(disassembly, "zeroCtrlPostVshCallTrace")
+    if len(re.findall(r"R_MIPS_HI16\s+zeroCtrlPostVshArgument\b",
+            post_vsh_call)) != 1 or len(re.findall(
+            r"R_MIPS_LO16\s+zeroCtrlPostVshArgument\b", post_vsh_call)) != 1 or \
+            not re.search(r"\bsw\s+a0,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPostVshArgument\b", post_vsh_call):
+        fail("T31 call wrapper does not bind the exact argument capture")
     entry = function_body(disassembly, SONY_ENTRY_STUB)
     exit_stub = function_body(disassembly, SONY_EXIT_STUB)
     for symbol in ("zeroCtrlSonyModuleStartEntrySeen",

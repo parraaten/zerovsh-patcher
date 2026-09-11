@@ -594,3 +594,25 @@ classification wrappers route from
 `zeroCtrlStateZero15To14EffectiveResult`. Class18 must remain based on Sony's
 `$v1`. Discard any pre-T30.1 run as an invalid isolated test because the old
 branch instrumentation could neutralize the 15-to-14 return substitution.
+
+## T31 — exact impose parameter/result compatibility
+
+Keep T30.1 and the activation-required PAF-present/BSMan-not-linked controls
+enabled. Disable both consumer controls and the PAF-mask control, then enable:
+
+```ini
+PSP1000StateZero15To14Compat = Enabled
+PSP1000ImposeParam8000000DCompat = Enabled
+```
+
+A valid run must retain state-zero effective 14, mask `0x01D5`, and nonzero
+rejoin count, then report:
+
+```text
+[vsh-impose-param-8000000d-compat] enabled=1 argument=0x8000000D natural=0x80000107 effective=0x00000000 substitutions=...
+```
+
+The substitution count may exceed one. Compare the first boundary after Sony's
+`activation+0x114` branch along with activation, post-BSMan, field-writer,
+dispatcher/case14, and post-PAF/VshBridge evidence. Do not invoke the dispatcher
+or add another compatibility.

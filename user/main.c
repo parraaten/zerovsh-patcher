@@ -216,6 +216,9 @@ extern volatile unsigned int zeroCtrlPostPafResult0, zeroCtrlPostPafResult1;
 extern volatile unsigned int zeroCtrlPostPafReturn0Hits, zeroCtrlPostPafReturn1Hits;
 extern volatile unsigned int zeroCtrlPostVshTarget, zeroCtrlPostVshSavedRA;
 extern volatile unsigned int zeroCtrlPostVshNaturalResult, zeroCtrlPostVshReturnHits;
+extern volatile unsigned int zeroCtrlPostVshArgument, zeroCtrlPostVshCompatMode;
+extern volatile unsigned int zeroCtrlPostVshEffectiveResult;
+extern volatile unsigned int zeroCtrlPostVshSubstitutionHits;
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
 extern volatile unsigned int zeroCtrlPostVshEntryHits;
 extern void zeroCtrlStateZeroCompareTrace(void), zeroCtrlStateZeroCompareTraceEnd(void);
@@ -648,6 +651,12 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlStateZero15To14EffectiveResult;
 	bsmanClosedRegistration.state_zero_15to14_substitution_hits_addr =
 			(u32)&zeroCtrlStateZero15To14SubstitutionHits;
+	bsmanClosedRegistration.post_vsh_argument_addr = (u32)&zeroCtrlPostVshArgument;
+	bsmanClosedRegistration.post_vsh_compat_mode_addr = (u32)&zeroCtrlPostVshCompatMode;
+	bsmanClosedRegistration.post_vsh_effective_result_addr =
+			(u32)&zeroCtrlPostVshEffectiveResult;
+	bsmanClosedRegistration.post_vsh_substitution_hits_addr =
+			(u32)&zeroCtrlPostVshSubstitutionHits;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        

@@ -186,9 +186,13 @@ typedef struct {
     u32 state_zero_15to14_compat_mode_addr;
     u32 state_zero_15to14_effective_result_addr;
     u32 state_zero_15to14_substitution_hits_addr;
+    u32 post_vsh_argument_addr;
+    u32 post_vsh_compat_mode_addr;
+    u32 post_vsh_effective_result_addr;
+    u32 post_vsh_substitution_hits_addr;
 } ZeroCtrlBSManClosedRegistration;
 
 typedef char ZeroCtrlBSManClosedRegistration_size[
-    sizeof(ZeroCtrlBSManClosedRegistration) == 768 ? 1 : -1];
+    sizeof(ZeroCtrlBSManClosedRegistration) == 784 ? 1 : -1];
 
 #endif

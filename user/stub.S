@@ -379,6 +379,8 @@ zeroCtrlPostPafReturnTraceEnd:
 .type zeroCtrlPostVshCallTrace @function
 .ent zeroCtrlPostVshCallTrace, 0
 zeroCtrlPostVshCallTrace:
+    lui     $t0, %hi(zeroCtrlPostVshArgument)
+    sw      $a0, %lo(zeroCtrlPostVshArgument)($t0)
     RECORD_PREFIX_COUNTER zeroCtrlPostVshEntryHits
     lui     $t0, %hi(zeroCtrlPostPathMask)
     lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
@@ -403,6 +405,28 @@ zeroCtrlPostVshReturnTrace:
     lui     $t0, %hi(zeroCtrlPostVshNaturalResult)
     sw      $v0, %lo(zeroCtrlPostVshNaturalResult)($t0)
     RECORD_PREFIX_COUNTER zeroCtrlPostVshReturnHits
+    lui     $t0, %hi(zeroCtrlPostVshCompatMode)
+    lw      $t1, %lo(zeroCtrlPostVshCompatMode)($t0)
+    beqz    $t1, 66f
+    nop
+    lui     $t0, %hi(zeroCtrlPostVshArgument)
+    lw      $t1, %lo(zeroCtrlPostVshArgument)($t0)
+    lui     $t2, 0x8000
+    ori     $t2, $t2, 0x000D
+    bne     $t1, $t2, 66f
+    nop
+    lui     $t2, 0x8000
+    ori     $t2, $t2, 0x0107
+    bne     $v0, $t2, 66f
+    nop
+    addu    $v0, $zero, $zero
+    lui     $t0, %hi(zeroCtrlPostVshSubstitutionHits)
+    lw      $t1, %lo(zeroCtrlPostVshSubstitutionHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPostVshSubstitutionHits)($t0)
+66:
+    lui     $t0, %hi(zeroCtrlPostVshEffectiveResult)
+    sw      $v0, %lo(zeroCtrlPostVshEffectiveResult)($t0)
     lui     $t0, %hi(zeroCtrlPostPathMask)
     lw      $t1, %lo(zeroCtrlPostPathMask)($t0)
     ori     $t1, $t1, 0x0400
@@ -1178,6 +1202,14 @@ zeroCtrlPostVshTarget: .space 4
 zeroCtrlPostVshSavedRA: .space 4
 .globl zeroCtrlPostVshNaturalResult
 zeroCtrlPostVshNaturalResult: .space 4
+.globl zeroCtrlPostVshArgument
+zeroCtrlPostVshArgument: .space 4
+.globl zeroCtrlPostVshCompatMode
+zeroCtrlPostVshCompatMode: .space 4
+.globl zeroCtrlPostVshEffectiveResult
+zeroCtrlPostVshEffectiveResult: .space 4
+.globl zeroCtrlPostVshSubstitutionHits
+zeroCtrlPostVshSubstitutionHits: .space 4
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits

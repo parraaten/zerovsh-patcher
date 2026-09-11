@@ -1859,3 +1859,29 @@ compare Sony's `$v1`, which already received the effective return value.
 No hardware conclusion is assigned to the pre-correction T30 implementation.
 No patch owner, callsite, compatibility rule, dispatcher invocation, or Sony
 context/global write is added by this correction.
+
+### T30.1 hardware result and T31 exact impose-return control
+
+**PROVEN BY HARDWARE — T30.1:** natural state result 15 became effective 14 on
+four returns. The state-zero mask changed from `0x06D5` to `0x01D5`, and rejoin
+increased from zero to four. Natural state value 15 was therefore an immediate
+blocker, and effective 14 exposes the Class15-true/rejoin path.
+
+The newly reached sequence completed both instrumented PAF calls with zero and
+then called `sceVshBridge/0x639C3CB3` with argument `0x8000000D`, returning
+natural `0x80000107`. Public NID data identifies the function as
+`vshImposeGetParam`; no official semantic name is assigned to private parameter
+`0x8000000D`. Sony's immediate nonzero branch returns to the retry path.
+
+T31 extends only the existing post-VshBridge call/return owners. The call owner
+records untouched `$a0`. The return owner records natural `$v0` and, only when
+T30 is enabled, activation tracing is enabled, the argument is exactly
+`0x8000000D`, and natural result is exactly `0x80000107`, presents effective
+zero and increments its fixed counter. All other argument/result pairs are
+preserved exactly, and the original saved Sony `$ra` restoration remains.
+
+**HYPOTHESIS / UNKNOWN:** whether zero is the result expected on the hardware
+profile for which Sony designed this private impose-parameter path, and whether
+presenting it advances beyond the `activation+0x114` retry branch. No dispatcher
+invocation, Sony context/global write, new callsite, or additional compatibility
+is part of T31.

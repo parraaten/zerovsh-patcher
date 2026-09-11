@@ -97,6 +97,7 @@ static char psp1000Consumer14020Compat[16];
 static char psp1000Consumer13F6CCompat[16];
 static char psp1000PafCapabilityMaskCompat[16];
 static char psp1000StateZero15To14Compat[16];
+static char psp1000ImposeParam8000000DCompat[16];
 static unsigned long slideStartBtn, slideStopBtn;
 static long b_level;
 
@@ -274,6 +275,9 @@ typedef struct {
     unsigned int post_vsh_return_leaf_addr, post_vsh_return_leaf_size;
     unsigned int post_vsh_target_addr, post_vsh_saved_ra_addr;
     unsigned int post_vsh_natural_result_addr, post_vsh_return_hits_addr;
+    unsigned int post_vsh_argument_addr, post_vsh_compat_mode_addr;
+    unsigned int post_vsh_effective_result_addr, post_vsh_substitution_hits_addr;
+    int post_vsh_compat_enabled;
     unsigned int post_paf_entry_counter_addr[2], post_vsh_entry_hits_addr;
     unsigned int post_original[12], post_replacement[6];
     unsigned int state_zero_leaf_addr[8], state_zero_leaf_size[8];
@@ -1458,6 +1462,10 @@ void zeroCtrlRegisterBSManClosedShim(
     CHECK_POST_SCALAR(post_paf_entry0_hits_addr);
     CHECK_POST_SCALAR(post_paf_entry1_hits_addr);
     CHECK_POST_SCALAR(post_vsh_entry_hits_addr);
+    CHECK_POST_SCALAR(post_vsh_argument_addr);
+    CHECK_POST_SCALAR(post_vsh_compat_mode_addr);
+    CHECK_POST_SCALAR(post_vsh_effective_result_addr);
+    CHECK_POST_SCALAR(post_vsh_substitution_hits_addr);
 #define CHECK_STATE_ZERO_LEAF(field) \
     if (!zeroCtrlRegistrationLeafValid(helper, copied.field##_addr, \
                 copied.field##_end_addr)) return
@@ -1654,6 +1662,10 @@ void zeroCtrlRegisterBSManClosedShim(
     bsman->post_paf_entry_counter_addr[0] = copied.post_paf_entry0_hits_addr;
     bsman->post_paf_entry_counter_addr[1] = copied.post_paf_entry1_hits_addr;
     bsman->post_vsh_entry_hits_addr = copied.post_vsh_entry_hits_addr;
+    bsman->post_vsh_argument_addr = copied.post_vsh_argument_addr;
+    bsman->post_vsh_compat_mode_addr = copied.post_vsh_compat_mode_addr;
+    bsman->post_vsh_effective_result_addr = copied.post_vsh_effective_result_addr;
+    bsman->post_vsh_substitution_hits_addr = copied.post_vsh_substitution_hits_addr;
 #define COPY_STATE_ZERO_LEAF(index, field) do { \
     bsman->state_zero_leaf_addr[index] = copied.field##_addr; \
     bsman->state_zero_leaf_size[index] = copied.field##_end_addr - \
@@ -3551,6 +3563,18 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             counts[9], counts[10], bs_result, bs_substitutions,
                             bs_effective, paf0, paf1, vsh_result);
                     zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[vsh-impose-param-8000000d-compat] enabled=%d "
+                            "argument=0x%08X natural=0x%08X effective=0x%08X "
+                            "substitutions=%u\n",
+                            bsman->post_vsh_compat_enabled,
+                            zeroCtrlReadHelperCounter(bsman->post_vsh_argument_addr),
+                            vsh_result,
+                            zeroCtrlReadHelperCounter(
+                                bsman->post_vsh_effective_result_addr),
+                            zeroCtrlReadHelperCounter(
+                                bsman->post_vsh_substitution_hits_addr));
+                    zeroCtrlDiagnosticsText(line);
                 }
             }
             {
@@ -4714,6 +4738,11 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         _sw(0, bsman->post_vsh_saved_ra_addr);
         _sw(0, bsman->post_vsh_natural_result_addr);
         _sw(0, bsman->post_vsh_return_hits_addr);
+        _sw(0xFFFFFFFF, bsman->post_vsh_argument_addr);
+        _sw(bsman->post_vsh_compat_enabled ? 1 : 0,
+                bsman->post_vsh_compat_mode_addr);
+        _sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr);
+        _sw(0, bsman->post_vsh_substitution_hits_addr);
         _sw(0, bsman->post_paf_entry_counter_addr[0]);
         _sw(0, bsman->post_paf_entry_counter_addr[1]);
         _sw(0, bsman->post_vsh_entry_hits_addr);
@@ -4800,6 +4829,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
         SYNC_POST_SCALAR(bsman->post_vsh_natural_result_addr);
         SYNC_POST_SCALAR(bsman->post_vsh_return_hits_addr);
         SYNC_POST_SCALAR(bsman->post_vsh_entry_hits_addr);
+        SYNC_POST_SCALAR(bsman->post_vsh_argument_addr);
+        SYNC_POST_SCALAR(bsman->post_vsh_compat_mode_addr);
+        SYNC_POST_SCALAR(bsman->post_vsh_effective_result_addr);
+        SYNC_POST_SCALAR(bsman->post_vsh_substitution_hits_addr);
         SYNC_POST_SCALAR(bsman->state_zero_path_mask_addr);
         SYNC_POST_SCALAR(bsman->state_zero_15to14_compat_mode_addr);
         SYNC_POST_SCALAR(bsman->state_zero_15to14_effective_result_addr);
@@ -5243,6 +5276,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	ini_gets("Experimental", "PSP1000StateZero15To14Compat", "Disabled",
 			psp1000StateZero15To14Compat,
 			sizeof(psp1000StateZero15To14Compat), config);
+	ini_gets("Experimental", "PSP1000ImposeParam8000000DCompat", "Disabled",
+			psp1000ImposeParam8000000DCompat,
+			sizeof(psp1000ImposeParam8000000DCompat), config);
 	ini_gets("Experimental", "PSP1000SelectiveSlideTrigger58D4", "Disabled",
 			legacySelective58D4, sizeof(legacySelective58D4), config);
 	if (strcmp(psp1000SlideTriggerMode, "Disabled") == 0 &&
@@ -5310,6 +5346,10 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0 &&
 			strcmp(psp1000StateZero15To14Compat, "Enabled") == 0;
+		slide_diag.bsman.post_vsh_compat_enabled =
+			slide_diag.bsman.activation_enabled &&
+			slide_diag.bsman.state_zero_15to14_compat_enabled &&
+			strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0;
 	}
 
 	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,
