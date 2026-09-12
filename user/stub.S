@@ -138,6 +138,25 @@ zeroCtrlBSManClosedHits: .space 4
 .type zeroCtrlSlideActivationTrace @function
 .ent zeroCtrlSlideActivationTrace, 0
 zeroCtrlSlideActivationTrace:
+    lui     $t0, %hi(zeroCtrlSlideActivationCallerRAFirst)
+    lw      $t1, %lo(zeroCtrlSlideActivationCallerRAFirst)($t0)
+    bnez    $t1, 90f
+    nop
+    sw      $ra, %lo(zeroCtrlSlideActivationCallerRAFirst)($t0)
+90:
+    lui     $t0, %hi(zeroCtrlSlideActivationCallerRALast)
+    lw      $t1, %lo(zeroCtrlSlideActivationCallerRALast)($t0)
+    beqz    $t1, 91f
+    nop
+    beq     $t1, $ra, 91f
+    nop
+    lui     $t0, %hi(zeroCtrlSlideActivationCallerRAChanges)
+    lw      $t1, %lo(zeroCtrlSlideActivationCallerRAChanges)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlSlideActivationCallerRAChanges)($t0)
+91:
+    lui     $t0, %hi(zeroCtrlSlideActivationCallerRALast)
+    sw      $ra, %lo(zeroCtrlSlideActivationCallerRALast)($t0)
     lui     $t0, %hi(zeroCtrlSlideActivationHits)
     lw      $t1, %lo(zeroCtrlSlideActivationHits)($t0)
     addiu   $t1, $t1, 1
@@ -1392,6 +1411,12 @@ zeroCtrlSlidePrefixMaskTraceEnd:
 zeroCtrlSlideActivationResume: .space 4
 .globl zeroCtrlSlideActivationHits
 zeroCtrlSlideActivationHits: .space 4
+.globl zeroCtrlSlideActivationCallerRAFirst
+zeroCtrlSlideActivationCallerRAFirst: .space 4
+.globl zeroCtrlSlideActivationCallerRALast
+zeroCtrlSlideActivationCallerRALast: .space 4
+.globl zeroCtrlSlideActivationCallerRAChanges
+zeroCtrlSlideActivationCallerRAChanges: .space 4
 .globl zeroCtrlBSManCallTarget
 zeroCtrlBSManCallTarget: .space 4
 .globl zeroCtrlBSManCallHits

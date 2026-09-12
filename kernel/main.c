@@ -258,6 +258,8 @@ typedef struct {
     unsigned int activation_replacement[2];
     unsigned int activation_leaf_addr, activation_leaf_size;
     unsigned int activation_resume_addr, activation_hits_addr;
+    int activation_caller_ra_registered, activation_caller_ra_validation;
+    unsigned int activation_caller_ra_addr[3];
     unsigned int call_leaf_addr, call_leaf_size, call_target_addr, call_hits_addr;
     unsigned int call_original, call_replacement;
     unsigned int trace_stage_addr, call_ra_addr;
@@ -2080,6 +2082,35 @@ int zeroCtrlRegisterActivationWide(
     return 1;
 }
 
+void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
+        unsigned int last_addr, unsigned int changes_addr) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *helper;
+    unsigned int address[3];
+    unsigned int index;
+
+    if (!bsman->activation_enabled || !bsman->registered ||
+            bsman->activation_caller_ra_registered) return;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!helper || (unsigned int)helper < 0x88000000 ||
+            helper->text_addr == 0 || helper->text_size == 0 ||
+            helper->nsegment == 0) return;
+    address[0] = first_addr;
+    address[1] = last_addr;
+    address[2] = changes_addr;
+    for (index = 0; index < 3; index++) {
+        if ((address[index] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, address[index], 4)) return;
+    }
+    bsman->activation_caller_ra_validation = 1;
+    for (index = 0; index < 3; index++) {
+        bsman->activation_caller_ra_addr[index] = address[index];
+        _sw(0, address[index]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)address[index], 4);
+    }
+    bsman->activation_caller_ra_registered = 1;
+}
+
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int text_size, unsigned int module_start_addr,
         unsigned int elf_entry_addr, unsigned int target,
@@ -3161,6 +3192,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
     int observed_post_early_ready = 0;
+    unsigned int observed_activation_caller_ra[4] = { 0, 0, 0, 0 };
+    int observed_activation_caller_ra_ready = 0;
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
     int observed_field12c_write_install_status = 0;
@@ -3210,6 +3243,70 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         }
         WRITE_LATE_FLAG(slide_diag.saw_probe, observed_probe, "probe");
         WRITE_LATE_FLAG(slide_diag.saw_start, observed_start, "start");
+        if (slide_diag.bsman.activation_enabled) {
+            ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+            unsigned int caller_ra[4] = { 0, 0, 0, 0 };
+            int caller_ra_changed = !observed_activation_caller_ra_ready;
+            caller_ra[0] = bsman->activation_caller_ra_registered;
+            if (caller_ra[0]) {
+                caller_ra[1] = zeroCtrlReadHelperCounter(
+                        bsman->activation_caller_ra_addr[0]);
+                caller_ra[2] = zeroCtrlReadHelperCounter(
+                        bsman->activation_caller_ra_addr[1]);
+                caller_ra[3] = zeroCtrlReadHelperCounter(
+                        bsman->activation_caller_ra_addr[2]);
+            }
+            for (i = 0; i < 4; i++)
+                if (caller_ra[i] != observed_activation_caller_ra[i])
+                    caller_ra_changed = 1;
+            if (caller_ra_changed) {
+                unsigned int which;
+                snprintf(line, sizeof(line),
+                        "[activation-caller-ra] registered=%u validation=%d "
+                        "hits=%u first=0x%08X last=0x%08X changes=%u\n",
+                        caller_ra[0], bsman->activation_caller_ra_validation,
+                        zeroCtrlReadHelperCounter(bsman->activation_hits_addr),
+                        caller_ra[1], caller_ra[2], caller_ra[3]);
+                zeroCtrlDiagnosticsText(line);
+                for (which = 0; which < 2; which++) {
+                    unsigned int ra = caller_ra[which + 1];
+                    SceModule2 *owner;
+                    if (ra == 0) continue;
+                    owner = sceKernelFindModuleByAddress(ra);
+                    if (owner && (unsigned int)owner >= 0x88000000 &&
+                            owner->text_addr != 0 && owner->text_size >= 8 &&
+                            owner->nsegment != 0 && ra >= owner->text_addr + 8 &&
+                            ra <= owner->text_addr + owner->text_size) {
+                        unsigned int callsite = ra - 8;
+                        unsigned int word = _lw(callsite);
+                        unsigned int delay = _lw(ra - 4);
+                        unsigned int opcode = word >> 26;
+                        unsigned int function = word & 0x3F;
+                        unsigned int direct_target = opcode == 3 ?
+                                zeroCtrlMipsJumpTarget(callsite, word) : 0;
+                        snprintf(line, sizeof(line),
+                                "[activation-caller-ra-resolve] which=%s "
+                                "ra=0x%08X module=%.27s text=0x%08X size=0x%X "
+                                "offset=0x%08X callsite=0x%08X word=0x%08X "
+                                "delay=0x%08X opcode=0x%02X rs=%u rt=%u rd=%u "
+                                "function=0x%02X class=%s target=0x%08X match=%d\n",
+                                which == 0 ? "first" : "last", ra,
+                                owner->modname, owner->text_addr, owner->text_size,
+                                ra - owner->text_addr, callsite, word, delay,
+                                opcode, (word >> 21) & 0x1F,
+                                (word >> 16) & 0x1F, (word >> 11) & 0x1F,
+                                function, opcode == 3 ? "JAL" :
+                                    (opcode == 0 && function == 9 ? "JALR" : "OTHER"),
+                                direct_target,
+                                opcode == 3 && direct_target == bsman->activation_addr);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                }
+                memcpy(observed_activation_caller_ra, caller_ra,
+                        sizeof(caller_ra));
+                observed_activation_caller_ra_ready = 1;
+            }
+        }
         if (slide_diag.bsman.activation_wide_enabled) {
             ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
             unsigned int current[18] = {

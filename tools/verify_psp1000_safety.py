@@ -326,6 +326,32 @@ def check_sources(root):
     if writer_start < 0 or writer_end <= writer_start:
         fail("deferred slide diagnostic writer is missing")
     writer = kernel[writer_start:writer_end]
+    caller_ra_start = writer.find("if (slide_diag.bsman.activation_enabled)")
+    caller_ra_end = writer.find(
+            "if (slide_diag.bsman.activation_wide_enabled)", caller_ra_start)
+    caller_ra = writer[caller_ra_start:caller_ra_end]
+    for token in ("[activation-caller-ra]", "registered=%u validation=%d",
+            "activation_hits_addr", "activation_caller_ra_addr[0]",
+            "activation_caller_ra_addr[1]", "activation_caller_ra_addr[2]",
+            "sceKernelFindModuleByAddress(ra)",
+            "(unsigned int)owner >= 0x88000000", "owner->text_addr != 0",
+            "owner->text_size >= 8", "owner->nsegment != 0",
+            "ra >= owner->text_addr + 8",
+            "ra <= owner->text_addr + owner->text_size",
+            "callsite = ra - 8", "word = _lw(callsite)",
+            "delay = _lw(ra - 4)", "[activation-caller-ra-resolve]",
+            "opcode=0x%02X rs=%u rt=%u rd=%u", "function=0x%02X",
+            "opcode == 3 ? \"JAL\"", "function == 9 ? \"JALR\"",
+            "zeroCtrlMipsJumpTarget(callsite, word)",
+            "direct_target == bsman->activation_addr"):
+        if token not in caller_ra:
+            fail("deferred activation caller RA resolution lacks " + token)
+    if caller_ra_start < 0 or caller_ra_end < 0 or any(token in caller_ra for
+            token in ("_sw(", "sceKernelDcache", "sceKernelIcache")):
+        fail("deferred activation caller RA resolution is not read-only")
+    if "[activation-caller-ra]" in assembly or \
+            "[activation-caller-ra-resolve]" in assembly:
+        fail("activation caller RA output leaked into assembly helpers")
     sony_diag_start = writer.find("if (slide_diag.sony_start_trace.enabled)")
     bsman_diag_start = writer.find(
         "if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled)",
@@ -426,6 +452,29 @@ def check_sources(root):
     if any(token in localization_leaves for token in
             ("$gp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
         fail("activation localization leaves use gp, calls, I/O, or allocation")
+    activation_leaf = assembly[activation_start:activation_end]
+    for scalar in ("zeroCtrlSlideActivationCallerRAFirst",
+            "zeroCtrlSlideActivationCallerRALast",
+            "zeroCtrlSlideActivationCallerRAChanges"):
+        if assembly.count(scalar + ": .space 4") != 1:
+            fail("activation caller RA lacks exactly one BSS scalar " + scalar)
+        if scalar not in activation_leaf:
+            fail("activation entry does not record " + scalar)
+    if activation_leaf.find("zeroCtrlSlideActivationCallerRAFirst") > \
+            activation_leaf.find("zeroCtrlSlideActivationHits") or \
+            activation_leaf.find("zeroCtrlSlideActivationCallerRAFirst") > \
+            activation_leaf.find("addiu   $sp, $sp, -32"):
+        fail("activation caller RA is not captured before existing entry work")
+    if any(token in activation_leaf for token in ("lw      $ra", "move    $ra",
+            "addu    $ra", "addiu   $ra")) or \
+            "sw      $ra, %lo(zeroCtrlSlideActivationCallerRAFirst)" not in \
+                activation_leaf or \
+            "sw      $ra, %lo(zeroCtrlSlideActivationCallerRALast)" not in \
+                activation_leaf:
+        fail("activation caller RA capture modifies RA or misses first/last")
+    if "addiu   $sp, $sp, -32" not in activation_leaf or \
+            "sw      $s1, 4($sp)" not in activation_leaf:
+        fail("activation caller RA capture changed Sony prologue reproduction")
     return_leaf = assembly[return_start:return_end]
     natural_result_store = return_leaf.find(
         "sw      $v0, %lo(zeroCtrlPostBSManNaturalResult)")
@@ -619,9 +668,9 @@ def check_sources(root):
         if post_paf_source.count(
                 "sw      $v0, %lo(" + result_symbol + ")($t0)") != 1:
             fail("post-BSMan PAF return trace lacks exact store to " + result_symbol)
-    fast_poll = kernel[kernel.find(
-        "if (slide_diag.bsman.activation_enabled)"):kernel.find(
-            "#undef WRITE_LATE_FLAG")]
+    fast_poll_start = kernel.find("if (slide_diag.topmenu_validation)")
+    fast_poll_end = kernel.find("#undef WRITE_LATE_FLAG", fast_poll_start)
+    fast_poll = kernel[fast_poll_start:fast_poll_end]
     if "zeroCtrlDiagnosticsMemory" in fast_poll or \
             "zeroCtrlDiagnosticsCapturePartitions" in fast_poll:
         fail("activation fast-poll path performs a memory query")
@@ -1295,6 +1344,45 @@ def check_sources(root):
     if "PSP1000ActivationWideTrace = Disabled" not in sample_config or \
             '"PSP1000ActivationWideTrace", "Disabled"' not in kernel:
         fail("T40 wide activation trace is not default-disabled")
+    caller_register_start = kernel.find("void zeroCtrlRegisterActivationCallerRA(")
+    caller_register_end = kernel.find("void zeroCtrlRecordVshSlideTarget(",
+            caller_register_start)
+    caller_register = kernel[caller_register_start:caller_register_end]
+    for token in ("bsman->activation_enabled", "bsman->registered",
+            'sceKernelFindModuleByName("ZeroVSH_Patcher_User")',
+            "(unsigned int)helper < 0x88000000",
+            "helper->text_addr == 0", "helper->text_size == 0",
+            "helper->nsegment == 0", "(address[index] & 3) != 0",
+            "zeroCtrlVshModuleRangeValid(helper, address[index], 4)",
+            "for (index = 0; index < 3; index++)",
+            "bsman->activation_caller_ra_validation = 1",
+            "_sw(0, address[index])",
+            "sceKernelDcacheWritebackInvalidateRange((const void *)address[index], 4)",
+            "bsman->activation_caller_ra_registered = 1"):
+        if token not in caller_register:
+            fail("activation caller RA registration lacks " + token)
+    validation = caller_register.find("zeroCtrlVshModuleRangeValid")
+    initialization = caller_register.find("_sw(0, address[index])")
+    registered = caller_register.find(
+            "bsman->activation_caller_ra_registered = 1")
+    if caller_register_start < 0 or not 0 <= validation < initialization < registered or \
+            "sceKernelIcache" in caller_register or \
+            "activation_addr" in caller_register:
+        fail("activation caller RA registration ordering patches code or is unsafe")
+    if "PSP_EXPORT_FUNC_NID(zeroCtrlRegisterActivationCallerRA, 0x1337357E)" \
+            not in kernel_exports or \
+            "STUB_FUNC 0x1337357E, zeroCtrlRegisterActivationCallerRA" \
+            not in user_imports:
+        fail("activation caller RA registration import/export is missing")
+    caller_user_registration = user[user.find(
+        "zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);"):
+        user.find("sctrlHENSetStartModuleHandler(OnModuleStart)")]
+    for token in ("zeroCtrlRegisterActivationCallerRA(",
+            "&zeroCtrlSlideActivationCallerRAFirst",
+            "&zeroCtrlSlideActivationCallerRALast",
+            "&zeroCtrlSlideActivationCallerRAChanges"):
+        if token not in caller_user_registration:
+            fail("activation caller RA user registration lacks " + token)
     if "scalar_addr[54]" not in bsman_header or \
             "leaf_addr[11]" not in bsman_header or \
             "sizeof(ZeroCtrlActivationWideRegistration) == 304" not in bsman_header:

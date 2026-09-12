@@ -99,6 +99,8 @@ void zeroCtrlRegisterBSManClosedShim(
         const ZeroCtrlBSManClosedRegistration *registration);
 int zeroCtrlRegisterActivationWide(
         const ZeroCtrlActivationWideRegistration *registration);
+void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
+        unsigned int last_addr, unsigned int changes_addr);
 void zeroCtrlSetLEDState(void);
 void zeroCtrlSetBrightness(void);
 void zeroCtrlSetClockSpeed(void);
@@ -277,6 +279,9 @@ extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondHits;
 extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondNonzeroHits;
 extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondZeroResumeTarget;
 extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget;
+extern volatile unsigned int zeroCtrlSlideActivationCallerRAFirst;
+extern volatile unsigned int zeroCtrlSlideActivationCallerRALast;
+extern volatile unsigned int zeroCtrlSlideActivationCallerRAChanges;
 #define WIDE_HELPER_DECL(name) extern void name(void), name##End(void)
 WIDE_HELPER_DECL(zeroCtrlActivationWideCompareTrace);
 WIDE_HELPER_DECL(zeroCtrlWide662Call); WIDE_HELPER_DECL(zeroCtrlWide662Return);
@@ -829,6 +834,10 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.masked_paf_c59fc3d0_second_zero_resume_target_addr = (u32)&zeroCtrlMaskedPafC59FC3D0SecondZeroResumeTarget;
 	bsmanClosedRegistration.masked_paf_c59fc3d0_second_nonzero_target_addr = (u32)&zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
+	zeroCtrlRegisterActivationCallerRA(
+			(u32)&zeroCtrlSlideActivationCallerRAFirst,
+			(u32)&zeroCtrlSlideActivationCallerRALast,
+			(u32)&zeroCtrlSlideActivationCallerRAChanges);
 	if (zeroCtrlRegisterActivationWide(NULL)) {
 		activationWideRegistration.leaf_addr[0] = (u32)zeroCtrlActivationWideCompareTrace;
 		activationWideRegistration.leaf_end_addr[0] = (u32)zeroCtrlActivationWideCompareTraceEnd;
