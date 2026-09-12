@@ -1477,6 +1477,42 @@ def check_sources(root):
         fail("early T37/T38/T39 snapshot modifies patch or cache state")
     if "[activation-prewide-early]" in assembly:
         fail("early T37/T38/T39 output leaked into assembly helpers")
+    if "[activation-collection-early]" not in early:
+        fail("early T33-T36 collection evidence is missing from the writer")
+    for token in ("enabled=%d", "t33=%u/%u/0x%08X",
+            "t34=%u/%u/0x%08X", "t35=%u/%u/0x%08X/0x%08X",
+            "t36=%u/%u/0x%08X/0x%08X",
+            "post_minus_one_vcall64_hits_addr",
+            "post_minus_one_vcall64_return_hits_addr",
+            "post_minus_one_vcall64_natural_result_addr",
+            "post_minus_one_vcall64_count_snapshot_addr",
+            "post_minus_one_vcall64_array_read_hits_addr",
+            "post_minus_one_vcall64_array_snapshot_addr",
+            "collection_paf_fcf265d8_hits_addr",
+            "collection_paf_fcf265d8_nonzero_hits_addr",
+            "collection_paf_fcf265d8_natural_result_addr",
+            "collection_paf_fcf265d8_last_item_addr",
+            "collection_paf_9a285882_hits_addr",
+            "collection_paf_9a285882_nonzero_hits_addr",
+            "collection_paf_9a285882_natural_result_addr",
+            "collection_paf_9a285882_last_item_addr",
+            "observed_collection_early[14]",
+            "observed_collection_early_ready",
+            "observed_collection_enabled"):
+        if token not in writer:
+            fail("early T33-T36 collection snapshot lacks " + token)
+    collection_start = early.find("unsigned int collection[14]")
+    collection = early[collection_start:]
+    if collection_start < 0 or any(token in collection for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache",
+            "activation_wide_replacement")):
+        fail("early T33-T36 collection snapshot modifies patch/cache state")
+    for later in ("[state-zero-vcall-resolve]", "[topmenu-state]",
+            "post_bsman_counts="):
+        if writer.find("[activation-collection-early]") > writer.find(later):
+            fail("early T33-T36 collection snapshot follows verbose " + later)
+    if "[activation-collection-early]" in assembly:
+        fail("early T33-T36 collection output leaked into assembly helpers")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")

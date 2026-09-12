@@ -3151,6 +3151,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0, 0, 0, 0, 0, 0, 0, 0, 0
     };
     int observed_prewide_early_ready = 0;
+    unsigned int observed_collection_early[14] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    int observed_collection_early_ready = 0;
+    int observed_collection_enabled = -1;
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
     int observed_field12c_write_install_status = 0;
@@ -3289,6 +3294,62 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     zeroCtrlDiagnosticsText(line);
                     memcpy(observed_prewide_early, prewide, sizeof(prewide));
                     observed_prewide_early_ready = 1;
+                }
+                {
+                    unsigned int collection[14];
+                    int collection_changed = !observed_collection_early_ready ||
+                            observed_collection_enabled !=
+                                bsman->post_vcall64_collection_enabled;
+                    collection[0] = zeroCtrlReadHelperCounter(
+                            bsman->post_minus_one_vcall64_hits_addr);
+                    collection[1] = zeroCtrlReadHelperCounter(
+                            bsman->post_minus_one_vcall64_return_hits_addr);
+                    collection[2] = zeroCtrlReadHelperCounter(
+                            bsman->post_minus_one_vcall64_natural_result_addr);
+                    collection[3] = zeroCtrlReadHelperCounter(
+                            bsman->post_minus_one_vcall64_count_snapshot_addr);
+                    collection[4] = zeroCtrlReadHelperCounter(
+                            bsman->post_minus_one_vcall64_array_read_hits_addr);
+                    collection[5] = zeroCtrlReadHelperCounter(
+                            bsman->post_minus_one_vcall64_array_snapshot_addr);
+                    collection[6] = zeroCtrlReadHelperCounter(
+                            bsman->collection_paf_fcf265d8_hits_addr);
+                    collection[7] = zeroCtrlReadHelperCounter(
+                            bsman->collection_paf_fcf265d8_nonzero_hits_addr);
+                    collection[8] = zeroCtrlReadHelperCounter(
+                            bsman->collection_paf_fcf265d8_natural_result_addr);
+                    collection[9] = zeroCtrlReadHelperCounter(
+                            bsman->collection_paf_fcf265d8_last_item_addr);
+                    collection[10] = zeroCtrlReadHelperCounter(
+                            bsman->collection_paf_9a285882_hits_addr);
+                    collection[11] = zeroCtrlReadHelperCounter(
+                            bsman->collection_paf_9a285882_nonzero_hits_addr);
+                    collection[12] = zeroCtrlReadHelperCounter(
+                            bsman->collection_paf_9a285882_natural_result_addr);
+                    collection[13] = zeroCtrlReadHelperCounter(
+                            bsman->collection_paf_9a285882_last_item_addr);
+                    for (i = 0; i < 14; i++)
+                        if (collection[i] != observed_collection_early[i])
+                            collection_changed = 1;
+                    if (collection_changed) {
+                        snprintf(line, sizeof(line),
+                                "[activation-collection-early] enabled=%d "
+                                "t33=%u/%u/0x%08X t34=%u/%u/0x%08X "
+                                "t35=%u/%u/0x%08X/0x%08X "
+                                "t36=%u/%u/0x%08X/0x%08X\n",
+                                bsman->post_vcall64_collection_enabled,
+                                collection[0], collection[1], collection[2],
+                                collection[3], collection[4], collection[5],
+                                collection[6], collection[7], collection[8],
+                                collection[9], collection[10], collection[11],
+                                collection[12], collection[13]);
+                        zeroCtrlDiagnosticsText(line);
+                        memcpy(observed_collection_early, collection,
+                                sizeof(collection));
+                        observed_collection_early_ready = 1;
+                        observed_collection_enabled =
+                                bsman->post_vcall64_collection_enabled;
+                    }
                 }
             }
         }
