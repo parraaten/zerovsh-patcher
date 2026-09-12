@@ -582,6 +582,7 @@ typedef struct {
 
 typedef struct {
     int armed;
+    int minimal_memory_test;
     volatile int saw_request;
     volatile int saw_rco_request;
     volatile int saw_probe;
@@ -2619,7 +2620,8 @@ int zeroCtrlModuleProbe(void *data, void *exec_info) {
             strcmp(modname, "slide_plugin_module") == 0;
     if (is_slide && !slide_diag.saw_probe) {
         slide_diag.probe_callback_entered = 1;
-        zeroCtrlDiagnosticsCapturePartitions(&slide_diag.at_probe);
+        if (!slide_diag.minimal_memory_test)
+            zeroCtrlDiagnosticsCapturePartitions(&slide_diag.at_probe);
         slide_diag.saw_probe = 1;
     }
 
@@ -3150,6 +3152,17 @@ static void zeroCtrlWriteLateTransition(unsigned int elapsed,
     zeroCtrlDiagnosticsText(line);
 }
 
+static void zeroCtrlWriteFastMemory(const char *boundary) {
+    char line[128];
+    snprintf(line, sizeof(line),
+            "[mem-fast] %s total_free=%u largest_block=%u\n", boundary,
+            (unsigned int)sceKernelPartitionTotalFreeMemSize(
+                PSP_MEMORY_PARTITION_USER),
+            (unsigned int)sceKernelPartitionMaxFreeMemSize(
+                PSP_MEMORY_PARTITION_USER));
+    zeroCtrlDiagnosticsText(line);
+}
+
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
     unsigned int elapsed = 0;
     unsigned int written = 0;
@@ -3204,6 +3217,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_dispatch_entry_early_status = 0;
     int observed_dispatch_entry_pre_slide = 0;
     int observed_consumer_install = 0, observed_consumer_pre_slide = 0;
+    unsigned int minimal_memory_written = 0;
+    unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
 
@@ -3211,6 +3226,63 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     zeroCtrlDiagnosticsText("[checkpoint] slide_diag_writer_alive\n");
     while (elapsed < SLIDE_OBSERVATION_WINDOW_US) {
         zeroCtrlWriteSlideCheckpoints(&written);
+        if (slide_diag.minimal_memory_test) {
+            ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
+            unsigned int activation_hits = zeroCtrlReadHelperCounter(
+                    slide_diag.bsman.activation_hits_addr);
+            unsigned int state;
+            zeroCtrlRefreshSonyStartTrace();
+            if (slide_diag.saw_request && !(minimal_memory_written & 0x01)) {
+                zeroCtrlWriteFastMemory("before_slide_module");
+                minimal_memory_written |= 0x01;
+            }
+            if (slide_diag.start_callback_entered &&
+                    !(minimal_memory_written & 0x02)) {
+                zeroCtrlWriteFastMemory("before_slide_module_start");
+                minimal_memory_written |= 0x02;
+            }
+            if (trace->return_seen && !(minimal_memory_written & 0x04)) {
+                zeroCtrlWriteFastMemory("after_slide_module_start");
+                minimal_memory_written |= 0x04;
+            }
+            if (trace->return_seen && !(minimal_memory_written & 0x08)) {
+                zeroCtrlWriteFastMemory("before_activation");
+                minimal_memory_written |= 0x08;
+            }
+            if (activation_hits && !(minimal_memory_written & 0x10)) {
+                zeroCtrlDiagnosticsText(
+                        "[checkpoint-fast] activation_callback_entered\n");
+                minimal_memory_written |= 0x10;
+            }
+            if (trace->entry_seen && !(minimal_memory_written & 0x20)) {
+                zeroCtrlDiagnosticsText(
+                        "[checkpoint-fast] slide_module_start_entered\n");
+                minimal_memory_written |= 0x20;
+            }
+            if (trace->return_seen && !(minimal_memory_written & 0x40)) {
+                snprintf(line, sizeof(line),
+                        "[checkpoint-fast] slide_module_start_returned "
+                        "result=0x%08X\n", (unsigned int)trace->result);
+                zeroCtrlDiagnosticsText(line);
+                minimal_memory_written |= 0x40;
+            }
+            state = (slide_diag.saw_request ? 1 : 0) |
+                    (slide_diag.saw_probe ? 2 : 0) |
+                    (slide_diag.start_callback_entered ? 4 : 0) |
+                    (trace->entry_seen ? 8 : 0) |
+                    (trace->return_seen ? 16 : 0) |
+                    (activation_hits ? 32 : 0);
+            if (state != minimal_last_state) {
+                snprintf(line, sizeof(line),
+                        "[checkpoint-fast] latest=0x%02X activation_hits=%u\n",
+                        state, activation_hits);
+                zeroCtrlDiagnosticsText(line);
+                minimal_last_state = state;
+            }
+            sceKernelDelayThread(10000);
+            elapsed += 10000;
+            continue;
+        }
         for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
             unsigned int hits = zeroCtrlReadTriggerHits(i);
             if (hits != observed_hits[i]) {
@@ -5110,6 +5182,13 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             elapsed += delay;
         }
     }
+    if (slide_diag.minimal_memory_test) {
+        zeroCtrlDiagnosticsText(
+                "[checkpoint-fast] minimal_observation_window_complete\n");
+        slide_diag.deferred_thread_started = 0;
+        sceKernelExitDeleteThread(0);
+        return 0;
+    }
     zeroCtrlDiagnosticsText("[checkpoint] slide_observation_window_complete\n");
     zeroCtrlWriteSlideCheckpoints(&written);
     zeroCtrlDiagnosticsText("[checkpoint] final_partition_capture_begin\n");
@@ -7001,7 +7080,8 @@ int OnModuleStart(SceModule2 *mod) {
                 int previous_result;
 
                 slide_diag.start_callback_entered = 1;
-                zeroCtrlDiagnosticsCapturePartitions(&slide_diag.pre_start);
+                if (!slide_diag.minimal_memory_test)
+                        zeroCtrlDiagnosticsCapturePartitions(&slide_diag.pre_start);
                 memcpy(&slide_diag.module, mod, sizeof(slide_diag.module));
                 previous_result = previous ? previous(mod) : 0;
                 slide_diag.previous_handler_result = previous_result;
@@ -7375,6 +7455,10 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			strcmp(useSlide, "Disabled") == 0) {
 		memset(&slide_diag, 0, sizeof(slide_diag));
 		slide_diag.armed = 1;
+		slide_diag.minimal_memory_test =
+			model == 0 && devkit == 0x06060110 &&
+			strcmp(psp1000SlidePlugin, "Enabled") == 0 &&
+			strcmp(psp1000Diagnostics, "Enabled") == 0;
 		slide_diag.global_predicate_enabled =
 			devkit == 0x06060110 &&
 			strcmp(psp1000SlideTriggerMode,

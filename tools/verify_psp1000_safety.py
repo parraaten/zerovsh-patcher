@@ -326,6 +326,64 @@ def check_sources(root):
     if writer_start < 0 or writer_end <= writer_start:
         fail("deferred slide diagnostic writer is missing")
     writer = kernel[writer_start:writer_end]
+    minimal_start = writer.find("zeroCtrlWriteSlideCheckpoints(&written)")
+    minimal_end = writer.find("for (i = 0; i < VSH_TRIGGER_COUNT; i++)",
+            minimal_start)
+    minimal = writer[minimal_start:minimal_end]
+    for token in ("zeroCtrlWriteSlideCheckpoints(&written)",
+            'zeroCtrlWriteFastMemory("before_slide_module")',
+            'zeroCtrlWriteFastMemory("before_slide_module_start")',
+            'zeroCtrlWriteFastMemory("after_slide_module_start")',
+            'zeroCtrlWriteFastMemory("before_activation")',
+            "[checkpoint-fast] activation_callback_entered",
+            "[checkpoint-fast] slide_module_start_entered",
+            "[checkpoint-fast] slide_module_start_returned",
+            "[checkpoint-fast] latest=", "continue;"):
+        if token not in minimal:
+            fail("minimal PSP-1000 memory test lacks " + token)
+    for verbose in ("[paf-parent-a0]", "[paf-dispatch-window-",
+            "[paf-dispatch-control]", "[t40-exit-window-",
+            "[natural-50-window-"):
+        if verbose in minimal:
+            fail("minimal PSP-1000 memory test executes verbose output " + verbose)
+    if minimal_start + minimal.find("continue;") > writer.find("[paf-parent-a0]"):
+        fail("minimal memory test does not bypass parent/PAF diagnostics")
+    minimal_gate = kernel[kernel.find("slide_diag.minimal_memory_test ="):
+        kernel.find("slide_diag.global_predicate_enabled =")]
+    for token in ("model == 0", "devkit == 0x06060110",
+            'strcmp(psp1000SlidePlugin, "Enabled") == 0',
+            'strcmp(psp1000Diagnostics, "Enabled") == 0'):
+        if token not in minimal_gate:
+            fail("minimal memory test gate lacks " + token)
+    fast_memory_start = kernel.find("static void zeroCtrlWriteFastMemory(")
+    fast_memory_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(",
+            fast_memory_start)
+    fast_memory = kernel[fast_memory_start:fast_memory_end]
+    for token in ("[mem-fast] %s total_free=%u largest_block=%u",
+            "sceKernelPartitionTotalFreeMemSize(",
+            "sceKernelPartitionMaxFreeMemSize(",
+            "PSP_MEMORY_PARTITION_USER"):
+        if token not in fast_memory:
+            fail("minimal memory checkpoint lacks " + token)
+    if any(token in fast_memory for token in ("sceKernelAlloc", "malloc", "_sw(")):
+        fail("minimal memory checkpoint allocates or writes runtime state")
+    minimal_final = writer[writer.find("if (slide_diag.minimal_memory_test)",
+        minimal_end):writer.find(
+            'zeroCtrlDiagnosticsText("[checkpoint] slide_observation_window_complete')]
+    for token in ("minimal_observation_window_complete",
+            "sceKernelExitDeleteThread(0)", "return 0"):
+        if token not in minimal_final:
+            fail("minimal memory test does not bypass final verbose dumps")
+    probe_scope = kernel[kernel.find("int zeroCtrlModuleProbe("):
+        kernel.find("int zeroCtrlHookModule(")]
+    start_scope = kernel[kernel.find("int OnModuleStart("):
+        kernel.find("int zeroCtrlLoadStartModule(")]
+    if "if (!slide_diag.minimal_memory_test)" not in probe_scope or \
+            "if (!slide_diag.minimal_memory_test)" not in start_scope:
+        fail("minimal memory test retains large callback partition captures")
+    if re.search(r"hook_import_bynid\([^\n]*(?:Alloc|Malloc|SysMem)", kernel,
+            re.IGNORECASE):
+        fail("minimal memory test introduces a global allocator hook")
     caller_ra_start = writer.find("if (slide_diag.bsman.activation_enabled)")
     caller_ra_end = writer.find(
             "if (slide_diag.bsman.activation_wide_enabled)", caller_ra_start)
