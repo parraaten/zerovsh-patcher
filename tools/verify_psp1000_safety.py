@@ -1568,6 +1568,31 @@ def check_sources(root):
         fail("post-PAF0 gap diagnostic is not read-only")
     if "[post-paf0-gap]" in assembly:
         fail("post-PAF0 gap diagnostic leaked into assembly helpers")
+    exit_start = writer.find("static const unsigned int exit_offsets[18]")
+    exit_end = writer.find("if (bsman->post_collection_paf_fcf265d8_enabled)",
+            exit_start)
+    exit_window = writer[exit_start:exit_end]
+    for offset in range(0x234, 0x279, 4):
+        if "0x%03X" % offset not in exit_window:
+            fail("T40 exit window lacks static read offset 0x%03X" % offset)
+    for token in ("exit_words[exit_index] = _lw(bsman->activation_addr +",
+            "[t40-exit-window-%u]", "[t40-exit-control]",
+            "word=0x%08X", "opcode=0x%02X", "rs=%u", "rt=%u",
+            "zeroCtrlMipsJumpTarget(pc, word)",
+            "zeroCtrlMipsBranchTarget(pc, word)", "target=0x%08X",
+            "target_offset=0x%08X", "direct_jump || branch || register_jump"):
+        if token not in exit_window:
+            fail("read-only T40 exit-window diagnostic lacks " + token)
+    if exit_start < 0 or exit_end < 0 or any(token in exit_window for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache")):
+        fail("T40 exit-window diagnostic is not read-only")
+    for label in ("[t40-exit-window-", "[t40-exit-control]"):
+        if label in assembly:
+            fail("T40 exit-window output leaked into assembly helpers")
+    if ("_sw(bsman->activation_addr + 0x234,\n"
+            "                    bsman->activation_wide_scalar_addr[45]);") \
+            not in kernel:
+        fail("T40 090 wrapper resume is not activation+0x234")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")

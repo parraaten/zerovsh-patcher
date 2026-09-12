@@ -3763,6 +3763,60 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 target_offset);
                         zeroCtrlDiagnosticsText(line);
                     }
+                    {
+                        static const unsigned int exit_offsets[18] = {
+                            0x234, 0x238, 0x23C, 0x240, 0x244, 0x248,
+                            0x24C, 0x250, 0x254, 0x258, 0x25C, 0x260,
+                            0x264, 0x268, 0x26C, 0x270, 0x274, 0x278
+                        };
+                        unsigned int exit_words[18];
+                        unsigned int exit_index;
+                        for (exit_index = 0; exit_index < 18; exit_index++)
+                            exit_words[exit_index] = _lw(bsman->activation_addr +
+                                    exit_offsets[exit_index]);
+                        for (exit_index = 0; exit_index < 3; exit_index++) {
+                            unsigned int first = exit_index * 6;
+                            snprintf(line, sizeof(line),
+                                    "[t40-exit-window-%u] "
+                                    "%03x=0x%08X %03x=0x%08X %03x=0x%08X "
+                                    "%03x=0x%08X %03x=0x%08X %03x=0x%08X\n",
+                                    exit_index,
+                                    exit_offsets[first], exit_words[first],
+                                    exit_offsets[first + 1], exit_words[first + 1],
+                                    exit_offsets[first + 2], exit_words[first + 2],
+                                    exit_offsets[first + 3], exit_words[first + 3],
+                                    exit_offsets[first + 4], exit_words[first + 4],
+                                    exit_offsets[first + 5], exit_words[first + 5]);
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                        for (exit_index = 0; exit_index < 18; exit_index++) {
+                            unsigned int word = exit_words[exit_index];
+                            unsigned int opcode = word >> 26;
+                            unsigned int function = word & 0x3F;
+                            unsigned int pc = bsman->activation_addr +
+                                    exit_offsets[exit_index];
+                            int direct_jump = opcode == 2 || opcode == 3;
+                            int branch = opcode == 1 || opcode == 4 ||
+                                    opcode == 5 || opcode == 6 || opcode == 7;
+                            int register_jump = opcode == 0 &&
+                                    (function == 8 || function == 9);
+                            unsigned int target = direct_jump ?
+                                    zeroCtrlMipsJumpTarget(pc, word) :
+                                    (branch ? zeroCtrlMipsBranchTarget(pc, word) : 0);
+                            if (direct_jump || branch || register_jump) {
+                                snprintf(line, sizeof(line),
+                                        "[t40-exit-control] offset=0x%03X "
+                                        "word=0x%08X opcode=0x%02X rs=%u rt=%u "
+                                        "function=0x%02X target=0x%08X "
+                                        "target_offset=0x%08X\n",
+                                        exit_offsets[exit_index], word, opcode,
+                                        (word >> 21) & 0x1F,
+                                        (word >> 16) & 0x1F, function, target,
+                                        target ? target - bsman->activation_addr : 0);
+                                zeroCtrlDiagnosticsText(line);
+                            }
+                        }
+                    }
                     if (bsman->post_collection_paf_fcf265d8_enabled) {
                         snprintf(line, sizeof(line),
                                 "[t37-validation] enabled=1 checked=%u "
