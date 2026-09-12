@@ -403,6 +403,19 @@ def check_sources(root):
             "[paf-dispatch-reg-def]", "[paf-dispatch-frame-candidate]",
             "[paf-dispatch-callers]", "[paf-dispatch-caller]")):
         fail("PAF JALR window diagnostic leaked into assembly helpers")
+    fingerprint_read = caller_ra.find("_lw(fingerprint_pc)")
+    direct_scan = caller_ra.find("for (scan_offset = 0;")
+    caller_summary = caller_ra.find('"[paf-dispatch-callers] validation=%d "')
+    caller_candidate = caller_ra.find('"[paf-dispatch-caller] index=%u "')
+    verbose_window = caller_ra.find('"[paf-dispatch-window-%u]"')
+    if not 0 <= fingerprint_read < direct_scan < caller_summary < \
+            caller_candidate < verbose_window:
+        fail("PAF dispatcher caller scan is not ahead of verbose decoding")
+    if caller_ra.count("static const unsigned int fingerprint_offset[]") != 1 or \
+            caller_ra.count("dispatcher_start = callsite - 0xA0") != 1 or \
+            caller_ra.count('"[paf-dispatch-callers] validation=%d "') != 1 or \
+            caller_ra.count('"[paf-dispatch-caller] index=%u "') != 1:
+        fail("PAF dispatcher caller scan implementation is duplicated")
     sony_diag_start = writer.find("if (slide_diag.sony_start_trace.enabled)")
     bsman_diag_start = writer.find(
         "if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled)",
