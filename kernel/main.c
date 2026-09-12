@@ -3156,6 +3156,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     };
     int observed_collection_early_ready = 0;
     int observed_collection_enabled = -1;
+    unsigned int observed_post_early[22] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    int observed_post_early_ready = 0;
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
     int observed_field12c_write_install_status = 0;
@@ -3349,6 +3354,55 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         observed_collection_early_ready = 1;
                         observed_collection_enabled =
                                 bsman->post_vcall64_collection_enabled;
+                    }
+                }
+                {
+                    unsigned int post[22];
+                    int post_changed = !observed_post_early_ready;
+                    post[0] = zeroCtrlReadHelperCounter(bsman->post_path_mask_addr);
+                    post[1] = zeroCtrlReadHelperCounter(bsman->post_bs_counter_addr[0]);
+                    post[2] = zeroCtrlReadHelperCounter(bsman->post_bs_counter_addr[1]);
+                    post[3] = zeroCtrlReadHelperCounter(bsman->post_state_counter_addr[0]);
+                    post[4] = zeroCtrlReadHelperCounter(bsman->post_state_counter_addr[1]);
+                    post[5] = zeroCtrlReadHelperCounter(bsman->post_state_natural_value_addr);
+                    post[6] = zeroCtrlReadHelperCounter(bsman->post_paf_entry_counter_addr[0]);
+                    post[7] = zeroCtrlReadHelperCounter(bsman->post_paf_return_counter_addr[0]);
+                    post[8] = zeroCtrlReadHelperCounter(bsman->post_paf_result_addr[0]);
+                    post[9] = zeroCtrlReadHelperCounter(bsman->post_paf_entry_counter_addr[1]);
+                    post[10] = zeroCtrlReadHelperCounter(bsman->post_paf_return_counter_addr[1]);
+                    post[11] = zeroCtrlReadHelperCounter(bsman->post_paf_result_addr[1]);
+                    post[12] = zeroCtrlReadHelperCounter(bsman->post_vsh_entry_hits_addr);
+                    post[13] = zeroCtrlReadHelperCounter(bsman->post_vsh_return_hits_addr);
+                    post[14] = zeroCtrlReadHelperCounter(bsman->post_vsh_argument_addr);
+                    post[15] = zeroCtrlReadHelperCounter(bsman->post_vsh_natural_result_addr);
+                    post[16] = zeroCtrlReadHelperCounter(bsman->post_vsh_effective_result_addr);
+                    post[17] = zeroCtrlReadHelperCounter(bsman->post_vsh_substitution_hits_addr);
+                    post[18] = zeroCtrlReadHelperCounter(bsman->post_impose_vcall_hits_addr);
+                    post[19] = zeroCtrlReadHelperCounter(bsman->post_impose_vcall_return_hits_addr);
+                    post[20] = zeroCtrlReadHelperCounter(bsman->post_impose_vcall_target_addr);
+                    post[21] = zeroCtrlReadHelperCounter(bsman->post_impose_vcall_natural_result_addr);
+                    for (i = 0; i < 22; i++)
+                        if (post[i] != observed_post_early[i]) post_changed = 1;
+                    if (post_changed) {
+                        snprintf(line, sizeof(line),
+                                "[activation-post-early] mask=0x%03X "
+                                "bs=%u/%u state=%u/%u/0x%08X "
+                                "paf0=%u/%u/0x%08X paf1=%u/%u/0x%08X\n",
+                                post[0], post[1], post[2], post[3], post[4],
+                                post[5], post[6], post[7], post[8], post[9],
+                                post[10], post[11]);
+                        zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[activation-post-early-call] "
+                                "vsh=%u/%u/arg:0x%08X/nat:0x%08X/"
+                                "eff:0x%08X/sub:%u "
+                                "t32=%u/%u/target:0x%08X/nat:0x%08X\n",
+                                post[12], post[13], post[14], post[15],
+                                post[16], post[17], post[18], post[19],
+                                post[20], post[21]);
+                        zeroCtrlDiagnosticsText(line);
+                        memcpy(observed_post_early, post, sizeof(post));
+                        observed_post_early_ready = 1;
                     }
                 }
             }

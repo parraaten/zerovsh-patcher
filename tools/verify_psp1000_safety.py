@@ -1513,6 +1513,45 @@ def check_sources(root):
             fail("early T33-T36 collection snapshot follows verbose " + later)
     if "[activation-collection-early]" in assembly:
         fail("early T33-T36 collection output leaked into assembly helpers")
+    for label in ("[activation-post-early]", "[activation-post-early-call]"):
+        if label not in early:
+            fail("early post-BSMan snapshot is missing " + label)
+    for token in ("mask=0x%03X", "bs=%u/%u", "state=%u/%u/0x%08X",
+            "paf0=%u/%u/0x%08X", "paf1=%u/%u/0x%08X",
+            "vsh=%u/%u/arg:0x%08X/nat:0x%08X/",
+            "eff:0x%08X/sub:%u",
+            "t32=%u/%u/target:0x%08X/nat:0x%08X",
+            "post_path_mask_addr", "post_bs_counter_addr[0]",
+            "post_bs_counter_addr[1]", "post_state_counter_addr[0]",
+            "post_state_counter_addr[1]", "post_state_natural_value_addr",
+            "post_paf_entry_counter_addr[0]",
+            "post_paf_return_counter_addr[0]", "post_paf_result_addr[0]",
+            "post_paf_entry_counter_addr[1]",
+            "post_paf_return_counter_addr[1]", "post_paf_result_addr[1]",
+            "post_vsh_entry_hits_addr", "post_vsh_return_hits_addr",
+            "post_vsh_argument_addr", "post_vsh_natural_result_addr",
+            "post_vsh_effective_result_addr",
+            "post_vsh_substitution_hits_addr",
+            "post_impose_vcall_hits_addr",
+            "post_impose_vcall_return_hits_addr",
+            "post_impose_vcall_target_addr",
+            "post_impose_vcall_natural_result_addr",
+            "observed_post_early[22]", "observed_post_early_ready"):
+        if token not in writer:
+            fail("early post-BSMan snapshot lacks " + token)
+    post_early_start = early.find("unsigned int post[22]")
+    post_early = early[post_early_start:]
+    if post_early_start < 0 or any(token in post_early for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache",
+            "activation_wide_replacement")):
+        fail("early post-BSMan snapshot modifies patch/cache state")
+    for later in ("[state-zero-vcall-resolve]", "[topmenu-state]",
+            "post_bsman_counts="):
+        if writer.find("[activation-post-early]") > writer.find(later):
+            fail("early post-BSMan snapshot follows verbose " + later)
+    if "[activation-post-early]" in assembly or \
+            "[activation-post-early-call]" in assembly:
+        fail("early post-BSMan output leaked into assembly helpers")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")
