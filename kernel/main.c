@@ -583,6 +583,12 @@ typedef struct {
 typedef struct {
     int armed;
     int minimal_memory_test;
+    volatile int minimal_probe_memory_valid;
+    unsigned int minimal_probe_total_free;
+    unsigned int minimal_probe_largest_block;
+    volatile int minimal_start_memory_valid;
+    unsigned int minimal_start_total_free;
+    unsigned int minimal_start_largest_block;
     volatile int saw_request;
     volatile int saw_rco_request;
     volatile int saw_probe;
@@ -2620,8 +2626,17 @@ int zeroCtrlModuleProbe(void *data, void *exec_info) {
             strcmp(modname, "slide_plugin_module") == 0;
     if (is_slide && !slide_diag.saw_probe) {
         slide_diag.probe_callback_entered = 1;
-        if (!slide_diag.minimal_memory_test)
+        if (slide_diag.minimal_memory_test) {
+            slide_diag.minimal_probe_total_free =
+                    sceKernelPartitionTotalFreeMemSize(
+                        PSP_MEMORY_PARTITION_USER);
+            slide_diag.minimal_probe_largest_block =
+                    sceKernelPartitionMaxFreeMemSize(
+                        PSP_MEMORY_PARTITION_USER);
+            slide_diag.minimal_probe_memory_valid = 1;
+        } else {
             zeroCtrlDiagnosticsCapturePartitions(&slide_diag.at_probe);
+        }
         slide_diag.saw_probe = 1;
     }
 
@@ -3152,14 +3167,12 @@ static void zeroCtrlWriteLateTransition(unsigned int elapsed,
     zeroCtrlDiagnosticsText(line);
 }
 
-static void zeroCtrlWriteFastMemory(const char *boundary) {
+static void zeroCtrlWriteFastMemory(const char *boundary,
+        unsigned int total_free, unsigned int largest_block) {
     char line[128];
     snprintf(line, sizeof(line),
             "[mem-fast] %s total_free=%u largest_block=%u\n", boundary,
-            (unsigned int)sceKernelPartitionTotalFreeMemSize(
-                PSP_MEMORY_PARTITION_USER),
-            (unsigned int)sceKernelPartitionMaxFreeMemSize(
-                PSP_MEMORY_PARTITION_USER));
+            total_free, largest_block);
     zeroCtrlDiagnosticsText(line);
 }
 
@@ -3232,22 +3245,23 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     slide_diag.bsman.activation_hits_addr);
             unsigned int state;
             zeroCtrlRefreshSonyStartTrace();
-            if (slide_diag.saw_request && !(minimal_memory_written & 0x01)) {
-                zeroCtrlWriteFastMemory("before_slide_module");
+            if (slide_diag.saw_rco_request && !observed_rco_request) {
+                observed_rco_request = 1;
+                fast_poll_until = elapsed + 2000000;
+            }
+            if (slide_diag.minimal_probe_memory_valid &&
+                    !(minimal_memory_written & 0x01)) {
+                zeroCtrlWriteFastMemory("probe_entry",
+                        slide_diag.minimal_probe_total_free,
+                        slide_diag.minimal_probe_largest_block);
                 minimal_memory_written |= 0x01;
             }
-            if (slide_diag.start_callback_entered &&
+            if (slide_diag.minimal_start_memory_valid &&
                     !(minimal_memory_written & 0x02)) {
-                zeroCtrlWriteFastMemory("before_slide_module_start");
+                zeroCtrlWriteFastMemory("start_handler_entry",
+                        slide_diag.minimal_start_total_free,
+                        slide_diag.minimal_start_largest_block);
                 minimal_memory_written |= 0x02;
-            }
-            if (trace->return_seen && !(minimal_memory_written & 0x04)) {
-                zeroCtrlWriteFastMemory("after_slide_module_start");
-                minimal_memory_written |= 0x04;
-            }
-            if (trace->return_seen && !(minimal_memory_written & 0x08)) {
-                zeroCtrlWriteFastMemory("before_activation");
-                minimal_memory_written |= 0x08;
             }
             if (activation_hits && !(minimal_memory_written & 0x10)) {
                 zeroCtrlDiagnosticsText(
@@ -3279,8 +3293,12 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 zeroCtrlDiagnosticsText(line);
                 minimal_last_state = state;
             }
-            sceKernelDelayThread(10000);
-            elapsed += 10000;
+            {
+                unsigned int delay = elapsed < fast_poll_until ?
+                        10000 : SLIDE_OBSERVATION_POLL_US;
+                sceKernelDelayThread(delay);
+                elapsed += delay;
+            }
             continue;
         }
         for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
@@ -7080,8 +7098,17 @@ int OnModuleStart(SceModule2 *mod) {
                 int previous_result;
 
                 slide_diag.start_callback_entered = 1;
-                if (!slide_diag.minimal_memory_test)
+                if (slide_diag.minimal_memory_test) {
+                        slide_diag.minimal_start_total_free =
+                                sceKernelPartitionTotalFreeMemSize(
+                                    PSP_MEMORY_PARTITION_USER);
+                        slide_diag.minimal_start_largest_block =
+                                sceKernelPartitionMaxFreeMemSize(
+                                    PSP_MEMORY_PARTITION_USER);
+                        slide_diag.minimal_start_memory_valid = 1;
+                } else {
                         zeroCtrlDiagnosticsCapturePartitions(&slide_diag.pre_start);
+                }
                 memcpy(&slide_diag.module, mod, sizeof(slide_diag.module));
                 previous_result = previous ? previous(mod) : 0;
                 slide_diag.previous_handler_result = previous_result;

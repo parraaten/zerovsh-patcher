@@ -331,14 +331,18 @@ def check_sources(root):
             minimal_start)
     minimal = writer[minimal_start:minimal_end]
     for token in ("zeroCtrlWriteSlideCheckpoints(&written)",
-            'zeroCtrlWriteFastMemory("before_slide_module")',
-            'zeroCtrlWriteFastMemory("before_slide_module_start")',
-            'zeroCtrlWriteFastMemory("after_slide_module_start")',
-            'zeroCtrlWriteFastMemory("before_activation")',
+            'zeroCtrlWriteFastMemory("probe_entry"',
+            "slide_diag.minimal_probe_total_free",
+            "slide_diag.minimal_probe_largest_block",
+            'zeroCtrlWriteFastMemory("start_handler_entry"',
+            "slide_diag.minimal_start_total_free",
+            "slide_diag.minimal_start_largest_block",
             "[checkpoint-fast] activation_callback_entered",
             "[checkpoint-fast] slide_module_start_entered",
             "[checkpoint-fast] slide_module_start_returned",
-            "[checkpoint-fast] latest=", "continue;"):
+            "[checkpoint-fast] latest=", "fast_poll_until = elapsed + 2000000",
+            "elapsed < fast_poll_until", "10000 : SLIDE_OBSERVATION_POLL_US",
+            "continue;"):
         if token not in minimal:
             fail("minimal PSP-1000 memory test lacks " + token)
     for verbose in ("[paf-parent-a0]", "[paf-dispatch-window-",
@@ -346,6 +350,13 @@ def check_sources(root):
             "[natural-50-window-"):
         if verbose in minimal:
             fail("minimal PSP-1000 memory test executes verbose output " + verbose)
+    for false_boundary in ("before_slide_module", "before_slide_module_start",
+            "after_slide_module_start", "before_activation", "after_activation"):
+        if 'zeroCtrlWriteFastMemory("' + false_boundary + '"' in kernel:
+            fail("minimal memory test retains retrospective boundary " +
+                    false_boundary)
+    if "sceKernelDelayThread(10000);" in minimal or "elapsed += 10000;" in minimal:
+        fail("minimal memory test forces permanent 10 ms polling")
     if minimal_start + minimal.find("continue;") > writer.find("[paf-parent-a0]"):
         fail("minimal memory test does not bypass parent/PAF diagnostics")
     minimal_gate = kernel[kernel.find("slide_diag.minimal_memory_test ="):
@@ -360,13 +371,13 @@ def check_sources(root):
             fast_memory_start)
     fast_memory = kernel[fast_memory_start:fast_memory_end]
     for token in ("[mem-fast] %s total_free=%u largest_block=%u",
-            "sceKernelPartitionTotalFreeMemSize(",
-            "sceKernelPartitionMaxFreeMemSize(",
-            "PSP_MEMORY_PARTITION_USER"):
+            "unsigned int total_free", "unsigned int largest_block"):
         if token not in fast_memory:
             fail("minimal memory checkpoint lacks " + token)
-    if any(token in fast_memory for token in ("sceKernelAlloc", "malloc", "_sw(")):
-        fail("minimal memory checkpoint allocates or writes runtime state")
+    if any(token in fast_memory for token in ("sceKernelAlloc", "malloc", "_sw(",
+            "sceKernelPartitionTotalFreeMemSize",
+            "sceKernelPartitionMaxFreeMemSize")):
+        fail("deferred minimal memory output does not use stored snapshots")
     minimal_final = writer[writer.find("if (slide_diag.minimal_memory_test)",
         minimal_end):writer.find(
             'zeroCtrlDiagnosticsText("[checkpoint] slide_observation_window_complete')]
@@ -378,9 +389,18 @@ def check_sources(root):
         kernel.find("int zeroCtrlHookModule(")]
     start_scope = kernel[kernel.find("int OnModuleStart("):
         kernel.find("int zeroCtrlLoadStartModule(")]
-    if "if (!slide_diag.minimal_memory_test)" not in probe_scope or \
-            "if (!slide_diag.minimal_memory_test)" not in start_scope:
-        fail("minimal memory test retains large callback partition captures")
+    for scope, prefix in ((probe_scope, "minimal_probe"),
+            (start_scope, "minimal_start")):
+        for token in ("if (slide_diag.minimal_memory_test)",
+                "sceKernelPartitionTotalFreeMemSize(",
+                "sceKernelPartitionMaxFreeMemSize(",
+                "PSP_MEMORY_PARTITION_USER", prefix + "_total_free",
+                prefix + "_largest_block", prefix + "_memory_valid = 1"):
+            if token not in scope:
+                fail("minimal memory snapshot boundary lacks " + token)
+        if scope.find(prefix + "_memory_valid = 1") < \
+                scope.find(prefix + "_largest_block"):
+            fail("minimal memory snapshot is published before capture completes")
     if re.search(r"hook_import_bynid\([^\n]*(?:Alloc|Malloc|SysMem)", kernel,
             re.IGNORECASE):
         fail("minimal memory test introduces a global allocator hook")
