@@ -416,6 +416,39 @@ def check_sources(root):
             caller_ra.count('"[paf-dispatch-callers] validation=%d "') != 1 or \
             caller_ra.count('"[paf-dispatch-caller] index=%u "') != 1:
         fail("PAF dispatcher caller scan implementation is duplicated")
+    parent_summary = caller_ra.find('"[paf-parent-a0] validation=%d "')
+    parent_def = caller_ra.find('"[paf-parent-a0-def] "')
+    parent_control = caller_ra.find('"[paf-parent-control] "')
+    parent_reaching = caller_ra.find('"[paf-parent-a0-reaching] "')
+    if not caller_candidate < parent_summary < parent_def < parent_reaching < \
+            verbose_window or parent_control < parent_def:
+        fail("PAF parent A0 evidence is not prioritized before verbose output")
+    for token in ("unique_caller_pc = scan_pc",
+            "dispatcher_start + 0xD8",
+            "parent_end = unique_caller_pc + 4",
+            "unique_caller_pc - parent_start == 0x1E4",
+            "parent_end - owner->text_addr <=", "owner->text_size - 4",
+            "0x27BDFFC0", "0xAFB00030", "0x2403FFFF",
+            "0xAFBF0038", "0xAFB10034", "0x90820018",
+            "0x1440002E", "0x00808021", "0x94820012",
+            "0x30420001", "0x1440002A", "0x0E241B07",
+            "0xAE2364A0", "jal_matches == 1", "jump_matches == 0",
+            "_lw(parent_start +", "_lw(unique_caller_pc + 4)",
+            "parent_rt == 4", "parent_rd == 4",
+            "[paf-parent-a0-def]", "load ? parent_rs : 0",
+            "load ? (short)(parent_instruction &",
+            "[paf-parent-control]", "likely=%d",
+            "for (phase = 0; phase < 2; phase++)",
+            "phase == 0", "phase == 1",
+            "zeroCtrlMipsJumpTarget(", "zeroCtrlMipsBranchTarget(",
+            "[paf-parent-frame-candidate]",
+            "status=ambiguous a0_defs=%u"):
+        if token not in caller_ra:
+            fail("PAF parent A0 diagnostic lacks " + token)
+    if any(label in assembly for label in ("[paf-parent-a0]",
+            "[paf-parent-a0-def]", "[paf-parent-control]",
+            "[paf-parent-frame-candidate]", "[paf-parent-a0-reaching]")):
+        fail("PAF parent A0 diagnostic leaked into assembly helpers")
     sony_diag_start = writer.find("if (slide_diag.sony_start_trace.enabled)")
     bsman_diag_start = writer.find(
         "if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled)",

@@ -3336,6 +3336,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 unsigned int jal_matches = 0;
                                 unsigned int jump_matches = 0;
                                 unsigned int reported = 0;
+                                unsigned int unique_caller_pc = 0;
                                 int dispatcher_validation =
                                         dispatcher_start >= owner->text_addr &&
                                         dispatcher_offset <= owner->text_size - 0xD8;
@@ -3363,7 +3364,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                                 zeroCtrlMipsJumpTarget(
                                                     scan_pc, scan_word) ==
                                                     dispatcher_start) {
-                                            if (scan_opcode == 3) jal_matches++;
+                                            if (scan_opcode == 3) {
+                                                if (jal_matches == 0)
+                                                    unique_caller_pc = scan_pc;
+                                                jal_matches++;
+                                            }
                                             else jump_matches++;
                                         }
                                     }
@@ -3409,6 +3414,210 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                             zeroCtrlDiagnosticsText(line);
                                             reported++;
                                         }
+                                    }
+                                }
+                                {
+                                    static const unsigned int parent_offset[] = {
+                                        0x00, 0x04, 0x08, 0x0C, 0x10, 0x14,
+                                        0x18, 0x1C, 0x20, 0x24, 0x28
+                                    };
+                                    static const unsigned int parent_word[] = {
+                                        0x27BDFFC0, 0xAFB00030, 0x2403FFFF,
+                                        0xAFBF0038, 0xAFB10034, 0x90820018,
+                                        0x1440002E, 0x00808021, 0x94820012,
+                                        0x30420001, 0x1440002A
+                                    };
+                                    unsigned int parent_start =
+                                            dispatcher_start + 0xD8;
+                                    unsigned int parent_end = unique_caller_pc + 4;
+                                    unsigned int parent_index;
+                                    unsigned int a0_defs = 0;
+                                    int parent_validation = dispatcher_validation &&
+                                            jal_matches == 1 && jump_matches == 0 &&
+                                            unique_caller_pc >= parent_start &&
+                                            unique_caller_pc - parent_start == 0x1E4 &&
+                                            parent_start >= owner->text_addr &&
+                                            parent_end >= parent_start &&
+                                            parent_end - owner->text_addr <=
+                                                owner->text_size - 4;
+                                    for (parent_index = 0;
+                                            parent_validation && parent_index <
+                                                sizeof(parent_offset) /
+                                                    sizeof(parent_offset[0]);
+                                            parent_index++) {
+                                        if (_lw(parent_start +
+                                                parent_offset[parent_index]) !=
+                                                parent_word[parent_index])
+                                            parent_validation = 0;
+                                    }
+                                    if (parent_validation &&
+                                            (_lw(unique_caller_pc) != 0x0E241B07 ||
+                                                _lw(unique_caller_pc + 4) !=
+                                                    0xAE2364A0))
+                                        parent_validation = 0;
+                                    if (parent_validation) {
+                                        unsigned int pc;
+                                        for (pc = parent_start; pc <= parent_end;
+                                                pc += 4) {
+                                            unsigned int parent_instruction = _lw(pc);
+                                            unsigned int parent_opcode =
+                                                parent_instruction >> 26;
+                                            unsigned int parent_rt =
+                                                (parent_instruction >> 16) & 0x1F;
+                                            unsigned int parent_rd =
+                                                (parent_instruction >> 11) & 0x1F;
+                                            unsigned int parent_function =
+                                                parent_instruction & 0x3F;
+                                            int a0_immediate = parent_rt == 4 &&
+                                                (parent_opcode == 9 ||
+                                                    parent_opcode == 12 ||
+                                                    parent_opcode == 13 ||
+                                                    parent_opcode == 15 ||
+                                                    parent_opcode == 35 ||
+                                                    parent_opcode == 36 ||
+                                                    parent_opcode == 37);
+                                            int a0_register = parent_opcode == 0 &&
+                                                parent_rd == 4 &&
+                                                (parent_function == 0 ||
+                                                    parent_function == 4 ||
+                                                    parent_function == 33 ||
+                                                    parent_function == 37);
+                                            if (a0_immediate || a0_register) a0_defs++;
+                                        }
+                                    }
+                                    snprintf(line, sizeof(line),
+                                            "[paf-parent-a0] validation=%d "
+                                            "start=0x%08X caller=0x%08X a0_defs=%u\n",
+                                            parent_validation, parent_start,
+                                            unique_caller_pc, a0_defs);
+                                    zeroCtrlDiagnosticsText(line);
+                                    if (parent_validation) {
+                                        unsigned int pc;
+                                        unsigned int phase;
+                                        for (phase = 0; phase < 2; phase++) {
+                                        for (pc = parent_start; pc <= parent_end;
+                                                pc += 4) {
+                                            unsigned int parent_instruction = _lw(pc);
+                                            unsigned int parent_opcode =
+                                                parent_instruction >> 26;
+                                            unsigned int parent_rs =
+                                                (parent_instruction >> 21) & 0x1F;
+                                            unsigned int parent_rt =
+                                                (parent_instruction >> 16) & 0x1F;
+                                            unsigned int parent_rd =
+                                                (parent_instruction >> 11) & 0x1F;
+                                            unsigned int parent_function =
+                                                parent_instruction & 0x3F;
+                                            int a0_immediate = parent_rt == 4 &&
+                                                (parent_opcode == 9 ||
+                                                    parent_opcode == 12 ||
+                                                    parent_opcode == 13 ||
+                                                    parent_opcode == 15 ||
+                                                    parent_opcode == 35 ||
+                                                    parent_opcode == 36 ||
+                                                    parent_opcode == 37);
+                                            int a0_register = parent_opcode == 0 &&
+                                                parent_rd == 4 &&
+                                                (parent_function == 0 ||
+                                                    parent_function == 4 ||
+                                                    parent_function == 33 ||
+                                                    parent_function == 37);
+                                            int regimm_branch = parent_opcode == 1 &&
+                                                (parent_rt <= 3 ||
+                                                    (parent_rt >= 16 &&
+                                                        parent_rt <= 19));
+                                            int likely_branch =
+                                                (parent_opcode >= 20 &&
+                                                    parent_opcode <= 23) ||
+                                                (parent_opcode == 1 &&
+                                                    (parent_rt == 2 ||
+                                                        parent_rt == 3 ||
+                                                        parent_rt == 18 ||
+                                                        parent_rt == 19));
+                                            int conditional_branch = regimm_branch ||
+                                                (parent_opcode >= 4 &&
+                                                    parent_opcode <= 7) ||
+                                                (parent_opcode >= 20 &&
+                                                    parent_opcode <= 23);
+                                            int direct_jump = parent_opcode == 2 ||
+                                                parent_opcode == 3;
+                                            int register_jump = parent_opcode == 0 &&
+                                                (parent_function == 8 ||
+                                                    parent_function == 9);
+                                            if (phase == 0 &&
+                                                    (a0_immediate || a0_register)) {
+                                                int load = parent_opcode == 35 ||
+                                                    parent_opcode == 36 ||
+                                                    parent_opcode == 37;
+                                                snprintf(line, sizeof(line),
+                                                        "[paf-parent-a0-def] "
+                                                        "offset=0x%05X word=0x%08X "
+                                                        "opcode=0x%02X rs=%u rt=%u "
+                                                        "rd=%u function=0x%02X load=%d "
+                                                        "base=%u displacement=%d\n",
+                                                        pc - owner->text_addr,
+                                                        parent_instruction,
+                                                        parent_opcode, parent_rs,
+                                                        parent_rt, parent_rd,
+                                                        parent_function, load,
+                                                        load ? parent_rs : 0,
+                                                        load ? (short)(parent_instruction &
+                                                            0xFFFF) : 0);
+                                                zeroCtrlDiagnosticsText(line);
+                                            }
+                                            if (phase == 1 && (direct_jump ||
+                                                    conditional_branch ||
+                                                    register_jump)) {
+                                                unsigned int target = direct_jump ?
+                                                    zeroCtrlMipsJumpTarget(
+                                                        pc, parent_instruction) :
+                                                    (conditional_branch ?
+                                                        zeroCtrlMipsBranchTarget(
+                                                            pc, parent_instruction) : 0);
+                                                snprintf(line, sizeof(line),
+                                                        "[paf-parent-control] "
+                                                        "offset=0x%05X word=0x%08X "
+                                                        "opcode=0x%02X rs=%u rt=%u "
+                                                        "rd=%u function=0x%02X "
+                                                        "target=0x%08X likely=%d\n",
+                                                        pc - owner->text_addr,
+                                                        parent_instruction,
+                                                        parent_opcode, parent_rs,
+                                                        parent_rt, parent_rd,
+                                                        parent_function, target,
+                                                        likely_branch);
+                                                zeroCtrlDiagnosticsText(line);
+                                            }
+                                            if (phase == 1 && ((parent_opcode == 9 &&
+                                                    parent_rs == 29 &&
+                                                    parent_rt == 29) ||
+                                                    ((parent_opcode == 35 ||
+                                                        parent_opcode == 43) &&
+                                                        parent_rs == 29 &&
+                                                        parent_rt == 31) ||
+                                                    (parent_opcode == 0 &&
+                                                        parent_function == 8 &&
+                                                        parent_rs == 31))) {
+                                                snprintf(line, sizeof(line),
+                                                        "[paf-parent-frame-candidate] "
+                                                        "offset=0x%05X word=0x%08X "
+                                                        "opcode=0x%02X rs=%u rt=%u "
+                                                        "function=0x%02X displacement=%d\n",
+                                                        pc - owner->text_addr,
+                                                        parent_instruction,
+                                                        parent_opcode, parent_rs,
+                                                        parent_rt, parent_function,
+                                                        (short)(parent_instruction &
+                                                            0xFFFF));
+                                                zeroCtrlDiagnosticsText(line);
+                                            }
+                                        }
+                                        }
+                                        snprintf(line, sizeof(line),
+                                                "[paf-parent-a0-reaching] "
+                                                "status=ambiguous a0_defs=%u\n",
+                                                a0_defs);
+                                        zeroCtrlDiagnosticsText(line);
                                     }
                                 }
                             }
