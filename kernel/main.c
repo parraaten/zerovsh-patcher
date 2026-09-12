@@ -3306,7 +3306,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 direct_target,
                                 opcode == 3 && direct_target == bsman->activation_addr);
                         zeroCtrlDiagnosticsText(line);
-                        if (strcmp(owner->modname, "scePaf_Module") == 0 &&
+                        if ((which == 0 || caller_ra[1] != caller_ra[2]) &&
+                                strcmp(owner->modname, "scePaf_Module") == 0 &&
                                 owner->text_size >= 0x124 &&
                                 callsite >= owner->text_addr + 0xC0 &&
                                 callsite - owner->text_addr <=
@@ -3484,6 +3485,103 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                             load ? instruction_rs : 0,
                                             load ? (short)(instruction & 0xFFFF) : 0);
                                     zeroCtrlDiagnosticsText(line);
+                                }
+                            }
+                            {
+                                static const unsigned int fingerprint_offset[] = {
+                                    0x00, 0x04, 0x08, 0x0C, 0x10, 0x14,
+                                    0xA0, 0xA4,
+                                    0xBC, 0xC0, 0xC4, 0xC8, 0xCC, 0xD0, 0xD4
+                                };
+                                static const unsigned int fingerprint_word[] = {
+                                    0x27BDFFD0, 0xAFB00020, 0x2403FFFF,
+                                    0xAFBF002C, 0xAFB20028, 0xAFB10024,
+                                    0x0100F809, 0x8CE7002C,
+                                    0x8FBF002C, 0x8FB20028, 0x8FB10024,
+                                    0x8FB00020, 0x00601021, 0x03E00008,
+                                    0x27BD0030
+                                };
+                                unsigned int dispatcher_start = callsite - 0xA0;
+                                unsigned int dispatcher_offset =
+                                        dispatcher_start - owner->text_addr;
+                                unsigned int fingerprint_index;
+                                unsigned int jal_matches = 0;
+                                unsigned int jump_matches = 0;
+                                unsigned int reported = 0;
+                                int dispatcher_validation =
+                                        dispatcher_start >= owner->text_addr &&
+                                        dispatcher_offset <= owner->text_size - 0xD8;
+                                for (fingerprint_index = 0;
+                                        dispatcher_validation && fingerprint_index <
+                                            sizeof(fingerprint_offset) /
+                                                sizeof(fingerprint_offset[0]);
+                                        fingerprint_index++) {
+                                    unsigned int fingerprint_pc = dispatcher_start +
+                                            fingerprint_offset[fingerprint_index];
+                                    if (_lw(fingerprint_pc) !=
+                                            fingerprint_word[fingerprint_index])
+                                        dispatcher_validation = 0;
+                                }
+                                if (dispatcher_validation) {
+                                    unsigned int scan_offset;
+                                    for (scan_offset = 0;
+                                            scan_offset <= owner->text_size - 4;
+                                            scan_offset += 4) {
+                                        unsigned int scan_pc =
+                                                owner->text_addr + scan_offset;
+                                        unsigned int scan_word = _lw(scan_pc);
+                                        unsigned int scan_opcode = scan_word >> 26;
+                                        if ((scan_opcode == 2 || scan_opcode == 3) &&
+                                                zeroCtrlMipsJumpTarget(
+                                                    scan_pc, scan_word) ==
+                                                    dispatcher_start) {
+                                            if (scan_opcode == 3) jal_matches++;
+                                            else jump_matches++;
+                                        }
+                                    }
+                                }
+                                snprintf(line, sizeof(line),
+                                        "[paf-dispatch-callers] validation=%d "
+                                        "dispatcher=0x%08X offset=0x%08X "
+                                        "jal_matches=%u jump_matches=%u "
+                                        "loaded_words=%u truncated=%u\n",
+                                        dispatcher_validation, dispatcher_start,
+                                        dispatcher_offset, jal_matches, jump_matches,
+                                        owner->text_size / 4,
+                                        jal_matches + jump_matches > 8 ?
+                                            jal_matches + jump_matches - 8 : 0);
+                                zeroCtrlDiagnosticsText(line);
+                                if (dispatcher_validation) {
+                                    unsigned int scan_offset;
+                                    for (scan_offset = 0;
+                                            scan_offset <= owner->text_size - 4 &&
+                                                reported < 8;
+                                            scan_offset += 4) {
+                                        unsigned int scan_pc =
+                                                owner->text_addr + scan_offset;
+                                        unsigned int scan_word = _lw(scan_pc);
+                                        unsigned int scan_opcode = scan_word >> 26;
+                                        if ((scan_opcode == 2 || scan_opcode == 3) &&
+                                                zeroCtrlMipsJumpTarget(
+                                                    scan_pc, scan_word) ==
+                                                    dispatcher_start) {
+                                            int delay_valid = scan_offset <=
+                                                    owner->text_size - 8;
+                                            unsigned int delay = delay_valid ?
+                                                    _lw(scan_pc + 4) : 0;
+                                            snprintf(line, sizeof(line),
+                                                    "[paf-dispatch-caller] index=%u "
+                                                    "type=%s offset=0x%08X "
+                                                    "pc=0x%08X word=0x%08X "
+                                                    "delay=0x%08X delay_valid=%d\n",
+                                                    reported,
+                                                    scan_opcode == 3 ? "JAL" : "J",
+                                                    scan_offset, scan_pc, scan_word,
+                                                    delay, delay_valid);
+                                            zeroCtrlDiagnosticsText(line);
+                                            reported++;
+                                        }
+                                    }
                                 }
                             }
                         }

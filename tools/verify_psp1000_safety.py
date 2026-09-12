@@ -379,12 +379,29 @@ def check_sources(root):
             "instruction_rt == 16", "instruction_rt == 17",
             "instruction_rt == 18", "destination = tracked_immediate",
             "[paf-dispatch-frame-candidate]", "stack_adjust",
-            "ra_stack", "return_jump"):
+            "ra_stack", "return_jump",
+            "which == 0 || caller_ra[1] != caller_ra[2]",
+            "dispatcher_start = callsite - 0xA0",
+            "dispatcher_offset <= owner->text_size - 0xD8",
+            "0x27BDFFD0", "0xAFB00020", "0x2403FFFF",
+            "0xAFBF002C", "0xAFB20028", "0xAFB10024",
+            "0x0100F809", "0x8CE7002C", "0x8FBF002C",
+            "0x8FB20028", "0x8FB10024", "0x8FB00020",
+            "0x00601021", "0x03E00008", "0x27BD0030",
+            "_lw(fingerprint_pc)", "[paf-dispatch-callers]",
+            "validation=%d", "jal_matches=%u jump_matches=%u",
+            "loaded_words=%u truncated=%u", "scan_offset += 4",
+            "scan_opcode == 2 || scan_opcode == 3",
+            "zeroCtrlMipsJumpTarget(", "dispatcher_start",
+            "[paf-dispatch-caller]", "scan_opcode == 3 ? \"JAL\" : \"J\"",
+            "delay_valid = scan_offset <=", "_lw(scan_pc + 4)",
+            "reported < 8"):
         if token not in caller_ra:
             fail("PAF JALR window diagnostic lacks " + token)
     if any(label in assembly for label in ("[paf-dispatch-window-",
             "[paf-dispatch-control]", "[paf-jalr-t0-def]",
-            "[paf-dispatch-reg-def]", "[paf-dispatch-frame-candidate]")):
+            "[paf-dispatch-reg-def]", "[paf-dispatch-frame-candidate]",
+            "[paf-dispatch-callers]", "[paf-dispatch-caller]")):
         fail("PAF JALR window diagnostic leaked into assembly helpers")
     sony_diag_start = writer.find("if (slide_diag.sony_start_trace.enabled)")
     bsman_diag_start = writer.find(
