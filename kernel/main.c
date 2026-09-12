@@ -6722,7 +6722,6 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			strcmp(psp1000StateZero15To14Compat, "Enabled") == 0;
 		slide_diag.bsman.post_vsh_compat_enabled =
 			slide_diag.bsman.activation_enabled &&
-			slide_diag.bsman.state_zero_15to14_compat_enabled &&
 			strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0;
 		slide_diag.bsman.post_impose_vcall_enabled =
 			slide_diag.bsman.post_vsh_compat_enabled &&

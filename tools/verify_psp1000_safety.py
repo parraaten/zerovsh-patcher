@@ -1217,10 +1217,11 @@ def check_sources(root):
         kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
             "post_vsh_compat_enabled ="))]
     for gate in ("slide_diag.bsman.activation_enabled",
-            "slide_diag.bsman.state_zero_15to14_compat_enabled",
             'strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0'):
         if gate not in t31_gate:
             fail("T31 impose compatibility gating lacks " + gate)
+    if "state_zero_15to14_compat_enabled" in t31_gate:
+        fail("T31 impose compatibility still depends on the T30 experiment")
     if "[vsh-impose-param-8000000d-compat]" not in writer:
         fail("T31 deferred impose diagnostic is missing")
     for field in ("post_vsh_argument_addr", "post_vsh_compat_mode_addr",
