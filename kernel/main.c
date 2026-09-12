@@ -387,9 +387,10 @@ typedef struct {
     unsigned int masked_paf_c59fc3d0_second_replacement;
     int activation_wide_enabled, activation_wide_validation;
     int activation_wide_install, activation_wide_cache_sync;
-    unsigned int activation_wide_leaf_addr[10], activation_wide_leaf_size[10];
-    unsigned int activation_wide_scalar_addr[52];
+    unsigned int activation_wide_leaf_addr[11], activation_wide_leaf_size[11];
+    unsigned int activation_wide_scalar_addr[54];
     unsigned int activation_wide_original[6], activation_wide_replacement[6];
+    unsigned int activation_wide_pre_original, activation_wide_pre_replacement;
     unsigned int post_paf_entry_counter_addr[2], post_vsh_entry_hits_addr;
     unsigned int post_original[12], post_replacement[6];
     unsigned int state_zero_leaf_addr[8], state_zero_leaf_size[8];
@@ -2059,21 +2060,21 @@ int zeroCtrlRegisterActivationWide(
     k1 = pspSdkSetK1(0);
     memcpy(&copied, registration, sizeof(copied));
     pspSdkSetK1(k1);
-    for (wide_index = 0; wide_index < 10; wide_index++) {
+    for (wide_index = 0; wide_index < 11; wide_index++) {
         if (!zeroCtrlRegistrationLeafValid(helper, copied.leaf_addr[wide_index],
                     copied.leaf_end_addr[wide_index])) return 0;
     }
-    for (wide_index = 0; wide_index < 52; wide_index++) {
+    for (wide_index = 0; wide_index < 54; wide_index++) {
         if (!zeroCtrlVshModuleRangeValid(helper,
                     copied.scalar_addr[wide_index], 4)) return 0;
     }
-    for (wide_index = 0; wide_index < 10; wide_index++) {
+    for (wide_index = 0; wide_index < 11; wide_index++) {
         bsman->activation_wide_leaf_addr[wide_index] =
                 copied.leaf_addr[wide_index];
         bsman->activation_wide_leaf_size[wide_index] =
                 copied.leaf_end_addr[wide_index] - copied.leaf_addr[wide_index];
     }
-    for (wide_index = 0; wide_index < 52; wide_index++)
+    for (wide_index = 0; wide_index < 54; wide_index++)
         bsman->activation_wide_scalar_addr[wide_index] =
                 copied.scalar_addr[wide_index];
     return 1;
@@ -3145,6 +3146,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
     int observed_wide_early_status[4] = { -1, -1, -1, -1 };
+    unsigned int observed_wide_02374143 = 0;
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
     int observed_field12c_write_install_status = 0;
@@ -3208,6 +3210,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         bsman->activation_wide_install ||
                     observed_wide_early_status[3] !=
                         bsman->activation_wide_cache_sync;
+            unsigned int pre02374143 = registered ? zeroCtrlReadHelperCounter(
+                    bsman->activation_wide_scalar_addr[53]) : 0;
             static const unsigned int scalar_index[18] = {
                 /* triplets: hits/zero/nonzero; loop is hits/back/exit. */
                 0, 1, 2, 11, 15, 16, 20, 24, 25,
@@ -3220,12 +3224,13 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     if (current[i] != observed_wide_early[i]) changed = 1;
                 }
             }
+            if (pre02374143 != observed_wide_02374143) changed = 1;
             if (changed) {
                 snprintf(line, sizeof(line),
                         "[activation-wide-early] registered=%d validation=%d "
                         "install=%d cache_sync=%d compare=%u/%u/%u "
                         "662=%u/%u/%u 440=%u/%u/%u fcf=%u/%u/%u "
-                        "loop=%u/%u/%u 090=%u/%u/%u\n",
+                        "loop=%u/%u/%u 090=%u/%u/%u pre02374143=%u\n",
                         registered, bsman->activation_wide_validation,
                         bsman->activation_wide_install,
                         bsman->activation_wide_cache_sync,
@@ -3234,7 +3239,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         current[6], current[7], current[8],
                         current[9], current[10], current[11],
                         current[12], current[13], current[14],
-                        current[15], current[16], current[17]);
+                        current[15], current[16], current[17], pre02374143);
                 zeroCtrlDiagnosticsText(line);
                 memcpy(observed_wide_early, current, sizeof(current));
                 observed_wide_early_status[0] = registered;
@@ -3243,6 +3248,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 observed_wide_early_status[2] = bsman->activation_wide_install;
                 observed_wide_early_status[3] =
                         bsman->activation_wide_cache_sync;
+                observed_wide_02374143 = pre02374143;
             }
         }
         if (slide_diag.sony_start_trace.enabled) {
@@ -5316,7 +5322,7 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
             };
             static const unsigned int wide_helper[6] = { 0, 1, 3, 5, 7, 8 };
             unsigned int wide_index;
-            for (wide_index = 0; wide_index < 10; wide_index++)
+            for (wide_index = 0; wide_index < 11; wide_index++)
                 if (!zeroCtrlVshModuleRangeValid(helper,
                         bsman->activation_wide_leaf_addr[wide_index],
                         bsman->activation_wide_leaf_size[wide_index])) return;
@@ -5336,10 +5342,24 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                                 wide_helper[wide_index]] & 0xF0000000) ||
                         zeroCtrlMipsJumpTarget(site,
                             bsman->activation_wide_replacement[wide_index]) !=
-                            bsman->activation_wide_leaf_addr[
+                        bsman->activation_wide_leaf_addr[
                                 wide_helper[wide_index]]) return;
             }
-            if (zeroCtrlMipsBranchTarget(bsman->activation_addr + 0x1F8,
+            bsman->activation_wide_pre_original =
+                    _lw(bsman->activation_addr + 0x1E8);
+            bsman->activation_wide_pre_replacement = 0x0C000000 |
+                    ((bsman->activation_wide_leaf_addr[10] >> 2) & 0x03FFFFFF);
+            if ((bsman->activation_wide_pre_original >> 26) != 3 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1E8,
+                        bsman->activation_wide_pre_original) !=
+                            bsman->activation_addr - 0x9304 + 0x2A168 ||
+                    _lw(bsman->activation_addr + 0x1EC) != 0 ||
+                    zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x1E8,
+                        bsman->activation_wide_pre_replacement) !=
+                            bsman->activation_wide_leaf_addr[10] ||
+                    ((bsman->activation_addr + 0x1F0) & 0xF0000000) !=
+                        (bsman->activation_wide_leaf_addr[10] & 0xF0000000) ||
+                    zeroCtrlMipsBranchTarget(bsman->activation_addr + 0x1F8,
                         bsman->activation_wide_original[0]) !=
                             bsman->activation_addr + 0x22C ||
                     zeroCtrlMipsJumpTarget(bsman->activation_addr + 0x200,
@@ -5642,7 +5662,7 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 bsman->masked_paf_c59fc3d0_second_nonzero_target_addr);
         if (bsman->activation_wide_enabled) {
             unsigned int wide_index;
-            for (wide_index = 0; wide_index < 52; wide_index++)
+            for (wide_index = 0; wide_index < 54; wide_index++)
                 _sw(0, bsman->activation_wide_scalar_addr[wide_index]);
             /* Compare: zero exits the body; nonzero enters it. */
             _sw(bsman->activation_addr + 0x22C,
@@ -5671,8 +5691,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                     bsman->activation_wide_scalar_addr[43]);
             _sw(bsman->activation_addr + 0x234,
                     bsman->activation_wide_scalar_addr[45]);
+            _sw(bsman->activation_addr - 0x9304 + 0x2A168,
+                    bsman->activation_wide_scalar_addr[52]);
             /* Routing and counters must be coherent before any owner is live. */
-            for (wide_index = 0; wide_index < 52; wide_index++)
+            for (wide_index = 0; wide_index < 54; wide_index++)
                 sceKernelDcacheWritebackInvalidateRange(
                         (const void *)bsman->activation_wide_scalar_addr[
                             wide_index], 4);
@@ -5870,6 +5892,8 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 0x1F8, 0x200, 0x20C, 0x214, 0x21C, 0x22C
             };
             unsigned int wide_index;
+            _sw(bsman->activation_wide_pre_replacement,
+                    bsman->activation_addr + 0x1E8);
             for (wide_index = 0; wide_index < 6; wide_index++)
                 _sw(bsman->activation_wide_replacement[wide_index],
                         bsman->activation_addr + wide_offset[wide_index]);
@@ -5978,6 +6002,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
                 0x1F8, 0x200, 0x20C, 0x214, 0x21C, 0x22C
             };
             unsigned int wide_index;
+            sceKernelDcacheWritebackInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1E8), 4);
+            sceKernelIcacheInvalidateRange(
+                    (const void *)(bsman->activation_addr + 0x1E8), 4);
             for (wide_index = 0; wide_index < 6; wide_index++) {
                 sceKernelDcacheWritebackInvalidateRange(
                         (const void *)(bsman->activation_addr +

@@ -1294,9 +1294,9 @@ def check_sources(root):
     if "PSP1000ActivationWideTrace = Disabled" not in sample_config or \
             '"PSP1000ActivationWideTrace", "Disabled"' not in kernel:
         fail("T40 wide activation trace is not default-disabled")
-    if "scalar_addr[52]" not in bsman_header or \
-            "leaf_addr[10]" not in bsman_header or \
-            "sizeof(ZeroCtrlActivationWideRegistration) == 288" not in bsman_header:
+    if "scalar_addr[54]" not in bsman_header or \
+            "leaf_addr[11]" not in bsman_header or \
+            "sizeof(ZeroCtrlActivationWideRegistration) == 304" not in bsman_header:
         fail("optional T40 registration fields are incomplete")
     for token in ("copied.leaf_addr[wide_index]",
             "copied.scalar_addr[wide_index], 4",
@@ -1335,7 +1335,7 @@ def check_sources(root):
             "static const unsigned int offset[8]" in kernel:
         fail("masked PAF offset arrays shadow the installer's offset local")
     t40_initialize = kernel.find(
-            "for (wide_index = 0; wide_index < 52; wide_index++)\n"
+            "for (wide_index = 0; wide_index < 54; wide_index++)\n"
             "                _sw(0, bsman->activation_wide_scalar_addr[wide_index]);")
     t40_scalar_sync = kernel.find(
             "/* Routing and counters must be coherent before any owner is live. */",
@@ -1358,7 +1358,7 @@ def check_sources(root):
             t40_install_flag < t40_cache_flag):
         fail("T40 scalar initialization/cache and code commit ordering is unsafe")
     scalar_sync = kernel[t40_scalar_sync:t40_patch_write]
-    if "for (wide_index = 0; wide_index < 52; wide_index++)" not in scalar_sync or \
+    if "for (wide_index = 0; wide_index < 54; wide_index++)" not in scalar_sync or \
             "sceKernelDcacheWritebackInvalidateRange(" not in scalar_sync or \
             "activation_wide_scalar_addr[\n                            wide_index], 4" not in scalar_sync or \
             "sceKernelIcacheInvalidateRange" in scalar_sync:
@@ -1368,6 +1368,41 @@ def check_sources(root):
             code_commit or "sceKernelDcacheWritebackInvalidateRange(" not in \
             code_commit or "sceKernelIcacheInvalidateRange(" not in code_commit:
         fail("T40 does not synchronize all six code patches before success")
+    t40_validation = kernel[kernel.find("if (bsman->activation_wide_enabled) {",
+            kernel.find("static void zeroCtrlInstallBSManClosedShim")):
+            t40_initialize]
+    for token in ("bsman->activation_wide_pre_original =",
+            "_lw(bsman->activation_addr + 0x1E8)",
+            "(bsman->activation_wide_pre_original >> 26) != 3",
+            "bsman->activation_addr - 0x9304 + 0x2A168",
+            "_lw(bsman->activation_addr + 0x1EC) != 0",
+            "bsman->activation_wide_pre_replacement = 0x0C000000",
+            "bsman->activation_wide_leaf_addr[10]"):
+        if token not in t40_validation:
+            fail("T40 +0x1E8 entry validation lacks " + token)
+    pre_scalar_init = kernel.find(
+            "_sw(bsman->activation_addr - 0x9304 + 0x2A168,\n"
+            "                    bsman->activation_wide_scalar_addr[52]);",
+            t40_initialize)
+    pre_patch = kernel.find("_sw(bsman->activation_wide_pre_replacement,",
+            t40_scalar_sync)
+    pre_code_sync = kernel.find(
+            "(const void *)(bsman->activation_addr + 0x1E8), 4);",
+            pre_patch)
+    if min(pre_scalar_init, pre_patch, pre_code_sync) < 0 or not (
+            pre_scalar_init < t40_scalar_sync < pre_patch < pre_code_sync <
+            t40_install_flag):
+        fail("T40 +0x1E8 scalar/patch cache ordering is unsafe")
+    entry_helper = assembly[assembly.find("zeroCtrlWide02374143Entry:"):
+            assembly.find("zeroCtrlWide02374143EntryEnd:")]
+    for token in ("sw $t0, 0($sp)", "sw $t1, 4($sp)",
+            "zeroCtrlWide02374143Hits", "zeroCtrlWide02374143Target",
+            "jr $t0", "lw $t0, -8($sp)"):
+        if token not in entry_helper:
+            fail("T40 +0x1E8 entry helper lacks " + token)
+    if any(token in entry_helper for token in ("$ra", "$v0", "$a0", "$a1",
+            "$a2", "$a3", "$s0", "jal", "sce", "malloc")):
+        fail("T40 +0x1E8 entry helper changes live state or performs a call/I/O")
     for word in ("0x1040000C", "0x1040FFF2", "0x26100001",
             "0x8FBF001C", "0x00002021"):
         if word not in kernel:
@@ -1402,6 +1437,7 @@ def check_sources(root):
     for token in ("registered=%d validation=%d", "install=%d cache_sync=%d",
             "compare=%u/%u/%u", "662=%u/%u/%u", "440=%u/%u/%u",
             "fcf=%u/%u/%u", "loop=%u/%u/%u", "090=%u/%u/%u",
+            "pre02374143=%u", "activation_wide_scalar_addr[53]",
             "scalar_index[18]", "zeroCtrlReadHelperCounter(",
             "memcpy(observed_wide_early, current, sizeof(current))"):
         if token not in early:

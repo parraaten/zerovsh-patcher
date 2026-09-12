@@ -1716,6 +1716,27 @@ WIDE_CALL zeroCtrlWideFCFCall, zeroCtrlWideFCFReturn, zeroCtrlWideFCFTarget, zer
 WIDE_DECISION zeroCtrlActivationWideLoopTrace, zeroCtrlWideLoopHits, zeroCtrlWideLoopBack, zeroCtrlWideLoopExit, zeroCtrlWideLoopFirst, zeroCtrlWideLoopLast, zeroCtrlWideLoopChanges, zeroCtrlWideLoopBackTarget, zeroCtrlWideLoopExitTarget
 WIDE_CALL zeroCtrlWide090Call, zeroCtrlWide090Return, zeroCtrlWide090Target, zeroCtrlWide090RA, zeroCtrlWide090Resume, zeroCtrlWide090Hits, zeroCtrlWide090First, zeroCtrlWide090Last, zeroCtrlWide090Changes, zeroCtrlWide090Zero, zeroCtrlWide090Nonzero
 
+/* Entry-only boundary for the natural PAF NID 0x02374143 call. */
+.globl zeroCtrlWide02374143Entry
+.globl zeroCtrlWide02374143EntryEnd
+.ent zeroCtrlWide02374143Entry, 0
+zeroCtrlWide02374143Entry:
+    addiu $sp, $sp, -8
+    sw $t0, 0($sp)
+    sw $t1, 4($sp)
+    lui $t0, %hi(zeroCtrlWide02374143Hits)
+    lw $t1, %lo(zeroCtrlWide02374143Hits)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(zeroCtrlWide02374143Hits)($t0)
+    lui $t0, %hi(zeroCtrlWide02374143Target)
+    lw $t0, %lo(zeroCtrlWide02374143Target)($t0)
+    lw $t1, 4($sp)
+    addiu $sp, $sp, 8
+    jr $t0
+    lw $t0, -8($sp)
+zeroCtrlWide02374143EntryEnd:
+.end zeroCtrlWide02374143Entry
+
 .section .bss
 .align 2
 .macro WIDE_SCALAR name
@@ -1753,6 +1774,8 @@ WIDE_SCALAR zeroCtrlWideLoopChanges
 WIDE_SCALAR zeroCtrlWideLoopBackTarget
 WIDE_SCALAR zeroCtrlWideLoopExitTarget
 WIDE_CALL_SCALARS 090
+WIDE_SCALAR zeroCtrlWide02374143Target
+WIDE_SCALAR zeroCtrlWide02374143Hits
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits

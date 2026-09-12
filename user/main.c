@@ -284,6 +284,7 @@ WIDE_HELPER_DECL(zeroCtrlWide440Call); WIDE_HELPER_DECL(zeroCtrlWide440Return);
 WIDE_HELPER_DECL(zeroCtrlWideFCFCall); WIDE_HELPER_DECL(zeroCtrlWideFCFReturn);
 WIDE_HELPER_DECL(zeroCtrlActivationWideLoopTrace);
 WIDE_HELPER_DECL(zeroCtrlWide090Call); WIDE_HELPER_DECL(zeroCtrlWide090Return);
+WIDE_HELPER_DECL(zeroCtrlWide02374143Entry);
 #undef WIDE_HELPER_DECL
 #define WIDE_SCALAR_DECL(name) extern volatile unsigned int name
 WIDE_SCALAR_DECL(zeroCtrlWideCompareHits); WIDE_SCALAR_DECL(zeroCtrlWideCompareZero);
@@ -301,6 +302,7 @@ WIDE_SCALAR_DECL(zeroCtrlWideLoopHits); WIDE_SCALAR_DECL(zeroCtrlWideLoopBack);
 WIDE_SCALAR_DECL(zeroCtrlWideLoopExit); WIDE_SCALAR_DECL(zeroCtrlWideLoopFirst);
 WIDE_SCALAR_DECL(zeroCtrlWideLoopLast); WIDE_SCALAR_DECL(zeroCtrlWideLoopChanges);
 WIDE_SCALAR_DECL(zeroCtrlWideLoopBackTarget); WIDE_SCALAR_DECL(zeroCtrlWideLoopExitTarget);
+WIDE_SCALAR_DECL(zeroCtrlWide02374143Target); WIDE_SCALAR_DECL(zeroCtrlWide02374143Hits);
 #undef WIDE_CALL_DECL
 #undef WIDE_SCALAR_DECL
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
@@ -848,6 +850,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		activationWideRegistration.leaf_end_addr[8] = (u32)zeroCtrlWide090CallEnd;
 		activationWideRegistration.leaf_addr[9] = (u32)zeroCtrlWide090Return;
 		activationWideRegistration.leaf_end_addr[9] = (u32)zeroCtrlWide090ReturnEnd;
+		activationWideRegistration.leaf_addr[10] = (u32)zeroCtrlWide02374143Entry;
+		activationWideRegistration.leaf_end_addr[10] = (u32)zeroCtrlWide02374143EntryEnd;
 		activationWideRegistration.scalar_addr[0] = (u32)&zeroCtrlWideCompareHits;
 		activationWideRegistration.scalar_addr[1] = (u32)&zeroCtrlWideCompareZero;
 		activationWideRegistration.scalar_addr[2] = (u32)&zeroCtrlWideCompareNonzero;
@@ -900,6 +904,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		activationWideRegistration.scalar_addr[49] = (u32)&zeroCtrlWide090Changes;
 		activationWideRegistration.scalar_addr[50] = (u32)&zeroCtrlWide090Zero;
 		activationWideRegistration.scalar_addr[51] = (u32)&zeroCtrlWide090Nonzero;
+		activationWideRegistration.scalar_addr[52] = (u32)&zeroCtrlWide02374143Target;
+		activationWideRegistration.scalar_addr[53] = (u32)&zeroCtrlWide02374143Hits;
 		zeroCtrlRegisterActivationWide(&activationWideRegistration);
 	}
 	
