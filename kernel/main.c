@@ -162,6 +162,9 @@ typedef struct {
     unsigned int stub_addr;
     unsigned int counter_addr;
     unsigned int hit_count;
+    unsigned int request_addr;
+    unsigned int original_target_addr;
+    unsigned int functional_mode_addr;
     int validation;
     int patch_applied;
     int cache_sync;
@@ -582,6 +585,10 @@ typedef struct {
 
 typedef struct {
     int armed;
+    int functional_enabled;
+    volatile int functional_request_armed;
+    volatile int functional_trigger_consumed;
+    volatile int functional_button_thread;
     int minimal_memory_test;
     volatile int minimal_probe_memory_valid;
     unsigned int minimal_probe_total_free;
@@ -1313,7 +1320,11 @@ static void zeroCtrlScanVshGlobalReferences(unsigned int text_addr,
 }
 
 int zeroCtrlIsPsp1000SlideExperimentEnabled(void) {
-    return slide_diag.armed;
+    return slide_diag.armed || slide_diag.functional_enabled;
+}
+
+int zeroCtrlIsPsp1000SlideFunctionalEnabled(void) {
+    return slide_diag.functional_enabled;
 }
 
 void zeroCtrlRegisterSonyStartTrace(
@@ -2123,10 +2134,13 @@ void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int text_size, unsigned int module_start_addr,
         unsigned int elf_entry_addr, unsigned int target,
-        unsigned int stub_58d4, unsigned int stub_13f6c,
+        unsigned int stub_58d4, unsigned int stub_58d4_end,
+        unsigned int stub_13f6c,
         unsigned int stub_14020, unsigned int counter_58d4,
         unsigned int counter_13f6c, unsigned int counter_14020,
-        unsigned int global_stub, unsigned int global_counter) {
+        unsigned int global_stub, unsigned int global_counter,
+        unsigned int request_58d4, unsigned int original_target_58d4,
+        unsigned int functional_mode_58d4) {
     const unsigned int stubs[VSH_TRIGGER_COUNT] = {
         stub_58d4, stub_13f6c, stub_14020
     };
@@ -2198,6 +2212,11 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
 
                 evidence->stub_addr = stubs[i];
                 evidence->counter_addr = counters[i];
+                if (i == 0) {
+                    evidence->request_addr = request_58d4;
+                    evidence->original_target_addr = original_target_58d4;
+                    evidence->functional_mode_addr = functional_mode_58d4;
+                }
                 if (!(slide_diag.trigger_mode & (1U << i))) continue;
                 if (text_size < 4 ||
                         vsh_trigger_offsets[i] > text_size - 4 ||
@@ -2213,8 +2232,17 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                 evidence->original_word = word;
                 evidence->original_target = original_target;
                 if ((word >> 26) == 3 && original_target == target &&
-                        zeroCtrlVshModuleRangeValid(helper, stubs[i], 24) &&
+                        (i != 0 || stub_58d4_end > stub_58d4) &&
+                        zeroCtrlVshModuleRangeValid(helper, stubs[i],
+                            i == 0 ? stub_58d4_end - stub_58d4 : 24) &&
                         zeroCtrlVshModuleRangeValid(helper, counters[i], 4) &&
+                        (i != 0 ||
+                            (zeroCtrlVshModuleRangeValid(helper,
+                                evidence->request_addr, 4) &&
+                            zeroCtrlVshModuleRangeValid(helper,
+                                evidence->original_target_addr, 4) &&
+                            zeroCtrlVshModuleRangeValid(helper,
+                                evidence->functional_mode_addr, 4))) &&
                         (stubs[i] & 3) == 0 &&
                         ((callsite + 4) & 0xF0000000) ==
                                 (stubs[i] & 0xF0000000)) {
@@ -2229,6 +2257,21 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
 
             /* Commit pass: selected callsites are all valid or none are written. */
             if (all_selected_valid) {
+                ZeroCtrlVshTriggerEvidence *request_evidence =
+                        &slide_diag.triggers[0];
+                if (slide_diag.trigger_mode & ZERO_TRIGGER_58D4) {
+                    _sw(0, request_evidence->request_addr);
+                    _sw(request_evidence->original_target,
+                            request_evidence->original_target_addr);
+                    _sw(slide_diag.functional_enabled ? 1 : 0,
+                            request_evidence->functional_mode_addr);
+                    sceKernelDcacheWritebackInvalidateRange(
+                            (const void *)request_evidence->request_addr, 4);
+                    sceKernelDcacheWritebackInvalidateRange(
+                            (const void *)request_evidence->original_target_addr, 4);
+                    sceKernelDcacheWritebackInvalidateRange(
+                            (const void *)request_evidence->functional_mode_addr, 4);
+                }
                 for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
                     ZeroCtrlVshTriggerEvidence *evidence =
                             &slide_diag.triggers[i];
@@ -3245,6 +3288,38 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     slide_diag.bsman.activation_hits_addr);
             unsigned int state;
             zeroCtrlRefreshSonyStartTrace();
+            if (slide_diag.functional_enabled &&
+                    !(minimal_memory_written & 0x0080)) {
+                zeroCtrlDiagnosticsText("[psp1000-functional] enabled=1\n");
+                minimal_memory_written |= 0x0080;
+            }
+            if (slide_diag.functional_button_thread &&
+                    !(minimal_memory_written & 0x0100)) {
+                zeroCtrlDiagnosticsText(
+                        "[psp1000-functional] button_thread=1\n");
+                minimal_memory_written |= 0x0100;
+            }
+            if (slide_diag.functional_request_armed &&
+                    !(minimal_memory_written & 0x0200)) {
+                zeroCtrlDiagnosticsText(
+                        "[psp1000-functional] request_armed=1\n");
+                minimal_memory_written |= 0x0200;
+            }
+            if (slide_diag.functional_request_armed &&
+                    slide_diag.triggers[0].request_addr &&
+                    *(volatile unsigned int *)
+                        slide_diag.triggers[0].request_addr == 0 &&
+                    !(minimal_memory_written & 0x0400)) {
+                slide_diag.functional_trigger_consumed = 1;
+                zeroCtrlDiagnosticsText(
+                        "[psp1000-functional] trigger_consumed=1\n");
+                minimal_memory_written |= 0x0400;
+            }
+            if (slide_diag.saw_probe && !(minimal_memory_written & 0x0800)) {
+                zeroCtrlDiagnosticsText(
+                        "[psp1000-functional] slide_module_seen=1\n");
+                minimal_memory_written |= 0x0800;
+            }
             if (slide_diag.saw_rco_request && !observed_rco_request) {
                 observed_rco_request = 1;
                 fast_poll_until = elapsed + 2000000;
@@ -3266,6 +3341,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             if (activation_hits && !(minimal_memory_written & 0x10)) {
                 zeroCtrlDiagnosticsText(
                         "[checkpoint-fast] activation_callback_entered\n");
+                snprintf(line, sizeof(line),
+                        "[psp1000-functional] activation_hits=%u\n",
+                        activation_hits);
+                zeroCtrlDiagnosticsText(line);
                 minimal_memory_written |= 0x10;
             }
             if (trace->entry_seen && !(minimal_memory_written & 0x20)) {
@@ -7115,6 +7194,12 @@ int OnModuleStart(SceModule2 *mod) {
                 slide_diag.previous_handler_returned = 1;
                 slide_diag.module_start_addr = mod->module_start_func;
                 slide_diag.elf_entry_addr = mod->entry_addr;
+                if (slide_diag.functional_enabled) {
+                        hook_import_bynid(mod, "sceBSMan", 0x23E3A9B6,
+                                zeroCtrlDummyFunc, 1);
+                        hook_import_bynid(mod, "sceVshBridge", 0x639C3CB3,
+                                zeroCtrlGetParam, 1);
+                }
                 zeroCtrlInstallSonyStartTrace(mod);
                 zeroCtrlInstallBSManClosedShim(mod);
                 slide_diag.start_callback_returning = 1;
@@ -7337,10 +7422,20 @@ void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 		sceCtrlReadLatch(&data);
 	
 		if(zeroCtrlGetSlideState() == ZERO_SLIDE_STOPPED) {
-			if((data.uiMake & ALL_CTRL) == slideStartBtn) {     
-				zeroCtrlWriteDebug("Starting slide\n\n");		
-				
-				zeroCtrlSetSlideState(ZERO_SLIDE_STARTING); 								
+			if((data.uiMake & ALL_CTRL) == slideStartBtn) {
+				int request_ready = !slide_diag.functional_enabled;
+				zeroCtrlWriteDebug("Starting slide\n\n");
+				if (slide_diag.functional_enabled &&
+						slide_diag.triggers[0].validation &&
+						slide_diag.triggers[0].request_addr) {
+					_sw(1, slide_diag.triggers[0].request_addr);
+					sceKernelDcacheWritebackInvalidateRange(
+							(const void *)slide_diag.triggers[0].request_addr, 4);
+					slide_diag.functional_request_armed = 1;
+					request_ready = 1;
+				}
+				if (request_ready)
+					zeroCtrlSetSlideState(ZERO_SLIDE_STARTING);
 			}
 		} else if(zeroCtrlGetSlideState() == ZERO_SLIDE_STARTED) {
 			if((data.uiMake & ALL_CTRL) == slideStopBtn) {         		
@@ -7377,6 +7472,8 @@ void zeroCtrlCreateBtnThread(void) {
 	if(thid >= 0) {
 		if (sceKernelStartThread(thid, 0, NULL) < 0) {
 			sceKernelDeleteThread(thid);
+		} else if (slide_diag.functional_enabled) {
+			slide_diag.functional_button_thread = 1;
 		}
 	} else {
 		//zeroCtrlWriteDebug("Thread ID: 0x%08X\n", thid);	
@@ -7479,22 +7576,29 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			strcmp(legacySelective58D4, "Enabled") == 0)
 		strcpy(psp1000SlideTriggerMode, "DangerousCaller58D4");
 	if (model == 0 && strcmp(psp1000SlidePlugin, "Enabled") == 0 &&
-			strcmp(useSlide, "Disabled") == 0) {
+			(strcmp(useSlide, "Disabled") == 0 ||
+			 (devkit == 0x06060110 && strcmp(useSlide, "Enabled") == 0))) {
 		memset(&slide_diag, 0, sizeof(slide_diag));
 		slide_diag.armed = 1;
+		slide_diag.functional_enabled =
+			model == 0 && devkit == 0x06060110 &&
+			strcmp(psp1000SlidePlugin, "Enabled") == 0 &&
+			strcmp(useSlide, "Enabled") == 0;
 		slide_diag.minimal_memory_test =
 			model == 0 && devkit == 0x06060110 &&
 			strcmp(psp1000SlidePlugin, "Enabled") == 0 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0;
 		slide_diag.global_predicate_enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000SlideTriggerMode,
 				"DangerousGlobalPredicate6F84") == 0;
-		slide_diag.trigger_mode =
-			devkit == 0x06060110 &&
+		slide_diag.trigger_mode = slide_diag.functional_enabled ?
+			ZERO_TRIGGER_58D4 :
+			(devkit == 0x06060110 &&
 			!slide_diag.global_predicate_enabled ?
 			zeroCtrlParseTriggerMode(psp1000SlideTriggerMode) :
-			ZERO_TRIGGER_DISABLED;
+			ZERO_TRIGGER_DISABLED);
 		slide_diag.sony_start_trace.enabled =
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
@@ -7509,16 +7613,21 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 					"DangerousCaller58D4") == 0;
 		slide_diag.bsman.activation_enabled =
 			devkit == 0x06060110 &&
-			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
-			strcmp(psp1000ActivationTrace, "Enabled") == 0 &&
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000Diagnostics, "Enabled") == 0) &&
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000ActivationTrace, "Enabled") == 0) &&
 			strcmp(psp1000BSManClosedShim, "Disabled") == 0 &&
-			strcmp(psp1000SlideTriggerMode,
-					"DangerousCaller58D4") == 0;
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000SlideTriggerMode,
+					"DangerousCaller58D4") == 0);
 		slide_diag.bsman.paf_compat_enabled =
 			slide_diag.bsman.activation_enabled &&
-			strcmp(psp1000PafPresentCompat, "Enabled") == 0;
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000PafPresentCompat, "Enabled") == 0);
 		slide_diag.bsman.bsman_not_linked_compat_enabled =
 			slide_diag.bsman.activation_enabled &&
+			!slide_diag.functional_enabled &&
 			strcmp(psp1000BSManNotLinkedCompat, "Enabled") == 0;
 		slide_diag.bsman.consumer_14020_compat_enabled =
 			devkit == 0x06060110 &&
@@ -7540,12 +7649,16 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			strcmp(psp1000PafCapabilityMaskCompat, "Enabled") == 0;
 		slide_diag.bsman.state_zero_15to14_compat_enabled =
 			devkit == 0x06060110 &&
-			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
-			strcmp(psp1000SlideTriggerMode,
-					"DangerousCaller58D4") == 0 &&
-			strcmp(psp1000StateZero15To14Compat, "Enabled") == 0;
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000Diagnostics, "Enabled") == 0) &&
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000SlideTriggerMode,
+					"DangerousCaller58D4") == 0) &&
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000StateZero15To14Compat, "Enabled") == 0);
 		slide_diag.bsman.post_vsh_compat_enabled =
 			slide_diag.bsman.activation_enabled &&
+			!slide_diag.functional_enabled &&
 			strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0;
 		slide_diag.bsman.post_impose_vcall_enabled =
 			slide_diag.bsman.post_vsh_compat_enabled &&
@@ -7572,6 +7685,7 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			slide_diag.bsman.masked_paf_c59fc3d0_enabled &&
 			strcmp(psp1000MaskedPafC59FC3D0SecondTrace, "Enabled") == 0;
 		slide_diag.bsman.activation_wide_enabled =
+			!slide_diag.functional_enabled &&
 			slide_diag.bsman.masked_paf_c59fc3d0_second_enabled &&
 			strcmp(psp1000ActivationWideTrace, "Enabled") == 0;
 	}
@@ -7580,14 +7694,24 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			model, devkit, useSlide, redir_path,
 			startup_total, startup_largest);
 	if (slide_diag.armed && strcmp(psp1000Diagnostics, "Enabled") == 0) {
-		zeroCtrlDiagnosticsText("[phase] psp1000_slide_phase3\n"
+		zeroCtrlDiagnosticsText(slide_diag.functional_enabled ?
+				"[phase] psp1000_slide_functional\n"
+				"[experiment] psp1000_slide_optin=enabled\n"
+				"[experiment] clock_and_calendar=enabled\n"
+				"[experiment] button_thread=request_gated\n" :
+				"[phase] psp1000_slide_phase3\n"
 				"[experiment] psp1000_slide_optin=enabled\n"
 				"[experiment] clock_and_calendar=disabled\n"
 				"[experiment] vsh_reference_scan=read_only\n"
 				"[experiment] vsh_direct_windows=predicate_6f84_only\n"
 				"[experiment] vsh_state_import_resolution=read_only\n"
 				"[experiment] button_thread=disabled\n");
-		if (slide_diag.global_predicate_enabled) {
+		if (slide_diag.functional_enabled) {
+			zeroCtrlDiagnosticsText(
+					"[experiment] global_predicate_6f84_patch=disabled\n"
+					"[experiment] psp1000_vsh_slide_trigger="
+					"request_gated_caller_58d4\n");
+		} else if (slide_diag.global_predicate_enabled) {
 			zeroCtrlDiagnosticsText(
 					"[experiment] global_predicate_6f84_patch=enabled_dangerous\n"
 					"[experiment] psp1000_vsh_slide_trigger="
@@ -7654,8 +7778,11 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	    }
     }
 
-	if (slide_diag.armed) {
-		/* Observation only: no button, power, clock, or Sony-module hooks. */
+	if (slide_diag.functional_enabled) {
+		zeroCtrlCreateBtnThread();
+		previous = sctrlHENSetStartModuleHandler(OnModuleStart);
+	} else if (slide_diag.armed) {
+		/* Diagnostic mode: no button, power, clock, or Sony-module hooks. */
 		previous = sctrlHENSetStartModuleHandler(OnModuleStart);
 	}
     

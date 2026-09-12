@@ -404,6 +404,96 @@ def check_sources(root):
     if re.search(r"hook_import_bynid\([^\n]*(?:Alloc|Malloc|SysMem)", kernel,
             re.IGNORECASE):
         fail("minimal memory test introduces a global allocator hook")
+    functional_gate = kernel[kernel.find("slide_diag.functional_enabled ="):
+        kernel.find("slide_diag.minimal_memory_test =")]
+    for token in ("model == 0", "devkit == 0x06060110",
+            'strcmp(psp1000SlidePlugin, "Enabled") == 0',
+            'strcmp(useSlide, "Enabled") == 0'):
+        if token not in functional_gate:
+            fail("PSP-1000 functional gate lacks " + token)
+    if "PSP1000Diagnostics" in functional_gate:
+        fail("PSP-1000 functional mode incorrectly requires diagnostics")
+    for token in ("[psp1000-functional] enabled=1",
+            "[psp1000-functional] button_thread=1",
+            "[psp1000-functional] request_armed=1",
+            "[psp1000-functional] trigger_consumed=1",
+            "[psp1000-functional] slide_module_seen=1",
+            "[psp1000-functional] activation_hits=%u"):
+        if token not in minimal:
+            fail("functional compact diagnostics lack " + token)
+    trigger_leaf = assembly[assembly.find("zeroCtrlTrigger58D4:"):
+        assembly.find("zeroCtrlTrigger58D4End:")]
+    for token in ("zeroCtrlTrigger58D4FunctionalMode",
+            "zeroCtrlTrigger58D4Request", "zeroCtrlTrigger58D4OriginalTarget",
+            "sw      $zero, %lo(zeroCtrlTrigger58D4Request)",
+            "jr      $k0", "jr      $ra", "addiu   $v0, $zero, 1"):
+        if token not in trigger_leaf:
+            fail("functional 58D4 helper lacks " + token)
+    if any(token in trigger_leaf for token in ("$sp", "$gp", "jal ", "jalr")):
+        fail("functional 58D4 helper uses stack/gp/nested call")
+    record_start = kernel.find("void zeroCtrlRecordVshSlideTarget(")
+    record_end = kernel.find("int (*msIoOpen)", record_start)
+    record = kernel[record_start:record_end]
+    for token in ("stub_58d4_end - stub_58d4",
+            "evidence->request_addr", "evidence->original_target_addr",
+            "evidence->functional_mode_addr",
+            "_sw(0, request_evidence->request_addr)",
+            "_sw(request_evidence->original_target",
+            "_sw(slide_diag.functional_enabled ? 1 : 0",
+            "sceKernelDcacheWritebackInvalidateRange("):
+        if token not in record:
+            fail("functional 58D4 registration lacks " + token)
+    scalar_init = record.find("_sw(0, request_evidence->request_addr)")
+    trigger_commit = record.find("_sw(evidence->replacement_word")
+    if not 0 <= scalar_init < trigger_commit:
+        fail("functional 58D4 routing scalars are not initialized before patch")
+    button_start = kernel.find("void zeroCtrlReadButtons(")
+    button_end = kernel.find("void zeroCtrlCreateBtnThread(", button_start)
+    button = kernel[button_start:button_end]
+    for token in ("ZERO_SLIDE_STOPPED", "slideStartBtn",
+            "slide_diag.functional_enabled", "request_addr",
+            "_sw(1, slide_diag.triggers[0].request_addr)",
+            "functional_request_armed = 1", "request_ready",
+            "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
+        if token not in button:
+            fail("functional StartBtn request gating lacks " + token)
+    button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
+        kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
+        kernel.find("zeroCtrlCreatePatchThread();"))]
+    for token in ("zeroCtrlCreateBtnThread()",
+            "sctrlHENSetStartModuleHandler(OnModuleStart)",
+            "else if (slide_diag.armed)"):
+        if token not in button_install:
+            fail("functional button thread/handler gate lacks " + token)
+    kernel_module_start = kernel[kernel.find("int OnModuleStart(SceModule2 *mod)"):
+        kernel.find("int zeroCtrlLoadStartModule(")]
+    for token in ('hook_import_bynid(mod, "sceBSMan", 0x23E3A9B6',
+            "zeroCtrlDummyFunc, 1",
+            'hook_import_bynid(mod, "sceVshBridge", 0x639C3CB3',
+            "zeroCtrlGetParam, 1"):
+        if token not in kernel_module_start:
+            fail("functional SlidePlugin import integration lacks " + token)
+    for gate_name in ("bsman_not_linked_compat_enabled =",
+            "post_vsh_compat_enabled ="):
+        gate = kernel[kernel.find(gate_name):kernel.find(";", kernel.find(gate_name))]
+        if "!slide_diag.functional_enabled" not in gate:
+            fail("functional mode double-enables experimental compatibility")
+    user_module_start = user[user.find("int OnModuleStart(SceModule2 *mod)"):
+        user.find("int module_start(")]
+    for token in ("zeroCtrlIsPsp1000SlideFunctionalEnabled()",
+            "mod->text_size >= 0xC994",
+            "(_lw(mod->text_addr + 0xC990) >> 26) == 3",
+            "_lw(mod->text_addr + 0x9038) == 0x27BDFFC0",
+            "_lw(mod->text_addr + 0x903C) == 0xAFB40030",
+            "MAKE_CALL(mod->text_addr+0xC990",
+            "zeroCtrlRedir2Stub(mod->text_addr+0x9038"):
+        if token not in user_module_start:
+            fail("functional user SlidePlugin integration lacks " + token)
+    if "PSP_EXPORT_FUNC_NID(zeroCtrlIsPsp1000SlideFunctionalEnabled, 0x1337357F)" \
+            not in kernel_exports or \
+            "STUB_FUNC 0x1337357F, zeroCtrlIsPsp1000SlideFunctionalEnabled" \
+            not in user_imports:
+        fail("functional mode query import/export is missing")
     caller_ra_start = writer.find("if (slide_diag.bsman.activation_enabled)")
     caller_ra_end = writer.find(
             "if (slide_diag.bsman.activation_wide_enabled)", caller_ra_start)
@@ -2486,6 +2576,11 @@ def check_sources(root):
         if "SONY_START_GUARD_" + reason not in installer:
             fail("Sony installer lost initial guard reason " + reason)
     for stub, counter in zip(STUBS, COUNTERS):
+        if stub == "zeroCtrlTrigger58D4":
+            if counter not in assembly or "zeroCtrlTrigger58D4Request" not in \
+                    assembly or "zeroCtrlTrigger58D4OriginalTarget" not in assembly:
+                fail("functional 58D4 trigger lacks counter/request/target state")
+            continue
         invocation = "CREATE_TRIGGER_STUB " + stub + ", " + counter
         if invocation not in assembly:
             fail(stub + " does not reference its dedicated counter")

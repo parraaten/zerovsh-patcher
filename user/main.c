@@ -86,13 +86,17 @@ void zeroCtrlSetSlideConfig(const char *item, char *value);
 int zeroCtrlContrast2Hour(void);
 int zeroCtrlGetModel(void);
 int zeroCtrlIsPsp1000SlideExperimentEnabled(void);
+int zeroCtrlIsPsp1000SlideFunctionalEnabled(void);
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int text_size, unsigned int module_start_addr,
         unsigned int elf_entry_addr, unsigned int target,
-        unsigned int stub_58d4, unsigned int stub_13f6c,
+        unsigned int stub_58d4, unsigned int stub_58d4_end,
+        unsigned int stub_13f6c,
         unsigned int stub_14020, unsigned int counter_58d4,
         unsigned int counter_13f6c, unsigned int counter_14020,
-        unsigned int global_stub, unsigned int global_counter);
+        unsigned int global_stub, unsigned int global_counter,
+        unsigned int request_58d4, unsigned int original_target_58d4,
+        unsigned int functional_mode_58d4);
 void zeroCtrlRegisterSonyStartTrace(
         const ZeroCtrlSonyStartTraceRegistration *registration);
 void zeroCtrlRegisterBSManClosedShim(
@@ -137,9 +141,13 @@ int zeroCtrlDummyFunc2(void) {
 	return 0;
 }
 extern int zeroCtrlTrigger58D4(void);
+extern void zeroCtrlTrigger58D4End(void);
 extern int zeroCtrlTrigger13F6C(void);
 extern int zeroCtrlTrigger14020(void);
 extern volatile unsigned int zeroCtrlTrigger58D4Hits;
+extern volatile unsigned int zeroCtrlTrigger58D4Request;
+extern volatile unsigned int zeroCtrlTrigger58D4OriginalTarget;
+extern volatile unsigned int zeroCtrlTrigger58D4FunctionalMode;
 extern volatile unsigned int zeroCtrlTrigger13F6CHits;
 extern volatile unsigned int zeroCtrlTrigger14020Hits;
 extern int zeroCtrlGlobalPredicate6F84True(void);
@@ -400,8 +408,9 @@ void InjectionEntryFuncInit(u32 *unk0) {
 	origFuncInit(unk0);
 }
 //OK
-int OnModuleStart(SceModule2 *mod) {       
+int OnModuleStart(SceModule2 *mod) {
 	int psp1000_experiment = zeroCtrlIsPsp1000SlideExperimentEnabled();
+	int psp1000_functional = zeroCtrlIsPsp1000SlideFunctionalEnabled();
 	if(((model != 0) && (model != 4)) || psp1000_experiment) {
 		if(strcmp(mod->modname, "vsh_module") == 0) {
 			if(psp1000_experiment) {
@@ -411,13 +420,17 @@ int OnModuleStart(SceModule2 *mod) {
 							mod->text_size, mod->module_start_func,
 							mod->entry_addr, target,
 							(unsigned int)zeroCtrlTrigger58D4,
+							(unsigned int)zeroCtrlTrigger58D4End,
 							(unsigned int)zeroCtrlTrigger13F6C,
 							(unsigned int)zeroCtrlTrigger14020,
 							(unsigned int)&zeroCtrlTrigger58D4Hits,
 							(unsigned int)&zeroCtrlTrigger13F6CHits,
 							(unsigned int)&zeroCtrlTrigger14020Hits,
 							(unsigned int)zeroCtrlGlobalPredicate6F84True,
-							(unsigned int)&zeroCtrlGlobalPredicate6F84Hits);
+							(unsigned int)&zeroCtrlGlobalPredicate6F84Hits,
+							(unsigned int)&zeroCtrlTrigger58D4Request,
+							(unsigned int)&zeroCtrlTrigger58D4OriginalTarget,
+							(unsigned int)&zeroCtrlTrigger58D4FunctionalMode);
 				}
 			} else if(devkit == 0x06020010) {								
 				zeroCtrlRedir2Stub(mod->text_addr+0x6D78, slide_check_stub, zeroCtrlDummyFunc);			
@@ -440,9 +453,19 @@ int OnModuleStart(SceModule2 *mod) {
 		}  
 	}
 	
-	if(!psp1000_experiment && strcmp(mod->modname, "slide_plugin_module") == 0) {
-		MAKE_CALL(mod->text_addr+0xC990, zeroCtrlGetCurrentClockLocalTime);
-		origFuncInit = zeroCtrlRedir2Stub(mod->text_addr+0x9038, slide_start_stub, InjectionEntryFuncInit);		
+	if((!psp1000_experiment || psp1000_functional) &&
+			strcmp(mod->modname, "slide_plugin_module") == 0) {
+		int functional_valid = !psp1000_functional ||
+			(devkit == 0x06060110 && mod->text_addr != 0 &&
+			mod->text_size >= 0xC994 &&
+			(_lw(mod->text_addr + 0xC990) >> 26) == 3 &&
+			_lw(mod->text_addr + 0x9038) == 0x27BDFFC0 &&
+			_lw(mod->text_addr + 0x903C) == 0xAFB40030);
+		if (functional_valid) {
+			MAKE_CALL(mod->text_addr+0xC990, zeroCtrlGetCurrentClockLocalTime);
+			origFuncInit = zeroCtrlRedir2Stub(mod->text_addr+0x9038,
+					slide_start_stub, InjectionEntryFuncInit);
+		}
 	}
 	
        return previous ? previous(mod) : 0;

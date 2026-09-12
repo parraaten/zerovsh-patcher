@@ -36,7 +36,40 @@ CREATE_STUB slide_start_stub
     .end \funcname
 .endm
 
-CREATE_TRIGGER_STUB zeroCtrlTrigger58D4, zeroCtrlTrigger58D4Hits
+.globl zeroCtrlTrigger58D4
+.type zeroCtrlTrigger58D4 @function
+.ent zeroCtrlTrigger58D4, 0
+zeroCtrlTrigger58D4:
+    lui     $k0, %hi(zeroCtrlTrigger58D4FunctionalMode)
+    lw      $k1, %lo(zeroCtrlTrigger58D4FunctionalMode)($k0)
+    beqz    $k1, 2f
+    nop
+    lui     $k0, %hi(zeroCtrlTrigger58D4Request)
+    lw      $k1, %lo(zeroCtrlTrigger58D4Request)($k0)
+    beqz    $k1, 1f
+    nop
+    sw      $zero, %lo(zeroCtrlTrigger58D4Request)($k0)
+    lui     $k0, %hi(zeroCtrlTrigger58D4Hits)
+    lw      $k1, %lo(zeroCtrlTrigger58D4Hits)($k0)
+    addiu   $k1, $k1, 1
+    sw      $k1, %lo(zeroCtrlTrigger58D4Hits)($k0)
+    jr      $ra
+    addiu   $v0, $zero, 1
+1:
+    lui     $k0, %hi(zeroCtrlTrigger58D4OriginalTarget)
+    lw      $k0, %lo(zeroCtrlTrigger58D4OriginalTarget)($k0)
+    jr      $k0
+    nop
+2:
+    lui     $k0, %hi(zeroCtrlTrigger58D4Hits)
+    lw      $k1, %lo(zeroCtrlTrigger58D4Hits)($k0)
+    addiu   $k1, $k1, 1
+    sw      $k1, %lo(zeroCtrlTrigger58D4Hits)($k0)
+    jr      $ra
+    addiu   $v0, $zero, 1
+.globl zeroCtrlTrigger58D4End
+zeroCtrlTrigger58D4End:
+.end zeroCtrlTrigger58D4
 CREATE_TRIGGER_STUB zeroCtrlTrigger13F6C, zeroCtrlTrigger13F6CHits
 CREATE_TRIGGER_STUB zeroCtrlTrigger14020, zeroCtrlTrigger14020Hits
 CREATE_TRIGGER_STUB zeroCtrlGlobalPredicate6F84True, zeroCtrlGlobalPredicate6F84Hits
@@ -45,6 +78,12 @@ CREATE_TRIGGER_STUB zeroCtrlGlobalPredicate6F84True, zeroCtrlGlobalPredicate6F84
 .align 2
 .globl zeroCtrlTrigger58D4Hits
 zeroCtrlTrigger58D4Hits: .space 4
+.globl zeroCtrlTrigger58D4Request
+zeroCtrlTrigger58D4Request: .space 4
+.globl zeroCtrlTrigger58D4OriginalTarget
+zeroCtrlTrigger58D4OriginalTarget: .space 4
+.globl zeroCtrlTrigger58D4FunctionalMode
+zeroCtrlTrigger58D4FunctionalMode: .space 4
 .globl zeroCtrlTrigger13F6CHits
 zeroCtrlTrigger13F6CHits: .space 4
 .globl zeroCtrlTrigger14020Hits
