@@ -334,6 +334,7 @@ def check_sources(root):
             "activation_hits_addr", "activation_caller_ra_addr[0]",
             "activation_caller_ra_addr[1]", "activation_caller_ra_addr[2]",
             "sceKernelFindModuleByAddress(ra)",
+            "(ra & 3) == 0",
             "((unsigned int)owner & 3) == 0",
             "(unsigned int)owner >= 0x88000000", "owner->text_addr != 0",
             "(unsigned int)owner < 0x8C000000",
@@ -355,6 +356,27 @@ def check_sources(root):
     if "[activation-caller-ra]" in assembly or \
             "[activation-caller-ra-resolve]" in assembly:
         fail("activation caller RA output leaked into assembly helpers")
+    for token in ('strcmp(owner->modname, "scePaf_Module") == 0',
+            "window_start = callsite - 0x60",
+            "window_end = callsite + 0x20",
+            "callsite >= owner->text_addr + 0x60",
+            "callsite - owner->text_addr <=",
+            "owner->text_size - 0x24", "window_start + item * 4",
+            "_lw(pc)", "[paf-jalr-window-%u]", "[paf-jalr-control]",
+            "zeroCtrlMipsJumpTarget(pc, instruction)",
+            "zeroCtrlMipsBranchTarget(", "regimm_branch",
+            "instruction_rt >= 16", "instruction_function == 8",
+            "instruction_function == 9", "[paf-jalr-t0-def]",
+            "instruction_rt == 8", "instruction_rd == 8",
+            "instruction_opcode == 35", "instruction_opcode == 36",
+            "instruction_opcode == 37", "base=%u displacement=%d",
+            "load ? instruction_rs : 0",
+            "load ? (short)(instruction & 0xFFFF) : 0"):
+        if token not in caller_ra:
+            fail("PAF JALR window diagnostic lacks " + token)
+    if any(label in assembly for label in ("[paf-jalr-window-",
+            "[paf-jalr-control]", "[paf-jalr-t0-def]")):
+        fail("PAF JALR window diagnostic leaked into assembly helpers")
     sony_diag_start = writer.find("if (slide_diag.sony_start_trace.enabled)")
     bsman_diag_start = writer.find(
         "if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled)",

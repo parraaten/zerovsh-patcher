@@ -3275,7 +3275,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     SceModule2 *owner;
                     if (ra == 0) continue;
                     owner = sceKernelFindModuleByAddress(ra);
-                    if (owner && ((unsigned int)owner & 3) == 0 &&
+                    if (owner && (ra & 3) == 0 &&
+                            ((unsigned int)owner & 3) == 0 &&
                             (unsigned int)owner >= 0x88000000 &&
                             (unsigned int)owner < 0x8C000000 &&
                             owner->text_addr != 0 && owner->text_size >= 8 &&
@@ -3305,6 +3306,106 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 direct_target,
                                 opcode == 3 && direct_target == bsman->activation_addr);
                         zeroCtrlDiagnosticsText(line);
+                        if (strcmp(owner->modname, "scePaf_Module") == 0 &&
+                                owner->text_size >= 0x84 &&
+                                callsite >= owner->text_addr + 0x60 &&
+                                callsite - owner->text_addr <=
+                                    owner->text_size - 0x24) {
+                            unsigned int window_start = callsite - 0x60;
+                            unsigned int window_end = callsite + 0x20;
+                            unsigned int group;
+                            for (group = 0; group < 6; group++) {
+                                unsigned int item;
+                                unsigned int used = (unsigned int)snprintf(line,
+                                        sizeof(line), "[paf-jalr-window-%u]", group);
+                                for (item = group * 6;
+                                        item < group * 6 + 6 &&
+                                        window_start + item * 4 <= window_end;
+                                        item++) {
+                                    unsigned int pc = window_start + item * 4;
+                                    used += (unsigned int)snprintf(line + used,
+                                            sizeof(line) - used, " %05X=0x%08X",
+                                            pc - owner->text_addr, _lw(pc));
+                                }
+                                snprintf(line + used, sizeof(line) - used, "\n");
+                                zeroCtrlDiagnosticsText(line);
+                            }
+                            for (i = 0; window_start + i * 4 <= window_end; i++) {
+                                unsigned int pc = window_start + i * 4;
+                                unsigned int instruction = _lw(pc);
+                                unsigned int instruction_opcode = instruction >> 26;
+                                unsigned int instruction_rs =
+                                        (instruction >> 21) & 0x1F;
+                                unsigned int instruction_rt =
+                                        (instruction >> 16) & 0x1F;
+                                unsigned int instruction_rd =
+                                        (instruction >> 11) & 0x1F;
+                                unsigned int instruction_function =
+                                        instruction & 0x3F;
+                                int direct_jump = instruction_opcode == 2 ||
+                                        instruction_opcode == 3;
+                                int regimm_branch = instruction_opcode == 1 &&
+                                        (instruction_rt <= 3 ||
+                                            (instruction_rt >= 16 &&
+                                                instruction_rt <= 19));
+                                int conditional_branch =
+                                        regimm_branch ||
+                                        (instruction_opcode >= 4 &&
+                                            instruction_opcode <= 7);
+                                int register_jump = instruction_opcode == 0 &&
+                                        (instruction_function == 8 ||
+                                            instruction_function == 9);
+                                int t0_immediate = instruction_rt == 8 &&
+                                        (instruction_opcode == 9 ||
+                                            instruction_opcode == 12 ||
+                                            instruction_opcode == 13 ||
+                                            instruction_opcode == 15 ||
+                                            instruction_opcode == 35 ||
+                                            instruction_opcode == 36 ||
+                                            instruction_opcode == 37);
+                                int t0_register = instruction_opcode == 0 &&
+                                        instruction_rd == 8 &&
+                                        (instruction_function == 0 ||
+                                            instruction_function == 4 ||
+                                            instruction_function == 33 ||
+                                            instruction_function == 37);
+                                if (direct_jump || conditional_branch ||
+                                        register_jump) {
+                                    unsigned int target = direct_jump ?
+                                            zeroCtrlMipsJumpTarget(pc, instruction) :
+                                            (conditional_branch ?
+                                                zeroCtrlMipsBranchTarget(
+                                                    pc, instruction) : 0);
+                                    snprintf(line, sizeof(line),
+                                            "[paf-jalr-control] offset=0x%05X "
+                                            "word=0x%08X opcode=0x%02X rs=%u "
+                                            "rt=%u rd=%u function=0x%02X "
+                                            "target=0x%08X\n",
+                                            pc - owner->text_addr, instruction,
+                                            instruction_opcode, instruction_rs,
+                                            instruction_rt, instruction_rd,
+                                            instruction_function, target);
+                                    zeroCtrlDiagnosticsText(line);
+                                }
+                                if (t0_immediate || t0_register) {
+                                    int load = instruction_opcode == 35 ||
+                                            instruction_opcode == 36 ||
+                                            instruction_opcode == 37;
+                                    snprintf(line, sizeof(line),
+                                            "[paf-jalr-t0-def] offset=0x%05X "
+                                            "word=0x%08X opcode=0x%02X rs=%u "
+                                            "rt=%u rd=%u function=0x%02X "
+                                            "load=%d base=%u displacement=%d\n",
+                                            pc - owner->text_addr, instruction,
+                                            instruction_opcode, instruction_rs,
+                                            instruction_rt, instruction_rd,
+                                            instruction_function, load,
+                                            load ? instruction_rs : 0,
+                                            load ? (short)(instruction & 0xFFFF) : 0);
+                                    zeroCtrlDiagnosticsText(line);
+                                }
+                            }
+                        }
                     }
                 }
                 memcpy(observed_activation_caller_ra, caller_ra,
