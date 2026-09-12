@@ -3817,6 +3817,70 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             }
                         }
                     }
+                    {
+                        static const unsigned int natural_offsets[26] = {
+                            0x04C, 0x050, 0x054, 0x058, 0x05C, 0x060,
+                            0x064, 0x068, 0x06C, 0x070, 0x074, 0x078,
+                            0x07C, 0x080, 0x084, 0x088, 0x08C, 0x090,
+                            0x094, 0x098, 0x09C, 0x0A0, 0x0A4, 0x0A8,
+                            0x0AC, 0x0B0
+                        };
+                        unsigned int natural_words[26];
+                        unsigned int natural_index;
+                        for (natural_index = 0; natural_index < 26;
+                                natural_index++)
+                            natural_words[natural_index] = _lw(
+                                    bsman->activation_addr +
+                                    natural_offsets[natural_index]);
+                        for (natural_index = 0; natural_index < 4;
+                                natural_index++) {
+                            unsigned int first = natural_index * 6;
+                            snprintf(line, sizeof(line),
+                                    "[natural-50-window-%u] "
+                                    "%03x=0x%08X %03x=0x%08X %03x=0x%08X "
+                                    "%03x=0x%08X %03x=0x%08X %03x=0x%08X\n",
+                                    natural_index,
+                                    natural_offsets[first], natural_words[first],
+                                    natural_offsets[first + 1], natural_words[first + 1],
+                                    natural_offsets[first + 2], natural_words[first + 2],
+                                    natural_offsets[first + 3], natural_words[first + 3],
+                                    natural_offsets[first + 4], natural_words[first + 4],
+                                    natural_offsets[first + 5], natural_words[first + 5]);
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                        snprintf(line, sizeof(line),
+                                "[natural-50-window-4] 0ac=0x%08X 0b0=0x%08X\n",
+                                natural_words[24], natural_words[25]);
+                        zeroCtrlDiagnosticsText(line);
+                        for (natural_index = 0; natural_index < 26;
+                                natural_index++) {
+                            unsigned int word = natural_words[natural_index];
+                            unsigned int opcode = word >> 26;
+                            unsigned int function = word & 0x3F;
+                            unsigned int pc = bsman->activation_addr +
+                                    natural_offsets[natural_index];
+                            int direct_jump = opcode == 2 || opcode == 3;
+                            int branch = opcode == 1 || opcode == 4 ||
+                                    opcode == 5 || opcode == 6 || opcode == 7;
+                            int register_jump = opcode == 0 &&
+                                    (function == 8 || function == 9);
+                            unsigned int target = direct_jump ?
+                                    zeroCtrlMipsJumpTarget(pc, word) :
+                                    (branch ? zeroCtrlMipsBranchTarget(pc, word) : 0);
+                            if (direct_jump || branch || register_jump) {
+                                snprintf(line, sizeof(line),
+                                        "[natural-50-control] offset=0x%03X "
+                                        "word=0x%08X opcode=0x%02X rs=%u rt=%u "
+                                        "function=0x%02X target=0x%08X "
+                                        "target_offset=0x%08X\n",
+                                        natural_offsets[natural_index], word,
+                                        opcode, (word >> 21) & 0x1F,
+                                        (word >> 16) & 0x1F, function, target,
+                                        target ? target - bsman->activation_addr : 0);
+                                zeroCtrlDiagnosticsText(line);
+                            }
+                        }
+                    }
                     if (bsman->post_collection_paf_fcf265d8_enabled) {
                         snprintf(line, sizeof(line),
                                 "[t37-validation] enabled=1 checked=%u "

@@ -1594,6 +1594,28 @@ def check_sources(root):
             "                    bsman->activation_wide_scalar_addr[45]);") \
             not in kernel:
         fail("T40 090 wrapper resume is not activation+0x234")
+    natural_start = writer.find("static const unsigned int natural_offsets[26]")
+    natural_end = writer.find(
+            "if (bsman->post_collection_paf_fcf265d8_enabled)", natural_start)
+    natural_window = writer[natural_start:natural_end]
+    for offset in range(0x4C, 0xB1, 4):
+        if "0x%03X" % offset not in natural_window:
+            fail("natural +0x50 window lacks static read offset 0x%03X" % offset)
+    for token in ("natural_words[natural_index] = _lw(",
+            "[natural-50-window-%u]", "[natural-50-window-4]",
+            "[natural-50-control]", "word=0x%08X", "opcode=0x%02X",
+            "rs=%u", "rt=%u", "zeroCtrlMipsJumpTarget(pc, word)",
+            "zeroCtrlMipsBranchTarget(pc, word)", "target=0x%08X",
+            "target_offset=0x%08X", "direct_jump || branch || register_jump"):
+        if token not in natural_window:
+            fail("read-only natural +0x50 diagnostic lacks " + token)
+    if natural_start < 0 or natural_end < 0 or any(
+            token in natural_window for token in (
+                "_sw(", "sceKernelDcache", "sceKernelIcache")):
+        fail("natural +0x50 instruction diagnostic is not read-only")
+    for label in ("[natural-50-window-", "[natural-50-control]"):
+        if label in assembly:
+            fail("natural +0x50 diagnostic leaked into assembly helpers")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")
