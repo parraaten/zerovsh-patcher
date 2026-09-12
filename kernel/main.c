@@ -3307,17 +3307,17 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 opcode == 3 && direct_target == bsman->activation_addr);
                         zeroCtrlDiagnosticsText(line);
                         if (strcmp(owner->modname, "scePaf_Module") == 0 &&
-                                owner->text_size >= 0x84 &&
-                                callsite >= owner->text_addr + 0x60 &&
+                                owner->text_size >= 0x124 &&
+                                callsite >= owner->text_addr + 0xC0 &&
                                 callsite - owner->text_addr <=
-                                    owner->text_size - 0x24) {
-                            unsigned int window_start = callsite - 0x60;
-                            unsigned int window_end = callsite + 0x20;
+                                    owner->text_size - 0x64) {
+                            unsigned int window_start = callsite - 0xC0;
+                            unsigned int window_end = callsite + 0x60;
                             unsigned int group;
-                            for (group = 0; group < 6; group++) {
+                            for (group = 0; group < 13; group++) {
                                 unsigned int item;
                                 unsigned int used = (unsigned int)snprintf(line,
-                                        sizeof(line), "[paf-jalr-window-%u]", group);
+                                        sizeof(line), "[paf-dispatch-window-%u]", group);
                                 for (item = group * 6;
                                         item < group * 6 + 6 &&
                                         window_start + item * 4 <= window_end;
@@ -3348,10 +3348,20 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                         (instruction_rt <= 3 ||
                                             (instruction_rt >= 16 &&
                                                 instruction_rt <= 19));
+                                int likely_branch =
+                                        (instruction_opcode >= 20 &&
+                                            instruction_opcode <= 23) ||
+                                        (instruction_opcode == 1 &&
+                                            (instruction_rt == 2 ||
+                                                instruction_rt == 3 ||
+                                                instruction_rt == 18 ||
+                                                instruction_rt == 19));
                                 int conditional_branch =
                                         regimm_branch ||
                                         (instruction_opcode >= 4 &&
-                                            instruction_opcode <= 7);
+                                            instruction_opcode <= 7) ||
+                                        (instruction_opcode >= 20 &&
+                                            instruction_opcode <= 23);
                                 int register_jump = instruction_opcode == 0 &&
                                         (instruction_function == 8 ||
                                             instruction_function == 9);
@@ -3377,15 +3387,86 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                                 zeroCtrlMipsBranchTarget(
                                                     pc, instruction) : 0);
                                     snprintf(line, sizeof(line),
-                                            "[paf-jalr-control] offset=0x%05X "
+                                            "[paf-dispatch-control] offset=0x%05X "
                                             "word=0x%08X opcode=0x%02X rs=%u "
                                             "rt=%u rd=%u function=0x%02X "
-                                            "target=0x%08X\n",
+                                            "target=0x%08X likely=%d\n",
                                             pc - owner->text_addr, instruction,
                                             instruction_opcode, instruction_rs,
                                             instruction_rt, instruction_rd,
-                                            instruction_function, target);
+                                            instruction_function, target,
+                                            likely_branch);
                                     zeroCtrlDiagnosticsText(line);
+                                }
+                                {
+                                    unsigned int destination;
+                                    int tracked_immediate =
+                                            (instruction_rt == 9 ||
+                                                instruction_rt == 16 ||
+                                                instruction_rt == 17 ||
+                                                instruction_rt == 18) &&
+                                            (instruction_opcode == 9 ||
+                                                instruction_opcode == 12 ||
+                                                instruction_opcode == 13 ||
+                                                instruction_opcode == 15 ||
+                                                instruction_opcode == 35 ||
+                                                instruction_opcode == 36 ||
+                                                instruction_opcode == 37);
+                                    int tracked_register = instruction_opcode == 0 &&
+                                            (instruction_rd == 9 ||
+                                                instruction_rd == 16 ||
+                                                instruction_rd == 17 ||
+                                                instruction_rd == 18) &&
+                                            (instruction_function == 0 ||
+                                                instruction_function == 4 ||
+                                                instruction_function == 33 ||
+                                                instruction_function == 37);
+                                    if (tracked_immediate || tracked_register) {
+                                        int load = instruction_opcode == 35 ||
+                                                instruction_opcode == 36 ||
+                                                instruction_opcode == 37;
+                                        destination = tracked_immediate ?
+                                                instruction_rt : instruction_rd;
+                                        snprintf(line, sizeof(line),
+                                                "[paf-dispatch-reg-def] "
+                                                "offset=0x%05X word=0x%08X reg=%u "
+                                                "opcode=0x%02X rs=%u rt=%u rd=%u "
+                                                "function=0x%02X load=%d base=%u "
+                                                "displacement=%d\n",
+                                                pc - owner->text_addr, instruction,
+                                                destination, instruction_opcode,
+                                                instruction_rs, instruction_rt,
+                                                instruction_rd,
+                                                instruction_function, load,
+                                                load ? instruction_rs : 0,
+                                                load ? (short)(instruction & 0xFFFF) : 0);
+                                        zeroCtrlDiagnosticsText(line);
+                                    }
+                                }
+                                {
+                                    int stack_adjust = instruction_opcode == 9 &&
+                                            instruction_rs == 29 &&
+                                            instruction_rt == 29;
+                                    int ra_stack = (instruction_opcode == 35 ||
+                                            instruction_opcode == 43) &&
+                                            instruction_rs == 29 &&
+                                            instruction_rt == 31;
+                                    int return_jump = instruction_opcode == 0 &&
+                                            instruction_function == 8 &&
+                                            instruction_rs == 31;
+                                    if (stack_adjust || ra_stack || return_jump) {
+                                        snprintf(line, sizeof(line),
+                                                "[paf-dispatch-frame-candidate] "
+                                                "offset=0x%05X word=0x%08X "
+                                                "opcode=0x%02X rs=%u rt=%u rd=%u "
+                                                "function=0x%02X displacement=%d\n",
+                                                pc - owner->text_addr, instruction,
+                                                instruction_opcode, instruction_rs,
+                                                instruction_rt, instruction_rd,
+                                                instruction_function,
+                                                (short)(instruction & 0xFFFF));
+                                        zeroCtrlDiagnosticsText(line);
+                                    }
                                 }
                                 if (t0_immediate || t0_register) {
                                     int load = instruction_opcode == 35 ||
