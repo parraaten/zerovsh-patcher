@@ -3881,6 +3881,64 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             }
                         }
                     }
+                    {
+                        SceModule2 *slide = sceKernelFindModuleByName(
+                                "slide_plugin_module");
+                        unsigned int jal_matches = 0;
+                        unsigned int jump_matches = 0;
+                        unsigned int scan_offset;
+                        if (slide && bsman->activation_addr >= slide->text_addr &&
+                                bsman->activation_addr - slide->text_addr <
+                                    slide->text_size) {
+                            for (scan_offset = 0; scan_offset + 8 <=
+                                    slide->text_size; scan_offset += 4) {
+                                unsigned int pc = slide->text_addr + scan_offset;
+                                unsigned int word = _lw(pc);
+                                if ((word >> 26) == 3 &&
+                                        zeroCtrlMipsJumpTarget(pc, word) ==
+                                            bsman->activation_addr)
+                                    jal_matches++;
+                                else if ((word >> 26) == 2 &&
+                                        zeroCtrlMipsJumpTarget(pc, word) ==
+                                            bsman->activation_addr)
+                                    jump_matches++;
+                            }
+                            snprintf(line, sizeof(line),
+                                    "[activation-callers] matches=%u jumps=%u "
+                                    "activation=0x%08X text=0x%08X size=0x%X "
+                                    "loaded_words=1\n",
+                                    jal_matches, jump_matches,
+                                    bsman->activation_addr, slide->text_addr,
+                                    slide->text_size);
+                            zeroCtrlDiagnosticsText(line);
+                            jal_matches = 0;
+                            jump_matches = 0;
+                            for (scan_offset = 0; scan_offset + 8 <=
+                                    slide->text_size; scan_offset += 4) {
+                                unsigned int pc = slide->text_addr + scan_offset;
+                                unsigned int word = _lw(pc);
+                                unsigned int opcode = word >> 26;
+                                if ((opcode == 2 || opcode == 3) &&
+                                        zeroCtrlMipsJumpTarget(pc, word) ==
+                                            bsman->activation_addr) {
+                                    unsigned int index = opcode == 3 ?
+                                            jal_matches++ : jump_matches++;
+                                    snprintf(line, sizeof(line),
+                                            opcode == 3 ?
+                                            "[activation-caller] index=%u " :
+                                            "[activation-jump] index=%u ", index);
+                                    snprintf(line + strlen(line),
+                                            sizeof(line) - strlen(line),
+                                            "offset=0x%08X address=0x%08X "
+                                            "word=0x%08X delay=0x%08X "
+                                            "return=0x%08X\n",
+                                            scan_offset, pc, word, _lw(pc + 4),
+                                            pc + 8);
+                                    zeroCtrlDiagnosticsText(line);
+                                }
+                            }
+                        }
+                    }
                     if (bsman->post_collection_paf_fcf265d8_enabled) {
                         snprintf(line, sizeof(line),
                                 "[t37-validation] enabled=1 checked=%u "

@@ -1616,6 +1616,28 @@ def check_sources(root):
     for label in ("[natural-50-window-", "[natural-50-control]"):
         if label in assembly:
             fail("natural +0x50 diagnostic leaked into assembly helpers")
+    callers_start = writer.find(
+            'SceModule2 *slide = sceKernelFindModuleByName(\n'
+            '                                "slide_plugin_module")')
+    callers_end = writer.find(
+            "if (bsman->post_collection_paf_fcf265d8_enabled)", callers_start)
+    callers = writer[callers_start:callers_end]
+    for token in ("slide->text_addr", "slide->text_size",
+            "scan_offset + 8 <=", "word = _lw(pc)",
+            "(word >> 26) == 3", "(word >> 26) == 2",
+            "zeroCtrlMipsJumpTarget(pc, word) ==",
+            "bsman->activation_addr", "[activation-callers]",
+            "[activation-caller]", "[activation-jump]",
+            "delay=0x%08X", "_lw(pc + 4)", "return=0x%08X", "pc + 8"):
+        if token not in callers:
+            fail("read-only activation direct-caller scan lacks " + token)
+    if callers_start < 0 or callers_end < 0 or any(token in callers for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache", "jalr")):
+        fail("activation direct-caller scan is not read-only/direct-only")
+    for label in ("[activation-callers]", "[activation-caller]",
+            "[activation-jump]"):
+        if label in assembly:
+            fail("activation caller-scan output leaked into assembly helpers")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")
