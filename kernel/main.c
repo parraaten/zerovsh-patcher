@@ -2092,9 +2092,11 @@ void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
     if (!bsman->activation_enabled || !bsman->registered ||
             bsman->activation_caller_ra_registered) return;
     helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-    if (!helper || (unsigned int)helper < 0x88000000 ||
+    if (!helper || ((unsigned int)helper & 3) != 0 ||
+            (unsigned int)helper < 0x88000000 ||
+            (unsigned int)helper >= 0x8C000000 ||
             helper->text_addr == 0 || helper->text_size == 0 ||
-            helper->nsegment == 0) return;
+            helper->nsegment == 0 || helper->nsegment > 4) return;
     address[0] = first_addr;
     address[1] = last_addr;
     address[2] = changes_addr;
@@ -3273,9 +3275,12 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     SceModule2 *owner;
                     if (ra == 0) continue;
                     owner = sceKernelFindModuleByAddress(ra);
-                    if (owner && (unsigned int)owner >= 0x88000000 &&
+                    if (owner && ((unsigned int)owner & 3) == 0 &&
+                            (unsigned int)owner >= 0x88000000 &&
+                            (unsigned int)owner < 0x8C000000 &&
                             owner->text_addr != 0 && owner->text_size >= 8 &&
-                            owner->nsegment != 0 && ra >= owner->text_addr + 8 &&
+                            owner->nsegment != 0 && owner->nsegment <= 4 &&
+                            ra >= owner->text_addr + 8 &&
                             ra <= owner->text_addr + owner->text_size) {
                         unsigned int callsite = ra - 8;
                         unsigned int word = _lw(callsite);
