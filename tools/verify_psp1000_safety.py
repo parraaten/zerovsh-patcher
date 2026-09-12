@@ -1451,6 +1451,32 @@ def check_sources(root):
             fail("T40 early snapshot is ordered after verbose " + later)
     if "[activation-wide-early]" in assembly:
         fail("T40 early file output leaked into assembly helpers")
+    if "[activation-prewide-early]" not in early:
+        fail("early T37/T38/T39 evidence is missing from the writer thread")
+    for token in ("t37=%u/%u/0x%08X", "t38=%u/%u/0x%08X",
+            "t39=%u/%u/0x%08X",
+            "post_collection_paf_fcf265d8_hits_addr",
+            "post_collection_paf_fcf265d8_nonzero_hits_addr",
+            "post_collection_paf_fcf265d8_natural_result_addr",
+            "masked_paf_c59fc3d0_hits_addr",
+            "masked_paf_c59fc3d0_nonzero_hits_addr",
+            "masked_paf_c59fc3d0_decision_value_addr",
+            "masked_paf_c59fc3d0_second_hits_addr",
+            "masked_paf_c59fc3d0_second_nonzero_hits_addr",
+            "masked_paf_c59fc3d0_second_decision_value_addr",
+            "observed_prewide_early[9]", "observed_prewide_early_ready"):
+        if token not in writer:
+            fail("early T37/T38/T39 snapshot lacks " + token)
+    prewide_start = early.find("if (bsman->registered)")
+    prewide_end = early.find("if (slide_diag.sony_start_trace.enabled)",
+            prewide_start)
+    prewide = early[prewide_start:prewide_end]
+    if prewide_start < 0 or any(token in prewide for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache",
+            "activation_wide_replacement")):
+        fail("early T37/T38/T39 snapshot modifies patch or cache state")
+    if "[activation-prewide-early]" in assembly:
+        fail("early T37/T38/T39 output leaked into assembly helpers")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")

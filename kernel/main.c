@@ -3147,6 +3147,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     };
     int observed_wide_early_status[4] = { -1, -1, -1, -1 };
     unsigned int observed_wide_02374143 = 0;
+    unsigned int observed_prewide_early[9] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    int observed_prewide_early_ready = 0;
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
     int observed_field12c_write_install_status = 0;
@@ -3249,6 +3253,43 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 observed_wide_early_status[3] =
                         bsman->activation_wide_cache_sync;
                 observed_wide_02374143 = pre02374143;
+            }
+            if (bsman->registered) {
+                unsigned int prewide[9];
+                int prewide_changed = !observed_prewide_early_ready;
+                prewide[0] = zeroCtrlReadHelperCounter(
+                        bsman->post_collection_paf_fcf265d8_hits_addr);
+                prewide[1] = zeroCtrlReadHelperCounter(
+                        bsman->post_collection_paf_fcf265d8_nonzero_hits_addr);
+                prewide[2] = zeroCtrlReadHelperCounter(
+                        bsman->post_collection_paf_fcf265d8_natural_result_addr);
+                prewide[3] = zeroCtrlReadHelperCounter(
+                        bsman->masked_paf_c59fc3d0_hits_addr);
+                prewide[4] = zeroCtrlReadHelperCounter(
+                        bsman->masked_paf_c59fc3d0_nonzero_hits_addr);
+                prewide[5] = zeroCtrlReadHelperCounter(
+                        bsman->masked_paf_c59fc3d0_decision_value_addr);
+                prewide[6] = zeroCtrlReadHelperCounter(
+                        bsman->masked_paf_c59fc3d0_second_hits_addr);
+                prewide[7] = zeroCtrlReadHelperCounter(
+                        bsman->masked_paf_c59fc3d0_second_nonzero_hits_addr);
+                prewide[8] = zeroCtrlReadHelperCounter(
+                        bsman->masked_paf_c59fc3d0_second_decision_value_addr);
+                for (i = 0; i < 9; i++)
+                    if (prewide[i] != observed_prewide_early[i])
+                        prewide_changed = 1;
+                if (prewide_changed) {
+                    snprintf(line, sizeof(line),
+                            "[activation-prewide-early] "
+                            "t37=%u/%u/0x%08X t38=%u/%u/0x%08X "
+                            "t39=%u/%u/0x%08X\n",
+                            prewide[0], prewide[1], prewide[2],
+                            prewide[3], prewide[4], prewide[5],
+                            prewide[6], prewide[7], prewide[8]);
+                    zeroCtrlDiagnosticsText(line);
+                    memcpy(observed_prewide_early, prewide, sizeof(prewide));
+                    observed_prewide_early_ready = 1;
+                }
             }
         }
         if (slide_diag.sony_start_trace.enabled) {
