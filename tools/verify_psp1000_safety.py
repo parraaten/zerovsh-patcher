@@ -1388,6 +1388,33 @@ def check_sources(root):
             "fcf265d8", "[activation-wide-loop]", "090ccb3f"):
         if label not in kernel:
             fail("T40 deferred diagnostic missing " + label)
+    writer_start = kernel.find("static int zeroCtrlWriteSlideDiagnostics(")
+    writer_end = kernel.find("static void zeroCtrlCreateSlideDiagnosticsThread(",
+            writer_start)
+    writer = kernel[writer_start:writer_end]
+    early_start = writer.find("if (slide_diag.bsman.activation_wide_enabled)")
+    early_end = writer.find("if (slide_diag.sony_start_trace.enabled)",
+            early_start)
+    early = writer[early_start:early_end]
+    if early_start < 0 or early_end < 0 or \
+            "[activation-wide-early]" not in early:
+        fail("T40 compact early diagnostic is missing from the writer thread")
+    for token in ("registered=%d validation=%d", "install=%d cache_sync=%d",
+            "compare=%u/%u/%u", "662=%u/%u/%u", "440=%u/%u/%u",
+            "fcf=%u/%u/%u", "loop=%u/%u/%u", "090=%u/%u/%u",
+            "scalar_index[18]", "zeroCtrlReadHelperCounter(",
+            "memcpy(observed_wide_early, current, sizeof(current))"):
+        if token not in early:
+            fail("T40 early snapshot lacks " + token)
+    if any(token in early for token in ("_sw(", "sceKernelDcache",
+            "sceKernelIcache", "activation_wide_replacement")):
+        fail("T40 early snapshot modifies hot-path or patch state")
+    for later in ("[state-zero-vcall-resolve]", "[topmenu-state]",
+            "post_bsman_counts="):
+        if writer.find("[activation-wide-early]") > writer.find(later):
+            fail("T40 early snapshot is ordered after verbose " + later)
+    if "[activation-wide-early]" in assembly:
+        fail("T40 early file output leaked into assembly helpers")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")

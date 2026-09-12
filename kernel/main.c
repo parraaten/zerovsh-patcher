@@ -3141,6 +3141,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_post_counts[25] = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };
+    unsigned int observed_wide_early[18] = {
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    };
+    int observed_wide_early_status[4] = { -1, -1, -1, -1 };
     unsigned int fast_poll_until = 0;
     int observed_bsman_attempted = 0;
     int observed_field12c_write_install_status = 0;
@@ -3149,7 +3153,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_dispatch_entry_early_status = 0;
     int observed_dispatch_entry_pre_slide = 0;
     int observed_consumer_install = 0, observed_consumer_pre_slide = 0;
-    char line[256];
+    char line[384];
     unsigned int i;
 
     slide_diag.writer_alive = 1;
@@ -3190,6 +3194,57 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         }
         WRITE_LATE_FLAG(slide_diag.saw_probe, observed_probe, "probe");
         WRITE_LATE_FLAG(slide_diag.saw_start, observed_start, "start");
+        if (slide_diag.bsman.activation_wide_enabled) {
+            ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+            unsigned int current[18] = {
+                0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0
+            };
+            int registered = bsman->activation_wide_scalar_addr[0] != 0;
+            int changed = observed_wide_early_status[0] != registered ||
+                    observed_wide_early_status[1] !=
+                        bsman->activation_wide_validation ||
+                    observed_wide_early_status[2] !=
+                        bsman->activation_wide_install ||
+                    observed_wide_early_status[3] !=
+                        bsman->activation_wide_cache_sync;
+            static const unsigned int scalar_index[18] = {
+                /* triplets: hits/zero/nonzero; loop is hits/back/exit. */
+                0, 1, 2, 11, 15, 16, 20, 24, 25,
+                29, 33, 34, 35, 36, 37, 46, 50, 51
+            };
+            if (registered) {
+                for (i = 0; i < 18; i++) {
+                    current[i] = zeroCtrlReadHelperCounter(
+                            bsman->activation_wide_scalar_addr[scalar_index[i]]);
+                    if (current[i] != observed_wide_early[i]) changed = 1;
+                }
+            }
+            if (changed) {
+                snprintf(line, sizeof(line),
+                        "[activation-wide-early] registered=%d validation=%d "
+                        "install=%d cache_sync=%d compare=%u/%u/%u "
+                        "662=%u/%u/%u 440=%u/%u/%u fcf=%u/%u/%u "
+                        "loop=%u/%u/%u 090=%u/%u/%u\n",
+                        registered, bsman->activation_wide_validation,
+                        bsman->activation_wide_install,
+                        bsman->activation_wide_cache_sync,
+                        current[0], current[1], current[2],
+                        current[3], current[4], current[5],
+                        current[6], current[7], current[8],
+                        current[9], current[10], current[11],
+                        current[12], current[13], current[14],
+                        current[15], current[16], current[17]);
+                zeroCtrlDiagnosticsText(line);
+                memcpy(observed_wide_early, current, sizeof(current));
+                observed_wide_early_status[0] = registered;
+                observed_wide_early_status[1] =
+                        bsman->activation_wide_validation;
+                observed_wide_early_status[2] = bsman->activation_wide_install;
+                observed_wide_early_status[3] =
+                        bsman->activation_wide_cache_sync;
+            }
+        }
         if (slide_diag.sony_start_trace.enabled) {
             ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
             zeroCtrlRefreshSonyStartTrace();
