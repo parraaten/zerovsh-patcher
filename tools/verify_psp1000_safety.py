@@ -1552,6 +1552,22 @@ def check_sources(root):
     if "[activation-post-early]" in assembly or \
             "[activation-post-early-call]" in assembly:
         fail("early post-BSMan output leaked into assembly helpers")
+    gap_start = writer.find("unsigned int word_f0 = _lw(")
+    gap_end = writer.find("if (bsman->post_collection_paf_fcf265d8_enabled)",
+            gap_start)
+    gap = writer[gap_start:gap_end]
+    for token in ("bsman->activation_addr + 0xF0",
+            "bsman->activation_addr + 0xF4", "[post-paf0-gap]",
+            "word_f0=0x%08X", "word_f4=0x%08X", "opcode=0x%02X",
+            "conditional_branch", "zeroCtrlMipsBranchTarget(",
+            "branch_target=0x%08X", "target_offset=0x%08X"):
+        if token not in gap:
+            fail("read-only post-PAF0 gap diagnostic lacks " + token)
+    if gap_start < 0 or gap_end < 0 or any(token in gap for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache")):
+        fail("post-PAF0 gap diagnostic is not read-only")
+    if "[post-paf0-gap]" in assembly:
+        fail("post-PAF0 gap diagnostic leaked into assembly helpers")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")

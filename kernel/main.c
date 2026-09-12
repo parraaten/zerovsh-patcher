@@ -3738,6 +3738,31 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             bsman->activation_cache_sync,
                             bsman->activation_addr, bsman->caller_addr);
                     zeroCtrlDiagnosticsText(line);
+                    {
+                        unsigned int word_f0 = _lw(
+                                bsman->activation_addr + 0xF0);
+                        unsigned int word_f4 = _lw(
+                                bsman->activation_addr + 0xF4);
+                        unsigned int opcode = word_f0 >> 26;
+                        int conditional_branch = opcode == 1 || opcode == 4 ||
+                                opcode == 5 || opcode == 6 || opcode == 7;
+                        unsigned int branch_target = conditional_branch ?
+                                zeroCtrlMipsBranchTarget(
+                                    bsman->activation_addr + 0xF0, word_f0) : 0;
+                        unsigned int target_offset = conditional_branch ?
+                                branch_target - bsman->activation_addr : 0;
+                        snprintf(line, sizeof(line),
+                                "[post-paf0-gap] word_f0=0x%08X "
+                                "word_f4=0x%08X opcode=0x%02X rs=%u rt=%u "
+                                "conditional=%d branch_target=0x%08X "
+                                "target_offset=0x%08X\n",
+                                word_f0, word_f4, opcode,
+                                (word_f0 >> 21) & 0x1F,
+                                (word_f0 >> 16) & 0x1F,
+                                conditional_branch, branch_target,
+                                target_offset);
+                        zeroCtrlDiagnosticsText(line);
+                    }
                     if (bsman->post_collection_paf_fcf265d8_enabled) {
                         snprintf(line, sizeof(line),
                                 "[t37-validation] enabled=1 checked=%u "
