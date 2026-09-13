@@ -449,8 +449,8 @@ def check_sources(root):
     if vsh3_start < 0 or vsh3_end < 0:
         fail("VSH +3F568 implementation analysis is missing")
     vsh3 = kernel[vsh3_start:vsh3_end]
-    impl_flow_start = kernel.find("static void zeroCtrlWriteVsh3f568ImplFlow(")
-    impl_flow = kernel[impl_flow_start:vsh3_start]
+    paf_start = kernel.find("#define PAF_A989A2C4_HELPER_MAP_LIMIT 0x300")
+    paf = kernel[paf_start:vsh3_start]
     for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
             "!slide_diag.functional_enabled", "!slide_diag.minimal_memory_test",
             "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x3F568, 8)",
@@ -480,45 +480,64 @@ def check_sources(root):
             "owner->nsegment", "owner->segmentaddr[i]",
             "owner->segmentsize[i]", "impl_size > 0x100",
             "zeroCtrlVshModuleRangeValid(owner, resolved, impl_size)",
-            "target_in_text = resolved >= owner->text_addr &&",
-            "resolved - owner->text_addr < owner->text_size",
             "target_in_text=0 target_off=OUTSIDE_TEXT",
-            "[vsh3f568-owner] validation=1", "[vsh3f568-impl-map]",
-            "[vsh3f568-impl-cf]", "[vsh3f568-impl-frame]",
-            "zeroCtrlWriteVsh3f568ImplFlow(owner, resolved, impl_size",
-            "zeroCtrlWriteVsh3f568CallbackFlow(owner, resolved, impl_size, 5, 0)",
+            "[vsh3f568-owner] validation=1",
+            'strcmp(import_library, "scePaf") != 0',
+            "import_nid != 0xA989A2C4",
+            "zeroCtrlWritePafA989A2C4Analysis(owner, resolved, impl_size)",
             "[vsh3f568-use]", "[vsh3f568-summary]"):
         if token not in vsh3:
             fail("resolved VSH +3F568 analysis lacks " + token)
-    for token in ("tracked_a1 = 5", "[vsh3f568-impl-a1] status=STORED",
-            "[vsh3f568-impl-a0]",
-            "delay = _lw(target + offset + 4)",
-            "zeroCtrlMipsGprWriteDestination(delay)",
-            "OVERWRITTEN_IN_DELAY_SLOT", "PASSED_TO_CALL",
-            "USED_IMMEDIATELY", "opcode == 1 || opcode == 2"):
-        if token not in impl_flow:
-            fail("real +3F568 input analysis lacks " + token)
     if "[vsh3f568-map]" in vsh3 or "[vsh3f568-cf]" in vsh3:
         fail("superseded VSH stub-table map is still emitted")
-    for section in (vsh3, impl_flow):
+    for section in (vsh3, paf):
         for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
-                "zeroCtrlRedir", "request_function()"):
+                "MAKE_JUMP", "REDIRECT_FUNCTION", "zeroCtrlRedir",
+                "request_function()"):
             if forbidden in section:
                 fail("resolved VSH +3F568 analysis is not read-only: " + forbidden)
-    callback_start = kernel.find(
-            "static void zeroCtrlWriteVsh3f568CallbackFlow(")
-    callback_flow = kernel[callback_start:impl_flow_start]
-    for token in ("VSH3F568_CALLBACK_DEPTH_LIMIT", "status=STORED",
-            "status=DISPATCHED", "status=PASSED", "status=COPIED",
-            "status=OWNER_BOUNDARY", "status=CONTROL_BOUNDARY",
-            "zeroCtrlMipsGprWriteDestination(delay)",
-            "zeroCtrlWriteVsh3f568CallbackFlow(owner, callee, callee_size"):
-        if token not in callback_flow:
-            fail("bounded scePaf callback flow lacks " + token)
-    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
-            "request_function()"):
-        if forbidden in callback_flow:
-            fail("scePaf callback flow is not read-only: " + forbidden)
+    if "VSH3F568_CALLBACK_DEPTH_LIMIT" in kernel or \
+            "zeroCtrlWriteVsh3f568CallbackFlow" in kernel:
+        fail("generic eight-depth callback walker remains enabled")
+    for token in ("#define PAF_A989A2C4_HELPER_MAP_LIMIT 0x300",
+            "#define PAF_A989A2C4_NEXT_MAP_LIMIT   0x180",
+            "move_v0_a0 == 0x00801021", "move_a2_a1 == 0x00A03021",
+            "move_a1_v0 == 0x00402821", "(jal >> 26) != 3",
+            "slot = ((lui & 0xFFFF) << 16) +",
+            "(int)(short)(load_a0 & 0xFFFF)",
+            "zeroCtrlVshModuleRangeValid(owner, slot, 4)",
+            "[paf-a989a2c4-wrapper] validation=1",
+            "callback_reg=6 descriptor_reg=5 context_reg=4",
+            "[paf-a989a2c4-context] slot=0x%08X value=0x%08X",
+            "sceKernelFindModuleByAddress(helper) != owner",
+            "PAF_A989A2C4_HELPER_MAP_LIMIT", "[paf-a989a2c4-helper-map]",
+            "[paf-a989a2c4-helper-cf]", "[paf-a989a2c4-helper-frame]",
+            'zeroCtrlWritePafStructuralUses(helper, helper_size, 5,',
+            '"paf-a989a2c4-descriptor"',
+            'zeroCtrlWritePafStructuralUses(helper, helper_size, 4,',
+            '"paf-a989a2c4-context-use"',
+            "zeroCtrlWritePafCallbackFlow(owner, helper, helper_size, 6, 1",
+            "tracked < 4 || tracked > 7", "status=PASSED_TO_CALL",
+            '"OVERWRITTEN"', "OVERWRITTEN_IN_DELAY_SLOT",
+            '"AMBIGUOUS_CALL"', '"CONTROL_BOUNDARY"',
+            "PAF_A989A2C4_NEXT_MAP_LIMIT", "[paf-a989a2c4-next]",
+            "[paf-a989a2c4-next-map]", '"paf-a989a2c4-next-callback"',
+            "next_size, tracked, 0,", "[paf-a989a2c4-helper-callers]",
+            "stored < 8"):
+        if token not in paf:
+            fail("exact scePaf A989A2C4 analysis lacks " + token)
+    callback_start = paf.find("static void zeroCtrlWritePafCallbackFlow(")
+    callback_end = paf.find("static void zeroCtrlWritePafA989A2C4Analysis(")
+    callback_flow = paf[callback_start:callback_end]
+    delay_check = callback_flow.find("zeroCtrlMipsGprWriteDestination(delay)")
+    overwritten_delay = callback_flow.find("OVERWRITTEN_IN_DELAY_SLOT")
+    jalr_classify = callback_flow.find("function == 9 && rs == tracked")
+    used_immediately = callback_flow.find('"USED_IMMEDIATELY"')
+    argument_gate = callback_flow.find("tracked < 4 || tracked > 7")
+    passed_call = callback_flow.find("status=PASSED_TO_CALL")
+    if not 0 <= delay_check < overwritten_delay < jalr_classify < \
+            used_immediately < argument_gate < passed_call:
+        fail("scePaf callback call classification precedes delay-slot validation")
     destination_start = kernel.find(
             "static int zeroCtrlMipsGprWriteDestination(")
     destination_end = kernel.find(
@@ -536,16 +555,6 @@ def check_sources(root):
             "(opcode >= 0x28 && opcode <= 0x2F)") or \
             "opcode <= 0x2F) || opcode == 0x38" in destination_decoder:
         fail("SC is incorrectly classified as a no-destination store")
-    delay_check = impl_flow.find("zeroCtrlMipsGprWriteDestination(delay)")
-    overwritten_delay = impl_flow.find("OVERWRITTEN_IN_DELAY_SLOT")
-    used_immediately = impl_flow.find("status=USED_IMMEDIATELY")
-    passed_call = impl_flow.find("PASSED_TO_CALL")
-    ambiguous_call = impl_flow.find("status=AMBIGUOUS_CALL")
-    argument_gate = impl_flow.find("tracked_a1 >= 4 && tracked_a1 <= 7")
-    jalr_target_gate = impl_flow.find("function == 9 && rs == tracked_a1")
-    if not 0 <= delay_check < overwritten_delay < jalr_target_gate < \
-            used_immediately < argument_gate < passed_call < ambiguous_call:
-        fail("real +3F568 call classification precedes delay-slot validation")
     liveness_start = kernel.find("static int zeroCtrlVsh3f568A1PairReaches(")
     liveness_end = vsh3_start
     liveness = kernel[liveness_start:liveness_end]

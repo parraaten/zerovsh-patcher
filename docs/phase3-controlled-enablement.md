@@ -2114,15 +2114,31 @@ nonzero decision is only a future compatibility candidate.
 ### VSH +0x589C callback implementation flow
 
 The next read-only diagnostic follows the hardware-proven callback pointer
-passed by VSH `+0x05704` as argument 1 to the import stub at `+0x3F568`.  After
-the existing import-table and `sceKernelFindModuleByAddress()` validation has
-identified the real owning module, a bounded flow walker starts at the resolved
-implementation with register `$a1` tainted.  It reports a proven register copy,
-word store (including base register and displacement), indirect dispatch, or
-direct-call argument pass.  A direct call is followed only when the callback is
-still in `$a0` through `$a3`, the delay slot provably preserves it, and the
-callee remains inside the validated owner; depth and per-function inspection
-are capped at eight calls and `0x100` bytes respectively.
+passed by VSH `+0x05704` as argument 1 to the import stub at `+0x3F568`. After
+the existing import-table proof uniquely identifies `scePaf` NID `0xA989A2C4`
+and `sceKernelFindModuleByAddress()` validates `scePaf_Module`, the diagnostic
+revalidates the small outer wrapper. It requires the wrapper to preserve the
+incoming descriptor, copy incoming `$a1` to `$a2`, load `$a0` through a
+relocation-safe LUI/LW slot, directly call an internal helper, and place the
+original `$a0` into `$a1` in the JAL delay slot. The slot uses signed LO16
+reconstruction and must lie in a validated owner segment before its value is
+read; the value is not dereferenced.
+
+The dynamically decoded internal helper is the primary target. Its containing
+segment is proven and its map is truncated to at most `0x300` bytes. Callback
+flow begins there in `$a2`, descriptor inspection independently begins in
+`$a1`, and context-use inspection begins in `$a0`. The structural inspections
+report only recognizable LW, SW, MOVE/OR/ADDU, and ADDIU operations and do not
+assign private field meanings. Control-flow and frame candidates are emitted
+from the same bounded map, and the owner's executable text is scanned for no
+more than eight compact direct callers of the decoded helper.
+
+If the callback is mechanically passed in `$a0` through `$a3` to a direct JAL,
+the delay slot must first prove that it preserves the callback. Exactly that
+one callee may then be owner- and segment-validated and mapped for at most
+`0x180` bytes. Its callback flow is inspected once without following another
+call. JALR-through-callback is likewise classified only after delay-slot
+validation. There is no generic recursive call graph or eight-depth walker.
 
 Branches, jumps, returns, unknown register writes, ambiguous delay slots, and
 module boundaries stop the path rather than guessing.  The walker uses only
