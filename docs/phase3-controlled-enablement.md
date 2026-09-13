@@ -2282,3 +2282,27 @@ its `+0x00` stack allocation through the `+0x2C` field store, including both
 call delay slots and the intervening `a1` load. The per-register `a1`
 provenance model, constructed_1 proof, adjacent data scan, earlier downstream
 analyses, and conservative primary callback-flow result remain unchanged.
+
+#### A989 OUTER base-origin observation
+
+The next diagnostic does not widen the generic candidate search. For each of
+the existing, capped reported `base+0x14`/JALR candidates, it walks backward at
+most `0x40` bytes to identify the nearest mechanically decoded write to that
+candidate's base register. The walk stops at direct or indirect control flow,
+at a control-flow delay slot, or when GPR destination behavior is unknown. It
+reports only exact MOVE, zero/general ADDIU, or LW definitions; all other cases
+remain `UNKNOWN`. The record is explicitly a local, branch-free suffix fact,
+not proof of function-entry provenance or identity with the A989 OUTER object.
+
+New records are:
+
+```text
+[paf-a989-outer14-base-origin] load_off=... status=LOCAL_DEFINITION definition_off=... kind=MOVE|ADDIU|LW source_reg=... disp=... path=BRANCH_FREE_SUFFIX
+[paf-a989-outer14-base-origin] load_off=... status=UNKNOWN path=BRANCH_FREE_SUFFIX
+```
+
+This observation is intended to distinguish candidates whose local base
+definition offers a concrete next provenance edge from candidates that remain
+opaque. It adds no object dereference, runtime call, execution claim, semantic
+Sony name, or change to the primary `callback_flow=AMBIGUOUS` result. A new
+PSP-1000 run is required to collect these loaded-image records.

@@ -4822,6 +4822,10 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                     source[base] = 0;
                 candidates++;
                 if (reported < 16) {
+                    unsigned int back = offset;
+                    unsigned int back_start = offset > 0x40 ?
+                            offset - 0x40 : 0;
+                    unsigned int definition_found = 0;
                     snprintf(line, sizeof(line),
                             "[paf-a989-outer14-call-candidate] load_off=0x%X "
                             "jalr_off=0x%X base_reg=%u target_reg=%u\n",
@@ -4832,6 +4836,92 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                             "a1_source=%s\n", look,
                             source[5] ? "base_plus_0x04" : "UNKNOWN");
                     zeroCtrlDiagnosticsText(line);
+                    while (back > back_start) {
+                        unsigned int definition_off = back - 4;
+                        unsigned int definition =
+                                _lw(paf->text_addr + definition_off);
+                        unsigned int definition_opcode = definition >> 26;
+                        unsigned int definition_rs =
+                                (definition >> 21) & 0x1F;
+                        unsigned int definition_rt =
+                                (definition >> 16) & 0x1F;
+                        unsigned int definition_function = definition & 0x3F;
+                        int definition_destination;
+                        if (definition_off >= 4) {
+                            unsigned int prior = _lw(paf->text_addr +
+                                    definition_off - 4);
+                            unsigned int prior_opcode = prior >> 26;
+                            unsigned int prior_function = prior & 0x3F;
+                            if (prior_opcode == 1 || prior_opcode == 2 ||
+                                    prior_opcode == 3 ||
+                                    (prior_opcode >= 4 && prior_opcode <= 7) ||
+                                    (prior_opcode >= 0x14 &&
+                                        prior_opcode <= 0x17) ||
+                                    (prior_opcode == 0 &&
+                                        (prior_function == 8 ||
+                                         prior_function == 9)))
+                                break;
+                        }
+                        if (definition_opcode == 1 ||
+                                definition_opcode == 2 ||
+                                definition_opcode == 3 ||
+                                (definition_opcode >= 4 &&
+                                    definition_opcode <= 7) ||
+                                (definition_opcode >= 0x14 &&
+                                    definition_opcode <= 0x17) ||
+                                (definition_opcode == 0 &&
+                                    (definition_function == 8 ||
+                                     definition_function == 9)))
+                            break;
+                        definition_destination =
+                                zeroCtrlMipsGprWriteDestination(definition);
+                        if (definition_destination < 0) break;
+                        if ((unsigned int)definition_destination == base) {
+                            const char *kind = 0;
+                            unsigned int source_reg = definition_rs;
+                            int displacement = 0;
+                            if (zeroCtrlMipsMove(definition, base,
+                                        definition_rs) ||
+                                    zeroCtrlMipsMove(definition, base,
+                                        definition_rt)) {
+                                kind = "MOVE";
+                                source_reg = definition_rs == 0 ?
+                                        definition_rt : definition_rs;
+                            } else if (definition_opcode == 9 &&
+                                    definition_rt == base) {
+                                kind = "ADDIU";
+                                displacement =
+                                        (int)(short)(definition & 0xFFFF);
+                            } else if (definition_opcode == 0x23 &&
+                                    definition_rt == base) {
+                                kind = "LW";
+                                displacement =
+                                        (int)(short)(definition & 0xFFFF);
+                            }
+                            if (kind != 0) {
+                                snprintf(line, sizeof(line),
+                                        "[paf-a989-outer14-base-origin] "
+                                        "load_off=0x%X "
+                                        "status=LOCAL_DEFINITION "
+                                        "definition_off=0x%X kind=%s "
+                                        "source_reg=%u disp=%d "
+                                        "path=BRANCH_FREE_SUFFIX\n",
+                                        offset, definition_off, kind,
+                                        source_reg, displacement);
+                                zeroCtrlDiagnosticsText(line);
+                                definition_found = 1;
+                            }
+                            break;
+                        }
+                        back = definition_off;
+                    }
+                    if (!definition_found) {
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-outer14-base-origin] "
+                                "load_off=0x%X status=UNKNOWN "
+                                "path=BRANCH_FREE_SUFFIX\n", offset);
+                        zeroCtrlDiagnosticsText(line);
+                    }
                     reported++;
                 }
                 if (source[5]) closure = 1;

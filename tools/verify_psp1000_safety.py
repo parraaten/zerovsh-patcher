@@ -921,6 +921,23 @@ def check_sources(root):
             "[paf-a989-outer14-call-candidate]", "reported < 16",
             "[paf-a989-outer14-call-provenance]", "base_plus_0x04",
             'source[5] ? "base_plus_0x04" : "UNKNOWN"',
+            "back_start = offset > 0x40 ?",
+            "offset - 0x40 : 0",
+            "definition_off = back - 4",
+            "_lw(paf->text_addr + definition_off)",
+            "definition_off - 4",
+            "prior_opcode == 1 || prior_opcode == 2",
+            "prior_function == 8 ||",
+            "prior_function == 9",
+            "zeroCtrlMipsGprWriteDestination(definition)",
+            "(unsigned int)definition_destination == base",
+            "zeroCtrlMipsMove(definition, base",
+            "definition_opcode == 9",
+            "definition_opcode == 0x23",
+            "status=LOCAL_DEFINITION",
+            "path=BRANCH_FREE_SUFFIX",
+            "[paf-a989-outer14-base-origin]",
+            "load_off=0x%X status=UNKNOWN",
             "[paf-a989-outer14-dispatch-shape] validation=1",
             "target_field_off=0x14 arg1_field_off=0x04",
             "[paf-a989-constructed1-provenance]",
@@ -967,6 +984,34 @@ def check_sources(root):
             delay_decode < delay_base < delay_update < provenance_output < \
             closure_update:
         fail("base/target liveness or JALR delay provenance ordering is not conservative")
+    origin_bound = constructed_flow.find(
+            "back_start = offset > 0x40 ?", delay_update)
+    origin_read = constructed_flow.find(
+            "_lw(paf->text_addr + definition_off)", origin_bound)
+    origin_delay_guard = constructed_flow.find(
+            "definition_off - 4", origin_read)
+    origin_control_barrier = constructed_flow.find(
+            "prior_opcode == 1 || prior_opcode == 2", origin_delay_guard)
+    origin_decode = constructed_flow.find(
+            "zeroCtrlMipsGprWriteDestination(definition)",
+            origin_control_barrier)
+    origin_base_write = constructed_flow.find(
+            "(unsigned int)definition_destination == base", origin_decode)
+    origin_move = constructed_flow.find(
+            "zeroCtrlMipsMove(definition, base", origin_base_write)
+    origin_addiu = constructed_flow.find(
+            "definition_opcode == 9", origin_move)
+    origin_lw = constructed_flow.find(
+            "definition_opcode == 0x23", origin_addiu)
+    origin_output = constructed_flow.find(
+            "status=LOCAL_DEFINITION", origin_lw)
+    origin_unknown = constructed_flow.find(
+            "load_off=0x%X status=UNKNOWN", origin_output)
+    if not 0 <= origin_bound < provenance_output < origin_read < origin_delay_guard < \
+            origin_control_barrier < origin_decode < origin_base_write < \
+            origin_move < origin_addiu < origin_lw < origin_output < \
+            origin_unknown or "kind=OTHER" in constructed_flow:
+        fail("OUTER+0x14 base-origin observation is unbounded or not fail-closed")
     c0_frame = constructed_flow.find(
             "_lw(constructed[0]) == 0x27BDFFF0")
     c0_save_s1 = constructed_flow.find(
