@@ -447,57 +447,60 @@ def check_sources(root):
             "static void zeroCtrlWriteFunctionalVsh3f568Analysis(void)")
     vsh3_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(", vsh3_start)
     if vsh3_start < 0 or vsh3_end < 0:
-        fail("VSH +3F568 analysis is missing")
+        fail("VSH +3F568 implementation analysis is missing")
     vsh3 = kernel[vsh3_start:vsh3_end]
-    for definition in ("#define VSH3F568_MAP_START 0x3F468",
-            "#define VSH3F568_MAP_END   0x3F768",
-            "#define VSH3F568_CALLER_WINDOW_BEFORE 0x40",
-            "#define VSH3F568_CALLER_WINDOW_AFTER  0x20"):
-        if definition not in kernel:
-            fail("VSH +3F568 analysis lacks " + definition)
-    for token in ("model != 0",
-            "sceKernelDevkitVersion() != 0x06060110",
+    impl_flow_start = kernel.find("static void zeroCtrlWriteVsh3f568ImplFlow(")
+    impl_flow = kernel[impl_flow_start:vsh3_start]
+    for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
             "!slide_diag.functional_enabled", "!slide_diag.minimal_memory_test",
-            "zeroCtrlVshModuleRangeValid(vsh,",
-            "vsh->text_addr + VSH3F568_MAP_START",
-            "VSH3F568_MAP_END - VSH3F568_MAP_START",
+            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x3F568, 8)",
             "word_56fc = _lw(text + 0x56FC)",
             "word_5700 = _lw(text + 0x5700)",
             "word_5704 = _lw(text + 0x5704)",
             "word_5708 = _lw(text + 0x5708)",
-            "((word_56fc >> 16) & 0x1F) != 5",
-            "(word_5700 >> 26) != 9",
-            "((word_5700 >> 21) & 0x1F) != 5",
-            "((word_5700 >> 16) & 0x1F) != 5",
-            "(int)(short)(word_5700 & 0xFFFF)",
             "decoded_a1 != text + 0x589C", "(word_5704 >> 26) != 3",
             "zeroCtrlMipsJumpTarget(text + 0x5704, word_5704)",
-            "text + 0x3F568", "(word_5708 >> 26) != 0",
             "((word_5708 >> 11) & 0x1F) != 4",
             "[vsh3f568-callsite] validation=1 caller=0x05704",
-            "[vsh3f568-map]", "[vsh3f568-cf]", "[vsh3f568-frame]",
-            "for (offset = 0x56AC; offset < 0x570C; offset += 4)",
-            "[vsh5704-arg0]", "pending_call_clobber",
-            "known_mask &= ~VSH_CALLER_SAVED_GPR_MASK",
-            "pending_call_clobber = opcode == 3",
-            "zeroCtrlMipsGprWriteDestination(word)",
-            "zeroCtrlWriteVsh3f568A1Flow(vsh)",
-            "for (offset = 0; offset + 8 <= vsh->text_size; offset += 4)",
-            "zeroCtrlMipsJumpTarget(pc, word) == text + 0x3F568",
-            "[vsh3f568-callers]", "[vsh3f568-caller]",
-            "low_opcode == 9 || low_opcode == 0x0D",
-            "upper + (int)(short)(low & 0xFFFF)",
-            "upper | (low & 0xFFFF)", "[vsh3f568-address-ref]"):
+            "thunk_word = _lw(stub)", "(thunk_word >> 26) != 2",
+            "_lw(stub + 4) != 0",
+            "resolved = zeroCtrlMipsJumpTarget(stub, thunk_word)",
+            "[vsh3f568-thunk] validation=1",
+            "table_addr = (unsigned int)vsh->stub_top",
+            "table_size = vsh->stub_size",
+            "zeroCtrlVshModuleRangeValid(vsh, table_addr, table_size)",
+            "entry->len == 0", "entry->stubcount > 0xFFFFFFFFU / 8",
+            "zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size)",
+            "zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size)",
+            "stubtable + i * 8 != stub", "matches != 1",
+            "zeroCtrlCopyVshImportLibrary(vsh, entry->libname",
+            "[vsh3f568-import] validation=1",
+            "sceKernelFindModuleByAddress(resolved)",
+            "zeroCtrlLoadedModuleMetadataValid(owner)",
+            "owner->nsegment", "owner->segmentaddr[i]",
+            "owner->segmentsize[i]", "impl_size > 0x100",
+            "zeroCtrlVshModuleRangeValid(owner, resolved, impl_size)",
+            "[vsh3f568-owner] validation=1", "[vsh3f568-impl-map]",
+            "[vsh3f568-impl-cf]", "[vsh3f568-impl-frame]",
+            "zeroCtrlWriteVsh3f568ImplFlow(owner, resolved, impl_size",
+            "[vsh3f568-use]", "[vsh3f568-summary]"):
         if token not in vsh3:
-            fail("VSH +3F568 analysis lacks " + token)
-    first_vsh3_read = vsh3.find("_lw(")
-    vsh3_range = vsh3.find("zeroCtrlVshModuleRangeValid(vsh,")
-    if not 0 <= vsh3_range < first_vsh3_read:
-        fail("VSH +3F568 analysis reads before validating loaded ranges")
-    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
-            "zeroCtrlRedir", "request_function()"):
-        if forbidden in vsh3:
-            fail("VSH +3F568 analysis is not read-only: " + forbidden)
+            fail("resolved VSH +3F568 analysis lacks " + token)
+    for token in ("tracked_a1 = 5", "[vsh3f568-impl-a1] status=STORED",
+            "[vsh3f568-impl-a0]",
+            "delay = _lw(target + offset + 4)",
+            "zeroCtrlMipsGprWriteDestination(delay)",
+            "OVERWRITTEN_IN_DELAY_SLOT", "PASSED_TO_CALL",
+            "USED_IMMEDIATELY", "opcode == 1 || opcode == 2"):
+        if token not in impl_flow:
+            fail("real +3F568 input analysis lacks " + token)
+    if "[vsh3f568-map]" in vsh3 or "[vsh3f568-cf]" in vsh3:
+        fail("superseded VSH stub-table map is still emitted")
+    for section in (vsh3, impl_flow):
+        for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
+                "zeroCtrlRedir", "request_function()"):
+            if forbidden in section:
+                fail("resolved VSH +3F568 analysis is not read-only: " + forbidden)
     destination_start = kernel.find(
             "static int zeroCtrlMipsGprWriteDestination(")
     destination_end = kernel.find(
@@ -515,53 +518,11 @@ def check_sources(root):
             "(opcode >= 0x28 && opcode <= 0x2F)") or \
             "opcode <= 0x2F) || opcode == 0x38" in destination_decoder:
         fail("SC is incorrectly classified as a no-destination store")
-    a1_start = kernel.find("static void zeroCtrlWriteVsh3f568A1Flow(")
-    a1_end = vsh3_start
-    a1_flow = kernel[a1_start:a1_end]
-    for token in ("tracked = 5", "[vsh3f568-a1-store]",
-            "[vsh3f568-a1-copy]", "PASSED_TO_CALL", "USED_IMMEDIATELY",
-            "delay = _lw(vsh->text_addr + offset + 4)",
-            "delay_destination = zeroCtrlMipsGprWriteDestination(delay)",
-            "OVERWRITTEN_IN_DELAY_SLOT", "AMBIGUOUS_DELAY_SLOT",
-            "[vsh3f568-next-map]", "zeroCtrlVshModuleRangeValid(vsh, target, 0x40)",
-            "zeroCtrlWriteVsh3f568Dispatch(vsh, offset + 4, rs,",
-            "status=AMBIGUOUS",
-            "opcode == 2 || opcode == 1", "opcode >= 4 && opcode <= 7",
-            "opcode >= 0x14 && opcode <= 0x17",
-            "opcode == 0 && function == 8"):
-        if token not in a1_flow:
-            fail("bounded VSH +3F568 a1 dataflow lacks " + token)
-    if any(token in a1_flow for token in ("_sw(", "Dcache", "Icache")):
-        fail("bounded VSH +3F568 a1 dataflow is not read-only")
-    caller_window_start = kernel.find(
-            "static void zeroCtrlWriteVsh3f568CallerWindow(")
-    caller_window_end = a1_start
-    caller_window = kernel[caller_window_start:caller_window_end]
-    for token in ("[vsh3f568-window]", "row += 0x20",
-            "_lw(address + 28)", "[vsh589c-dispatch]",
-            "status=NOT_IDENTIFIED_IN_BOUNDED_FLOW", "BASE_CLOBBERED",
-            "zeroCtrlMipsGprWriteDestination(candidate)",
-            "(unsigned int)destination == rt",
-            "zeroCtrlMipsGprWriteDestination(word)",
-            "(unsigned int)destination == base"):
-        if token not in caller_window:
-            fail("bounded VSH +3F568 caller window lacks " + token)
-    delay_check = a1_flow.find(
-            "delay_destination = zeroCtrlMipsGprWriteDestination(delay)")
-    overwritten_delay = a1_flow.find("OVERWRITTEN_IN_DELAY_SLOT")
-    passed_call = a1_flow.find("status=PASSED_TO_CALL")
-    used_immediately = a1_flow.find("status=USED_IMMEDIATELY")
-    if not 0 <= delay_check < overwritten_delay < used_immediately < passed_call:
-        fail("VSH +3F568 JAL/JALR classification precedes delay-slot validation")
-    structure_loop = vsh3[vsh3.find(
-            "for (offset = 0x56AC;"):vsh3.find(
-            "zeroCtrlWriteVsh3f568A1Flow(vsh)")]
-    store_output = structure_loop.find("[vsh5704-arg0]")
-    call_clobber = structure_loop.find(
-            "known_mask &= ~VSH_CALLER_SAVED_GPR_MASK")
-    if not 0 <= store_output < call_clobber or \
-            "VSH_CALLER_SAVED_GPR_MASK 0x8300FFFCU" not in kernel:
-        fail("caller known values are clobbered before the JAL delay slot")
+    delay_check = impl_flow.find("zeroCtrlMipsGprWriteDestination(delay)")
+    overwritten_delay = impl_flow.find("OVERWRITTEN_IN_DELAY_SLOT")
+    passed_call = impl_flow.find("PASSED_TO_CALL")
+    if not 0 <= delay_check < overwritten_delay < passed_call:
+        fail("real +3F568 call classification precedes delay-slot validation")
     if kernel.count("zeroCtrlWriteFunctionalVsh3f568Analysis();") != 1 or \
             "if (!vsh3f568_scan_written && slide_diag.functional_enabled" \
             not in minimal or "vsh3f568_scan_written = 1;" not in minimal:

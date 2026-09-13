@@ -3924,25 +3924,120 @@ static void zeroCtrlWriteVsh3f568A1Flow(SceModule2 *vsh) {
             "[vsh3f568-a1-flow] status=AMBIGUOUS bounded_map_exhausted=1\n");
 }
 
-static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
-    ZeroCtrlVsh589cDirect callers[VSH589C_REPORT_LIMIT];
-    ZeroCtrlVsh589cAddressRef address_refs[VSH589C_REPORT_LIMIT];
-    unsigned int caller_count = 0, address_count = 0;
-    unsigned int caller_total = 0, address_total = 0;
-    unsigned int jal_total = 0, jump_total = 0;
-    unsigned int known_value[32] = { 0 };
-    unsigned int known_mask = 0;
-    int pending_call_clobber = 0;
+static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod) {
+    return mod && ((unsigned int)mod & 3) == 0 &&
+            (unsigned int)mod >= 0x88000000 &&
+            (unsigned int)mod < 0x8C000000 && mod->text_addr != 0 &&
+            mod->text_size != 0 && mod->nsegment != 0 && mod->nsegment <= 4;
+}
+
+static void zeroCtrlWriteVsh3f568ImplFlow(SceModule2 *owner,
+        unsigned int target, unsigned int size, char *status,
+        unsigned int status_size) {
     unsigned int offset;
-    unsigned int row;
-    unsigned int i;
-    unsigned int text;
-    unsigned int word_56fc;
-    unsigned int word_5700;
-    unsigned int word_5704;
-    unsigned int word_5708;
-    unsigned int decoded_a1;
+    unsigned int tracked_a1 = 5;
+    char line[192];
+
+    snprintf(status, status_size, "AMBIGUOUS");
+    if (!zeroCtrlVshModuleRangeValid(owner, target, size)) return;
+    for (offset = 0; offset < size; offset += 4) {
+        unsigned int word = _lw(target + offset);
+        unsigned int opcode = word >> 26;
+        unsigned int rs = (word >> 21) & 0x1F;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int rd = (word >> 11) & 0x1F;
+        unsigned int function = word & 0x3F;
+        int destination;
+
+        if (opcode == 0x2B && rt == tracked_a1) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-impl-a1] status=STORED store_off=0x%X "
+                    "base_reg=%u disp=%d\n", offset, rs,
+                    (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+            snprintf(status, status_size, "STORED");
+            return;
+        }
+        if (opcode == 0 && (function == 0x21 || function == 0x25) &&
+                (rs == tracked_a1 || rt == tracked_a1) &&
+                (rs == 0 || rt == 0) && rd != 0) {
+            tracked_a1 = rd;
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-impl-a1] status=COPIED off=0x%X dst=%u\n",
+                    offset, tracked_a1);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        if (opcode == 3 || (opcode == 0 && function == 9)) {
+            unsigned int delay;
+            int delay_destination;
+            if (offset + 8 > size) break;
+            delay = _lw(target + offset + 4);
+            delay_destination = zeroCtrlMipsGprWriteDestination(delay);
+            if (delay_destination < 0 ||
+                    (unsigned int)delay_destination == tracked_a1) {
+                snprintf(line, sizeof(line),
+                        "[vsh3f568-impl-a1] status=%s call_off=0x%X "
+                        "delay_off=0x%X\n",
+                        delay_destination < 0 ? "AMBIGUOUS" :
+                        "OVERWRITTEN_IN_DELAY_SLOT", offset, offset + 4);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(status, status_size, "%s", delay_destination < 0 ?
+                        "AMBIGUOUS" : "OVERWRITTEN");
+                return;
+            }
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-impl-a1] status=%s call_off=0x%X reg=%u\n",
+                    opcode == 0 && function == 9 && rs == tracked_a1 ?
+                    "USED_IMMEDIATELY" : "PASSED_TO_CALL", offset, tracked_a1);
+            zeroCtrlDiagnosticsText(line);
+            snprintf(status, status_size, "%s",
+                    opcode == 0 && function == 9 && rs == tracked_a1 ?
+                    "USED_IMMEDIATELY" : "PASSED_TO_CALL");
+            return;
+        }
+        if (opcode == 1 || opcode == 2 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && function == 8))
+            break;
+        destination = zeroCtrlMipsGprWriteDestination(word);
+        if (destination < 0 || (unsigned int)destination == tracked_a1) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-impl-a1] status=%s off=0x%X\n",
+                    destination < 0 ? "AMBIGUOUS" : "OVERWRITTEN", offset);
+            zeroCtrlDiagnosticsText(line);
+            snprintf(status, status_size, "%s",
+                    destination < 0 ? "AMBIGUOUS" : "OVERWRITTEN");
+            return;
+        }
+        if ((opcode == 0x23 && rs == 4) ||
+                (opcode == 0x2B && (rs == 4 || rt == 4)) ||
+                (opcode == 0 && (function == 0x21 || function == 0x25) &&
+                 (rs == 4 || rt == 4)) || (opcode == 9 && rs == 4)) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-impl-a0] off=0x%X word=0x%08X opcode=0x%X "
+                    "rs=%u rt=%u rd=%u disp=%d\n", offset, word, opcode,
+                    rs, rt, rd, (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+    zeroCtrlDiagnosticsText("[vsh3f568-impl-a1] status=AMBIGUOUS\n");
+}
+
+static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
+    unsigned int callers[16];
+    unsigned int caller_count = 0;
+    unsigned int offset, row, i, matches = 0;
+    unsigned int text, stub, thunk_word, resolved;
+    unsigned int word_56fc, word_5700, word_5704, word_5708, decoded_a1;
+    unsigned int table_addr, table_size, table_offset = 0;
+    unsigned int import_nid = 0, import_index = 0;
+    char import_library[32] = { 0 };
     SceModule2 *vsh;
+    SceModule2 *owner;
+    unsigned int owner_segment = 0xFFFFFFFFU;
+    unsigned int impl_size = 0;
+    char a1_status[32];
     char line[256];
 
     if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
@@ -3950,21 +4045,14 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
             !slide_diag.vsh_module_seen)
         return;
     vsh = sceKernelFindModuleByName("vsh_module");
-    if (!vsh || ((unsigned int)vsh & 3) != 0 ||
-            (unsigned int)vsh < 0x88000000 ||
-            (unsigned int)vsh >= 0x8C000000 ||
-            vsh->modid != slide_diag.vsh_modid || vsh->text_addr == 0 ||
+    if (!zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            vsh->modid != slide_diag.vsh_modid ||
             vsh->text_addr != slide_diag.vsh_text_addr ||
             vsh->text_size != slide_diag.vsh_text_size ||
-            vsh->text_size < VSH3F568_MAP_END || vsh->nsegment == 0 ||
-            vsh->nsegment > 4 ||
-            !zeroCtrlVshModuleRangeValid(vsh,
-                vsh->text_addr + VSH3F568_MAP_START,
-                VSH3F568_MAP_END - VSH3F568_MAP_START) ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x3F568, 8) ||
             !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x56AC,
-                0x570C - 0x56AC) ||
-            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr, vsh->text_size)) {
-        zeroCtrlDiagnosticsText("[vsh3f568-callsite] validation=0\n");
+                0x570C - 0x56AC)) {
+        zeroCtrlDiagnosticsText("[vsh3f568-thunk] validation=0\n");
         return;
     }
     text = vsh->text_addr;
@@ -3983,194 +4071,222 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
                 text + 0x3F568 || (word_5708 >> 26) != 0 ||
             ((word_5708 & 0x3F) != 0x21 &&
              (word_5708 & 0x3F) != 0x25) ||
-            !((((word_5708 >> 21) & 0x1F) == 29 &&
-               ((word_5708 >> 16) & 0x1F) == 0) ||
-              (((word_5708 >> 21) & 0x1F) == 0 &&
-               ((word_5708 >> 16) & 0x1F) == 29)) ||
-            ((word_5708 >> 11) & 0x1F) != 4) {
+            ((word_5708 >> 11) & 0x1F) != 4 ||
+            !(((((word_5708 >> 21) & 0x1F) == 29) &&
+               (((word_5708 >> 16) & 0x1F) == 0)) ||
+              ((((word_5708 >> 21) & 0x1F) == 0) &&
+               (((word_5708 >> 16) & 0x1F) == 29)))) {
         zeroCtrlDiagnosticsText("[vsh3f568-callsite] validation=0\n");
         return;
     }
-    snprintf(line, sizeof(line),
+    zeroCtrlDiagnosticsText(
             "[vsh3f568-callsite] validation=1 caller=0x05704 "
             "target=0x3F568 a0_source=sp a1=0x0589C\n");
+    stub = text + 0x3F568;
+    thunk_word = _lw(stub);
+    if ((thunk_word >> 26) != 2 || _lw(stub + 4) != 0) {
+        zeroCtrlDiagnosticsText("[vsh3f568-thunk] validation=0\n");
+        return;
+    }
+    resolved = zeroCtrlMipsJumpTarget(stub, thunk_word);
+    snprintf(line, sizeof(line),
+            "[vsh3f568-thunk] validation=1 stub_off=0x3F568 "
+            "word=0x%08X resolved=0x%08X\n", thunk_word, resolved);
     zeroCtrlDiagnosticsText(line);
 
-    for (row = VSH3F568_MAP_START; row < VSH3F568_MAP_END; row += 0x20) {
-        unsigned int address = text + row;
+    table_addr = (unsigned int)vsh->stub_top;
+    table_size = vsh->stub_size;
+    if ((table_addr & 3) == 0 && table_size != 0 &&
+            zeroCtrlVshModuleRangeValid(vsh, table_addr, table_size)) {
+        while (table_offset < table_size) {
+            SceLibraryStubTable *entry;
+            unsigned int entry_addr, entry_size, functions_size, nids_size;
+            unsigned int stubtable, nidtable;
+            if (table_size - table_offset < 12 ||
+                    table_addr + table_offset < table_addr) break;
+            entry_addr = table_addr + table_offset;
+            if (!zeroCtrlVshModuleRangeValid(vsh, entry_addr, 12)) break;
+            entry = (SceLibraryStubTable *)entry_addr;
+            if (entry->len == 0) break;
+            entry_size = (unsigned int)entry->len * 4;
+            if (entry_size < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                    entry_size > table_size - table_offset ||
+                    !zeroCtrlVshModuleRangeValid(vsh, entry_addr, entry_size) ||
+                    entry->stubcount > 0xFFFFFFFFU / 8) break;
+            functions_size = (unsigned int)entry->stubcount * 8;
+            nids_size = (unsigned int)entry->stubcount * 4;
+            stubtable = (unsigned int)entry->stubtable;
+            nidtable = (unsigned int)entry->nidtable;
+            if ((stubtable & 3) == 0 && (nidtable & 3) == 0 &&
+                    zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size) &&
+                    zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size)) {
+                for (i = 0; i < entry->stubcount; i++) {
+                    if (i > (0xFFFFFFFFU - stubtable) / 8) break;
+                    if (stubtable + i * 8 != stub) continue;
+                    matches++;
+                    import_nid = entry->nidtable[i];
+                    import_index = i;
+                    if (!zeroCtrlCopyVshImportLibrary(vsh, entry->libname,
+                                import_library, sizeof(import_library)))
+                        import_library[0] = '\0';
+                }
+            }
+            table_offset += entry_size;
+        }
+    }
+    if (matches != 1 || import_library[0] == '\0') {
         snprintf(line, sizeof(line),
-                "[vsh3f568-map] off=0x%05X w0=%08X w1=%08X w2=%08X "
-                "w3=%08X w4=%08X w5=%08X w6=%08X w7=%08X\n",
-                row, _lw(address), _lw(address + 4), _lw(address + 8),
-                _lw(address + 12), _lw(address + 16), _lw(address + 20),
-                _lw(address + 24), _lw(address + 28));
+                "[vsh3f568-import] validation=0 matches=%u\n", matches);
+        zeroCtrlDiagnosticsText(line);
+        zeroCtrlDiagnosticsText(
+                "[vsh3f568-summary] stub=1 import_match=0 owner_match=0 a1_flow=AMBIGUOUS\n");
+        return;
+    }
+    snprintf(line, sizeof(line),
+            "[vsh3f568-import] validation=1 library=%s nid=0x%08X "
+            "index=%u stub=0x%08X resolved=0x%08X\n", import_library,
+            import_nid, import_index, stub, resolved);
+    zeroCtrlDiagnosticsText(line);
+
+    owner = sceKernelFindModuleByAddress(resolved);
+    if (zeroCtrlLoadedModuleMetadataValid(owner)) {
+        for (i = 0; i < owner->nsegment; i++) {
+            unsigned int start = owner->segmentaddr[i];
+            unsigned int size = owner->segmentsize[i];
+            if (size != 0 && resolved >= start && resolved - start < size) {
+                owner_segment = i;
+                impl_size = size - (resolved - start);
+                if (impl_size > 0x100) impl_size = 0x100;
+                break;
+            }
+        }
+    }
+    if (owner_segment == 0xFFFFFFFFU || impl_size < 4 ||
+            !zeroCtrlVshModuleRangeValid(owner, resolved, impl_size)) {
+        zeroCtrlDiagnosticsText("[vsh3f568-owner] validation=0\n");
+        zeroCtrlDiagnosticsText(
+                "[vsh3f568-summary] stub=1 import_match=1 owner_match=0 a1_flow=AMBIGUOUS\n");
+        return;
+    }
+    snprintf(line, sizeof(line),
+            "[vsh3f568-owner] validation=1 module=%s modid=0x%08X "
+            "text=0x%08X text_size=0x%08X target=0x%08X "
+            "target_off=%s0x%X segment=%u\n", owner->modname, owner->modid,
+            owner->text_addr, owner->text_size, resolved,
+            resolved >= owner->text_addr ? "" : "outside_text_",
+            resolved >= owner->text_addr ? resolved - owner->text_addr : 0,
+            owner_segment);
+    zeroCtrlDiagnosticsText(line);
+
+    for (row = 0; row + 4 <= impl_size; row += 0x20) {
+        unsigned int words[8] = { 0 };
+        unsigned int count = (impl_size - row) / 4;
+        if (count > 8) count = 8;
+        for (i = 0; i < count; i++) words[i] = _lw(resolved + row + i * 4);
+        snprintf(line, sizeof(line),
+                "[vsh3f568-impl-map] module=%s target_off=0x%X row=0x%X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", owner->modname,
+                resolved >= owner->text_addr ? resolved - owner->text_addr : 0,
+                row, words[0], words[1], words[2], words[3], words[4],
+                words[5], words[6], words[7]);
         zeroCtrlDiagnosticsText(line);
     }
-    for (offset = VSH3F568_MAP_START; offset < VSH3F568_MAP_END; offset += 4) {
-        unsigned int pc = text + offset;
+    for (offset = 0; offset < impl_size; offset += 4) {
+        unsigned int pc = resolved + offset;
         unsigned int word = _lw(pc);
         unsigned int opcode = word >> 26;
         unsigned int function = word & 0x3F;
         unsigned int rs = (word >> 21) & 0x1F;
         unsigned int rt = (word >> 16) & 0x1F;
-        unsigned int target = 0;
-        unsigned int likely = 0;
-        const char *class_name = NULL;
+        unsigned int target = 0, likely = 0;
+        const char *kind = NULL;
         if (opcode == 2 || opcode == 3) {
-            class_name = opcode == 2 ? "J" : "JAL";
+            kind = opcode == 2 ? "J" : "JAL";
             target = zeroCtrlMipsJumpTarget(pc, word);
         } else if (opcode == 0 && (function == 8 || function == 9)) {
-            class_name = function == 8 ? "JR" : "JALR";
+            kind = function == 8 ? "JR" : "JALR";
         } else if (opcode == 1) {
-            class_name = "REGIMM";
+            kind = "REGIMM";
             target = zeroCtrlMipsBranchTarget(pc, word);
             likely = rt == 2 || rt == 3 || rt == 0x12 || rt == 0x13;
         } else if ((opcode >= 4 && opcode <= 7) ||
                 (opcode >= 0x14 && opcode <= 0x17)) {
-            static const char *names[4] = { "BEQ", "BNE", "BLEZ", "BGTZ" };
-            static const char *likely_names[4] = {
-                "BEQL", "BNEL", "BLEZL", "BGTZL"
-            };
-            class_name = opcode >= 0x14 ? likely_names[opcode & 3] :
-                    names[opcode & 3];
+            kind = opcode >= 0x14 ? "BRANCH_LIKELY" : "BRANCH";
             target = zeroCtrlMipsBranchTarget(pc, word);
             likely = opcode >= 0x14;
         }
-        if (class_name) {
+        if (kind) {
             snprintf(line, sizeof(line),
-                    "[vsh3f568-cf] off=0x%05X class=%s target=0x%08X "
-                    "rs=%u rt=%u likely=%u\n",
-                    offset, class_name, target, rs, rt, likely);
+                    "[vsh3f568-impl-cf] off=0x%X class=%s target=0x%08X "
+                    "rs=%u rt=%u likely=%u\n", offset, kind, target,
+                    rs, rt, likely);
             zeroCtrlDiagnosticsText(line);
         }
         if (opcode == 9 && rs == 29 && rt == 29) {
-            int amount = (short)(word & 0xFFFF);
             snprintf(line, sizeof(line),
-                    "[vsh3f568-frame] off=0x%05X class=%s amount=%d\n",
-                    offset, amount < 0 ? "STACK_ALLOC" : "STACK_FREE",
-                    amount < 0 ? -amount : amount);
+                    "[vsh3f568-impl-frame] off=0x%X class=%s amount=%d\n",
+                    offset, (short)(word & 0xFFFF) < 0 ?
+                    "STACK_ALLOC" : "STACK_FREE",
+                    (short)(word & 0xFFFF));
             zeroCtrlDiagnosticsText(line);
-        } else if ((opcode == 0x2B || opcode == 0x23) && rs == 29 && rt == 31) {
+        } else if ((opcode == 0x2B || opcode == 0x23) &&
+                rs == 29 && rt == 31) {
             snprintf(line, sizeof(line),
-                    "[vsh3f568-frame] off=0x%05X class=%s disp=%d\n",
+                    "[vsh3f568-impl-frame] off=0x%X class=%s disp=%d\n",
                     offset, opcode == 0x2B ? "SAVE_RA" : "RESTORE_RA",
                     (int)(short)(word & 0xFFFF));
             zeroCtrlDiagnosticsText(line);
         } else if (opcode == 0 && function == 8 && rs == 31) {
             snprintf(line, sizeof(line),
-                    "[vsh3f568-frame] off=0x%05X class=RETURN\n", offset);
+                    "[vsh3f568-impl-frame] off=0x%X class=RETURN\n", offset);
             zeroCtrlDiagnosticsText(line);
         }
     }
-
-    for (offset = 0x56AC; offset < 0x570C; offset += 4) {
-        unsigned int word = _lw(text + offset);
-        unsigned int opcode = word >> 26;
-        unsigned int rs = (word >> 21) & 0x1F;
-        unsigned int rt = (word >> 16) & 0x1F;
-        unsigned int function = word & 0x3F;
-        int destination = zeroCtrlMipsGprWriteDestination(word);
-        if (opcode == 0x0F && rs == 0) {
-            known_value[rt] = (word & 0xFFFF) << 16;
-            known_mask |= 1U << rt;
-        } else if ((opcode == 9 || opcode == 0x0D) &&
-                (known_mask & (1U << rs))) {
-            known_value[rt] = opcode == 9 ? known_value[rs] +
-                    (int)(short)(word & 0xFFFF) :
-                    known_value[rs] | (word & 0xFFFF);
-            known_mask |= 1U << rt;
-        } else if (opcode == 0 && (function == 0x21 || function == 0x25) &&
-                destination > 0 && (rs == 0 || rt == 0) &&
-                (known_mask & (1U << (rs == 0 ? rt : rs)))) {
-            known_value[destination] = known_value[rs == 0 ? rt : rs];
-            known_mask |= 1U << destination;
-        } else if (destination < 0) {
-            known_mask = 0;
-        } else if (destination > 0) {
-            known_mask &= ~(1U << destination);
-        }
-        if (opcode == 0x2B && rs == 29) {
-            snprintf(line, sizeof(line),
-                    "[vsh5704-arg0] off=0x%05X stack_disp=%d source_reg=%u "
-                    "word=0x%08X known=%u resolved=0x%08X\n",
-                    offset, (int)(short)(word & 0xFFFF), rt, word,
-                    (known_mask >> rt) & 1, known_value[rt]);
-            zeroCtrlDiagnosticsText(line);
-        }
-        /* A call's delay slot is processed above before caller-saved state dies. */
-        if (pending_call_clobber)
-            known_mask &= ~VSH_CALLER_SAVED_GPR_MASK;
-        pending_call_clobber = opcode == 3 ||
-                (opcode == 0 && function == 9);
-    }
-    zeroCtrlWriteVsh3f568A1Flow(vsh);
+    zeroCtrlWriteVsh3f568ImplFlow(owner, resolved, impl_size,
+            a1_status, sizeof(a1_status));
 
     for (offset = 0; offset + 8 <= vsh->text_size; offset += 4) {
         unsigned int pc = text + offset;
         unsigned int word = _lw(pc);
-        unsigned int opcode = word >> 26;
-        if (opcode == 2 || opcode == 3) {
-            if (zeroCtrlMipsJumpTarget(pc, word) == text + 0x3F568) {
-                caller_total++;
-                if (opcode == 3) jal_total++; else jump_total++;
-                if (caller_count < VSH589C_REPORT_LIMIT) {
-                    callers[caller_count].offset = offset;
-                    callers[caller_count].word = word;
-                    callers[caller_count].kind = opcode;
-                    caller_count++;
-                }
-            }
-        }
-        if (opcode == 0x0F && ((word >> 21) & 0x1F) == 0) {
-            unsigned int reg = (word >> 16) & 0x1F;
-            unsigned int low = _lw(pc + 4);
-            unsigned int low_opcode = low >> 26;
-            if (reg != 0 && (low_opcode == 9 || low_opcode == 0x0D) &&
-                    ((low >> 21) & 0x1F) == reg &&
-                    ((low >> 16) & 0x1F) == reg) {
-                unsigned int upper = (word & 0xFFFF) << 16;
-                unsigned int resolved = low_opcode == 9 ?
-                        upper + (int)(short)(low & 0xFFFF) :
-                        upper | (low & 0xFFFF);
-                if (resolved == text + 0x3F568) {
-                    address_total++;
-                    if (address_count < VSH589C_REPORT_LIMIT) {
-                        address_refs[address_count].lui_offset = offset;
-                        address_refs[address_count].low_offset = offset + 4;
-                        address_refs[address_count].reg = reg;
-                        address_refs[address_count].resolved = resolved;
-                        address_count++;
-                    }
-                }
-            }
-        }
+        if ((word >> 26) == 3 && zeroCtrlMipsJumpTarget(pc, word) == stub &&
+                caller_count < 16)
+            callers[caller_count++] = offset;
     }
-    snprintf(line, sizeof(line),
-            "[vsh3f568-callers] jal=%u jump=%u total=%u stored=%u\n",
-            jal_total, jump_total, caller_total, caller_count);
-    zeroCtrlDiagnosticsText(line);
     for (i = 0; i < caller_count; i++) {
+        unsigned int call = callers[i];
+        unsigned int delay = _lw(text + call + 4);
+        unsigned int pointer = 0, known = 0, back;
+        for (back = call; back >= 8 && back + 0x20 >= call; back -= 4) {
+            unsigned int lui = _lw(text + back - 8);
+            unsigned int low = _lw(text + back - 4);
+            unsigned int reg = (lui >> 16) & 0x1F;
+            unsigned int low_opcode = low >> 26;
+            if ((lui >> 26) == 0x0F && ((lui >> 21) & 0x1F) == 0 && reg == 5 &&
+                    (low_opcode == 9 || low_opcode == 0x0D) &&
+                    ((low >> 21) & 0x1F) == 5 && ((low >> 16) & 0x1F) == 5) {
+                unsigned int upper = (lui & 0xFFFF) << 16;
+                pointer = low_opcode == 9 ? upper + (int)(short)(low & 0xFFFF) :
+                        upper | (low & 0xFFFF);
+                known = 1;
+                break;
+            }
+        }
         snprintf(line, sizeof(line),
-                "[vsh3f568-caller] index=%u off=0x%05X class=%s\n",
-                i, callers[i].offset, callers[i].kind == 3 ? "JAL" : "J");
+                "[vsh3f568-use] index=%u caller_off=0x%05X "
+                "delay_word=0x%08X a0_delay_source=%s a1_status=%s "
+                "a1_pointer=0x%08X a1_relative_to_vsh=%s0x%X\n", i, call,
+                delay, ((delay >> 26) == 0 && ((delay >> 11) & 0x1F) == 4) ?
+                "decoded_gpr" : "UNKNOWN", known ? "KNOWN" : "UNKNOWN",
+                pointer, known && pointer >= text ? "" : "UNKNOWN_",
+                known && pointer >= text ? pointer - text : 0);
         zeroCtrlDiagnosticsText(line);
-        if (callers[i].kind == 3)
-            zeroCtrlWriteVsh3f568CallerWindow(vsh, i, callers[i].offset);
     }
     snprintf(line, sizeof(line),
-            "[vsh3f568-address-refs] total=%u stored=%u\n",
-            address_total, address_count);
+            "[vsh3f568-summary] stub=1 import_match=1 owner_match=1 a1_flow=%s\n",
+            a1_status);
     zeroCtrlDiagnosticsText(line);
-    for (i = 0; i < address_count; i++) {
-        snprintf(line, sizeof(line),
-                "[vsh3f568-address-ref] index=%u lui_off=0x%05X "
-                "low_off=0x%05X reg=%u resolved=0x%08X\n",
-                i, address_refs[i].lui_offset, address_refs[i].low_offset,
-                address_refs[i].reg, address_refs[i].resolved);
-        zeroCtrlDiagnosticsText(line);
-    }
 }
-
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
     unsigned int elapsed = 0;
     unsigned int written = 0;
