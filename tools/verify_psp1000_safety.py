@@ -1171,6 +1171,85 @@ def check_sources(root):
             "sceKernelStartThread", "request_function()"):
         if forbidden in nearby_apply or forbidden in nearby:
             fail("nearby provenance analysis is not read-only: " + forbidden)
+    call_apply_start = kernel.find(
+            "static int zeroCtrlPafA989ApplyCallArgInstruction(")
+    call_apply_end = kernel.find(
+            "static int zeroCtrlModuleContainingSegment(", call_apply_start)
+    call_args_start = kernel.find(
+            "static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf) {",
+            nearby_start)
+    call_args_end = kernel.find(
+            "static int zeroCtrlPafA989ValidateCodeRange(", call_args_start)
+    if min(call_apply_start, call_apply_end, call_args_start, call_args_end) < 0:
+        fail("four-site A989 caller argument capture is missing")
+    call_apply = kernel[call_apply_start:call_apply_end]
+    call_args = kernel[call_args_start:call_args_end]
+    for token in ("ZERO_PAF_CALL_ARG_UNKNOWN", "ZERO_PAF_CALL_ARG_COPY",
+            "ZERO_PAF_CALL_ARG_LW", "ZERO_PAF_CALL_ARG_ADDIU",
+            "ZERO_PAF_CALL_ARG_CONSTANT", "zeroCtrlMipsGprWriteDestination(word)",
+            "if (destination < 0) return 0", "zeroCtrlMipsMove(word, rd, rs)",
+            "opcode == 9", "opcode == 0x0F", "opcode == 0x0D",
+            "opcode == 0x23", "source[destination].kind = ZERO_PAF_CALL_ARG_UNKNOWN"):
+        if token not in call_apply:
+            fail("four-site call argument transfer lacks " + token)
+    for token in ("0xCFC64, 0x345B8, 0x34884, 0x344A4",
+            "0xCFADC, 0xCF9A8, 0xCFB70, 0xCFB70", "index < 4",
+            "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)",
+            "zeroCtrlVshModuleRangeValid(paf, call, 8)",
+            "zeroCtrlVshModuleRangeValid(paf, target, 4)",
+            "(word >> 26) != 3", "zeroCtrlMipsJumpTarget(call, word) != target",
+            "[paf-a989-nearby-call-args] validation=0",
+            "start_off = call_off > 0x40 ? call_off - 0x40 : 0",
+            "end_off = call_off + 0x24", "map_size = (end_off - start_off) & ~3U",
+            "zeroCtrlVshModuleRangeValid(paf,\n                    paf->text_addr + start_off, map_size)",
+            "[paf-a989-nearby-caller-map]", "row < map_size",
+            "opcode == 1 || (opcode >= 4 && opcode <= 7)",
+            "opcode == 0 && function == 9", "flow_valid = 0",
+            "zeroCtrlPafA989ApplyCallArgInstruction(delay, source)",
+            "for (reg = 2; reg <= 15; reg++)",
+            "source[24].kind = ZERO_PAF_CALL_ARG_UNKNOWN",
+            "source[25].kind = ZERO_PAF_CALL_ARG_UNKNOWN",
+            "delay = _lw(call + 4)", "if (!flow_valid)",
+            "COPY_OF_SAVED_REG", "COPY_OF_REG", '"LW"', '"ADDIU"',
+            '"CONSTANT"', '"UNKNOWN"',
+            "[paf-a989-nearby-call-args] validation=1",
+            "a0_kind=%s", "a1_kind=%s", "a2_kind=%s", "a3_kind=%s",
+            "execution=NOT_OBSERVED", "0xCFC44", "0x50",
+            "zeroCtrlVshModuleRangeValid(paf, paf->text_addr + 0xCFC44",
+            "[paf-a989-cfc64-context]"):
+        if token not in call_args:
+            fail("four-site caller capture lacks " + token)
+    call_range = call_args.find("zeroCtrlVshModuleRangeValid(paf, call, 8)")
+    call_read = call_args.find("word = _lw(call)", call_range)
+    dynamic_target = call_args.find("zeroCtrlMipsJumpTarget(call, word) != target",
+            call_read)
+    map_range = call_args.find("paf->text_addr + start_off, map_size",
+            dynamic_target)
+    map_read = call_args.find("mapped[column] = _lw", map_range)
+    flow_start = call_args.find("for (cursor = start_off; cursor < call_off",
+            map_read)
+    delay_read = call_args.find("delay = _lw(call + 4)", flow_start)
+    delay_apply = call_args.find(
+            "zeroCtrlPafA989ApplyCallArgInstruction(delay, source)", delay_read)
+    result = call_args.find("[paf-a989-nearby-call-args] validation=1",
+            delay_apply)
+    context_range = call_args.find(
+            "zeroCtrlVshModuleRangeValid(paf, paf->text_addr + 0xCFC44",
+            result)
+    context_read = call_args.find("mapped[column] = _lw", context_range)
+    if not 0 <= call_range < call_read < dynamic_target < map_range < map_read < \
+            flow_start < delay_read < delay_apply < result < context_range < \
+            context_read:
+        fail("four-site caller capture reads or reports before validation")
+    if call_args.count("0xCFC64") != 1 or call_args.count("0x345B8") != 1 or \
+            call_args.count("0x34884") != 1 or call_args.count("0x344A4") != 1 or \
+            "outer14-exact-chain" in call_args:
+        fail("four-site caller capture broadens scope or asserts object identity")
+    for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP", "REDIRECT_FUNCTION",
+            "zeroCtrlRedir", "Dcache", "Icache", "sceKernelCreateThread",
+            "sceKernelStartThread", "request_function()"):
+        if forbidden in call_apply or forbidden in call_args:
+            fail("four-site caller capture is not read-only: " + forbidden)
     downstream_start = kernel.find("static void zeroCtrlWritePafA989Downstream(",
             consumer_start + 1)
     downstream_end = kernel.find(

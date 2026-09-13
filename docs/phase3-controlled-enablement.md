@@ -2351,3 +2351,38 @@ Both J and JAL references continue to use `[paf-a989-nearby-caller]`, with
 `kind=J` or `kind=JAL`, but only JAL contributes `DIRECT_JAL` evidence. This is
 a provenance-strength correction only and adds no new loaded-code or runtime
 finding before the next hardware capture.
+
+#### A989 four-site caller argument capture
+
+The next observation is restricted to the hardware-proven direct JAL edges
+`0xCFC64 -> 0xCFADC`, `0x345B8 -> 0xCF9A8`, `0x34884 -> 0xCFB70`, and
+`0x344A4 -> 0xCFB70`, in that priority order. Each loaded JAL is dynamically
+decoded again and both its callsite and expected target must remain in validated
+PAF text. A caller map is clamped to at most `0x40` bytes before and `0x20`
+bytes after the JAL.
+
+A straight-line suffix pass tracks exact MOVE, ADDIU, LW, and immediate
+construction forms for `a0-a3`. Branches, J/JR, unsupported destination
+behavior, and unprovable call boundaries fail closed. Earlier calls process
+their delay slots and invalidate caller-saved values; the target JAL delay slot
+is applied before argument reporting. All results retain
+`execution=NOT_OBSERVED` and neutral register/offset descriptions. A separate
+validated `0x50`-byte raw context spans `0xCFC44` through the code following
+the known `0xCFC74` consumer entry without inferring a relationship from
+proximity.
+
+New records are:
+
+```text
+[paf-a989-nearby-caller-map] caller_off=... off=... w0=... ... w7=...
+[paf-a989-nearby-call-args] validation=... caller_off=... target_off=... a0_kind=... a0_parent_reg=... a0_disp=... a0_value=... ... a3_kind=... execution=NOT_OBSERVED
+[paf-a989-cfc64-context] off=... w0=... ... w7=...
+```
+
+**PROVEN BY HARDWARE:** the four direct caller/target pairs above exist in the
+loaded image. **PROVEN BY SOURCE:** this new capture is targeted, bounded,
+range-validated, read-only, and fail-closed. The exact four argument values,
+the local boundary relationship around `0xCFC64`, and any connection to known
+A989 objects remain **HYPOTHESIS / UNKNOWN** until the next hardware log. The
+three candidate base results and primary callback flow remain `UNKNOWN` and
+`AMBIGUOUS`, respectively.

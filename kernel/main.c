@@ -3955,6 +3955,21 @@ typedef struct ZeroCtrlPafA989NearbySource {
     signed short disp;
 } ZeroCtrlPafA989NearbySource;
 
+enum ZeroCtrlPafA989CallArgKind {
+    ZERO_PAF_CALL_ARG_UNKNOWN = 0,
+    ZERO_PAF_CALL_ARG_COPY,
+    ZERO_PAF_CALL_ARG_LW,
+    ZERO_PAF_CALL_ARG_ADDIU,
+    ZERO_PAF_CALL_ARG_CONSTANT
+};
+
+typedef struct ZeroCtrlPafA989CallArgSource {
+    unsigned char kind;
+    unsigned char parent_reg;
+    signed short disp;
+    unsigned int value;
+} ZeroCtrlPafA989CallArgSource;
+
 static int zeroCtrlPafA989ApplyNearbyInstruction(unsigned int word,
         ZeroCtrlPafA989NearbySource source[32]) {
     unsigned int opcode = word >> 26;
@@ -3993,6 +4008,62 @@ static int zeroCtrlPafA989ApplyNearbyInstruction(unsigned int word,
         source[destination].origin = ZERO_PAF_NEARBY_UNKNOWN;
         source[destination].entry_reg = 0;
         source[destination].disp = 0;
+    }
+    return 1;
+}
+
+static int zeroCtrlPafA989ApplyCallArgInstruction(unsigned int word,
+        ZeroCtrlPafA989CallArgSource source[32]) {
+    unsigned int opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int rd = (word >> 11) & 0x1F;
+    int destination = zeroCtrlMipsGprWriteDestination(word);
+
+    if (destination < 0) return 0;
+    if ((zeroCtrlMipsMove(word, rd, rs) ||
+                zeroCtrlMipsMove(word, rd, rt)) && rd != 0) {
+        unsigned int copy_reg = rs == 0 ? rt : rs;
+        source[rd] = source[copy_reg];
+        if (source[rd].kind == ZERO_PAF_CALL_ARG_UNKNOWN) {
+            source[rd].kind = ZERO_PAF_CALL_ARG_COPY;
+            source[rd].parent_reg = copy_reg;
+        }
+    } else if (opcode == 9 && rt != 0) {
+        int immediate = (int)(short)(word & 0xFFFF);
+        if (rs == 0) {
+            source[rt].kind = ZERO_PAF_CALL_ARG_CONSTANT;
+            source[rt].parent_reg = 0;
+            source[rt].disp = 0;
+            source[rt].value = (unsigned int)immediate;
+        } else if (source[rs].kind == ZERO_PAF_CALL_ARG_CONSTANT) {
+            source[rt] = source[rs];
+            source[rt].value += immediate;
+        } else {
+            source[rt].kind = ZERO_PAF_CALL_ARG_ADDIU;
+            source[rt].parent_reg = rs;
+            source[rt].disp = (short)immediate;
+            source[rt].value = 0;
+        }
+    } else if (opcode == 0x0F && rs == 0 && rt != 0) {
+        source[rt].kind = ZERO_PAF_CALL_ARG_CONSTANT;
+        source[rt].parent_reg = 0;
+        source[rt].disp = 0;
+        source[rt].value = (word & 0xFFFF) << 16;
+    } else if (opcode == 0x0D && rt != 0 &&
+            source[rs].kind == ZERO_PAF_CALL_ARG_CONSTANT) {
+        source[rt] = source[rs];
+        source[rt].value |= word & 0xFFFF;
+    } else if (opcode == 0x23 && rt != 0) {
+        source[rt].kind = ZERO_PAF_CALL_ARG_LW;
+        source[rt].parent_reg = rs;
+        source[rt].disp = (short)(word & 0xFFFF);
+        source[rt].value = 0;
+    } else if (destination != 0) {
+        source[destination].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
+        source[destination].parent_reg = 0;
+        source[destination].disp = 0;
+        source[destination].value = 0;
     }
     return 1;
 }
@@ -4289,6 +4360,7 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
         const unsigned int constructed[2]);
 
 static void zeroCtrlWritePafA989NearbyFlows(SceModule2 *paf);
+static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf);
 
 static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
         unsigned int consumer, const unsigned int constructed[2]);
@@ -5206,6 +5278,183 @@ static void zeroCtrlWritePafA989NearbyFlows(SceModule2 *paf) {
                 candidate_off, base, origin, source[base].entry_reg,
                 source[base].disp);
         zeroCtrlDiagnosticsText(line);
+    }
+    zeroCtrlWritePafA989NearbyCallArgs(paf);
+}
+
+static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf) {
+    static const unsigned int call_offsets[4] = {
+        0xCFC64, 0x345B8, 0x34884, 0x344A4
+    };
+    static const unsigned int target_offsets[4] = {
+        0xCFADC, 0xCF9A8, 0xCFB70, 0xCFB70
+    };
+    unsigned int index;
+    char line[320];
+
+    if (!zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size))
+        return;
+    for (index = 0; index < 4; index++) {
+        unsigned int call_off = call_offsets[index];
+        unsigned int target_off = target_offsets[index];
+        unsigned int call, target, word, start_off, end_off, map_size;
+        unsigned int cursor, row, flow_valid = 1;
+        ZeroCtrlPafA989CallArgSource source[32] = { { 0, 0, 0, 0 } };
+        const char *kind[4];
+        unsigned int arg;
+
+        if (paf->text_size < 8 || call_off > paf->text_size - 8 ||
+                target_off > paf->text_size - 4) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-nearby-call-args] validation=0 "
+                    "caller_off=0x%X target_off=0x%X "
+                    "a0_kind=UNKNOWN a1_kind=UNKNOWN "
+                    "a2_kind=UNKNOWN a3_kind=UNKNOWN\n",
+                    call_off, target_off);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        call = paf->text_addr + call_off;
+        target = paf->text_addr + target_off;
+        if (call < paf->text_addr || target < paf->text_addr ||
+                !zeroCtrlVshModuleRangeValid(paf, call, 8) ||
+                !zeroCtrlVshModuleRangeValid(paf, target, 4)) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-nearby-call-args] validation=0 "
+                    "caller_off=0x%X target_off=0x%X "
+                    "a0_kind=UNKNOWN a1_kind=UNKNOWN "
+                    "a2_kind=UNKNOWN a3_kind=UNKNOWN\n",
+                    call_off, target_off);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        word = _lw(call);
+        if ((word >> 26) != 3 ||
+                zeroCtrlMipsJumpTarget(call, word) != target) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-nearby-call-args] validation=0 "
+                    "caller_off=0x%X target_off=0x%X "
+                    "a0_kind=UNKNOWN a1_kind=UNKNOWN "
+                    "a2_kind=UNKNOWN a3_kind=UNKNOWN\n",
+                    call_off, target_off);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        start_off = call_off > 0x40 ? call_off - 0x40 : 0;
+        end_off = call_off + 0x24;
+        if (end_off > paf->text_size) end_off = paf->text_size;
+        map_size = (end_off - start_off) & ~3U;
+        if (map_size == 0 || !zeroCtrlVshModuleRangeValid(paf,
+                    paf->text_addr + start_off, map_size)) continue;
+        for (row = 0; row < map_size; row += 0x20) {
+            unsigned int mapped[8] = { 0 };
+            unsigned int count = (map_size - row) / 4;
+            unsigned int column;
+            if (count > 8) count = 8;
+            for (column = 0; column < count; column++)
+                mapped[column] = _lw(paf->text_addr + start_off + row +
+                        column * 4);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-nearby-caller-map] caller_off=0x%X "
+                    "off=0x%X w0=%08X w1=%08X w2=%08X w3=%08X "
+                    "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                    call_off, start_off + row, mapped[0], mapped[1],
+                    mapped[2], mapped[3], mapped[4], mapped[5], mapped[6],
+                    mapped[7]);
+            zeroCtrlDiagnosticsText(line);
+        }
+        for (cursor = start_off; cursor < call_off; cursor += 4) {
+            unsigned int current = _lw(paf->text_addr + cursor);
+            unsigned int opcode = current >> 26;
+            unsigned int function = current & 0x3F;
+            if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17) || opcode == 2 ||
+                    (opcode == 0 && function == 8)) {
+                flow_valid = 0;
+                break;
+            }
+            if (opcode == 0 && function == 9 &&
+                    ((current >> 11) & 0x1F) != 31) {
+                flow_valid = 0;
+                break;
+            }
+            if (opcode == 3 || (opcode == 0 && function == 9)) {
+                unsigned int delay;
+                unsigned int reg;
+                if (cursor + 4 >= call_off) {
+                    flow_valid = 0;
+                    break;
+                }
+                delay = _lw(paf->text_addr + cursor + 4);
+                if (!zeroCtrlPafA989ApplyCallArgInstruction(delay, source)) {
+                    flow_valid = 0;
+                    break;
+                }
+                for (reg = 2; reg <= 15; reg++)
+                    source[reg].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
+                source[24].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
+                source[25].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
+                source[31].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
+                cursor += 4;
+                continue;
+            }
+            if (!zeroCtrlPafA989ApplyCallArgInstruction(current, source)) {
+                flow_valid = 0;
+                break;
+            }
+        }
+        if (flow_valid) {
+            unsigned int delay = _lw(call + 4);
+            if (!zeroCtrlPafA989ApplyCallArgInstruction(delay, source))
+                flow_valid = 0;
+        }
+        for (arg = 0; arg < 4; arg++) {
+            unsigned int reg = arg + 4;
+            if (!flow_valid) source[reg].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
+            kind[arg] = source[reg].kind == ZERO_PAF_CALL_ARG_COPY ?
+                    (source[reg].parent_reg >= 16 &&
+                     source[reg].parent_reg <= 23 ?
+                        "COPY_OF_SAVED_REG" : "COPY_OF_REG") :
+                source[reg].kind == ZERO_PAF_CALL_ARG_LW ? "LW" :
+                source[reg].kind == ZERO_PAF_CALL_ARG_ADDIU ? "ADDIU" :
+                source[reg].kind == ZERO_PAF_CALL_ARG_CONSTANT ? "CONSTANT" :
+                "UNKNOWN";
+        }
+        snprintf(line, sizeof(line),
+                "[paf-a989-nearby-call-args] validation=1 "
+                "caller_off=0x%X target_off=0x%X "
+                "a0_kind=%s a0_parent_reg=%u a0_disp=%d a0_value=0x%08X "
+                "a1_kind=%s a1_parent_reg=%u a1_disp=%d a1_value=0x%08X "
+                "a2_kind=%s a2_parent_reg=%u a2_disp=%d a2_value=0x%08X "
+                "a3_kind=%s a3_parent_reg=%u a3_disp=%d a3_value=0x%08X "
+                "execution=NOT_OBSERVED\n",
+                call_off, target_off,
+                kind[0], source[4].parent_reg, source[4].disp, source[4].value,
+                kind[1], source[5].parent_reg, source[5].disp, source[5].value,
+                kind[2], source[6].parent_reg, source[6].disp, source[6].value,
+                kind[3], source[7].parent_reg, source[7].disp, source[7].value);
+        zeroCtrlDiagnosticsText(line);
+    }
+    if (0xCFC44 < paf->text_size && paf->text_size - 0xCFC44 >= 0x50 &&
+            zeroCtrlVshModuleRangeValid(paf, paf->text_addr + 0xCFC44,
+                0x50)) {
+        unsigned int row;
+        for (row = 0; row < 0x50; row += 0x20) {
+            unsigned int mapped[8] = { 0 };
+            unsigned int count = (0x50 - row) / 4;
+            unsigned int column;
+            if (count > 8) count = 8;
+            for (column = 0; column < count; column++)
+                mapped[column] = _lw(paf->text_addr + 0xCFC44 + row +
+                        column * 4);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-cfc64-context] off=0x%X "
+                    "w0=%08X w1=%08X w2=%08X w3=%08X "
+                    "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                    0xCFC44 + row, mapped[0], mapped[1], mapped[2], mapped[3],
+                    mapped[4], mapped[5], mapped[6], mapped[7]);
+            zeroCtrlDiagnosticsText(line);
+        }
     }
 }
 
