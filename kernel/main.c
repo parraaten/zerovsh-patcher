@@ -5859,7 +5859,7 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     char line[256];
 
     if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
-            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
             !slide_diag.vsh_module_seen)
         return;
     vsh = sceKernelFindModuleByName("vsh_module");
@@ -6160,8 +6160,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     slide_diag.bsman.activation_hits_addr);
             unsigned int state;
             zeroCtrlRefreshSonyStartTrace();
-            if (!vsh3f568_scan_written && slide_diag.functional_enabled &&
-                    slide_diag.vsh_module_seen) {
+            if (!vsh3f568_scan_written && !slide_diag.functional_enabled &&
+                    slide_diag.minimal_memory_test && slide_diag.vsh_module_seen) {
                 vsh3f568_scan_written = 1;
                 zeroCtrlWriteFunctionalVsh3f568Analysis();
             }
@@ -10100,12 +10100,6 @@ int OnModuleStart(SceModule2 *mod) {
                 slide_diag.previous_handler_returned = 1;
                 slide_diag.module_start_addr = mod->module_start_func;
                 slide_diag.elf_entry_addr = mod->entry_addr;
-                if (slide_diag.functional_enabled) {
-                        hook_import_bynid(mod, "sceBSMan", 0x23E3A9B6,
-                                zeroCtrlDummyFunc, 1);
-                        hook_import_bynid(mod, "sceVshBridge", 0x639C3CB3,
-                                zeroCtrlGetParam, 1);
-                }
                 zeroCtrlInstallSonyStartTrace(mod);
                 zeroCtrlInstallBSManClosedShim(mod);
                 if (slide_diag.functional_enabled)
@@ -10504,12 +10498,14 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			zeroCtrlParseTriggerMode(psp1000SlideTriggerMode) :
 			ZERO_TRIGGER_DISABLED);
 		slide_diag.sony_start_trace.enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000SonyStartTrace, "Enabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0;
 		slide_diag.bsman.enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000BSManClosedShim, "Enabled") == 0 &&
@@ -10531,21 +10527,24 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			 strcmp(psp1000PafPresentCompat, "Enabled") == 0);
 		slide_diag.bsman.bsman_not_linked_compat_enabled =
 			slide_diag.bsman.activation_enabled &&
-			!slide_diag.functional_enabled &&
-			strcmp(psp1000BSManNotLinkedCompat, "Enabled") == 0;
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000BSManNotLinkedCompat, "Enabled") == 0);
 		slide_diag.bsman.consumer_14020_compat_enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0 &&
 			strcmp(psp1000Consumer14020Compat, "Enabled") == 0;
 		slide_diag.bsman.consumer_13f6c_compat_enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0 &&
 			strcmp(psp1000Consumer13F6CCompat, "Enabled") == 0;
 		slide_diag.bsman.paf_mask_compat_enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
@@ -10562,9 +10561,10 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			 strcmp(psp1000StateZero15To14Compat, "Enabled") == 0);
 		slide_diag.bsman.post_vsh_compat_enabled =
 			slide_diag.bsman.activation_enabled &&
-			!slide_diag.functional_enabled &&
-			strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0;
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0);
 		slide_diag.bsman.post_impose_vcall_enabled =
+			!slide_diag.functional_enabled &&
 			slide_diag.bsman.post_vsh_compat_enabled &&
 			strcmp(psp1000PostImposeVCallTrace, "Enabled") == 0;
 		slide_diag.bsman.post_minus_one_vcall64_enabled =
@@ -10602,6 +10602,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 				"[phase] psp1000_slide_functional\n"
 				"[experiment] psp1000_slide_optin=enabled\n"
 				"[experiment] clock_and_calendar=enabled\n"
+				"[checkpoint] compat=58d4,paf_zero_to_one,"
+				"bsman_not_linked_to_zero,state15_to14,"
+				"impose_invalid_mode_to_zero\n"
 				"[experiment] button_thread=request_gated\n" :
 				"[phase] psp1000_slide_phase3\n"
 				"[experiment] psp1000_slide_optin=enabled\n"

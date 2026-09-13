@@ -2394,3 +2394,66 @@ transition to `UNKNOWN` now clears the source kind, parent register,
 displacement, and value together; consequently an UNKNOWN `a0-a3` field always
 reports `parent_reg=0`, `disp=0`, and `value=0x00000000`. This is a fail-closed
 metadata correction and does not change the four callsites or add evidence.
+
+## PSP-1000 functional checkpoint
+
+This checkpoint ends expansion of the A989 investigation and exercises the
+furthest hardware-confirmed Sony activation path with only five demonstrated
+PSP-1000 differences:
+
+| Site | Natural PSP-1000 result/path | Checkpoint result/path | Hardware progress |
+| --- | --- | --- | --- |
+| VSH `+0x58D4` | natural PSP-1000 predicate is false | selective caller result is true | Sony requests, loads, starts, and enters SlidePlugin activation |
+| SlidePlugin `+0x9330`, `scePaf/0xED83BBCF` | zero | one, only at this return site | activation advances to the pre-BSMan boundary |
+| SlidePlugin `+0x93AC`, `sceBSMan/0x23E3A9B6` | `0x8002013A` | zero, only for that exact result at this return site | Sony reaches the state-zero path |
+| state-zero virtual return | 15 | 14, only for exact 15 | Sony reaches the rejoin and later PAF/VshBridge sequence |
+| `sceVshBridge/0x639C3CB3` with `a0=0x8000000D` | `0x80000107` | zero, only for that exact argument/result pair | Sony passes the retry branch and reaches the later natural interface/collection path |
+
+The PSP-1000 functional path no longer installs the original broad SlidePlugin
+BSMan and VshBridge import replacements. Sony's imports execute naturally and
+the existing validated callsite-return controls apply only the exact
+hardware-proven conversions above. Functional mode also ignores the isolated
+`+0x13F6C`, `+0x14020`, and `0x2 -> 0x1E9` mask experiments: hardware showed
+those substitutions were insufficient, while later collection and masked PAF
+decisions pass naturally. The broad BSMan stub replacement, Sony-start trace,
+post-impose traces, activation-wide trace, and A989 maps remain available only
+to nonfunctional diagnostic runs and are not checkpoint dependencies.
+
+The first unresolved functional condition is now Sony's natural continuation
+and return after the furthest confirmed activation decisions, followed by
+whether its unmodified RCO/UI path makes the Clock & Date UI visible. No
+additional compatibility value is justified at that boundary. The checkpoint
+therefore changes nothing else and treats UI visibility as the hardware result,
+not as a condition to spoof.
+
+Use this recovery-protected checkpoint configuration:
+
+```ini
+[SlidePlugin]
+ClockAndCalendar = Enabled
+
+[Experimental]
+PSP1000SlidePlugin = Enabled
+PSP1000Diagnostics = Enabled
+PSP1000BSManClosedShim = Disabled
+PSP1000Consumer14020Compat = Disabled
+PSP1000Consumer13F6CCompat = Disabled
+PSP1000PafCapabilityMaskCompat = Disabled
+PSP1000PostImposeVCallTrace = Disabled
+PSP1000PostMinusOneVCall64Trace = Disabled
+PSP1000PostVCall64CollectionTrace = Disabled
+PSP1000CollectionPafFCF265D8Trace = Disabled
+PSP1000CollectionPaf9A285882Trace = Disabled
+PSP1000PostCollectionPafFCF265D8Trace = Disabled
+PSP1000MaskedPafC59FC3D0Trace = Disabled
+PSP1000MaskedPafC59FC3D0SecondTrace = Disabled
+PSP1000ActivationWideTrace = Disabled
+```
+
+`PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED` remains zero. HOME remains request
+gated, the broad `+0x6F84` mode remains prohibited, and A989 output is skipped
+when the functional checkpoint is active. The hardware action is one
+recovery-protected PSP-1000 6.61 boot with this configuration, followed by an
+ordinary HOME press through Sony's existing state-machine callsite, observation
+of whether the Clock & Date UI becomes visible, normal XMB stability testing,
+and return of the complete unedited diagnostic log.

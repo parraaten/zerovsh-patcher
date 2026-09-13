@@ -450,7 +450,7 @@ def check_sources(root):
         fail("VSH +3F568 implementation analysis is missing")
     vsh3 = kernel[vsh3_start:vsh3_end]
     for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
-            "!slide_diag.functional_enabled", "!slide_diag.minimal_memory_test",
+            "slide_diag.functional_enabled", "!slide_diag.minimal_memory_test",
             "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x3F568, 8)",
             "word_56fc = _lw(text + 0x56FC)",
             "word_5700 = _lw(text + 0x5700)",
@@ -1428,9 +1428,17 @@ def check_sources(root):
             "opcode <= 0x2F) || opcode == 0x38" in destination_decoder:
         fail("SC is incorrectly classified as a no-destination store")
     if kernel.count("zeroCtrlWriteFunctionalVsh3f568Analysis();") != 1 or \
-            "if (!vsh3f568_scan_written && slide_diag.functional_enabled" \
-            not in minimal or "vsh3f568_scan_written = 1;" not in minimal:
-        fail("VSH +3F568 analysis is not one-shot deferred output")
+            "if (!vsh3f568_scan_written && !slide_diag.functional_enabled" \
+            not in minimal or "slide_diag.minimal_memory_test" not in minimal or \
+            "vsh3f568_scan_written = 1;" not in minimal:
+        fail("VSH +3F568 analysis is not diagnostic-only one-shot output")
+    a989_gate_start = kernel.find(
+            "static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {")
+    a989_gate = kernel[a989_gate_start:kernel.find(
+            'vsh = sceKernelFindModuleByName("vsh_module")', a989_gate_start)]
+    if "slide_diag.functional_enabled || !slide_diag.minimal_memory_test" \
+            not in a989_gate:
+        fail("A989 analysis can still run as a functional checkpoint dependency")
     minimal_gate = kernel[kernel.find("slide_diag.minimal_memory_test ="):
         kernel.find("slide_diag.global_predicate_enabled =")]
     for token in ("model == 0", "devkit == 0x06060110",
@@ -1546,28 +1554,56 @@ def check_sources(root):
             fail("functional button thread/handler gate lacks " + token)
     kernel_module_start = kernel[kernel.find("int OnModuleStart(SceModule2 *mod)"):
         kernel.find("int zeroCtrlLoadStartModule(")]
-    for token in ('hook_import_bynid(mod, "sceBSMan", 0x23E3A9B6',
-            "zeroCtrlDummyFunc, 1",
+    experiment_start = kernel_module_start.find(
+            "if (zeroCtrlIsPsp1000SlideExperimentEnabled() &&")
+    experiment_end = kernel_module_start.find(
+            'if(strcmp(mod->modname, "slide_plugin_module") == 0)',
+            experiment_start)
+    experiment_block = kernel_module_start[experiment_start:experiment_end]
+    for forbidden in ('hook_import_bynid(mod, "sceBSMan", 0x23E3A9B6',
             'hook_import_bynid(mod, "sceVshBridge", 0x639C3CB3',
-            "zeroCtrlGetParam, 1"):
-        if token not in kernel_module_start:
-            fail("functional SlidePlugin import integration lacks " + token)
-    bsman_hook = kernel_module_start.find(
-            'hook_import_bynid(mod, "sceBSMan", 0x23E3A9B6')
-    vsh_hook = kernel_module_start.find(
-            'hook_import_bynid(mod, "sceVshBridge", 0x639C3CB3')
+            "zeroCtrlDummyFunc", "zeroCtrlGetParam"):
+        if forbidden in experiment_block:
+            fail("functional PSP-1000 checkpoint retains broad import replacement")
     sony_install = kernel_module_start.find("zeroCtrlInstallSonyStartTrace(mod)")
     compat_install = kernel_module_start.find("zeroCtrlInstallBSManClosedShim(mod)")
     cache_clear = kernel_module_start.find("ClearCaches()", compat_install)
     functional_return = kernel_module_start.find("return previous_result", cache_clear)
-    if not 0 <= bsman_hook < vsh_hook < sony_install < compat_install < \
+    if not 0 <= experiment_start < sony_install < compat_install < \
             cache_clear < functional_return:
         fail("functional SlidePlugin cache clear is missing or incorrectly ordered")
     for gate_name in ("bsman_not_linked_compat_enabled =",
             "post_vsh_compat_enabled ="):
         gate = kernel[kernel.find(gate_name):kernel.find(";", kernel.find(gate_name))]
-        if "!slide_diag.functional_enabled" not in gate:
-            fail("functional mode double-enables experimental compatibility")
+        if "slide_diag.functional_enabled ||" not in gate:
+            fail("functional checkpoint omits hardware-proven compatibility " + gate_name)
+    for gate_name in ("paf_compat_enabled =",
+            "state_zero_15to14_compat_enabled ="):
+        gate = kernel[kernel.find(gate_name):kernel.find(";", kernel.find(gate_name))]
+        if "slide_diag.functional_enabled ||" not in gate:
+            fail("functional checkpoint omits hardware-proven compatibility " + gate_name)
+    trigger_gate = kernel[kernel.find("slide_diag.trigger_mode ="):
+            kernel.find(";", kernel.find("slide_diag.trigger_mode ="))]
+    if "slide_diag.functional_enabled ?" not in trigger_gate or \
+            "ZERO_TRIGGER_58D4" not in trigger_gate:
+        fail("functional checkpoint does not use the proven selective +58D4 path")
+    functional_gates = kernel[kernel.find("slide_diag.sony_start_trace.enabled ="):
+            kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
+                "slide_diag.sony_start_trace.enabled ="))]
+    for gate_name in ("sony_start_trace.enabled =", "bsman.enabled =",
+            "consumer_14020_compat_enabled =", "consumer_13f6c_compat_enabled =",
+            "paf_mask_compat_enabled =", "post_impose_vcall_enabled ="):
+        gate_start = functional_gates.find(gate_name)
+        gate_end = functional_gates.find(";", gate_start)
+        if gate_start < 0 or "!slide_diag.functional_enabled" not in \
+                functional_gates[gate_start:gate_end]:
+            fail("functional checkpoint does not suppress diagnostic/speculative " +
+                    gate_name)
+    for token in ("[checkpoint] compat=58d4,paf_zero_to_one,",
+            "bsman_not_linked_to_zero,state15_to14,",
+            "impose_invalid_mode_to_zero"):
+        if token not in kernel:
+            fail("functional checkpoint marker lacks " + token)
     user_module_start = user[user.find("int OnModuleStart(SceModule2 *mod)"):
         user.find("int module_start(")]
     for token in ("zeroCtrlIsPsp1000SlideFunctionalEnabled()",
