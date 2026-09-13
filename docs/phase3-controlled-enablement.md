@@ -2496,3 +2496,40 @@ boot should establish whether removing only the two unproven legacy hooks lets
 the PSP reach a stable XMB, continue beyond activation, and display Sony's
 Clock & Date UI. If the crash remains, these hooks are not sufficient to
 explain it and should not be restored as a diagnostic response.
+
+The legacy-hook exclusion run reproduced the same activation-entry crash, so
+the RTC and initialization hooks remain disabled on PSP-1000. The functional
+activation implementation is now separated from the research installer. The
+former functional route through `zeroCtrlInstallBSManClosedShim()` owned 22
+SlidePlugin activation words: the four compatibility call owners plus 18
+entry, branch, classification, and localization owners. Functional mode now
+uses `zeroCtrlInstallPsp1000FunctionalCompat()` and owns exactly four words,
+relative to the uniquely validated `SlidePlugin+0x9304` activation entry:
+
+```text
++0x02C  PAF ED83BBCF call wrapper
++0x0A8  BSMan 23E3A9B6 call wrapper
++0x10C  VshBridge 639C3CB3 call wrapper
++0x2B4  state-zero virtual-call wrapper
+```
+
+All four owners and their unique imported targets or exact virtual-call shape,
+all eight call/return leaves, pseudo-direct reachability, and every required
+helper scalar are validated before the first scalar write. Only the four
+compatibility modes and wrapper routing/result counters are initialized and
+D-cache synchronized. The four owner words are then written and individually
+D/I-cache synchronized; only afterward are
+`activation_compat_validation=1` and `activation_compat_install=1` eligible for
+the compact functional log. Their original delay slots remain untouched, as do
+Sony's result branches and the return-value classifications following the
+state-zero virtual call. The former functional `ClearCaches()` call is also
+removed; the dedicated transaction synchronizes only its scalar state and four
+owned code words.
+
+Nonfunctional diagnostic mode continues to use the unchanged research
+`zeroCtrlInstallBSManClosedShim()` path. The startup `+0x58D4` one-shot, HOME
+block, direct-runtime prohibition, legacy-hook exclusion, and the exact five
+hardware-proven compatibility conversions remain unchanged. The next
+recovery-protected PSP-1000 run should confirm both activation-compat markers,
+the existing four return/substitution counters, and whether Sony's otherwise
+untouched activation logic reaches a stable XMB and visible Clock & Date UI.

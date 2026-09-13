@@ -1645,12 +1645,23 @@ def check_sources(root):
         if forbidden in experiment_block:
             fail("functional PSP-1000 checkpoint retains broad import replacement")
     sony_install = kernel_module_start.find("zeroCtrlInstallSonyStartTrace(mod)")
-    compat_install = kernel_module_start.find("zeroCtrlInstallBSManClosedShim(mod)")
-    cache_clear = kernel_module_start.find("ClearCaches()", compat_install)
-    functional_return = kernel_module_start.find("return previous_result", cache_clear)
-    if not 0 <= experiment_start < sony_install < compat_install < \
-            cache_clear < functional_return:
-        fail("functional SlidePlugin cache clear is missing or incorrectly ordered")
+    functional_compat = kernel_module_start.find(
+            "zeroCtrlInstallPsp1000FunctionalCompat(mod)")
+    diagnostic_compat = kernel_module_start.find(
+            "zeroCtrlInstallBSManClosedShim(mod)", functional_compat)
+    functional_return = kernel_module_start.find("return previous_result",
+            diagnostic_compat)
+    if not 0 <= experiment_start < sony_install < functional_compat < \
+            diagnostic_compat < functional_return:
+        fail("functional SlidePlugin installer split is incorrectly ordered")
+    install_gate = kernel_module_start[sony_install:functional_return]
+    for token in ("if (slide_diag.functional_enabled)",
+            "zeroCtrlInstallPsp1000FunctionalCompat(mod)", "else",
+            "zeroCtrlInstallBSManClosedShim(mod)"):
+        if token not in install_gate:
+            fail("functional/diagnostic activation installer split lacks " + token)
+    if "ClearCaches()" in install_gate:
+        fail("functional activation path performs a broad cache flush")
     for gate_name in ("bsman_not_linked_compat_enabled =",
             "post_vsh_compat_enabled ="):
         gate = kernel[kernel.find(gate_name):kernel.find(";", kernel.find(gate_name))]
@@ -1683,6 +1694,88 @@ def check_sources(root):
             "impose_invalid_mode_to_zero"):
         if token not in kernel:
             fail("functional checkpoint marker lacks " + token)
+    functional_start = kernel.find(
+            "static void zeroCtrlInstallPsp1000FunctionalCompat(")
+    functional_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
+            functional_start)
+    functional = kernel[functional_start:functional_end]
+    for token in (
+            "0x02C, 0x0A8, 0x10C, 0x2B4",
+            "activation != mod->text_addr + 0x9304",
+            "candidates != 1",
+            "nid == 0xED83BBCF", "nid == 0x23E3A9B6",
+            "nid == 0x639C3CB3",
+            "paf_matches != 1", "bsman_matches != 1",
+            "vshbridge_matches != 1",
+            "bsman_callers != 1",
+            "bsman_caller != activation + 0xA8",
+            "bsman->prefix_paf_call_leaf_addr",
+            "bsman->call_leaf_addr", "bsman->post_vsh_call_leaf_addr",
+            "bsman->state_zero_leaf_addr[3]",
+            "bsman->prefix_paf_return_leaf_addr",
+            "bsman->return_leaf_addr", "bsman->post_vsh_return_leaf_addr",
+            "bsman->state_zero_leaf_addr[4]",
+            "_lw(owner[0] + 4) != 0x00408021",
+            "owner[1] != bsman_caller",
+            "(_lw(owner[1] + 4) & 0xFFFF0000) != 0x3C130000",
+            "_lw(owner[1] + 8) != 0x1040000A",
+            "_lw(activation + 0x108) != 0x3C048000",
+            "_lw(owner[2] + 4) != 0x3484000D",
+            "_lw(owner[2] + 8) != 0x1440FFCE",
+            "original[3] != 0x0040F809", "_lw(owner[3] + 4) != 0",
+            "zeroCtrlMipsJumpTarget(owner[i], replacement[i]) != leaf[i]",
+            "bsman->functional_validation = 1",
+            "_sw(1, bsman->prefix_paf_compat_mode_addr)",
+            "_sw(1, bsman->bsman_compat_mode_addr)",
+            "_sw(1, bsman->post_vsh_compat_mode_addr)",
+            "_sw(1, bsman->state_zero_15to14_compat_mode_addr)",
+            "for (i = 0; i < scalar_count; i++)\n"
+            "        sceKernelDcacheWritebackInvalidateRange",
+            "for (i = 0; i < 4; i++) {",
+            "_sw(replacement[i], owner[i])",
+            "sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4)",
+            "sceKernelIcacheInvalidateRange((const void *)owner[i], 4)",
+            "bsman->functional_install = 1",
+            "bsman->functional_cache_sync = 1"):
+        if token not in functional:
+            fail("narrow functional activation installer lacks " + token)
+    first_scalar_write = functional.find("_sw(0, bsman->prefix_path_mask_addr)")
+    validation_publish = functional.find("bsman->functional_validation = 1")
+    scalar_validation = functional.find(
+            "!zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)")
+    scalar_sync = functional.find(
+            "sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4)")
+    code_commit = functional.find("_sw(replacement[i], owner[i])")
+    install_publish = functional.find("bsman->functional_install = 1")
+    if not 0 <= scalar_validation < first_scalar_write < scalar_sync < \
+            code_commit < validation_publish < install_publish:
+        fail("functional activation validation/scalar/commit ordering regressed")
+    before_commit = functional[:code_commit]
+    if "_sw(replacement[i], owner[i])" in before_commit:
+        fail("functional activation transaction can partially own code")
+    for forbidden_offset in ("0x000", "0x004", "0x034", "0x038", "0x044",
+            "0x094", "0x098", "0x0B0", "0x0DC", "0x0E8", "0x0F8",
+            "0x27C", "0x288", "0x298", "0x2A4", "0x2BC", "0x2C8"):
+        if "activation + " + forbidden_offset in functional or \
+                "activation_addr + " + forbidden_offset in functional:
+            fail("functional activation installer owns forbidden " +
+                    forbidden_offset)
+    for forbidden in ("activation_leaf_addr", "prefix_result_leaf_addr",
+            "prefix_flag_leaf_addr", "prefix_mask_leaf_addr",
+            "post_bs_leaf_addr", "post_state_leaf_addr",
+            "post_paf_call_leaf_addr", "state_zero_leaf_addr[5]",
+            "state_zero_leaf_addr[6]", "state_zero_leaf_addr[7]",
+            "activation_wide", "post_impose_vcall", "collection_"):
+        if forbidden in functional:
+            fail("functional activation installer depends on research owner " +
+                    forbidden)
+    if functional.count("_sw(replacement[i], owner[i])") != 1:
+        fail("functional activation code commit is not one four-owner loop")
+    for marker in (
+            "[psp1000-functional] activation_compat_validation=1",
+            "[psp1000-functional] activation_compat_install=1"):
+        if marker not in minimal:
+            fail("functional activation marker missing " + marker)
     user_module_start = user[user.find("int OnModuleStart(SceModule2 *mod)"):
         user.find("int module_start(")]
     for token in ("zeroCtrlIsPsp1000SlideFunctionalEnabled()",
@@ -2581,7 +2674,7 @@ def check_sources(root):
             fail("T21 pre-slide record is missing snapshot scalar %d" % scalar)
     consumers_install = kernel[kernel.find(
         "static void zeroCtrlInstall6F84ConsumerTraces(void) {"):
-        kernel.find("static void zeroCtrlInstallBSManClosedShim")]
+        kernel.find("static void zeroCtrlInstallPsp1000FunctionalCompat")]
     for token in ("0x13F6C, 0x14020", "0x00000000, 0x0062800B",
             "vsh->text_addr + 0x6F84",
             "consumer_callsite_words[i][1] != delays[i]",

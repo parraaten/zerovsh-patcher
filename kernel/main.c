@@ -254,6 +254,7 @@ typedef struct {
     unsigned int stub_form, syscall_code;
     int closed_value;
     int activation_enabled, activation_validation, activation_install;
+    int functional_validation, functional_install, functional_cache_sync;
     int paf_compat_enabled;
     int bsman_not_linked_compat_enabled;
     int activation_cache_sync;
@@ -6181,6 +6182,19 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 zeroCtrlDiagnosticsText("[psp1000-functional] enabled=1\n");
                 minimal_memory_written |= 0x0080;
             }
+            if (slide_diag.bsman.functional_validation &&
+                    !(minimal_memory_written & 0x2000)) {
+                zeroCtrlDiagnosticsText(
+                        "[psp1000-functional] activation_compat_validation=1\n");
+                minimal_memory_written |= 0x2000;
+            }
+            if (slide_diag.bsman.functional_install &&
+                    slide_diag.bsman.functional_cache_sync &&
+                    !(minimal_memory_written & 0x4000)) {
+                zeroCtrlDiagnosticsText(
+                        "[psp1000-functional] activation_compat_install=1\n");
+                minimal_memory_written |= 0x4000;
+            }
             if (slide_diag.functional_button_thread &&
                     !(minimal_memory_written & 0x0100)) {
                 zeroCtrlDiagnosticsText(
@@ -8934,6 +8948,234 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
 #undef CONSUMER_GUARD_FAIL
 }
 
+static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
+    static const char paf_library[] = "scePaf";
+    static const char vshbridge_library[] = "sceVshBridge";
+    static const unsigned int owner_offset[4] = {
+        0x02C, 0x0A8, 0x10C, 0x2B4
+    };
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int activation, cursor, end, pc, candidates = 0;
+    unsigned int paf_stub = 0, bsman_stub = 0, vshbridge_stub = 0;
+    unsigned int paf_matches = 0, bsman_matches = 0, vshbridge_matches = 0;
+    unsigned int bsman_callers = 0, bsman_caller = 0;
+    unsigned int owner[4], original[4], replacement[4], leaf[4], leaf_size[4];
+    unsigned int scalar[40], scalar_count = 0, i;
+
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 || !bsman->registered ||
+            !zeroCtrlLoadedModuleMetadataValid(mod) ||
+            strcmp(mod->modname, "slide_plugin_module") != 0 ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            !zeroCtrlVshModuleRangeValid(mod, mod->text_addr, mod->text_size))
+        return;
+
+    for (pc = 0; pc + 20 <= mod->text_size; pc += 4) {
+        unsigned int address = mod->text_addr + pc;
+        if (_lw(address) == 0x27BDFFE0 &&
+                _lw(address + 4) == 0xAFB10004 &&
+                _lw(address + 8) == 0x00808821 &&
+                _lw(address + 12) == 0xAFB00000 &&
+                _lw(address + 16) == 0xAFBF001C) {
+            activation = address;
+            candidates++;
+        }
+    }
+    if (candidates != 1 || activation != mod->text_addr + 0x9304 ||
+            !zeroCtrlVshModuleRangeValid(mod, activation, 0x2BC + 8))
+        return;
+
+    cursor = (unsigned int)mod->stub_top;
+    end = cursor + mod->stub_size;
+    if (end < cursor || !zeroCtrlVshModuleRangeValid(mod, cursor,
+                mod->stub_size)) return;
+    while (cursor < end) {
+        SceLibraryStubTable *table = (SceLibraryStubTable *)cursor;
+        unsigned int bytes, index;
+        if ((cursor & 3) != 0 || end - cursor < 12) return;
+        bytes = (unsigned int)table->len * 4;
+        if (bytes < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                bytes > end - cursor ||
+                !zeroCtrlVshModuleRangeValid(mod, cursor, bytes) ||
+                !zeroCtrlVshModuleRangeValid(mod,
+                    (unsigned int)table->nidtable,
+                    (unsigned int)table->stubcount * 4) ||
+                !zeroCtrlVshModuleRangeValid(mod,
+                    (unsigned int)table->stubtable,
+                    (unsigned int)table->stubcount * 8)) return;
+        for (index = 0; index < table->stubcount; index++) {
+            unsigned int nid = table->nidtable[index];
+            unsigned int stub = (unsigned int)table->stubtable + index * 8;
+            if (zeroCtrlLibraryNameEquals(mod, table->libname,
+                        paf_library, sizeof(paf_library)) &&
+                    nid == 0xED83BBCF) {
+                paf_stub = stub;
+                paf_matches++;
+            }
+            if (zeroCtrlBSManLibraryNameValid(mod, table->libname) &&
+                    nid == 0x23E3A9B6) {
+                bsman_stub = stub;
+                bsman_matches++;
+            }
+            if (zeroCtrlLibraryNameEquals(mod, table->libname,
+                        vshbridge_library, sizeof(vshbridge_library)) &&
+                    nid == 0x639C3CB3) {
+                vshbridge_stub = stub;
+                vshbridge_matches++;
+            }
+        }
+        cursor += bytes;
+    }
+    if (paf_matches != 1 || bsman_matches != 1 || vshbridge_matches != 1)
+        return;
+    for (pc = 0; pc + 4 <= mod->text_size; pc += 4) {
+        unsigned int address = mod->text_addr + pc;
+        unsigned int instruction = _lw(address);
+        if ((instruction >> 26) == 3 &&
+                zeroCtrlMipsJumpTarget(address, instruction) == bsman_stub) {
+            bsman_caller = address;
+            bsman_callers++;
+        }
+    }
+    if (bsman_callers != 1 || bsman_caller != activation + 0xA8) return;
+
+    leaf[0] = bsman->prefix_paf_call_leaf_addr;
+    leaf_size[0] = bsman->prefix_paf_call_leaf_size;
+    leaf[1] = bsman->call_leaf_addr;
+    leaf_size[1] = bsman->call_leaf_size;
+    leaf[2] = bsman->post_vsh_call_leaf_addr;
+    leaf_size[2] = bsman->post_vsh_call_leaf_size;
+    leaf[3] = bsman->state_zero_leaf_addr[3];
+    leaf_size[3] = bsman->state_zero_leaf_size[3];
+    for (i = 0; i < 4; i++) {
+        owner[i] = activation + owner_offset[i];
+        original[i] = _lw(owner[i]);
+        if (!zeroCtrlVshModuleRangeValid(helper, leaf[i], leaf_size[i]) ||
+                ((owner[i] + 4) & 0xF0000000) !=
+                    (leaf[i] & 0xF0000000)) return;
+        replacement[i] = 0x0C000000 | ((leaf[i] >> 2) & 0x03FFFFFF);
+        if (zeroCtrlMipsJumpTarget(owner[i], replacement[i]) != leaf[i]) return;
+    }
+    if ((original[0] >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner[0], original[0]) != paf_stub ||
+            _lw(owner[0] + 4) != 0x00408021 ||
+            (original[1] >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner[1], original[1]) != bsman_stub ||
+            owner[1] != bsman_caller ||
+            (_lw(owner[1] + 4) & 0xFFFF0000) != 0x3C130000 ||
+            _lw(owner[1] + 8) != 0x1040000A ||
+            _lw(activation + 0x108) != 0x3C048000 ||
+            (original[2] >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner[2], original[2]) != vshbridge_stub ||
+            _lw(owner[2] + 4) != 0x3484000D ||
+            _lw(owner[2] + 8) != 0x1440FFCE ||
+            original[3] != 0x0040F809 || _lw(owner[3] + 4) != 0)
+        return;
+
+    if (!zeroCtrlVshModuleRangeValid(helper,
+                bsman->prefix_paf_return_leaf_addr,
+                bsman->prefix_paf_return_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->return_leaf_addr,
+                bsman->return_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                bsman->post_vsh_return_leaf_addr,
+                bsman->post_vsh_return_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                bsman->state_zero_leaf_addr[4],
+                bsman->state_zero_leaf_size[4])) return;
+
+#define ADD_FUNCTIONAL_SCALAR(address) do { scalar[scalar_count++] = (address); } while (0)
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_path_mask_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_target_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_ra_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_compat_mode_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_natural_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_substitution_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_return_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->call_target_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->call_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->call_ra_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->trace_stage_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_path_mask_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->bsman_natural_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->bsman_compat_mode_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->bsman_substitution_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->bsman_effective_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->bsman_return_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_target_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_saved_ra_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_natural_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_return_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_entry_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_argument_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_compat_mode_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_effective_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_substitution_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_path_mask_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_vcall_target_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_vcall_ra_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_vcall_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_counter_addr[1]);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_counter_addr[2]);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_15to14_compat_mode_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_15to14_effective_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_15to14_substitution_hits_addr);
+#undef ADD_FUNCTIONAL_SCALAR
+    for (i = 0; i < scalar_count; i++)
+        if ((scalar[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)) return;
+
+    bsman->activation_addr = activation;
+    bsman->caller_addr = owner[1];
+    _sw(0, bsman->prefix_path_mask_addr);
+    _sw(paf_stub, bsman->prefix_paf_target_addr);
+    _sw(0, bsman->prefix_paf_ra_addr);
+    _sw(1, bsman->prefix_paf_compat_mode_addr);
+    _sw(0, bsman->prefix_paf_natural_result_addr);
+    _sw(0, bsman->prefix_paf_substitution_hits_addr);
+    _sw(0, bsman->prefix_paf_return_hits_addr);
+    _sw(bsman_stub, bsman->call_target_addr);
+    _sw(0, bsman->call_hits_addr);
+    _sw(0, bsman->call_ra_addr);
+    _sw(0, bsman->trace_stage_addr);
+    _sw(0, bsman->post_path_mask_addr);
+    _sw(0, bsman->bsman_natural_result_addr);
+    _sw(1, bsman->bsman_compat_mode_addr);
+    _sw(0, bsman->bsman_substitution_hits_addr);
+    _sw(0, bsman->bsman_effective_result_addr);
+    _sw(0, bsman->bsman_return_hits_addr);
+    _sw(vshbridge_stub, bsman->post_vsh_target_addr);
+    _sw(0, bsman->post_vsh_saved_ra_addr);
+    _sw(0xFFFFFFFF, bsman->post_vsh_natural_result_addr);
+    _sw(0, bsman->post_vsh_return_hits_addr);
+    _sw(0, bsman->post_vsh_entry_hits_addr);
+    _sw(0xFFFFFFFF, bsman->post_vsh_argument_addr);
+    _sw(1, bsman->post_vsh_compat_mode_addr);
+    _sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr);
+    _sw(0, bsman->post_vsh_substitution_hits_addr);
+    _sw(0, bsman->state_zero_path_mask_addr);
+    _sw(0, bsman->state_zero_vcall_target_addr);
+    _sw(0, bsman->state_zero_vcall_ra_addr);
+    _sw(0xFFFFFFFF, bsman->state_zero_vcall_result_addr);
+    _sw(0, bsman->state_zero_counter_addr[1]);
+    _sw(0, bsman->state_zero_counter_addr[2]);
+    _sw(1, bsman->state_zero_15to14_compat_mode_addr);
+    _sw(0xFFFFFFFF, bsman->state_zero_15to14_effective_result_addr);
+    _sw(0, bsman->state_zero_15to14_substitution_hits_addr);
+    for (i = 0; i < scalar_count; i++)
+        sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
+
+    for (i = 0; i < 4; i++) {
+        _sw(replacement[i], owner[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4);
+        sceKernelIcacheInvalidateRange((const void *)owner[i], 4);
+    }
+    bsman->functional_validation = 1;
+    bsman->functional_install = 1;
+    bsman->functional_cache_sync = 1;
+}
+
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     const unsigned int target_nid = 0x23E3A9B6;
     static const char paf_library[] = "scePaf";
@@ -10131,9 +10373,10 @@ int OnModuleStart(SceModule2 *mod) {
                 slide_diag.module_start_addr = mod->module_start_func;
                 slide_diag.elf_entry_addr = mod->entry_addr;
                 zeroCtrlInstallSonyStartTrace(mod);
-                zeroCtrlInstallBSManClosedShim(mod);
                 if (slide_diag.functional_enabled)
-                        ClearCaches();
+                        zeroCtrlInstallPsp1000FunctionalCompat(mod);
+                else
+                        zeroCtrlInstallBSManClosedShim(mod);
                 slide_diag.start_callback_returning = 1;
                 slide_diag.saw_start = 1;
                 return previous_result;
