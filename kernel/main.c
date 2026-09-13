@@ -4719,17 +4719,28 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
         constructed0_size &= ~3U;
         if (constructed0_size == 0x30 && zeroCtrlVshModuleRangeValid(paf,
                     constructed[0], constructed0_size)) {
-            unsigned int delay1 = _lw(constructed[0] + 0x18);
-            unsigned int delay2 = _lw(constructed[0] + 0x28);
-            int delay1_destination = zeroCtrlMipsGprWriteDestination(delay1);
-            int delay2_destination = zeroCtrlMipsGprWriteDestination(delay2);
-            if (zeroCtrlMipsMove(_lw(constructed[0] + 0x08), 17, 4) &&
-                    (_lw(constructed[0] + 0x14) >> 26) == 3 &&
-                    delay1_destination >= 0 && delay1_destination != 17 &&
+            unsigned int first_call_word = _lw(constructed[0] + 0x14);
+            unsigned int second_call_word = _lw(constructed[0] + 0x24);
+            unsigned int first_call_target = zeroCtrlMipsJumpTarget(
+                    constructed[0] + 0x14, first_call_word);
+            unsigned int second_call_target = zeroCtrlMipsJumpTarget(
+                    constructed[0] + 0x24, second_call_word);
+            unsigned int call_segment, call_remaining;
+            if (_lw(constructed[0]) == 0x27BDFFF0 &&
+                    _lw(constructed[0] + 0x04) == 0xAFB10004 &&
+                    zeroCtrlMipsMove(_lw(constructed[0] + 0x08), 17, 4) &&
+                    _lw(constructed[0] + 0x0C) == 0x240401D8 &&
+                    _lw(constructed[0] + 0x10) == 0xAFBF0008 &&
+                    (first_call_word >> 26) == 3 &&
+                    zeroCtrlModuleContainingSegment(paf, first_call_target,
+                        &call_segment, &call_remaining) &&
+                    _lw(constructed[0] + 0x18) == 0xAFB00000 &&
                     zeroCtrlMipsMove(_lw(constructed[0] + 0x1C), 16, 2) &&
-                    (_lw(constructed[0] + 0x24) >> 26) == 3 &&
-                    delay2_destination >= 0 && delay2_destination != 16 &&
-                    delay2_destination != 17 &&
+                    _lw(constructed[0] + 0x20) == 0x8E250008 &&
+                    (second_call_word >> 26) == 3 &&
+                    zeroCtrlModuleContainingSegment(paf, second_call_target,
+                        &call_segment, &call_remaining) &&
+                    zeroCtrlMipsMove(_lw(constructed[0] + 0x28), 4, 2) &&
                     _lw(constructed[0] + 0x2C) == 0xAE300004) {
                 zeroCtrlDiagnosticsText(
                         "[paf-a989-constructed0-write] validation=1 "
@@ -4753,7 +4764,7 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
         unsigned int base = (load >> 21) & 0x1F;
         unsigned int target = (load >> 16) & 0x1F;
         unsigned char source[32] = { 0 };
-        if ((load >> 26) != 0x23 || target == 0 ||
+        if ((load >> 26) != 0x23 || target == 0 || base == target ||
                 (short)(load & 0xFFFF) != 0x14) continue;
         for (look = offset + 4; look <= offset + 0x40 &&
                 look + 4 <= paf->text_size; look += 4) {
@@ -4764,14 +4775,22 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
             unsigned int rd = (word >> 11) & 0x1F;
             unsigned int function = word & 0x3F;
             int destination;
+            if (!(opcode == 0 && function == 9)) {
+                destination = zeroCtrlMipsGprWriteDestination(word);
+                if (destination < 0 || (unsigned int)destination == target ||
+                        (unsigned int)destination == base) break;
+            }
             if (opcode == 0 && function == 9) {
                 unsigned int delay;
                 int delay_destination;
+                unsigned int delay_writes_base;
                 if (rs != target || rd != 31) break;
                 delay = _lw(paf->text_addr + look + 4);
                 delay_destination = zeroCtrlMipsGprWriteDestination(delay);
                 if (delay_destination < 0 ||
                         (unsigned int)delay_destination == target) break;
+                delay_writes_base =
+                        (unsigned int)delay_destination == base;
                 if ((delay >> 26) == 0x23 &&
                         ((delay >> 21) & 0x1F) == base &&
                         (short)(delay & 0xFFFF) == 4 &&
@@ -4796,6 +4815,11 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 } else if (delay_destination != 0) {
                     source[delay_destination] = 0;
                 }
+                /* A delay-slot load uses the original base before any write. */
+                if (delay_writes_base && !((delay >> 26) == 0x23 &&
+                        ((delay >> 21) & 0x1F) == base &&
+                        (short)(delay & 0xFFFF) == 4))
+                    source[base] = 0;
                 candidates++;
                 if (reported < 16) {
                     snprintf(line, sizeof(line),
@@ -4822,11 +4846,8 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 source[rd] = source[rt];
             } else if (opcode == 9 && (short)(word & 0xFFFF) == 0 && rt != 0) {
                 source[rt] = source[rs];
-            } else {
-                destination = zeroCtrlMipsGprWriteDestination(word);
-                if (destination < 0 || (unsigned int)destination == target)
-                    break;
-                if (destination != 0) source[destination] = 0;
+            } else if (destination != 0) {
+                source[destination] = 0;
             }
             if (opcode == 1 || opcode == 2 || opcode == 3 ||
                     (opcode >= 4 && opcode <= 7) ||

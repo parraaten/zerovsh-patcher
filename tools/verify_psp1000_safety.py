@@ -881,24 +881,41 @@ def check_sources(root):
             "constructed[0]", "remaining > 0x30 ? 0x30",
             "constructed0_size == 0x30",
             "zeroCtrlVshModuleRangeValid(paf,\n                    constructed[0], constructed0_size)",
+            "_lw(constructed[0]) == 0x27BDFFF0",
+            "_lw(constructed[0] + 0x04) == 0xAFB10004",
             "zeroCtrlMipsMove(_lw(constructed[0] + 0x08), 17, 4)",
-            "(_lw(constructed[0] + 0x14) >> 26) == 3",
+            "_lw(constructed[0] + 0x0C) == 0x240401D8",
+            "_lw(constructed[0] + 0x10) == 0xAFBF0008",
+            "first_call_word = _lw(constructed[0] + 0x14)",
+            "first_call_target = zeroCtrlMipsJumpTarget(",
+            "(first_call_word >> 26) == 3",
+            "zeroCtrlModuleContainingSegment(paf, first_call_target",
+            "_lw(constructed[0] + 0x18) == 0xAFB00000",
             "zeroCtrlMipsMove(_lw(constructed[0] + 0x1C), 16, 2)",
-            "(_lw(constructed[0] + 0x24) >> 26) == 3",
+            "_lw(constructed[0] + 0x20) == 0x8E250008",
+            "second_call_word = _lw(constructed[0] + 0x24)",
+            "second_call_target = zeroCtrlMipsJumpTarget(",
+            "(second_call_word >> 26) == 3",
+            "zeroCtrlModuleContainingSegment(paf, second_call_target",
+            "zeroCtrlMipsMove(_lw(constructed[0] + 0x28), 4, 2)",
             "_lw(constructed[0] + 0x2C) == 0xAE300004",
-            "delay1_destination", "delay2_destination",
             "[paf-a989-constructed0-write] validation=1",
             "base_arg_reg=4 base_saved_reg=17 field_off=0x04",
             "source=first_call_return_saved_reg source_reg=16",
             "store_off=0x2C",
             "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)",
             "(short)(load & 0xFFFF) != 0x14", "look <= offset + 0x40",
+            "base == target",
             "unsigned char source[32] = { 0 }",
             "zeroCtrlMipsGprWriteDestination(word)",
-            "(unsigned int)destination == target", "function == 9",
+            "(unsigned int)destination == target",
+            "(unsigned int)destination == base", "function == 9",
             "if (rs != target || rd != 31) break",
             "delay = _lw(paf->text_addr + look + 4)",
             "zeroCtrlMipsGprWriteDestination(delay)",
+            "delay_writes_base",
+            "(unsigned int)delay_destination == base",
+            "A delay-slot load uses the original base before any write",
             "source[(delay >> 16) & 0x1F] = 1",
             "source[delay_destination] = 0",
             "[paf-a989-outer14-call-candidate]", "reported < 16",
@@ -922,37 +939,70 @@ def check_sources(root):
     if "unsigned int provenance_reg" in constructed_flow or \
             "unsigned int provenance =" in constructed_flow:
         fail("OUTER+0x14 analysis retains sticky a1 provenance")
+    alias_reject = constructed_flow.find("base == target", outer_text_range)
+    destination_decode = constructed_flow.find(
+            "zeroCtrlMipsGprWriteDestination(word)", alias_reject)
+    target_barrier = constructed_flow.find(
+            "(unsigned int)destination == target", destination_decode)
+    base_barrier = constructed_flow.find(
+            "(unsigned int)destination == base", target_barrier)
     jalr_gate = constructed_flow.find("if (opcode == 0 && function == 9)",
-            outer_text_range)
+            base_barrier)
     unrelated_barrier = constructed_flow.find("if (rs != target || rd != 31) break",
             jalr_gate)
     delay_read = constructed_flow.find(
             "delay = _lw(paf->text_addr + look + 4)", unrelated_barrier)
     delay_decode = constructed_flow.find(
             "zeroCtrlMipsGprWriteDestination(delay)", delay_read)
+    delay_base = constructed_flow.find(
+            "(unsigned int)delay_destination == base", delay_decode)
     delay_update = constructed_flow.find("source[delay_destination] = 0",
             delay_decode)
     provenance_output = constructed_flow.find(
             'source[5] ? "base_plus_0x04" : "UNKNOWN"', delay_update)
     closure_update = constructed_flow.find("if (source[5]) closure = 1",
             provenance_output)
-    if not 0 <= jalr_gate < unrelated_barrier < delay_read < delay_decode < \
-            delay_update < provenance_output < closure_update:
-        fail("JALR delay/current-a1 provenance ordering is not conservative")
+    if not 0 <= alias_reject < destination_decode < target_barrier < \
+            base_barrier < jalr_gate < unrelated_barrier < delay_read < \
+            delay_decode < delay_base < delay_update < provenance_output < \
+            closure_update:
+        fail("base/target liveness or JALR delay provenance ordering is not conservative")
+    c0_frame = constructed_flow.find(
+            "_lw(constructed[0]) == 0x27BDFFF0")
+    c0_save_s1 = constructed_flow.find(
+            "_lw(constructed[0] + 0x04) == 0xAFB10004", c0_frame)
     c0_base = constructed_flow.find(
             "zeroCtrlMipsMove(_lw(constructed[0] + 0x08), 17, 4)")
+    c0_arg = constructed_flow.find(
+            "_lw(constructed[0] + 0x0C) == 0x240401D8", c0_base)
+    c0_save_ra = constructed_flow.find(
+            "_lw(constructed[0] + 0x10) == 0xAFBF0008", c0_arg)
     c0_first_call = constructed_flow.find(
-            "(_lw(constructed[0] + 0x14) >> 26) == 3", c0_base)
+            "(first_call_word >> 26) == 3", c0_save_ra)
+    c0_first_target = constructed_flow.find(
+            "zeroCtrlModuleContainingSegment(paf, first_call_target",
+            c0_first_call)
+    c0_save_s0 = constructed_flow.find(
+            "_lw(constructed[0] + 0x18) == 0xAFB00000", c0_first_target)
     c0_return = constructed_flow.find(
-            "zeroCtrlMipsMove(_lw(constructed[0] + 0x1C), 16, 2)", c0_first_call)
+            "zeroCtrlMipsMove(_lw(constructed[0] + 0x1C), 16, 2)", c0_save_s0)
+    c0_load_a1 = constructed_flow.find(
+            "_lw(constructed[0] + 0x20) == 0x8E250008", c0_return)
     c0_second_call = constructed_flow.find(
-            "(_lw(constructed[0] + 0x24) >> 26) == 3", c0_return)
+            "(second_call_word >> 26) == 3", c0_load_a1)
+    c0_second_target = constructed_flow.find(
+            "zeroCtrlModuleContainingSegment(paf, second_call_target",
+            c0_second_call)
+    c0_delay = constructed_flow.find(
+            "zeroCtrlMipsMove(_lw(constructed[0] + 0x28), 4, 2)",
+            c0_second_target)
     c0_store = constructed_flow.find(
-            "_lw(constructed[0] + 0x2C) == 0xAE300004", c0_second_call)
+            "_lw(constructed[0] + 0x2C) == 0xAE300004", c0_delay)
     c0_output = constructed_flow.find(
             "[paf-a989-constructed0-write] validation=1", c0_store)
-    if not 0 <= c0_base < c0_first_call < c0_return < c0_second_call < \
-            c0_store < c0_output:
+    if not 0 <= c0_frame < c0_save_s1 < c0_base < c0_arg < c0_save_ra < \
+            c0_first_call < c0_first_target < c0_save_s0 < c0_return < c0_load_a1 < \
+            c0_second_call < c0_second_target < c0_delay < c0_store < c0_output:
         fail("constructed_0 write lacks exact local liveness proof")
     generic_shape = constructed_flow.find(
             "[paf-a989-outer14-dispatch-shape] validation=1")

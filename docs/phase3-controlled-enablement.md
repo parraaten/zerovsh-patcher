@@ -2271,3 +2271,14 @@ instruction can overwrite it. Constructed_0 now uses the exact local
 four-word entry frame through `s0=a1`. The adjacent data scan and all earlier
 first-call observations remain unchanged. These corrections add no hardware or
 runtime claim.
+
+The OUTER `+0x14` scan additionally rejects an initial load whose base and
+target registers alias, and treats any intervening write to the original base
+as a liveness barrier. A JALR delay-slot load may establish `a1` from
+`original_base+0x04` because it observes the pre-delay base value; other
+delay-slot base writes cannot substitute a newly defined base for the original
+object. Constructed_0 validation now covers every captured instruction from
+its `+0x00` stack allocation through the `+0x2C` field store, including both
+call delay slots and the intervening `a1` load. The per-register `a1`
+provenance model, constructed_1 proof, adjacent data scan, earlier downstream
+analyses, and conservative primary callback-flow result remain unchanged.
