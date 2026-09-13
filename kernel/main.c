@@ -4492,17 +4492,23 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
             (words[0xA0 / 4] >> 26) != 3 ||
             words[0xA4 / 4] != 0xAE000018 ||
             (words[0xA8 / 4] >> 26) != 0x0F ||
+            ((words[0xA8 / 4] >> 21) & 0x1F) != 0 ||
+            ((words[0xA8 / 4] >> 16) & 0x1F) != 2 ||
             (words[0xAC / 4] >> 26) != 0x23 ||
-            ((words[0xAC / 4] >> 21) & 0x1F) !=
-                ((words[0xA8 / 4] >> 16) & 0x1F) ||
+            ((words[0xAC / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0xAC / 4] >> 16) & 0x1F) != 4 ||
             (words[0xB0 / 4] >> 26) != 0 ||
             (words[0xB0 / 4] & 0x3F) != 0 ||
             ((words[0xB0 / 4] >> 21) & 0x1F) != 0 ||
             ((words[0xB0 / 4] >> 16) & 0x1F) != 23 ||
+            ((words[0xB0 / 4] >> 11) & 0x1F) != 3 ||
             ((words[0xB0 / 4] >> 6) & 0x1F) != 3 ||
             !zeroCtrlMipsMove(words[0xB4 / 4], 5, 17) ||
             (words[0xB8 / 4] >> 26) != 3 ||
             (words[0xBC / 4] >> 26) != 0 ||
+            (words[0xBC / 4] & 0x3F) != 0x21 ||
+            ((words[0xBC / 4] >> 21) & 0x1F) != 4 ||
+            ((words[0xBC / 4] >> 16) & 0x1F) != 3 ||
             ((words[0xBC / 4] >> 11) & 0x1F) != 4 ||
             (words[0xC0 / 4] >> 26) != 3 ||
             !zeroCtrlMipsMove(words[0xC4 / 4], 4, 23) ||

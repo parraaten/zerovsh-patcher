@@ -2215,3 +2215,8 @@ only after exact SLTI/XORI/SLTIU/OR dataflow and branch operands/targets are
 validated. Outcomes at `+0x54` and `+0x80` remain unknown because they depend on
 a call return. This corrects loaded-code classification only and adds no
 hardware or runtime claim.
+
+The consumer-tail validator now additionally requires `LUI v0` followed by
+`LW a0,...(v0)`, `SLL v1,s7,3`, and the exact `ADDU a0,a0,v1` in the `+0xB8`
+call delay slot. This closes structural gaps without changing any output,
+mapping boundary, runtime behavior, or hardware interpretation.

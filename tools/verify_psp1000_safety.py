@@ -729,7 +729,22 @@ def check_sources(root):
             "words[0x98 / 4] != 0xAE16000C",
             "words[0x9C / 4] != 0xAE140014",
             "words[0xA4 / 4] != 0xAE000018",
+            "(words[0xA8 / 4] >> 26) != 0x0F",
+            "((words[0xA8 / 4] >> 21) & 0x1F) != 0",
+            "((words[0xA8 / 4] >> 16) & 0x1F) != 2",
+            "(words[0xAC / 4] >> 26) != 0x23",
+            "((words[0xAC / 4] >> 21) & 0x1F) != 2",
+            "((words[0xAC / 4] >> 16) & 0x1F) != 4",
+            "(words[0xB0 / 4] & 0x3F) != 0",
+            "((words[0xB0 / 4] >> 21) & 0x1F) != 0",
+            "((words[0xB0 / 4] >> 16) & 0x1F) != 23",
+            "((words[0xB0 / 4] >> 11) & 0x1F) != 3",
+            "((words[0xB0 / 4] >> 6) & 0x1F) != 3",
             "zeroCtrlMipsMove(words[0xB4 / 4], 5, 17)",
+            "(words[0xBC / 4] & 0x3F) != 0x21",
+            "((words[0xBC / 4] >> 21) & 0x1F) != 4",
+            "((words[0xBC / 4] >> 16) & 0x1F) != 3",
+            "((words[0xBC / 4] >> 11) & 0x1F) != 4",
             "zeroCtrlMipsMove(words[0xC4 / 4], 4, 23)",
             "zeroCtrlMipsMove(words[0xC8 / 4], 3, 0)",
             "(words[0xCC / 4] & 0x3F) != 0x0B",
@@ -783,6 +798,14 @@ def check_sources(root):
     if not 0 <= exact_branch_dataflow < exact_5c < exact_64 < \
             validated_consumer < branch_output_5c < branch_output_64:
         fail("known consumer branch output precedes exact dataflow validation")
+    exact_a8 = consumer.find("((words[0xA8 / 4] >> 16) & 0x1F) != 2")
+    exact_ac = consumer.find("((words[0xAC / 4] >> 16) & 0x1F) != 4", exact_a8)
+    exact_b0 = consumer.find("((words[0xB0 / 4] >> 11) & 0x1F) != 3", exact_ac)
+    exact_bc = consumer.find("(words[0xBC / 4] & 0x3F) != 0x21", exact_b0)
+    if not 0 <= exact_a8 < exact_ac < exact_b0 < exact_bc < validated_consumer:
+        fail("consumer tail register dataflow is not proven before validation")
+    if "((words[0xAC / 4] >> 21) & 0x1F) !=\n                ((words[0xA8 / 4] >> 16) & 0x1F)" in consumer:
+        fail("consumer slot still relies on generic LUI/LW base equality")
     for mistaken in ("(words[0x80 / 4] >> 26) != 0x2B",
             "zeroCtrlMipsMove(words[0x84 / 4], 5, 16)",
             "words[0x88 / 4] != 0xAE150004"):
