@@ -1092,11 +1092,21 @@ def check_sources(root):
             "(prologue >> 26) != 9", "(short)(prologue & 0xFFFF) >= 0",
             "save <= entry_off + 0x20", "((save_word >> 16) & 0x1F) == 31",
             "_lw(paf->text_addr + entry_off - 8) == 0x03E00008",
+            "_lw(paf->text_addr + entry_off - 4)",
+            "previous_jr_ra = 1",
             "caller_opcode == 2 || caller_opcode == 3",
             "zeroCtrlMipsJumpTarget(paf->text_addr + cursor",
+            "if (caller_opcode == 3)", "direct_jal_callers++",
+            "direct_j_refs++",
             "candidate_off - entry_off + 4",
             "[paf-a989-nearby-function]", "entry_off=UNKNOWN status=UNKNOWN",
-            "entry_off=0x%X status=VALID", "caller_reported < 16",
+            "entry_off=0x%X status=VALID entry_evidence=%s",
+            "PREVIOUS_JR_RA_AND_DIRECT_JAL", "PREVIOUS_JR_RA", "DIRECT_JAL",
+            "DIRECT_J_ONLY", "PROLOGUE_ONLY", "NO_BOUNDARY",
+            "INVALID_CANDIDATE",
+            "strong_entry = structural_entry &&",
+            "previous_jr_ra || direct_jal_callers != 0",
+            "if (!strong_entry)", "caller_reported < 16",
             "[paf-a989-nearby-caller]", "kind=%s",
             "source[cursor].origin = ZERO_PAF_NEARBY_ENTRY_ARG",
             "opcode == 1 || (opcode >= 4 && opcode <= 7)",
@@ -1123,8 +1133,17 @@ def check_sources(root):
             "candidate_off - entry_off + 4", nearby_first_read)
     nearby_valid_output = nearby.find("entry_off=0x%X status=VALID",
             nearby_local_range)
-    nearby_trace = nearby.find("for (cursor = entry_off; cursor < candidate_off",
+    nearby_strong_gate = nearby.find(
+            "strong_entry = structural_entry &&", nearby_local_range)
+    nearby_jal_condition = nearby.find(
+            "previous_jr_ra || direct_jal_callers != 0", nearby_strong_gate)
+    nearby_weak_reject = nearby.find("if (!strong_entry)", nearby_jal_condition)
+    nearby_weak_continue = nearby.find("continue;", nearby_weak_reject)
+    nearby_arg_init = nearby.find(
+            "source[cursor].origin = ZERO_PAF_NEARBY_ENTRY_ARG",
             nearby_valid_output)
+    nearby_trace = nearby.find("for (cursor = entry_off; cursor < candidate_off",
+            nearby_arg_init)
     nearby_delay = nearby.find(
             "zeroCtrlPafA989ApplyNearbyInstruction(delay, source)", nearby_trace)
     nearby_call_clear = nearby.find(
@@ -1134,12 +1153,17 @@ def check_sources(root):
     nearby_result = nearby.find("[paf-a989-nearby-base-flow]",
             nearby_saved_guard)
     if not 0 <= nearby_range < nearby_first_read < nearby_local_range < \
-            nearby_valid_output < nearby_trace < nearby_delay < \
+            nearby_strong_gate < nearby_jal_condition < nearby_weak_reject < \
+            nearby_weak_continue < nearby_valid_output < nearby_arg_init < \
+            nearby_trace < nearby_delay < \
             nearby_call_clear < nearby_saved_guard < nearby_result:
         fail("nearby function provenance reads or reports before validation")
     if nearby.count("0xCFA38") != 1 or nearby.count("0xCFB30") != 1 or \
             nearby.count("0xCFBF4") != 1 or "outer14-exact-chain" in nearby:
         fail("nearby analysis broadens candidates or overstates A989 identity")
+    if "entry_valid = 1" in nearby or \
+            "direct_j_refs != 0);" in nearby[nearby_strong_gate:nearby_weak_reject]:
+        fail("plain J reference can still authorize entry-argument provenance")
     if "look <= offset + 0x40" not in constructed_flow:
         fail("generic OUTER+0x14 search window was widened")
     for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP", "REDIRECT_FUNCTION",

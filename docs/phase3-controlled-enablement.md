@@ -2314,8 +2314,10 @@ at PAF text offsets `0xCFA38`, `0xCFB30`, and `0xCFBF4`; it does not widen the
 generic candidate scan or its reporting cap. For each offset, it searches back
 at most `0x100` bytes for the nearest conventional negative stack allocation
 with an RA save. That tentative entry is accepted only when it is immediately
-preceded by a `JR ra` boundary or is the dynamically decoded target of a direct
-loaded-text J/JAL. Otherwise the function entry is reported as `UNKNOWN`.
+preceded by a validated `JR ra` plus delay-slot boundary or is the dynamically
+decoded target of a direct loaded-text JAL. A plain J is retained as a bounded
+structural reference but cannot establish callable-entry argument provenance;
+when it is the only reference evidence, entry status remains `UNKNOWN`.
 
 From an accepted entry, a bounded forward pass tracks only entry arguments,
 simple copies, and one load through an entry argument or its saved-register
@@ -2329,7 +2331,8 @@ for the three accepted entries and are capped at 16 per entry.
 New records are:
 
 ```text
-[paf-a989-nearby-function] candidate_off=... entry_off=... status=VALID|UNKNOWN
+[paf-a989-nearby-function] candidate_off=... entry_off=... status=VALID entry_evidence=PREVIOUS_JR_RA|DIRECT_JAL|PREVIOUS_JR_RA_AND_DIRECT_JAL
+[paf-a989-nearby-function] candidate_off=... entry_off=... status=UNKNOWN entry_evidence=DIRECT_J_ONLY|PROLOGUE_ONLY|NO_BOUNDARY|INVALID_CANDIDATE
 [paf-a989-nearby-base-flow] candidate_off=... base_reg=... origin=ENTRY_A0|ENTRY_A1|ENTRY_A2|ENTRY_A3|COPY_OF_ENTRY_ARG|LW_FROM_ENTRY_ARG|LW_FROM_SAVED_ARG|UNKNOWN source_reg=... disp=...
 [paf-a989-nearby-caller] candidate_off=... function_entry=... caller_off=... kind=JAL|J
 ```
@@ -2342,3 +2345,9 @@ base provenance, and direct caller relationships remain **HYPOTHESIS / UNKNOWN**
 until another PSP-1000 run supplies the new records. No proximity or field
 offset is promoted to A989 OUTER identity, and the primary callback flow stays
 `AMBIGUOUS`.
+
+Entry GPRs `a0-a3` are initialized only after the strong-entry test succeeds.
+Both J and JAL references continue to use `[paf-a989-nearby-caller]`, with
+`kind=J` or `kind=JAL`, but only JAL contributes `DIRECT_JAL` evidence. This is
+a provenance-strength correction only and adds no new loaded-code or runtime
+finding before the next hardware capture.
