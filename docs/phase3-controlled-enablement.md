@@ -2110,3 +2110,40 @@ Seven registration addresses increase the ABI to exactly 1012 bytes. Hardware
 must retain the successful T37.2/T38 prerequisites before T39 is interpreted.
 A zero decision advances investigation from the exact sequence at `+0x1E8`; a
 nonzero decision is only a future compatibility candidate.
+
+### VSH +0x589C callback implementation flow
+
+The next read-only diagnostic follows the hardware-proven callback pointer
+passed by VSH `+0x05704` as argument 1 to the import stub at `+0x3F568`.  After
+the existing import-table and `sceKernelFindModuleByAddress()` validation has
+identified the real owning module, a bounded flow walker starts at the resolved
+implementation with register `$a1` tainted.  It reports a proven register copy,
+word store (including base register and displacement), indirect dispatch, or
+direct-call argument pass.  A direct call is followed only when the callback is
+still in `$a0` through `$a3`, the delay slot provably preserves it, and the
+callee remains inside the validated owner; depth and per-function inspection
+are capped at eight calls and `0x100` bytes respectively.
+
+Branches, jumps, returns, unknown register writes, ambiguous delay slots, and
+module boundaries stop the path rather than guessing.  The walker uses only
+fixed stack state and `_lw()` reads: it installs no hook, executes no callback,
+writes no target memory, performs no allocation, and leaves
+`PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED` at zero.  Hardware output is still
+required to determine which terminal record is reached in the real PSP-1000
+6.61 `scePaf` implementation; a successful build alone cannot establish where
+the callback is retained or dispatched.
+
+Phase report: the changed files are `kernel/main.c`, the static safety verifier,
+and this document.  The technical finding from source inspection is limited to
+the already established VSH callsite, uniquely resolved import, and owning
+module; the downstream callback disposition remains unknown.  The analysis
+assumes only standard MIPS register and delay-slot behavior and deliberately
+rejects control-flow joins instead of assigning private `scePaf` semantics.
+Static safety verification passes; the PSPDEV build is still required in a
+toolchain-equipped environment.  No new hardware result is claimed.  The
+required hardware test is one opt-in diagnostic boot on model 0, devkit
+`0x06060110`, followed by return of the complete unedited log.  The unresolved
+questions are the first terminal callback-flow status, its owning object or
+callee, and whether later dispatch exists.  The recommended next phase is to
+use that hardware record to extend only the proven path, without enabling
+runtime request execution.

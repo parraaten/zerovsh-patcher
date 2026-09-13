@@ -486,6 +486,7 @@ def check_sources(root):
             "[vsh3f568-owner] validation=1", "[vsh3f568-impl-map]",
             "[vsh3f568-impl-cf]", "[vsh3f568-impl-frame]",
             "zeroCtrlWriteVsh3f568ImplFlow(owner, resolved, impl_size",
+            "zeroCtrlWriteVsh3f568CallbackFlow(owner, resolved, impl_size, 5, 0)",
             "[vsh3f568-use]", "[vsh3f568-summary]"):
         if token not in vsh3:
             fail("resolved VSH +3F568 analysis lacks " + token)
@@ -504,6 +505,20 @@ def check_sources(root):
                 "zeroCtrlRedir", "request_function()"):
             if forbidden in section:
                 fail("resolved VSH +3F568 analysis is not read-only: " + forbidden)
+    callback_start = kernel.find(
+            "static void zeroCtrlWriteVsh3f568CallbackFlow(")
+    callback_flow = kernel[callback_start:impl_flow_start]
+    for token in ("VSH3F568_CALLBACK_DEPTH_LIMIT", "status=STORED",
+            "status=DISPATCHED", "status=PASSED", "status=COPIED",
+            "status=OWNER_BOUNDARY", "status=CONTROL_BOUNDARY",
+            "zeroCtrlMipsGprWriteDestination(delay)",
+            "zeroCtrlWriteVsh3f568CallbackFlow(owner, callee, callee_size"):
+        if token not in callback_flow:
+            fail("bounded scePaf callback flow lacks " + token)
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
+            "request_function()"):
+        if forbidden in callback_flow:
+            fail("scePaf callback flow is not read-only: " + forbidden)
     destination_start = kernel.find(
             "static int zeroCtrlMipsGprWriteDestination(")
     destination_end = kernel.find(

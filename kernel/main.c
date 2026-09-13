@@ -3931,6 +3931,116 @@ static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod) {
             mod->text_size != 0 && mod->nsegment != 0 && mod->nsegment <= 4;
 }
 
+#define VSH3F568_CALLBACK_DEPTH_LIMIT 8
+
+/*
+ * Follow the hardware-proven VSH +0x589C callback only through instructions
+ * which preserve a single, unambiguous value.  This is deliberately a
+ * diagnostic rather than a disassembler: control-flow joins terminate a path,
+ * direct calls are followed only when the callback is an argument, and all
+ * state is kept in this bounded kernel stack frame.
+ */
+static void zeroCtrlWriteVsh3f568CallbackFlow(SceModule2 *owner,
+        unsigned int target, unsigned int size, unsigned int callback_reg,
+        unsigned int depth) {
+    unsigned int offset;
+    char line[192];
+
+    if (depth >= VSH3F568_CALLBACK_DEPTH_LIMIT || callback_reg == 0 ||
+            !zeroCtrlVshModuleRangeValid(owner, target, size)) {
+        snprintf(line, sizeof(line),
+                "[vsh3f568-callback] status=BOUNDED depth=%u target=0x%08X\n",
+                depth, target);
+        zeroCtrlDiagnosticsText(line);
+        return;
+    }
+    for (offset = 0; offset < size; offset += 4) {
+        unsigned int pc = target + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int rs = (word >> 21) & 0x1F;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int rd = (word >> 11) & 0x1F;
+        unsigned int function = word & 0x3F;
+        int destination;
+
+        if (opcode == 0x2B && rt == callback_reg) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-callback] status=STORED depth=%u pc=0x%08X "
+                    "base_reg=%u disp=%d callback_reg=%u\n", depth, pc, rs,
+                    (int)(short)(word & 0xFFFF), callback_reg);
+            zeroCtrlDiagnosticsText(line);
+            return;
+        }
+        if (opcode == 0 && function == 9 && rs == callback_reg) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-callback] status=DISPATCHED depth=%u "
+                    "pc=0x%08X callback_reg=%u\n", depth, pc, callback_reg);
+            zeroCtrlDiagnosticsText(line);
+            return;
+        }
+        if (opcode == 0 && (function == 0x21 || function == 0x25) &&
+                (rs == callback_reg || rt == callback_reg) &&
+                (rs == 0 || rt == 0) && rd != 0) {
+            callback_reg = rd;
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-callback] status=COPIED depth=%u pc=0x%08X "
+                    "callback_reg=%u\n", depth, pc, callback_reg);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        if (opcode == 3) {
+            unsigned int callee = zeroCtrlMipsJumpTarget(pc, word);
+            unsigned int callee_size = 0x100;
+            unsigned int delay;
+            int delay_destination;
+            if (offset + 8 > size) return;
+            delay = _lw(pc + 4);
+            delay_destination = zeroCtrlMipsGprWriteDestination(delay);
+            if (delay_destination < 0 ||
+                    (unsigned int)delay_destination == callback_reg) {
+                zeroCtrlDiagnosticsText(
+                        "[vsh3f568-callback] status=AMBIGUOUS_DELAY\n");
+                return;
+            }
+            if (callback_reg >= 4 && callback_reg <= 7) {
+                snprintf(line, sizeof(line),
+                        "[vsh3f568-callback] status=PASSED depth=%u "
+                        "pc=0x%08X target=0x%08X arg=%u\n", depth, pc,
+                        callee, callback_reg - 4);
+                zeroCtrlDiagnosticsText(line);
+                if (!zeroCtrlVshModuleRangeValid(owner, callee, callee_size)) {
+                    zeroCtrlDiagnosticsText(
+                            "[vsh3f568-callback] status=OWNER_BOUNDARY\n");
+                    return;
+                }
+                zeroCtrlWriteVsh3f568CallbackFlow(owner, callee, callee_size,
+                        callback_reg, depth + 1);
+            }
+            return;
+        }
+        if (opcode == 1 || opcode == 2 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && function == 8)) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-callback] status=CONTROL_BOUNDARY depth=%u "
+                    "pc=0x%08X\n", depth, pc);
+            zeroCtrlDiagnosticsText(line);
+            return;
+        }
+        destination = zeroCtrlMipsGprWriteDestination(word);
+        if (destination < 0 || (unsigned int)destination == callback_reg) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-callback] status=%s depth=%u pc=0x%08X\n",
+                    destination < 0 ? "AMBIGUOUS" : "OVERWRITTEN", depth, pc);
+            zeroCtrlDiagnosticsText(line);
+            return;
+        }
+    }
+    zeroCtrlDiagnosticsText(
+            "[vsh3f568-callback] status=BOUNDED function_window=1\n");
+}
+
 static void zeroCtrlWriteVsh3f568ImplFlow(SceModule2 *owner,
         unsigned int target, unsigned int size, char *status,
         unsigned int status_size) {
@@ -4296,6 +4406,7 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     }
     zeroCtrlWriteVsh3f568ImplFlow(owner, resolved, impl_size,
             a1_status, sizeof(a1_status));
+    zeroCtrlWriteVsh3f568CallbackFlow(owner, resolved, impl_size, 5, 0);
 
     for (offset = 0; offset + 8 <= vsh->text_size; offset += 4) {
         unsigned int pc = text + offset;
