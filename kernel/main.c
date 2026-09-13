@@ -3931,6 +3931,262 @@ static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod) {
             mod->text_size != 0 && mod->nsegment != 0 && mod->nsegment <= 4;
 }
 
+static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
+        unsigned int source) {
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+
+    return (word >> 26) == 0 && ((word & 0x3F) == 0x21 ||
+            (word & 0x3F) == 0x25) && ((word >> 11) & 0x1F) == destination &&
+            ((rs == source && rt == 0) || (rs == 0 && rt == source));
+}
+
+static int zeroCtrlModuleContainingSegment(SceModule2 *mod,
+        unsigned int address, unsigned int *segment, unsigned int *remaining) {
+    unsigned int i;
+
+    if (!zeroCtrlLoadedModuleMetadataValid(mod)) return 0;
+    for (i = 0; i < mod->nsegment; i++) {
+        unsigned int start = mod->segmentaddr[i];
+        unsigned int size = mod->segmentsize[i];
+        if (size != 0 && address >= start && address - start < size) {
+            *segment = i;
+            *remaining = size - (address - start);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void zeroCtrlWritePafA989Inner(SceModule2 *paf,
+        unsigned int target, unsigned int map_size, char *flow,
+        unsigned int flow_size) {
+    unsigned int offset, row, i;
+    unsigned int tracked_callback = 6;
+    unsigned char input_source[32] = { 0 };
+    char line[256];
+
+    /* 1 means input a0, 2 means input a1.  No pointed-to memory is read. */
+    input_source[4] = 1;
+    input_source[5] = 2;
+    snprintf(flow, flow_size, "AMBIGUOUS");
+    if (map_size > 0x200 ||
+            !zeroCtrlVshModuleRangeValid(paf, target, map_size)) return;
+
+    for (row = 0; row < map_size; row += 0x20) {
+        unsigned int words[8] = { 0 };
+        unsigned int count = (map_size - row) / 4;
+        if (count > 8) count = 8;
+        for (i = 0; i < count; i++) words[i] = _lw(target + row + i * 4);
+        snprintf(line, sizeof(line),
+                "[paf-a989-inner-map] off=0x%X w0=%08X w1=%08X "
+                "w2=%08X w3=%08X w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                row, words[0], words[1], words[2], words[3], words[4],
+                words[5], words[6], words[7]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (offset = 0; offset < map_size; offset += 4) {
+        unsigned int pc = target + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int function = word & 0x3F;
+        unsigned int rs = (word >> 21) & 0x1F;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int rd = (word >> 11) & 0x1F;
+        unsigned int branch_target = 0, likely = 0;
+        const char *kind = NULL;
+        if (opcode == 2 || opcode == 3) {
+            kind = opcode == 2 ? "J" : "JAL";
+            branch_target = zeroCtrlMipsJumpTarget(pc, word);
+        } else if (opcode == 0 && (function == 8 || function == 9)) {
+            kind = function == 8 ? "JR" : "JALR";
+        } else if (opcode == 1) {
+            kind = "REGIMM";
+            branch_target = zeroCtrlMipsBranchTarget(pc, word);
+            likely = rt == 2 || rt == 3 || rt == 0x12 || rt == 0x13;
+        } else if ((opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
+            static const char *branches[4] = { "BEQ", "BNE", "BLEZ", "BGTZ" };
+            kind = opcode >= 0x14 ? "BRANCH_LIKELY" : branches[opcode - 4];
+            branch_target = zeroCtrlMipsBranchTarget(pc, word);
+            likely = opcode >= 0x14;
+        }
+        if (kind) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-inner-cf] off=0x%X class=%s target=0x%08X "
+                    "rs=%u rt=%u likely=%u\n", offset, kind, branch_target,
+                    rs, rt, likely);
+            zeroCtrlDiagnosticsText(line);
+        }
+        if (opcode == 9 && rs == 29 && rt == 29) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-inner-frame] off=0x%X class=%s amount=%d\n",
+                    offset, (short)(word & 0xFFFF) < 0 ?
+                    "STACK_ALLOC" : "STACK_FREE", (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+        } else if ((opcode == 0x2B || opcode == 0x23) && rs == 29 && rt == 31) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-inner-frame] off=0x%X class=%s disp=%d\n",
+                    offset, opcode == 0x2B ? "SAVE_RA" : "RESTORE_RA",
+                    (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+        } else if (opcode == 0 && function == 8 && rs == 31) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-inner-frame] off=0x%X class=RETURN\n", offset);
+            zeroCtrlDiagnosticsText(line);
+        }
+
+        if (opcode == 0x2B && rt == tracked_callback) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-callback] status=STORED off=0x%X base_reg=%u disp=%d\n",
+                    offset, rs, (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-callback-store] off=0x%X base_reg=%u disp=%d\n",
+                    offset, rs, (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-storage-base] status=%s source_input=%s\n",
+                    input_source[rs] ? "TRACED" : "UNKNOWN",
+                    input_source[rs] == 1 ? "a0" :
+                    input_source[rs] == 2 ? "a1" : "UNKNOWN");
+            zeroCtrlDiagnosticsText(line);
+            snprintf(flow, flow_size, "STORED");
+            return;
+        }
+        if ((zeroCtrlMipsMove(word, rd, tracked_callback) && rd != 0) ||
+                (opcode == 9 && rs == tracked_callback && rt != 0)) {
+            tracked_callback = opcode == 9 ? rt : rd;
+            snprintf(line, sizeof(line),
+                    "[paf-a989-callback] status=COPIED off=0x%X dst=%u\n",
+                    offset, tracked_callback);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        if (opcode == 3 || (opcode == 0 && function == 9)) {
+            unsigned int delay, next_segment, next_remaining;
+            int delay_destination;
+            if (offset + 8 > map_size) break;
+            delay = _lw(target + offset + 4);
+            delay_destination = zeroCtrlMipsGprWriteDestination(delay);
+            if (delay_destination < 0 ||
+                    (unsigned int)delay_destination == tracked_callback) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=%s call_off=0x%X delay_off=0x%X\n",
+                        delay_destination < 0 ? "AMBIGUOUS" : "OVERWRITTEN",
+                        offset, offset + 4);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(flow, flow_size, "%s", delay_destination < 0 ?
+                        "AMBIGUOUS" : "OVERWRITTEN");
+                return;
+            }
+            if (opcode == 0 && function == 9 && rs == tracked_callback) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=USED_IMMEDIATELY off=0x%X reg=%u\n",
+                        offset, tracked_callback);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(flow, flow_size, "USED_IMMEDIATELY");
+                return;
+            }
+            if (tracked_callback < 4 || tracked_callback > 7) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=AMBIGUOUS call_off=0x%X tracked_reg=%u\n",
+                        offset, tracked_callback);
+                zeroCtrlDiagnosticsText(line);
+                return;
+            }
+            snprintf(line, sizeof(line),
+                    "[paf-a989-callback] status=PASSED_TO_CALL off=0x%X reg=%u\n",
+                    offset, tracked_callback);
+            zeroCtrlDiagnosticsText(line);
+            snprintf(flow, flow_size, "PASSED_TO_CALL");
+            if (opcode == 3) {
+                unsigned int next = zeroCtrlMipsJumpTarget(pc, word);
+                if (zeroCtrlModuleContainingSegment(paf, next, &next_segment,
+                            &next_remaining)) {
+                    unsigned int next_size = next_remaining > 0x100 ?
+                            0x100 : next_remaining;
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-next] target=0x%08X target_off=0x%X tracked_reg=%u segment=%u\n",
+                            next, next >= paf->text_addr ?
+                            next - paf->text_addr : 0, tracked_callback,
+                            next_segment);
+                    zeroCtrlDiagnosticsText(line);
+                    if (zeroCtrlVshModuleRangeValid(paf, next, next_size))
+                        for (row = 0; row < next_size; row += 0x20) {
+                            unsigned int words[8] = { 0 };
+                            unsigned int count = (next_size - row) / 4;
+                            if (count > 8) count = 8;
+                            for (i = 0; i < count; i++)
+                                words[i] = _lw(next + row + i * 4);
+                            snprintf(line, sizeof(line),
+                                    "[paf-a989-next-map] off=0x%X w0=%08X w1=%08X w2=%08X w3=%08X w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                                    row, words[0], words[1], words[2], words[3],
+                                    words[4], words[5], words[6], words[7]);
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                }
+            }
+            return;
+        }
+        if (opcode == 1 || opcode == 2 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && function == 8)) break;
+
+        if (zeroCtrlMipsMove(word, rd, rs) && rd != 0) {
+            input_source[rd] = input_source[rs];
+            if (input_source[rs]) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-%s] off=0x%X class=MOVE dst=%u source=%u\n",
+                        input_source[rs] == 2 ? "descriptor" : "context",
+                        offset, rd, rs);
+                zeroCtrlDiagnosticsText(line);
+            }
+        } else if (zeroCtrlMipsMove(word, rd, rt) && rd != 0) {
+            input_source[rd] = input_source[rt];
+            if (input_source[rt]) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-%s] off=0x%X class=MOVE dst=%u source=%u\n",
+                        input_source[rt] == 2 ? "descriptor" : "context",
+                        offset, rd, rt);
+                zeroCtrlDiagnosticsText(line);
+            }
+        } else if ((opcode == 9 || opcode == 0x23) && rt != 0)
+            input_source[rt] = input_source[rs];
+        else {
+            int destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0) {
+                zeroCtrlDiagnosticsText("[paf-a989-callback] status=AMBIGUOUS unknown_destination=1\n");
+                return;
+            }
+            if (destination != 0) input_source[destination] = 0;
+        }
+        if ((opcode == 0x23 || opcode == 0x2B || opcode == 9) &&
+                input_source[rs]) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-%s] off=0x%X class=%s reg=%u base=%u disp=%d\n",
+                    input_source[rs] == 2 ? "descriptor" : "context",
+                    offset, opcode == 0x23 ? "LW" :
+                    opcode == 0x2B ? "SW" : "ADDIU", rt, rs,
+                    (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+        }
+        {
+            int destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0 || (unsigned int)destination == tracked_callback) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=%s off=0x%X\n",
+                        destination < 0 ? "AMBIGUOUS" : "OVERWRITTEN", offset);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(flow, flow_size, "%s", destination < 0 ?
+                        "AMBIGUOUS" : "OVERWRITTEN");
+                return;
+            }
+        }
+    }
+    zeroCtrlDiagnosticsText("[paf-a989-callback] status=AMBIGUOUS bounded_map_exhausted=1\n");
+}
+
 static void zeroCtrlWriteVsh3f568ImplFlow(SceModule2 *owner,
         unsigned int target, unsigned int size, char *status,
         unsigned int status_size) {
@@ -4064,9 +4320,7 @@ static int zeroCtrlVsh3f568A1PairReaches(SceModule2 *vsh,
 }
 
 static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
-    unsigned int callers[16];
-    unsigned int caller_count = 0;
-    unsigned int offset, row, i, matches = 0;
+    unsigned int i, matches = 0;
     unsigned int text, stub, thunk_word, resolved;
     unsigned int word_56fc, word_5700, word_5704, word_5708, decoded_a1;
     unsigned int table_addr, table_size, table_offset = 0;
@@ -4077,7 +4331,6 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     unsigned int owner_segment = 0xFFFFFFFFU;
     unsigned int impl_size = 0;
     unsigned int target_in_text = 0;
-    char a1_status[32];
     char line[256];
 
     if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
@@ -4174,7 +4427,9 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
             table_offset += entry_size;
         }
     }
-    if (matches != 1 || import_library[0] == '\0') {
+    if (matches != 1 || import_library[0] == '\0' ||
+            strcmp(import_library, "scePaf") != 0 ||
+            import_nid != 0xA989A2C4) {
         snprintf(line, sizeof(line),
                 "[vsh3f568-import] validation=0 matches=%u\n", matches);
         zeroCtrlDiagnosticsText(line);
@@ -4189,6 +4444,11 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     zeroCtrlDiagnosticsText(line);
 
     owner = sceKernelFindModuleByAddress(resolved);
+    if (!zeroCtrlLoadedModuleMetadataValid(owner) ||
+            strcmp(owner->modname, "scePaf_Module") != 0) {
+        zeroCtrlDiagnosticsText("[vsh3f568-owner] validation=0\n");
+        return;
+    }
     if (zeroCtrlLoadedModuleMetadataValid(owner)) {
         for (i = 0; i < owner->nsegment; i++) {
             unsigned int start = owner->segmentaddr[i];
@@ -4208,137 +4468,89 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
                 "[vsh3f568-summary] stub=1 import_match=1 owner_match=0 a1_flow=AMBIGUOUS\n");
         return;
     }
-    target_in_text = resolved >= owner->text_addr &&
-            resolved - owner->text_addr < owner->text_size;
-    if (target_in_text)
-        snprintf(line, sizeof(line),
-                "[vsh3f568-owner] validation=1 module=%s modid=0x%08X "
-                "text=0x%08X text_size=0x%08X target=0x%08X "
-                "target_in_text=1 target_off=0x%X segment=%u\n",
-                owner->modname, owner->modid, owner->text_addr,
-                owner->text_size, resolved, resolved - owner->text_addr,
-                owner_segment);
-    else
-        snprintf(line, sizeof(line),
-                "[vsh3f568-owner] validation=1 module=%s modid=0x%08X "
-                "text=0x%08X text_size=0x%08X target=0x%08X "
-                "target_in_text=0 target_off=OUTSIDE_TEXT segment=%u\n",
-                owner->modname, owner->modid, owner->text_addr,
-                owner->text_size, resolved, owner_segment);
-    zeroCtrlDiagnosticsText(line);
+    {
+        unsigned int wrapper[11];
+        unsigned int inner, inner_segment, inner_remaining, inner_size;
+        unsigned int context_slot, context_segment, context_remaining;
+        unsigned int wrapper_off = resolved >= owner->text_addr &&
+                resolved - owner->text_addr < owner->text_size ?
+                resolved - owner->text_addr : 0;
+        unsigned int wrapper_valid;
+        unsigned int context_valid;
+        char callback_flow[32];
 
-    for (row = 0; row + 4 <= impl_size; row += 0x20) {
-        unsigned int words[8] = { 0 };
-        unsigned int count = (impl_size - row) / 4;
-        if (count > 8) count = 8;
-        for (i = 0; i < count; i++) words[i] = _lw(resolved + row + i * 4);
+        if (!zeroCtrlVshModuleRangeValid(owner, resolved, sizeof(wrapper))) {
+            zeroCtrlDiagnosticsText("[paf-a989-wrapper] validation=0\n");
+            return;
+        }
+        for (i = 0; i < 11; i++) wrapper[i] = _lw(resolved + i * 4);
+        wrapper_valid = (wrapper[0] >> 26) == 0x0F &&
+                ((wrapper[0] >> 21) & 0x1F) == 0 &&
+                ((wrapper[0] >> 16) & 0x1F) == 3 &&
+                zeroCtrlMipsMove(wrapper[1], 2, 4) &&
+                (wrapper[2] >> 26) == 0x23 &&
+                ((wrapper[2] >> 21) & 0x1F) == 3 &&
+                ((wrapper[2] >> 16) & 0x1F) == 4 &&
+                wrapper[3] == 0x27BDFFF0 &&
+                zeroCtrlMipsMove(wrapper[4], 6, 5) &&
+                wrapper[5] == 0xAFBF0000 &&
+                (wrapper[6] >> 26) == 3 &&
+                zeroCtrlMipsMove(wrapper[7], 5, 2) &&
+                wrapper[8] == 0x8FBF0000 && wrapper[9] == 0x03E00008 &&
+                wrapper[10] == 0x27BD0010;
+        if (!wrapper_valid) {
+            zeroCtrlDiagnosticsText("[paf-a989-wrapper] validation=0\n");
+            return;
+        }
+        inner = zeroCtrlMipsJumpTarget(resolved + 0x18, wrapper[6]);
+        context_slot = ((wrapper[0] & 0xFFFF) << 16) +
+                (int)(short)(wrapper[2] & 0xFFFF);
+        context_valid = (context_slot & 3) == 0 &&
+                zeroCtrlModuleContainingSegment(owner, context_slot,
+                    &context_segment, &context_remaining) &&
+                zeroCtrlVshModuleRangeValid(owner, context_slot, 4);
         snprintf(line, sizeof(line),
-                "[vsh3f568-impl-map] module=%s target_in_text=%u "
-                "target_off=0x%X row=0x%X "
-                "w0=%08X w1=%08X w2=%08X w3=%08X "
-                "w4=%08X w5=%08X w6=%08X w7=%08X\n", owner->modname,
-                target_in_text,
-                target_in_text ? resolved - owner->text_addr : 0,
-                row, words[0], words[1], words[2], words[3], words[4],
-                words[5], words[6], words[7]);
+                "[paf-a989-wrapper] validation=1 wrapper_off=0x%X "
+                "inner=0x%08X inner_off=0x%X callback_reg=6 "
+                "descriptor_reg=5 context_reg=4\n", wrapper_off, inner,
+                inner >= owner->text_addr ? inner - owner->text_addr : 0);
+        zeroCtrlDiagnosticsText(line);
+        snprintf(line, sizeof(line),
+                "[paf-a989-context-slot] address=0x%08X segment_valid=%u\n",
+                context_slot, context_valid);
+        zeroCtrlDiagnosticsText(line);
+        if (context_valid) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-context-slot] value=0x%08X\n",
+                    _lw(context_slot));
+            zeroCtrlDiagnosticsText(line);
+        }
+        if (!zeroCtrlModuleContainingSegment(owner, inner, &inner_segment,
+                    &inner_remaining) ||
+                !zeroCtrlVshModuleRangeValid(owner, inner, 4)) {
+            zeroCtrlDiagnosticsText("[paf-a989-inner] validation=0\n");
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-summary] wrapper_valid=1 inner_valid=0 callback_flow=AMBIGUOUS\n");
+            return;
+        }
+        target_in_text = inner >= owner->text_addr &&
+                inner - owner->text_addr < owner->text_size;
+        snprintf(line, sizeof(line),
+                "[paf-a989-inner] validation=1 target=0x%08X "
+                "target_in_text=%u target_off=0x%X segment=%u\n", inner,
+                target_in_text, target_in_text ? inner - owner->text_addr : 0,
+                inner_segment);
+        zeroCtrlDiagnosticsText(line);
+        inner_size = inner_remaining > 0x200 ? 0x200 : inner_remaining;
+        inner_size &= ~3U;
+        zeroCtrlWritePafA989Inner(owner, inner, inner_size, callback_flow,
+                sizeof(callback_flow));
+        snprintf(line, sizeof(line),
+                "[paf-a989-summary] wrapper_valid=1 inner_valid=1 "
+                "callback_flow=%s\n", callback_flow);
         zeroCtrlDiagnosticsText(line);
     }
-    for (offset = 0; offset < impl_size; offset += 4) {
-        unsigned int pc = resolved + offset;
-        unsigned int word = _lw(pc);
-        unsigned int opcode = word >> 26;
-        unsigned int function = word & 0x3F;
-        unsigned int rs = (word >> 21) & 0x1F;
-        unsigned int rt = (word >> 16) & 0x1F;
-        unsigned int target = 0, likely = 0;
-        const char *kind = NULL;
-        if (opcode == 2 || opcode == 3) {
-            kind = opcode == 2 ? "J" : "JAL";
-            target = zeroCtrlMipsJumpTarget(pc, word);
-        } else if (opcode == 0 && (function == 8 || function == 9)) {
-            kind = function == 8 ? "JR" : "JALR";
-        } else if (opcode == 1) {
-            kind = "REGIMM";
-            target = zeroCtrlMipsBranchTarget(pc, word);
-            likely = rt == 2 || rt == 3 || rt == 0x12 || rt == 0x13;
-        } else if ((opcode >= 4 && opcode <= 7) ||
-                (opcode >= 0x14 && opcode <= 0x17)) {
-            kind = opcode >= 0x14 ? "BRANCH_LIKELY" : "BRANCH";
-            target = zeroCtrlMipsBranchTarget(pc, word);
-            likely = opcode >= 0x14;
-        }
-        if (kind) {
-            snprintf(line, sizeof(line),
-                    "[vsh3f568-impl-cf] off=0x%X class=%s target=0x%08X "
-                    "rs=%u rt=%u likely=%u\n", offset, kind, target,
-                    rs, rt, likely);
-            zeroCtrlDiagnosticsText(line);
-        }
-        if (opcode == 9 && rs == 29 && rt == 29) {
-            snprintf(line, sizeof(line),
-                    "[vsh3f568-impl-frame] off=0x%X class=%s amount=%d\n",
-                    offset, (short)(word & 0xFFFF) < 0 ?
-                    "STACK_ALLOC" : "STACK_FREE",
-                    (short)(word & 0xFFFF));
-            zeroCtrlDiagnosticsText(line);
-        } else if ((opcode == 0x2B || opcode == 0x23) &&
-                rs == 29 && rt == 31) {
-            snprintf(line, sizeof(line),
-                    "[vsh3f568-impl-frame] off=0x%X class=%s disp=%d\n",
-                    offset, opcode == 0x2B ? "SAVE_RA" : "RESTORE_RA",
-                    (int)(short)(word & 0xFFFF));
-            zeroCtrlDiagnosticsText(line);
-        } else if (opcode == 0 && function == 8 && rs == 31) {
-            snprintf(line, sizeof(line),
-                    "[vsh3f568-impl-frame] off=0x%X class=RETURN\n", offset);
-            zeroCtrlDiagnosticsText(line);
-        }
-    }
-    zeroCtrlWriteVsh3f568ImplFlow(owner, resolved, impl_size,
-            a1_status, sizeof(a1_status));
 
-    for (offset = 0; offset + 8 <= vsh->text_size; offset += 4) {
-        unsigned int pc = text + offset;
-        unsigned int word = _lw(pc);
-        if ((word >> 26) == 3 && zeroCtrlMipsJumpTarget(pc, word) == stub &&
-                caller_count < 16)
-            callers[caller_count++] = offset;
-    }
-    for (i = 0; i < caller_count; i++) {
-        unsigned int call = callers[i];
-        unsigned int delay = _lw(text + call + 4);
-        unsigned int pointer = 0, known = 0, back;
-        for (back = call; back >= 8 && back + 0x20 >= call; back -= 4) {
-            unsigned int lui = _lw(text + back - 8);
-            unsigned int low = _lw(text + back - 4);
-            unsigned int reg = (lui >> 16) & 0x1F;
-            unsigned int low_opcode = low >> 26;
-            if ((lui >> 26) == 0x0F && ((lui >> 21) & 0x1F) == 0 && reg == 5 &&
-                    (low_opcode == 9 || low_opcode == 0x0D) &&
-                    ((low >> 21) & 0x1F) == 5 && ((low >> 16) & 0x1F) == 5) {
-                unsigned int upper = (lui & 0xFFFF) << 16;
-                pointer = low_opcode == 9 ? upper + (int)(short)(low & 0xFFFF) :
-                        upper | (low & 0xFFFF);
-                if (zeroCtrlVsh3f568A1PairReaches(vsh, back - 4, call)) {
-                    known = 1;
-                    break;
-                }
-            }
-        }
-        snprintf(line, sizeof(line),
-                "[vsh3f568-use] index=%u caller_off=0x%05X "
-                "delay_word=0x%08X a0_delay_source=%s a1_status=%s "
-                "a1_pointer=0x%08X a1_relative_to_vsh=%s0x%X\n", i, call,
-                delay, ((delay >> 26) == 0 && ((delay >> 11) & 0x1F) == 4) ?
-                "decoded_gpr" : "UNKNOWN", known ? "PROVEN" : "UNKNOWN",
-                known ? pointer : 0, known && pointer >= text ? "" : "UNKNOWN_",
-                known && pointer >= text ? pointer - text : 0);
-        zeroCtrlDiagnosticsText(line);
-    }
-    snprintf(line, sizeof(line),
-            "[vsh3f568-summary] stub=1 import_match=1 owner_match=1 a1_flow=%s\n",
-            a1_status);
-    zeroCtrlDiagnosticsText(line);
 }
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
     unsigned int elapsed = 0;

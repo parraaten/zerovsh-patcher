@@ -2110,3 +2110,45 @@ Seven registration addresses increase the ABI to exactly 1012 bytes. Hardware
 must retain the successful T37.2/T38 prerequisites before T39 is interpreted.
 A zero decision advances investigation from the exact sequence at `+0x1E8`; a
 nonzero decision is only a future compatibility candidate.
+
+### Read-only scePaf A989A2C4 inner-routine analysis
+
+This phase replaces the automatic `0x100`-byte implementation-wrapper dump and
+13 already-established VSH caller summaries with a compact structural proof of
+the dynamically resolved `scePaf` NID `0xA989A2C4` wrapper. The proof requires
+the wrapper's register moves, context-slot load, stack frame, direct JAL, return,
+and delay slots. It decodes rather than assumes the inner target and proves that
+the original wrapper `a0` becomes inner `a1`, the original wrapper `a1` becomes
+inner `a2`, and the value loaded through the PAF global slot remains inner `a0`.
+The slot address is reconstructed with signed LW displacement semantics and is
+reported without a semantic name.
+
+The inner target must belong to a validated loaded `scePaf_Module` segment
+before any instruction is read. Its map is clamped to that segment and to
+`0x200` bytes. A conservative GPR analysis starts with the callback value in
+GPR 6, validates call delay-slot destination behavior first, distinguishes a
+tracked JALR target from argument forwarding, and stops at ambiguity, overwrite,
+control flow, or an arbitrary call. One directly called next routine may be
+mapped, at most `0x100` bytes and only after the same segment validation; it is
+not recursively analyzed. Descriptor input `a1` and context input `a0` are
+tracked only through mechanically recognized moves, loads, stores, and address
+increments. Storage-base provenance is reported only as `a0`, `a1`, or unknown.
+
+Files changed in this phase are `kernel/main.c`, the static safety verifier, and
+this engineering record. These changes add diagnostic reads and deferred text
+output only; they add no PAF/VSH invocation, hook, state substitution, code
+write, or cache operation. Runtime request execution remains compile-time
+disabled, functional HOME remains blocked, the `+0x6F84` forcing remains
+disabled, and the ABI remains exactly 1012 / 304 bytes. The implementation
+assumes only the hardware-established VSH call/import chain; names for the PAF
+slot and inner data structures remain deliberately unknown.
+
+Build status: not built, as required for this read-only diagnostic phase. Static
+Python compilation, the safety verifier, and whitespace validation pass.
+Hardware results are pending. The required hardware test is the existing
+opt-in PSP-1000 6.61 diagnostic boot with runtime execution still disabled,
+followed by return of the complete unedited log. Unresolved questions are
+whether the inner routine stores GPR 6, invokes it immediately, or forwards it
+once more, and whether any proven storage base derives structurally from input
+`a0` or `a1`. The recommended next phase is hardware review of these bounded
+records before adding any deeper read-only target analysis or behavior change.
