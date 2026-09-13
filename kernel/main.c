@@ -7202,6 +7202,8 @@ int OnModuleStart(SceModule2 *mod) {
                 }
                 zeroCtrlInstallSonyStartTrace(mod);
                 zeroCtrlInstallBSManClosedShim(mod);
+                if (slide_diag.functional_enabled)
+                        ClearCaches();
                 slide_diag.start_callback_returning = 1;
                 slide_diag.saw_start = 1;
                 return previous_result;

@@ -426,11 +426,13 @@ def check_sources(root):
     for token in ("zeroCtrlTrigger58D4FunctionalMode",
             "zeroCtrlTrigger58D4Request", "zeroCtrlTrigger58D4OriginalTarget",
             "sw      $zero, %lo(zeroCtrlTrigger58D4Request)",
-            "jr      $k0", "jr      $ra", "addiu   $v0, $zero, 1"):
+            "lw      $t0, %lo(zeroCtrlTrigger58D4OriginalTarget)($t0)",
+            "jr      $t0", "jr      $ra", "addiu   $v0, $zero, 1"):
         if token not in trigger_leaf:
             fail("functional 58D4 helper lacks " + token)
-    if any(token in trigger_leaf for token in ("$sp", "$gp", "jal ", "jalr")):
-        fail("functional 58D4 helper uses stack/gp/nested call")
+    if any(token in trigger_leaf for token in
+            ("$k0", "$k1", "$sp", "$gp", "jal ", "jalr")):
+        fail("functional 58D4 helper uses reserved/stateful registers or calls")
     record_start = kernel.find("void zeroCtrlRecordVshSlideTarget(")
     record_end = kernel.find("int (*msIoOpen)", record_start)
     record = kernel[record_start:record_end]
@@ -473,6 +475,17 @@ def check_sources(root):
             "zeroCtrlGetParam, 1"):
         if token not in kernel_module_start:
             fail("functional SlidePlugin import integration lacks " + token)
+    bsman_hook = kernel_module_start.find(
+            'hook_import_bynid(mod, "sceBSMan", 0x23E3A9B6')
+    vsh_hook = kernel_module_start.find(
+            'hook_import_bynid(mod, "sceVshBridge", 0x639C3CB3')
+    sony_install = kernel_module_start.find("zeroCtrlInstallSonyStartTrace(mod)")
+    compat_install = kernel_module_start.find("zeroCtrlInstallBSManClosedShim(mod)")
+    cache_clear = kernel_module_start.find("ClearCaches()", compat_install)
+    functional_return = kernel_module_start.find("return previous_result", cache_clear)
+    if not 0 <= bsman_hook < vsh_hook < sony_install < compat_install < \
+            cache_clear < functional_return:
+        fail("functional SlidePlugin cache clear is missing or incorrectly ordered")
     for gate_name in ("bsman_not_linked_compat_enabled =",
             "post_vsh_compat_enabled ="):
         gate = kernel[kernel.find(gate_name):kernel.find(";", kernel.find(gate_name))]
@@ -3780,11 +3793,43 @@ def check_stub_object(stub_object):
             if not relocation_bound_to_instruction(t39, counter, op):
                 fail("T39 tracer does not bind t1 counter operation")
     for symbol, counter in zip(STUBS, COUNTERS):
+        if symbol == "zeroCtrlTrigger58D4":
+            continue
         body = function_body(disassembly, symbol)
-        if not re.search(r"R_MIPS_HI16\s+" + counter + r"\b", body):
-            fail(symbol + " has no HI16 relocation to its dedicated counter")
-        if len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
-            fail(symbol + " does not have two LO16 counter relocations")
+        if len(re.findall(r"R_MIPS_HI16\s+" + counter + r"\b", body)) != 1 or \
+                len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
+            fail(symbol + " has wrong simple-trigger counter relocations")
+        for operation in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not relocation_bound_to_instruction(body, counter, operation):
+                fail(symbol + " does not bind its simple counter " + operation)
+    trigger58 = function_body(disassembly, "zeroCtrlTrigger58D4")
+    for scalar, hi_count, lo_count in (
+            ("zeroCtrlTrigger58D4FunctionalMode", 1, 1),
+            ("zeroCtrlTrigger58D4Request", 1, 2),
+            ("zeroCtrlTrigger58D4OriginalTarget", 1, 1),
+            ("zeroCtrlTrigger58D4Hits", 2, 4)):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b",
+                trigger58)) != hi_count or len(re.findall(
+                r"R_MIPS_LO16\s+" + scalar + r"\b", trigger58)) != lo_count:
+            fail("zeroCtrlTrigger58D4 has wrong relocations for " + scalar)
+    for scalar, operation in (
+            ("zeroCtrlTrigger58D4FunctionalMode", r"\blw\s+t1,"),
+            ("zeroCtrlTrigger58D4Request", r"\blw\s+t1,"),
+            ("zeroCtrlTrigger58D4Request", r"\bsw\s+zero,"),
+            ("zeroCtrlTrigger58D4OriginalTarget", r"\blw\s+t0,")):
+        if not relocation_bound_to_instruction(trigger58, scalar, operation):
+            fail("zeroCtrlTrigger58D4 does not bind " + scalar + " to " + operation)
+    for operation in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+        if len(re.findall(operation + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlTrigger58D4Hits\b", trigger58)) != 2:
+            fail("zeroCtrlTrigger58D4 lacks two exact counter " + operation +
+                    " sequences")
+    if not re.search(r"\blw\s+t0,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+            r"zeroCtrlTrigger58D4OriginalTarget\b[\s\S]*?\bjr\s+t0\b[\s\S]*?"
+            r"\bnop\b", trigger58):
+        fail("zeroCtrlTrigger58D4 natural target is not tail-jumped through t0")
+    if re.search(r"\b(?:k0|k1|sp|gp)\b|\bjalr?\b", trigger58):
+        fail("zeroCtrlTrigger58D4 uses reserved/stateful registers or nested calls")
     for symbol, _end, counter, result in T22_CONSUMER_WRAPPERS:
         body = function_body(disassembly, symbol)
         check_selective_consumer_semantics(body, symbol)

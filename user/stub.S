@@ -40,31 +40,31 @@ CREATE_STUB slide_start_stub
 .type zeroCtrlTrigger58D4 @function
 .ent zeroCtrlTrigger58D4, 0
 zeroCtrlTrigger58D4:
-    lui     $k0, %hi(zeroCtrlTrigger58D4FunctionalMode)
-    lw      $k1, %lo(zeroCtrlTrigger58D4FunctionalMode)($k0)
-    beqz    $k1, 2f
+    lui     $t0, %hi(zeroCtrlTrigger58D4FunctionalMode)
+    lw      $t1, %lo(zeroCtrlTrigger58D4FunctionalMode)($t0)
+    beqz    $t1, 2f
     nop
-    lui     $k0, %hi(zeroCtrlTrigger58D4Request)
-    lw      $k1, %lo(zeroCtrlTrigger58D4Request)($k0)
-    beqz    $k1, 1f
+    lui     $t0, %hi(zeroCtrlTrigger58D4Request)
+    lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)
+    beqz    $t1, 1f
     nop
-    sw      $zero, %lo(zeroCtrlTrigger58D4Request)($k0)
-    lui     $k0, %hi(zeroCtrlTrigger58D4Hits)
-    lw      $k1, %lo(zeroCtrlTrigger58D4Hits)($k0)
-    addiu   $k1, $k1, 1
-    sw      $k1, %lo(zeroCtrlTrigger58D4Hits)($k0)
+    sw      $zero, %lo(zeroCtrlTrigger58D4Request)($t0)
+    lui     $t0, %hi(zeroCtrlTrigger58D4Hits)
+    lw      $t1, %lo(zeroCtrlTrigger58D4Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlTrigger58D4Hits)($t0)
     jr      $ra
     addiu   $v0, $zero, 1
 1:
-    lui     $k0, %hi(zeroCtrlTrigger58D4OriginalTarget)
-    lw      $k0, %lo(zeroCtrlTrigger58D4OriginalTarget)($k0)
-    jr      $k0
+    lui     $t0, %hi(zeroCtrlTrigger58D4OriginalTarget)
+    lw      $t0, %lo(zeroCtrlTrigger58D4OriginalTarget)($t0)
+    jr      $t0
     nop
 2:
-    lui     $k0, %hi(zeroCtrlTrigger58D4Hits)
-    lw      $k1, %lo(zeroCtrlTrigger58D4Hits)($k0)
-    addiu   $k1, $k1, 1
-    sw      $k1, %lo(zeroCtrlTrigger58D4Hits)($k0)
+    lui     $t0, %hi(zeroCtrlTrigger58D4Hits)
+    lw      $t1, %lo(zeroCtrlTrigger58D4Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlTrigger58D4Hits)($t0)
     jr      $ra
     addiu   $v0, $zero, 1
 .globl zeroCtrlTrigger58D4End
