@@ -2204,3 +2204,14 @@ semantically naming any target.
 **Not proven:** that either block was dynamically constructed during this
 diagnostic boot; that any downstream routine invokes `VSH+589C`; or the
 semantics of any mapped PAF call target or constructed address.
+
+#### A989 consumer validation correction
+
+The consumer validator now matches the hardware-captured `+0x80` BEQ and
+`+0x84` zero-move delay slot. The outer-block stores are validated at `+0x88`,
+`+0x90`, `+0x94`, `+0x98`, `+0x9C`, and the `+0xA4` delay slot; no value is
+assigned to field `+0x10`. The `+0x5C` and `+0x64` known outcomes are emitted
+only after exact SLTI/XORI/SLTIU/OR dataflow and branch operands/targets are
+validated. Outcomes at `+0x54` and `+0x80` remain unknown because they depend on
+a call return. This corrects loaded-code classification only and adds no
+hardware or runtime claim.

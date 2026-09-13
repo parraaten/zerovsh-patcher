@@ -4404,12 +4404,6 @@ static void zeroCtrlWritePafA989ContainerStructure(SceModule2 *paf,
     zeroCtrlWritePafA989ConsumerStructure(paf, consumer_target, constructed);
 }
 
-static int zeroCtrlPafA989Branch(unsigned int word) {
-    unsigned int opcode = word >> 26;
-    return opcode == 1 || (opcode >= 4 && opcode <= 7) ||
-            (opcode >= 0x14 && opcode <= 0x17);
-}
-
 static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
         unsigned int consumer, const unsigned int constructed[2]) {
     static const unsigned int call_offsets[5] = {
@@ -4418,7 +4412,6 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
     unsigned int words[0x100 / 4];
     unsigned int call_targets[5];
     unsigned int slot, slot_segment, slot_remaining;
-    unsigned int signed_compare_20 = 0, s2_nonzero_test = 0;
     unsigned int i, row;
     char line[256];
 
@@ -4429,17 +4422,6 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
     }
     for (i = 0; i < sizeof(words) / sizeof(words[0]); i++)
         words[i] = _lw(consumer + i * 4);
-    for (i = 0x44 / 4; i < 0x54 / 4; i++) {
-        unsigned int word = words[i];
-        if ((word >> 26) == 0x0A &&
-                (short)(word & 0xFFFF) == 20) signed_compare_20++;
-        if ((word >> 26) == 0 && (word & 0x3F) == 0x2B &&
-                (((((word >> 21) & 0x1F) == 18) &&
-                  (((word >> 16) & 0x1F) == 0)) ||
-                 ((((word >> 21) & 0x1F) == 0) &&
-                  (((word >> 16) & 0x1F) == 18)))) s2_nonzero_test++;
-    }
-
     if (!zeroCtrlMipsMove(words[0x08 / 4], 23, 4) ||
             !zeroCtrlMipsMove(words[0x10 / 4], 22, 8) ||
             !zeroCtrlMipsMove(words[0x18 / 4], 21, 6) ||
@@ -4450,26 +4432,62 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
             (zeroCtrlMipsGprWriteDestination(words[0x40 / 4]) < 0) ||
             (zeroCtrlMipsGprWriteDestination(words[0x40 / 4]) >= 4 &&
              zeroCtrlMipsGprWriteDestination(words[0x40 / 4]) <= 7) ||
-            signed_compare_20 != 1 || s2_nonzero_test != 1 ||
-            !zeroCtrlPafA989Branch(words[0x54 / 4]) ||
-            !zeroCtrlPafA989Branch(words[0x5C / 4]) ||
-            !zeroCtrlPafA989Branch(words[0x64 / 4]) ||
+            (words[0x44 / 4] >> 26) != 0x0A ||
+            ((words[0x44 / 4] >> 21) & 0x1F) != 19 ||
+            ((words[0x44 / 4] >> 16) & 0x1F) != 3 ||
+            (short)(words[0x44 / 4] & 0xFFFF) != 20 ||
+            (words[0x48 / 4] >> 26) != 0x0E ||
+            ((words[0x48 / 4] >> 21) & 0x1F) != 3 ||
+            ((words[0x48 / 4] >> 16) & 0x1F) != 3 ||
+            (words[0x48 / 4] & 0xFFFF) != 1 ||
+            (words[0x4C / 4] >> 26) != 0x0B ||
+            ((words[0x4C / 4] >> 21) & 0x1F) != 18 ||
+            ((words[0x4C / 4] >> 16) & 0x1F) != 4 ||
+            (words[0x4C / 4] & 0xFFFF) != 1 ||
+            (words[0x50 / 4] >> 26) != 0 ||
+            (words[0x50 / 4] & 0x3F) != 0x25 ||
+            ((words[0x50 / 4] >> 11) & 0x1F) != 4 ||
+            !(((((words[0x50 / 4] >> 21) & 0x1F) == 4) &&
+               (((words[0x50 / 4] >> 16) & 0x1F) == 3)) ||
+              ((((words[0x50 / 4] >> 21) & 0x1F) == 3) &&
+               (((words[0x50 / 4] >> 16) & 0x1F) == 4))) ||
+            (words[0x54 / 4] >> 26) != 4 ||
+            ((words[0x54 / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0x54 / 4] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(consumer + 0x54, words[0x54 / 4]) !=
+                consumer + 0xD0 ||
+            !zeroCtrlMipsMove(words[0x58 / 4], 3, 0) ||
+            (words[0x5C / 4] >> 26) != 5 ||
+            ((words[0x5C / 4] >> 21) & 0x1F) != 4 ||
+            ((words[0x5C / 4] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(consumer + 0x5C, words[0x5C / 4]) !=
+                consumer + 0xD4 ||
+            words[0x60 / 4] != 0x8FBF0020 ||
+            (words[0x64 / 4] >> 26) != 4 ||
+            ((words[0x64 / 4] >> 21) & 0x1F) != 20 ||
+            ((words[0x64 / 4] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(consumer + 0x64, words[0x64 / 4]) !=
+                consumer + 0xD4 ||
+            words[0x68 / 4] != 0x24040028 ||
             (words[0x6C / 4] >> 26) != 3 ||
-            words[0x70 / 4] != 0x24040028 ||
+            words[0x70 / 4] != 0 ||
             !zeroCtrlMipsMove(words[0x74 / 4], 17, 2) ||
             (words[0x78 / 4] >> 26) != 9 ||
             ((words[0x78 / 4] >> 21) & 0x1F) != 2 ||
             ((words[0x78 / 4] >> 16) & 0x1F) != 16 ||
             (short)(words[0x78 / 4] & 0xFFFF) != 8 ||
             !zeroCtrlMipsMove(words[0x7C / 4], 4, 2) ||
-            (words[0x80 / 4] >> 26) != 0x2B ||
+            (words[0x80 / 4] >> 26) != 4 ||
             ((words[0x80 / 4] >> 21) & 0x1F) != 2 ||
-            ((words[0x80 / 4] >> 16) & 0x1F) != 18 ||
-            (short)(words[0x80 / 4] & 0xFFFF) != 8 ||
-            !zeroCtrlMipsMove(words[0x84 / 4], 5, 16) ||
-            words[0x88 / 4] != 0xAE150004 ||
-            words[0x8C / 4] != 0xAE130008 ||
-            words[0x90 / 4] != 0xAE16000C ||
+            ((words[0x80 / 4] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(consumer + 0x80, words[0x80 / 4]) !=
+                consumer + 0xD0 ||
+            !zeroCtrlMipsMove(words[0x84 / 4], 3, 0) ||
+            words[0x88 / 4] != 0xAC520008 ||
+            !zeroCtrlMipsMove(words[0x8C / 4], 5, 16) ||
+            words[0x90 / 4] != 0xAE150004 ||
+            words[0x94 / 4] != 0xAE130008 ||
+            words[0x98 / 4] != 0xAE16000C ||
             words[0x9C / 4] != 0xAE140014 ||
             (words[0xA0 / 4] >> 26) != 3 ||
             words[0xA4 / 4] != 0xAE000018 ||
@@ -4487,7 +4505,16 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
             (words[0xBC / 4] >> 26) != 0 ||
             ((words[0xBC / 4] >> 11) & 0x1F) != 4 ||
             (words[0xC0 / 4] >> 26) != 3 ||
-            !zeroCtrlMipsMove(words[0xC4 / 4], 4, 23)) {
+            !zeroCtrlMipsMove(words[0xC4 / 4], 4, 23) ||
+            !zeroCtrlMipsMove(words[0xC8 / 4], 3, 0) ||
+            (words[0xCC / 4] >> 26) != 0 ||
+            (words[0xCC / 4] & 0x3F) != 0x0B ||
+            ((words[0xCC / 4] >> 21) & 0x1F) != 16 ||
+            ((words[0xCC / 4] >> 16) & 0x1F) != 2 ||
+            ((words[0xCC / 4] >> 11) & 0x1F) != 3 ||
+            !zeroCtrlMipsMove(words[0xF4 / 4], 2, 3) ||
+            words[0xF8 / 4] != 0x03E00008 ||
+            words[0xFC / 4] != 0x27BD0030) {
         zeroCtrlDiagnosticsText(
                 "[paf-a989-consumer-structure] validation=0\n");
         return;
@@ -4500,22 +4527,6 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
             return;
         }
     }
-    {
-        unsigned int conditional_move = 0, return_seen = 0;
-        for (i = 0xC8 / 4; i < sizeof(words) / sizeof(words[0]); i++) {
-            unsigned int function = words[i] & 0x3F;
-            if ((words[i] >> 26) == 0 &&
-                    (function == 0x0A || function == 0x0B))
-                conditional_move = 1;
-            if (words[i] == 0x03E00008) return_seen = 1;
-        }
-        if (!conditional_move || !return_seen) {
-            zeroCtrlDiagnosticsText(
-                    "[paf-a989-consumer-structure] validation=0\n");
-            return;
-        }
-    }
-
     if (constructed[0] == 0 || constructed[1] == 0) {
         zeroCtrlDiagnosticsText(
                 "[paf-a989-consumer-structure] validation=0\n");
@@ -4531,17 +4542,17 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
             "a3_source=caller_minus_one t0_source=caller_minus_one "
             "t1_source=constructed_1\n");
     zeroCtrlDiagnosticsText(
-            "[paf-a989-outer-write] field_off=0x00 source=constructed_0\n");
+            "[paf-a989-outer-write] field_off=0x00 store_off=0x88 source=constructed_0\n");
     zeroCtrlDiagnosticsText(
-            "[paf-a989-outer-write] field_off=0x04 source=inner_container\n");
+            "[paf-a989-outer-write] field_off=0x04 store_off=0x90 source=inner_container\n");
     zeroCtrlDiagnosticsText(
-            "[paf-a989-outer-write] field_off=0x08 source=minus_one\n");
+            "[paf-a989-outer-write] field_off=0x08 store_off=0x94 source=minus_one\n");
     zeroCtrlDiagnosticsText(
-            "[paf-a989-outer-write] field_off=0x0C source=minus_one\n");
+            "[paf-a989-outer-write] field_off=0x0C store_off=0x98 source=minus_one\n");
     zeroCtrlDiagnosticsText(
-            "[paf-a989-outer-write] field_off=0x14 source=constructed_1\n");
+            "[paf-a989-outer-write] field_off=0x14 store_off=0x9C source=constructed_1\n");
     zeroCtrlDiagnosticsText(
-            "[paf-a989-outer-write] field_off=0x18 source=zero "
+            "[paf-a989-outer-write] field_off=0x18 store_off=0xA4 source=zero "
             "delay_slot_of=0xA0\n");
     zeroCtrlDiagnosticsText(
             "[paf-a989-consumer-known-branch] off=0x5C outcome=NOT_TAKEN "

@@ -689,34 +689,63 @@ def check_sources(root):
             "zeroCtrlMipsMove(words[0x30 / 4], 18, 5)",
             "(words[0x3C / 4] >> 26) != 3",
             "zeroCtrlMipsGprWriteDestination(words[0x40 / 4])",
-            "for (i = 0x44 / 4; i < 0x54 / 4; i++)",
-            "(short)(word & 0xFFFF) == 20",
-            "signed_compare_20 != 1 || s2_nonzero_test != 1",
-            "zeroCtrlPafA989Branch(words[0x54 / 4])",
-            "zeroCtrlPafA989Branch(words[0x5C / 4])",
-            "zeroCtrlPafA989Branch(words[0x64 / 4])",
-            "words[0x70 / 4] != 0x24040028",
+            "(words[0x44 / 4] >> 26) != 0x0A",
+            "((words[0x44 / 4] >> 21) & 0x1F) != 19",
+            "((words[0x44 / 4] >> 16) & 0x1F) != 3",
+            "(short)(words[0x44 / 4] & 0xFFFF) != 20",
+            "(words[0x48 / 4] >> 26) != 0x0E",
+            "((words[0x48 / 4] >> 21) & 0x1F) != 3",
+            "((words[0x48 / 4] >> 16) & 0x1F) != 3",
+            "(words[0x48 / 4] & 0xFFFF) != 1",
+            "(words[0x4C / 4] >> 26) != 0x0B",
+            "((words[0x4C / 4] >> 21) & 0x1F) != 18",
+            "((words[0x4C / 4] >> 16) & 0x1F) != 4",
+            "(words[0x4C / 4] & 0xFFFF) != 1",
+            "(words[0x50 / 4] & 0x3F) != 0x25",
+            "((words[0x50 / 4] >> 11) & 0x1F) != 4",
+            "(words[0x54 / 4] >> 26) != 4",
+            "((words[0x54 / 4] >> 21) & 0x1F) != 2",
+            "zeroCtrlMipsBranchTarget(consumer + 0x54", "consumer + 0xD0",
+            "zeroCtrlMipsMove(words[0x58 / 4], 3, 0)",
+            "(words[0x5C / 4] >> 26) != 5",
+            "((words[0x5C / 4] >> 21) & 0x1F) != 4",
+            "zeroCtrlMipsBranchTarget(consumer + 0x5C", "consumer + 0xD4",
+            "words[0x60 / 4] != 0x8FBF0020",
+            "(words[0x64 / 4] >> 26) != 4",
+            "((words[0x64 / 4] >> 21) & 0x1F) != 20",
+            "zeroCtrlMipsBranchTarget(consumer + 0x64",
+            "words[0x68 / 4] != 0x24040028",
+            "words[0x70 / 4] != 0",
             "zeroCtrlMipsMove(words[0x74 / 4], 17, 2)",
             "zeroCtrlMipsMove(words[0x7C / 4], 4, 2)",
-            "zeroCtrlMipsMove(words[0x84 / 4], 5, 16)",
-            "words[0x88 / 4] != 0xAE150004",
-            "words[0x8C / 4] != 0xAE130008",
-            "words[0x90 / 4] != 0xAE16000C",
+            "(words[0x80 / 4] >> 26) != 4",
+            "((words[0x80 / 4] >> 21) & 0x1F) != 2",
+            "zeroCtrlMipsBranchTarget(consumer + 0x80",
+            "zeroCtrlMipsMove(words[0x84 / 4], 3, 0)",
+            "words[0x88 / 4] != 0xAC520008",
+            "zeroCtrlMipsMove(words[0x8C / 4], 5, 16)",
+            "words[0x90 / 4] != 0xAE150004",
+            "words[0x94 / 4] != 0xAE130008",
+            "words[0x98 / 4] != 0xAE16000C",
             "words[0x9C / 4] != 0xAE140014",
             "words[0xA4 / 4] != 0xAE000018",
             "zeroCtrlMipsMove(words[0xB4 / 4], 5, 17)",
             "zeroCtrlMipsMove(words[0xC4 / 4], 4, 23)",
-            "function == 0x0A || function == 0x0B", "0x03E00008",
+            "zeroCtrlMipsMove(words[0xC8 / 4], 3, 0)",
+            "(words[0xCC / 4] & 0x3F) != 0x0B",
+            "zeroCtrlMipsMove(words[0xF4 / 4], 2, 3)",
+            "words[0xF8 / 4] != 0x03E00008",
+            "words[0xFC / 4] != 0x27BD0030",
             "constructed[0] == 0 || constructed[1] == 0",
             "[paf-a989-consumer-structure] validation=1",
             "container_saved_reg=21", "first_call_off=0x3C",
             "first_call_container_arg_reg=6", "a2_source=inner_container",
-            "field_off=0x00 source=constructed_0",
-            "field_off=0x04 source=inner_container",
-            "field_off=0x08 source=minus_one",
-            "field_off=0x0C source=minus_one",
-            "field_off=0x14 source=constructed_1",
-            "field_off=0x18 source=zero", "delay_slot_of=0xA0",
+            "field_off=0x00 store_off=0x88 source=constructed_0",
+            "field_off=0x04 store_off=0x90 source=inner_container",
+            "field_off=0x08 store_off=0x94 source=minus_one",
+            "field_off=0x0C store_off=0x98 source=minus_one",
+            "field_off=0x14 store_off=0x9C source=constructed_1",
+            "field_off=0x18 store_off=0xA4 source=zero", "delay_slot_of=0xA0",
             "[paf-a989-consumer-known-branch] off=0x5C outcome=NOT_TAKEN",
             "[paf-a989-consumer-known-branch] off=0x64 outcome=NOT_TAKEN",
             "source=caller_known_values",
@@ -744,6 +773,23 @@ def check_sources(root):
             "[paf-a989-consumer-structure] validation=1")
     if not 0 <= consumer_guard < entry_liveness < validated_consumer:
         fail("consumer provenance/shape is not validated before conclusions")
+    exact_branch_dataflow = consumer.find("(words[0x44 / 4] >> 26) != 0x0A")
+    exact_5c = consumer.find("(words[0x5C / 4] >> 26) != 5", exact_branch_dataflow)
+    exact_64 = consumer.find("(words[0x64 / 4] >> 26) != 4", exact_5c)
+    branch_output_5c = consumer.find(
+            "[paf-a989-consumer-known-branch] off=0x5C", exact_64)
+    branch_output_64 = consumer.find(
+            "[paf-a989-consumer-known-branch] off=0x64", branch_output_5c)
+    if not 0 <= exact_branch_dataflow < exact_5c < exact_64 < \
+            validated_consumer < branch_output_5c < branch_output_64:
+        fail("known consumer branch output precedes exact dataflow validation")
+    for mistaken in ("(words[0x80 / 4] >> 26) != 0x2B",
+            "zeroCtrlMipsMove(words[0x84 / 4], 5, 16)",
+            "words[0x88 / 4] != 0xAE150004"):
+        if mistaken in consumer:
+            fail("consumer validator retains mistaken outer-block offset: " + mistaken)
+    if "off=0x54 outcome=" in consumer or "off=0x80 outcome=" in consumer:
+        fail("consumer validator claims a call-return-dependent branch outcome")
     target_segment = consumer.find(
             "zeroCtrlModuleContainingSegment(paf, call_targets[i]")
     target_range = consumer.find("call_targets[i], map_size", target_segment)
