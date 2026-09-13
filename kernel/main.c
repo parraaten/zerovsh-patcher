@@ -4225,6 +4225,10 @@ static void zeroCtrlWritePafA989Inner(SceModule2 *paf,
     zeroCtrlDiagnosticsText("[paf-a989-callback] status=AMBIGUOUS bounded_map_exhausted=1\n");
 }
 
+static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
+        unsigned int first_target, unsigned int header_target,
+        unsigned int global_target);
+
 static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
         unsigned int consumer, const unsigned int constructed[2]);
 
@@ -4615,7 +4619,8 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
         if ((constructed[i] & 3) != 0 ||
                 !zeroCtrlModuleContainingSegment(paf, constructed[i],
                     &segment, &remaining)) continue;
-        map_size = remaining > 0x80 ? 0x80 : remaining;
+        map_size = remaining > (i == 0 ? 0x80 : 0x100) ?
+                (i == 0 ? 0x80 : 0x100) : remaining;
         map_size &= ~3U;
         if (map_size == 0 || !zeroCtrlVshModuleRangeValid(paf,
                     constructed[i], map_size)) continue;
@@ -4651,6 +4656,227 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
                 slot);
         zeroCtrlDiagnosticsText(line);
     }
+    zeroCtrlWritePafA989Downstream(paf, call_targets[0], call_targets[2],
+            call_targets[3]);
+}
+
+static int zeroCtrlPafA989ValidateCodeRange(SceModule2 *paf,
+        unsigned int address, unsigned int wanted, unsigned int *size,
+        unsigned int *segment) {
+    unsigned int remaining;
+    if (!zeroCtrlModuleContainingSegment(paf, address, segment, &remaining))
+        return 0;
+    *size = remaining > wanted ? wanted : remaining;
+    *size &= ~3U;
+    return *size != 0 && zeroCtrlVshModuleRangeValid(paf, address, *size);
+}
+
+static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
+        unsigned int first_target, unsigned int header_target,
+        unsigned int global_target) {
+    unsigned int first[10], link[6];
+    unsigned int first_segment, first_size;
+    unsigned int bound_slot, bound_segment, bound_remaining, bound_value;
+    unsigned int adjacent, adjacent_segment, adjacent_size;
+    unsigned int indirect_off = 0xFFFFFFFFU, adjacent_ra_saved = 0;
+    unsigned int caller_total = 0, caller_reported = 0, reference_total = 0;
+    unsigned int header_segment, header_size, global_segment, global_size;
+    unsigned int offset, i, row;
+    char line[256];
+
+    if (!zeroCtrlPafA989ValidateCodeRange(paf, first_target,
+                sizeof(first), &first_size, &first_segment) ||
+            first_size != sizeof(first)) {
+        zeroCtrlDiagnosticsText("[paf-a989-first-call-body] validation=0\n");
+        return;
+    }
+    for (i = 0; i < 10; i++) first[i] = _lw(first_target + i * 4);
+    if ((first[0] >> 26) != 1 || ((first[0] >> 21) & 0x1F) != 4 ||
+            ((first[0] >> 16) & 0x1F) != 0 || first[1] != 0x24050001 ||
+            (first[2] >> 26) != 0x0F || ((first[2] >> 21) & 0x1F) != 0 ||
+            ((first[2] >> 16) & 0x1F) != 3 ||
+            (first[3] >> 26) != 0x23 || ((first[3] >> 21) & 0x1F) != 3 ||
+            ((first[3] >> 16) & 0x1F) != 2 ||
+            (first[4] >> 26) != 0 || (first[4] & 0x3F) != 0x2A ||
+            ((first[4] >> 21) & 0x1F) != 4 ||
+            ((first[4] >> 16) & 0x1F) != 2 ||
+            ((first[4] >> 11) & 0x1F) != 2 ||
+            (first[5] >> 26) != 5 || ((first[5] >> 21) & 0x1F) != 2 ||
+            ((first[5] >> 16) & 0x1F) != 0 || first[6] != 0 ||
+            !zeroCtrlMipsMove(first[7], 5, 0) || first[8] != 0x03E00008 ||
+            !zeroCtrlMipsMove(first[9], 2, 5)) {
+        zeroCtrlDiagnosticsText("[paf-a989-first-call-body] validation=0\n");
+        return;
+    }
+    bound_slot = ((first[2] & 0xFFFF) << 16) +
+            (int)(short)(first[3] & 0xFFFF);
+    if ((bound_slot & 3) != 0 ||
+            !zeroCtrlModuleContainingSegment(paf, bound_slot, &bound_segment,
+                &bound_remaining) ||
+            !zeroCtrlVshModuleRangeValid(paf, bound_slot, 4)) {
+        zeroCtrlDiagnosticsText("[paf-a989-first-call-bound] segment_valid=0\n");
+        return;
+    }
+    bound_value = _lw(bound_slot);
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-first-call-body] validation=1 body_size=0x28 "
+            "a2_read=0 a3_read=0 container_arg_used=0\n");
+    snprintf(line, sizeof(line),
+            "[paf-a989-first-call-bound] address=0x%08X segment_valid=1 "
+            "value=0x%08X segment=%u\n", bound_slot, bound_value,
+            bound_segment);
+    zeroCtrlDiagnosticsText(line);
+    snprintf(line, sizeof(line),
+            "[paf-a989-first-call-static-result] caller_a0=0 would_return=%u "
+            "source=loaded_code_and_current_bound execution=NOT_OBSERVED\n",
+            (int)bound_value > 0);
+    zeroCtrlDiagnosticsText(line);
+
+    adjacent = first_target + 0x28;
+    if (adjacent < first_target || !zeroCtrlPafA989ValidateCodeRange(paf,
+                adjacent, 0x100, &adjacent_size, &adjacent_segment) ||
+            adjacent_size < 0x20 || (short)(_lw(adjacent) & 0xFFFF) >= 0 ||
+            (_lw(adjacent) >> 26) != 9 ||
+            ((_lw(adjacent) >> 21) & 0x1F) != 29 ||
+            ((_lw(adjacent) >> 16) & 0x1F) != 29) {
+        zeroCtrlDiagnosticsText("[paf-a989-adjacent-indirect] validation=0\n");
+        return;
+    }
+    for (offset = 4; offset + 20 <= adjacent_size; offset += 4) {
+        unsigned int frame_word = _lw(adjacent + offset);
+        unsigned int *w = (unsigned int *)(adjacent + offset);
+        if ((frame_word >> 26) == 0x2B &&
+                ((frame_word >> 21) & 0x1F) == 29 &&
+                ((frame_word >> 16) & 0x1F) == 31) adjacent_ra_saved = 1;
+        unsigned int w0 = _lw((unsigned int)&w[0]);
+        unsigned int w1 = _lw((unsigned int)&w[1]);
+        unsigned int w2 = _lw((unsigned int)&w[2]);
+        unsigned int w3 = _lw((unsigned int)&w[3]);
+        unsigned int w4 = _lw((unsigned int)&w[4]);
+        if ((w0 >> 26) == 0x23 && ((w0 >> 21) & 0x1F) == 5 &&
+                ((w0 >> 16) & 0x1F) == 16 && (short)(w0 & 0xFFFF) == 0 &&
+                (w1 >> 26) == 0x23 && ((w1 >> 21) & 0x1F) == 16 &&
+                ((w1 >> 16) & 0x1F) == 4 && (short)(w1 & 0xFFFF) == 4 &&
+                (w2 >> 26) == 0x23 && ((w2 >> 21) & 0x1F) == 16 &&
+                ((w2 >> 16) & 0x1F) == 2 && (short)(w2 & 0xFFFF) == 0 &&
+                (w3 >> 26) == 0 && (w3 & 0x3F) == 9 &&
+                ((w3 >> 21) & 0x1F) == 2 && ((w3 >> 11) & 0x1F) == 31 &&
+                zeroCtrlMipsMove(w4, 5, 16)) {
+            indirect_off = offset;
+            break;
+        }
+    }
+    if (indirect_off == 0xFFFFFFFFU || !adjacent_ra_saved) {
+        zeroCtrlDiagnosticsText("[paf-a989-adjacent-indirect] validation=0\n");
+        return;
+    }
+    snprintf(line, sizeof(line),
+            "[paf-a989-adjacent-indirect] validation=1 off=0x%X "
+            "base_source=mem_a1_plus_0 target_source=base_plus_0 "
+            "arg0_source=base_plus_4 arg1_source=base\n", indirect_off);
+    zeroCtrlDiagnosticsText(line);
+
+    if (zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)) {
+        for (offset = 0; offset + 8 <= paf->text_size; offset += 4) {
+            unsigned int pc = paf->text_addr + offset;
+            unsigned int word = _lw(pc);
+            unsigned int opcode = word >> 26;
+            if ((opcode == 2 || opcode == 3) &&
+                    zeroCtrlMipsJumpTarget(pc, word) == adjacent) {
+                caller_total++;
+                if (caller_reported < 16) {
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-adjacent-caller] kind=%s call_off=0x%X "
+                            "target_off=0x%X\n", opcode == 3 ? "JAL" : "J",
+                            offset, adjacent - paf->text_addr);
+                    zeroCtrlDiagnosticsText(line);
+                    if (offset >= 0x40 && offset + 0x40 <= paf->text_size &&
+                            zeroCtrlVshModuleRangeValid(paf,
+                                paf->text_addr + offset - 0x40, 0x80)) {
+                        for (row = 0; row < 0x80; row += 0x20) {
+                            unsigned int address = paf->text_addr + offset -
+                                    0x40 + row;
+                            snprintf(line, sizeof(line),
+                                    "[paf-a989-adjacent-caller-map] caller=%u "
+                                    "off=0x%X w0=%08X w1=%08X w2=%08X w3=%08X "
+                                    "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                                    caller_reported, offset - 0x40 + row,
+                                    _lw(address), _lw(address + 4),
+                                    _lw(address + 8), _lw(address + 12),
+                                    _lw(address + 16), _lw(address + 20),
+                                    _lw(address + 24), _lw(address + 28));
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                    }
+                    caller_reported++;
+                }
+            }
+            if (offset + 8 <= paf->text_size && opcode == 0x0F &&
+                    ((word >> 21) & 0x1F) == 0) {
+                unsigned int reg = (word >> 16) & 0x1F;
+                unsigned int low = _lw(pc + 4);
+                unsigned int low_opcode = low >> 26;
+                if (reg != 0 && (low_opcode == 9 || low_opcode == 0x0D) &&
+                        ((low >> 21) & 0x1F) == reg &&
+                        ((low >> 16) & 0x1F) == reg) {
+                    unsigned int address = (word & 0xFFFF) << 16;
+                    address = low_opcode == 9 ?
+                            address + (int)(short)(low & 0xFFFF) :
+                            address | (low & 0xFFFF);
+                    if (address == adjacent) {
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-adjacent-address-ref] off=0x%X "
+                                "reg=%u form=%s\n", offset, reg,
+                                low_opcode == 9 ? "LUI_ADDIU" : "LUI_ORI");
+                        zeroCtrlDiagnosticsText(line);
+                        reference_total++;
+                    }
+                }
+            }
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[paf-a989-adjacent-scan] direct_callers=%u reported=%u "
+            "address_refs=%u\n", caller_total, caller_reported,
+            reference_total);
+    zeroCtrlDiagnosticsText(line);
+
+    if (!zeroCtrlPafA989ValidateCodeRange(paf, header_target, 8,
+                &header_size, &header_segment) || header_size != 8 ||
+            _lw(header_target) != 0x03E00008 ||
+            _lw(header_target + 4) != 0xAC850004) {
+        zeroCtrlDiagnosticsText("[paf-a989-header-link] validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-header-link] validation=1 write_base_arg=4 "
+            "write_value_arg=5 field_off=4 header_base=allocation_return "
+            "header_plus_4=outer_block execution=NOT_OBSERVED\n");
+
+    if (!zeroCtrlPafA989ValidateCodeRange(paf, global_target, sizeof(link),
+                &global_size, &global_segment) || global_size != sizeof(link)) {
+        zeroCtrlDiagnosticsText("[paf-a989-global-link] validation=0\n");
+        return;
+    }
+    for (i = 0; i < 6; i++) link[i] = _lw(global_target + i * 4);
+    if (link[0] != 0x8C830004 || link[1] != 0xAC850004 ||
+            link[2] != 0x8C620000 || link[3] != 0xACA20000 ||
+            link[4] != 0x03E00008 || link[5] != 0xAC650000) {
+        zeroCtrlDiagnosticsText("[paf-a989-global-link] validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-global-link] validation=1 base_plus_4=arg1 "
+            "arg1_plus_0=old_base_plus_4_plus_0 "
+            "old_base_plus_4_plus_0=arg1 caller_a0=slot_value "
+            "caller_a1=allocation_return execution=NOT_OBSERVED\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-static-chain] evidence=LOADED_CODE_NORMAL_FALLTHROUGH "
+            "global_slot_to_header=STRUCTURALLY_LINKED "
+            "header_plus_4_to_outer=STRUCTURALLY_LINKED "
+            "outer_plus_4_to_inner=STRUCTURALLY_LINKED "
+            "inner_plus_C_to_vsh589c=STRUCTURALLY_STORED "
+            "execution=NOT_OBSERVED\n");
 }
 
 static void zeroCtrlWriteVsh3f568ImplFlow(SceModule2 *owner,

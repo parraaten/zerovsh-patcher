@@ -773,7 +773,8 @@ def check_sources(root):
             "call_targets[i] - paf->text_addr < paf->text_size",
             "[paf-a989-consumer-call]", "container_direct_arg=%u",
             "[paf-a989-consumer-call-map]", "row < map_size",
-            "remaining > 0x80 ? 0x80", "[paf-a989-constructed-map]",
+            "remaining > (i == 0 ? 0x80 : 0x100)",
+            "(i == 0 ? 0x80 : 0x100)", "[paf-a989-constructed-map]",
             "mapped[j] = _lw(constructed[i] + row + j * 4)",
             "slot = ((words[0xA8 / 4] & 0xFFFF) << 16) +",
             "(int)(short)(words[0xAC / 4] & 0xFFFF)",
@@ -821,7 +822,8 @@ def check_sources(root):
         fail("consumer call map reads before segment/full-range validation")
     constructed_segment = consumer.find(
             "zeroCtrlModuleContainingSegment(paf, constructed[i]")
-    constructed_cap = consumer.find("remaining > 0x80 ? 0x80", constructed_segment)
+    constructed_cap = consumer.find(
+            "remaining > (i == 0 ? 0x80 : 0x100)", constructed_segment)
     constructed_range = consumer.find("constructed[i], map_size", constructed_cap)
     constructed_read = consumer.find("_lw(constructed[i]", constructed_range)
     if not 0 <= constructed_segment < constructed_cap < constructed_range < \
@@ -851,6 +853,109 @@ def check_sources(root):
             "constructor", "vtable", "handler"):
         if semantic in consumer.lower():
             fail("PAF A989 consumer output invents semantics: " + semantic)
+    downstream_start = kernel.find("static void zeroCtrlWritePafA989Downstream(",
+            consumer_start + 1)
+    downstream_end = kernel.find(
+            "static void zeroCtrlWriteVsh3f568ImplFlow(", downstream_start)
+    if downstream_start < 0 or downstream_end < 0:
+        fail("PAF A989 immediate downstream analysis is missing")
+    downstream = kernel[downstream_start:downstream_end]
+    for token in ("zeroCtrlPafA989ValidateCodeRange(paf, first_target",
+            "sizeof(first)", "first_size != sizeof(first)",
+            "(first[0] >> 26) != 1", "((first[0] >> 21) & 0x1F) != 4",
+            "first[1] != 0x24050001", "(first[2] >> 26) != 0x0F",
+            "((first[2] >> 16) & 0x1F) != 3",
+            "(first[3] >> 26) != 0x23",
+            "((first[3] >> 21) & 0x1F) != 3",
+            "((first[3] >> 16) & 0x1F) != 2",
+            "(first[4] & 0x3F) != 0x2A",
+            "((first[4] >> 21) & 0x1F) != 4",
+            "((first[4] >> 16) & 0x1F) != 2",
+            "first[8] != 0x03E00008", "zeroCtrlMipsMove(first[9], 2, 5)",
+            "body_size=0x28", "a2_read=0 a3_read=0 container_arg_used=0",
+            "bound_slot = ((first[2] & 0xFFFF) << 16) +",
+            "(int)(short)(first[3] & 0xFFFF)",
+            "zeroCtrlModuleContainingSegment(paf, bound_slot",
+            "zeroCtrlVshModuleRangeValid(paf, bound_slot, 4)",
+            "bound_value = _lw(bound_slot)", "[paf-a989-first-call-bound]",
+            "[paf-a989-first-call-static-result]", "execution=NOT_OBSERVED",
+            "adjacent = first_target + 0x28", "adjacent < first_target",
+            "zeroCtrlPafA989ValidateCodeRange(paf,\n                adjacent, 0x100",
+            "adjacent_ra_saved", "indirect_off == 0xFFFFFFFFU",
+            "base_source=mem_a1_plus_0", "target_source=base_plus_0",
+            "arg0_source=base_plus_4 arg1_source=base",
+            "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)",
+            "zeroCtrlMipsJumpTarget(pc, word) == adjacent",
+            "caller_reported < 16", "offset >= 0x40",
+            "offset + 0x40 <= paf->text_size", "0x80",
+            "[paf-a989-adjacent-caller]", "[paf-a989-adjacent-caller-map]",
+            "[paf-a989-adjacent-scan] direct_callers=%u",
+            "low_opcode == 9 || low_opcode == 0x0D",
+            "address + (int)(short)(low & 0xFFFF)",
+            "address | (low & 0xFFFF)",
+            "[paf-a989-adjacent-address-ref]", "LUI_ADDIU", "LUI_ORI",
+            "zeroCtrlPafA989ValidateCodeRange(paf, header_target, 8",
+            "_lw(header_target) != 0x03E00008",
+            "_lw(header_target + 4) != 0xAC850004",
+            "[paf-a989-header-link] validation=1", "write_base_arg=4",
+            "write_value_arg=5 field_off=4", "header_plus_4=outer_block",
+            "zeroCtrlPafA989ValidateCodeRange(paf, global_target, sizeof(link)",
+            "link[0] != 0x8C830004", "link[1] != 0xAC850004",
+            "link[2] != 0x8C620000", "link[3] != 0xACA20000",
+            "link[4] != 0x03E00008", "link[5] != 0xAC650000",
+            "[paf-a989-global-link] validation=1", "caller_a0=slot_value",
+            "caller_a1=allocation_return", "[paf-a989-static-chain]",
+            "evidence=LOADED_CODE_NORMAL_FALLTHROUGH",
+            "global_slot_to_header=STRUCTURALLY_LINKED",
+            "inner_plus_C_to_vsh589c=STRUCTURALLY_STORED"):
+        if token not in downstream:
+            fail("PAF A989 immediate downstream analysis lacks " + token)
+    first_range = downstream.find(
+            "zeroCtrlPafA989ValidateCodeRange(paf, first_target")
+    first_read = downstream.find("_lw(first_target", first_range)
+    body_valid = downstream.find("[paf-a989-first-call-body] validation=1")
+    if not 0 <= first_range < first_read < body_valid:
+        fail("first-call body read/conclusion is not range ordered")
+    bound_segment = downstream.find(
+            "zeroCtrlModuleContainingSegment(paf, bound_slot")
+    bound_range = downstream.find(
+            "zeroCtrlVshModuleRangeValid(paf, bound_slot, 4)", bound_segment)
+    bound_read = downstream.find("_lw(bound_slot)", bound_range)
+    if not 0 <= bound_segment < bound_range < bound_read:
+        fail("first-call bound is read before four-byte validation")
+    adjacent_derive = downstream.find("adjacent = first_target + 0x28")
+    adjacent_range = downstream.find(
+            "zeroCtrlPafA989ValidateCodeRange(paf,\n                adjacent, 0x100",
+            adjacent_derive)
+    adjacent_read = downstream.find("_lw(adjacent", adjacent_range)
+    if not 0 <= adjacent_derive < adjacent_range < adjacent_read:
+        fail("adjacent function is read before derived range validation")
+    scan_range = downstream.find(
+            "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)")
+    scan_read = downstream.find("_lw(pc)", scan_range)
+    if not 0 <= scan_range < scan_read:
+        fail("adjacent caller/reference scan reads unvalidated PAF text")
+    header_range = downstream.find(
+            "zeroCtrlPafA989ValidateCodeRange(paf, header_target, 8")
+    header_read = downstream.find("_lw(header_target)", header_range)
+    global_range = downstream.find(
+            "zeroCtrlPafA989ValidateCodeRange(paf, global_target, sizeof(link)")
+    global_read = downstream.find("_lw(global_target", global_range)
+    if not 0 <= header_range < header_read < global_range < global_read:
+        fail("short link bodies are read before validated ranges")
+    if "first_target + 0x28" not in downstream or "0xCF688" in downstream:
+        fail("adjacent function is not derived dynamically")
+    if "base+0x0C" in downstream and "vsh589c" in downstream.lower():
+        fail("constructed-address base+0x0C is mislabeled as VSH callback")
+    for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP", "REDIRECT_FUNCTION",
+            "zeroCtrlRedir", "Dcache", "Icache", "sceKernelCreateThread",
+            "sceKernelStartThread", "request_function()"):
+        if forbidden in downstream:
+            fail("PAF A989 downstream analysis is not read-only: " + forbidden)
+    for semantic in ("allocator", "validator", "registrar", "registered",
+            "dispatcher", "event manager", "callback manager", "handler"):
+        if semantic in downstream.lower():
+            fail("PAF A989 downstream output invents semantics: " + semantic)
     if "[vsh3f568-impl-map]" in vsh3 or "[vsh3f568-use]" in vsh3:
         fail("superseded wrapper/caller output is still automatic")
     for section in (vsh3, inner):

@@ -2220,3 +2220,23 @@ The consumer-tail validator now additionally requires `LUI v0` followed by
 `LW a0,...(v0)`, `SLL v1,s7,3`, and the exact `ADDU a0,a0,v1` in the `+0xB8`
 call delay slot. This closes structural gaps without changing any output,
 mapping boundary, runtime behavior, or hardware interpretation.
+
+#### A989 first-call and adjacent-link observation
+
+**Proven by hardware:** the consumer `+0x3C` target and its downstream bytes
+were captured from the loaded PSP-1000 `scePaf` image.
+
+**Proven by loaded PSP-1000 6.61 code:** the first target has a complete
+`0x28`-byte body which does not read `a2` or `a3`; its bound slot is reconstructed
+and safely read as a scalar. The adjacent function is derived at first target
+plus `0x28` and contains the validated neutral indirect-call shape. Read-only
+text scans report bounded direct callers and LUI/ADDIU or LUI/ORI address
+references. The dynamically decoded consumer `+0xA0` and `+0xB8` targets
+validate the header and global pointer-link instruction shapes, permitting a
+normal-fallthrough structural chain record with explicit `execution=NOT_OBSERVED`.
+The second constructed-address map is extended to at most `0x100`; its
+`base+0x0C` load remains mechanically unnamed.
+
+**Not proven:** that any described path or write executed during this boot, that
+any indirect target invokes `VSH+589C`, or any semantic role for the adjacent
+function, linked objects, call targets, or constructed addresses.
