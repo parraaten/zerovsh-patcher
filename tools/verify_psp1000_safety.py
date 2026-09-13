@@ -326,6 +326,614 @@ def check_sources(root):
     if writer_start < 0 or writer_end <= writer_start:
         fail("deferred slide diagnostic writer is missing")
     writer = kernel[writer_start:writer_end]
+    minimal_start = writer.find("zeroCtrlWriteSlideCheckpoints(&written)")
+    minimal_end = writer.find("for (i = 0; i < VSH_TRIGGER_COUNT; i++)",
+            minimal_start)
+    minimal = writer[minimal_start:minimal_end]
+    for token in ("zeroCtrlWriteSlideCheckpoints(&written)",
+            'zeroCtrlWriteFastMemory("probe_entry"',
+            "slide_diag.minimal_probe_total_free",
+            "slide_diag.minimal_probe_largest_block",
+            'zeroCtrlWriteFastMemory("start_handler_entry"',
+            "slide_diag.minimal_start_total_free",
+            "slide_diag.minimal_start_largest_block",
+            "[checkpoint-fast] activation_callback_entered",
+            "[checkpoint-fast] slide_module_start_entered",
+            "[checkpoint-fast] slide_module_start_returned",
+            "[checkpoint-fast] latest=", "fast_poll_until = elapsed + 2000000",
+            "elapsed < fast_poll_until", "10000 : SLIDE_OBSERVATION_POLL_US",
+            "continue;"):
+        if token not in minimal:
+            fail("minimal PSP-1000 memory test lacks " + token)
+    for verbose in ("[paf-parent-a0]", "[paf-dispatch-window-",
+            "[paf-dispatch-control]", "[t40-exit-window-",
+            "[natural-50-window-"):
+        if verbose in minimal:
+            fail("minimal PSP-1000 memory test executes verbose output " + verbose)
+    for false_boundary in ("before_slide_module", "before_slide_module_start",
+            "after_slide_module_start", "before_activation", "after_activation"):
+        if 'zeroCtrlWriteFastMemory("' + false_boundary + '"' in kernel:
+            fail("minimal memory test retains retrospective boundary " +
+                    false_boundary)
+    if "sceKernelDelayThread(10000);" in minimal or "elapsed += 10000;" in minimal:
+        fail("minimal memory test forces permanent 10 ms polling")
+    if minimal_start + minimal.find("continue;") > writer.find("[paf-parent-a0]"):
+        fail("minimal memory test does not bypass parent/PAF diagnostics")
+    vsh58_start = kernel.find("static void zeroCtrlWriteFunctionalVsh58Map(void)")
+    vsh58_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(",
+            vsh58_start)
+    if vsh58_start < 0 or vsh58_end < 0:
+        fail("functional PSP-1000 VSH+58D4 map is missing")
+    vsh58 = kernel[vsh58_start:vsh58_end]
+    for token in ("VSH58_MAP_END - VSH58_MAP_START", "model != 0",
+            "sceKernelDevkitVersion() != 0x06060110",
+            "!slide_diag.functional_enabled",
+            "!slide_diag.minimal_memory_test", "!slide_diag.vsh_module_seen",
+            "vsh->text_addr == 0", "vsh->text_size < VSH58_MAP_END",
+            "vsh->text_addr > 0xFFFFFFFFU - VSH58_MAP_END",
+            "zeroCtrlVshModuleRangeValid(vsh,",
+            "vsh->text_addr + VSH58_MAP_START, map_size)",
+            "candidate->source_offset == 0x58D4",
+            "candidate->predicate_index == 2", "candidate->kind == 3",
+            "original_word = reference->instruction",
+            "zeroCtrlMipsJumpTarget(reference->source_addr, original_word)",
+            "[vsh58] source=", "[vsh58-callsite] original=",
+            "offset == 0x58D4 ? original_word", "[vsh58-map]",
+            "offset += 0x20", "unsigned int words[8]", "[vsh58-cf]",
+            "zeroCtrlMipsJumpTarget(pc, word)",
+            "zeroCtrlMipsBranchTarget(pc, word)", "opcode == 1",
+            "opcode >= 0x14 && opcode <= 0x17", "[vsh58-frame]",
+            '"STACK_ALLOC"', '"SAVE_RA"', '"RESTORE_RA"', "class=RETURN"):
+        if token not in vsh58:
+            fail("functional PSP-1000 VSH+58D4 map lacks " + token)
+    for definition in ("#define VSH58_MAP_START 0x54D4",
+            "#define VSH58_MAP_END   0x5CD4"):
+        if definition not in kernel:
+            fail("functional PSP-1000 VSH+58D4 map lacks " + definition)
+    range_validation = vsh58.find("zeroCtrlVshModuleRangeValid(vsh,")
+    first_read = vsh58.find("_lw(")
+    if not 0 <= range_validation < first_read:
+        fail("VSH+58D4 map reads loaded text before validating the full range")
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
+            "zeroCtrlRedir", "vsh->text_addr + 0x58D4)("):
+        if forbidden in vsh58:
+            fail("VSH+58D4 map is not strictly read-only: " + forbidden)
+    if "zeroCtrlWriteFunctionalVsh58Map();" in kernel:
+        fail("large VSH+58D4 map is still emitted automatically")
+    scan_start = kernel.find(
+            "static void zeroCtrlWriteFunctionalVshRequestCallers(void)")
+    scan_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(", scan_start)
+    if scan_start < 0 or scan_end < 0:
+        fail("read-only VSH +589C caller scan is missing")
+    request_scan = kernel[scan_start:scan_end]
+    for token in ("for (offset = 0; offset + 8 <= vsh->text_size; offset += 4)",
+            "opcode == 2 || opcode == 3",
+            "zeroCtrlMipsJumpTarget(pc, word)",
+            "target == vsh->text_addr + 0x589C",
+            "target == vsh->text_addr + 0x57B0",
+            "[vsh589c-callers] validation=1 jal=%u jump=%u",
+            "[vsh589c-caller]", "[vsh57b0-callers]",
+            "[vsh57b0-caller]", "opcode == 0x0F",
+            "low_opcode == 9 || low_opcode == 0x0D",
+            "upper + (int)(short)(low & 0xFFFF)",
+            "upper | (low & 0xFFFF)", "[vsh589c-address-ref]",
+            "VSH589C_REPORT_LIMIT"):
+        if token not in request_scan:
+            fail("VSH +589C/+57B0 scan lacks " + token)
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
+            "zeroCtrlRedir", "request_function()"):
+        if forbidden in request_scan:
+            fail("VSH +589C/+57B0 scan is not read-only: " + forbidden)
+    window_start = kernel.find("static void zeroCtrlWriteVsh589cWindow(")
+    a0_end = scan_start
+    request_helpers = kernel[window_start:a0_end]
+    for token in ("[vsh589c-window]", "row += 0x20", "_lw(address + 28)",
+            "zeroCtrlVsh589cA0Definition", "rt == 4 && opcode == 9",
+            "rt == 4 && opcode == 0x0D", "rt == 4 && opcode == 0x0F",
+            "rt == 4 && opcode == 0x23", "ADDU_MOVE", "OR_MOVE",
+            "zeroCtrlVsh589cControlBarrier", "status=AMBIGUOUS",
+            "NO_DEF_FRAME_BOUNDARY"):
+        if token not in request_helpers:
+            fail("bounded VSH +589C caller/A0 analysis lacks " + token)
+    for definition in ("#define VSH589C_WINDOW_BEFORE 0x50",
+            "#define VSH589C_WINDOW_AFTER  0x30"):
+        if definition not in kernel:
+            fail("bounded VSH +589C caller window lacks " + definition)
+    if any(token in request_helpers for token in ("_sw(", "Dcache", "Icache")):
+        fail("bounded VSH +589C caller/A0 analysis is not read-only")
+    if "zeroCtrlWriteFunctionalVshRequestCallers();" in kernel:
+        fail("superseded VSH +589C/+57B0 scan is still emitted automatically")
+    vsh3_start = kernel.find(
+            "static void zeroCtrlWriteFunctionalVsh3f568Analysis(void)")
+    vsh3_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(", vsh3_start)
+    if vsh3_start < 0 or vsh3_end < 0:
+        fail("VSH +3F568 implementation analysis is missing")
+    vsh3 = kernel[vsh3_start:vsh3_end]
+    impl_flow_start = kernel.find("static void zeroCtrlWriteVsh3f568ImplFlow(")
+    impl_flow = kernel[impl_flow_start:vsh3_start]
+    for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
+            "!slide_diag.functional_enabled", "!slide_diag.minimal_memory_test",
+            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x3F568, 8)",
+            "word_56fc = _lw(text + 0x56FC)",
+            "word_5700 = _lw(text + 0x5700)",
+            "word_5704 = _lw(text + 0x5704)",
+            "word_5708 = _lw(text + 0x5708)",
+            "decoded_a1 != text + 0x589C", "(word_5704 >> 26) != 3",
+            "zeroCtrlMipsJumpTarget(text + 0x5704, word_5704)",
+            "((word_5708 >> 11) & 0x1F) != 4",
+            "[vsh3f568-callsite] validation=1 caller=0x05704",
+            "thunk_word = _lw(stub)", "(thunk_word >> 26) != 2",
+            "_lw(stub + 4) != 0",
+            "resolved = zeroCtrlMipsJumpTarget(stub, thunk_word)",
+            "[vsh3f568-thunk] validation=1",
+            "table_addr = (unsigned int)vsh->stub_top",
+            "table_size = vsh->stub_size",
+            "zeroCtrlVshModuleRangeValid(vsh, table_addr, table_size)",
+            "entry->len == 0", "entry->stubcount > 0xFFFFFFFFU / 8",
+            "zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size)",
+            "zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size)",
+            "stubtable + i * 8 != stub", "matches != 1",
+            "zeroCtrlCopyVshImportLibrary(vsh, entry->libname",
+            "[vsh3f568-import] validation=1",
+            "sceKernelFindModuleByAddress(resolved)",
+            "zeroCtrlLoadedModuleMetadataValid(owner)",
+            "owner->nsegment", "owner->segmentaddr[i]",
+            "owner->segmentsize[i]", "impl_size > 0x100",
+            "zeroCtrlVshModuleRangeValid(owner, resolved, impl_size)",
+            "target_in_text = resolved >= owner->text_addr &&",
+            "resolved - owner->text_addr < owner->text_size",
+            "target_in_text=0 target_off=OUTSIDE_TEXT",
+            "[vsh3f568-owner] validation=1", "[vsh3f568-impl-map]",
+            "[vsh3f568-impl-cf]", "[vsh3f568-impl-frame]",
+            "zeroCtrlWriteVsh3f568ImplFlow(owner, resolved, impl_size",
+            "[vsh3f568-use]", "[vsh3f568-summary]"):
+        if token not in vsh3:
+            fail("resolved VSH +3F568 analysis lacks " + token)
+    for token in ("tracked_a1 = 5", "[vsh3f568-impl-a1] status=STORED",
+            "[vsh3f568-impl-a0]",
+            "delay = _lw(target + offset + 4)",
+            "zeroCtrlMipsGprWriteDestination(delay)",
+            "OVERWRITTEN_IN_DELAY_SLOT", "PASSED_TO_CALL",
+            "USED_IMMEDIATELY", "opcode == 1 || opcode == 2"):
+        if token not in impl_flow:
+            fail("real +3F568 input analysis lacks " + token)
+    if "[vsh3f568-map]" in vsh3 or "[vsh3f568-cf]" in vsh3:
+        fail("superseded VSH stub-table map is still emitted")
+    for section in (vsh3, impl_flow):
+        for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
+                "zeroCtrlRedir", "request_function()"):
+            if forbidden in section:
+                fail("resolved VSH +3F568 analysis is not read-only: " + forbidden)
+    destination_start = kernel.find(
+            "static int zeroCtrlMipsGprWriteDestination(")
+    destination_end = kernel.find(
+            "static void zeroCtrlWriteVsh3f568CallerWindow(",
+            destination_start)
+    destination_decoder = kernel[destination_start:destination_end]
+    sc_destination = "if (opcode == 0x38)\n        return (word >> 16) & 0x1F;"
+    for token in (sc_destination,
+            "(opcode >= 0x28 && opcode <= 0x2F)",
+            "(opcode >= 0x20 && opcode <= 0x26) || opcode == 0x30",
+            "return -1;"):
+        if token not in destination_decoder:
+            fail("conservative GPR destination decoder lacks " + token)
+    if destination_decoder.find(sc_destination) > destination_decoder.find(
+            "(opcode >= 0x28 && opcode <= 0x2F)") or \
+            "opcode <= 0x2F) || opcode == 0x38" in destination_decoder:
+        fail("SC is incorrectly classified as a no-destination store")
+    delay_check = impl_flow.find("zeroCtrlMipsGprWriteDestination(delay)")
+    overwritten_delay = impl_flow.find("OVERWRITTEN_IN_DELAY_SLOT")
+    used_immediately = impl_flow.find("status=USED_IMMEDIATELY")
+    passed_call = impl_flow.find("PASSED_TO_CALL")
+    ambiguous_call = impl_flow.find("status=AMBIGUOUS_CALL")
+    argument_gate = impl_flow.find("tracked_a1 >= 4 && tracked_a1 <= 7")
+    jalr_target_gate = impl_flow.find("function == 9 && rs == tracked_a1")
+    if not 0 <= delay_check < overwritten_delay < jalr_target_gate < \
+            used_immediately < argument_gate < passed_call < ambiguous_call:
+        fail("real +3F568 call classification precedes delay-slot validation")
+    liveness_start = kernel.find("static int zeroCtrlVsh3f568A1PairReaches(")
+    liveness_end = vsh3_start
+    liveness = kernel[liveness_start:liveness_end]
+    for token in ("for (offset = low_offset + 4; offset < call_offset",
+            "zeroCtrlMipsGprWriteDestination(word)",
+            "destination < 0 || destination == 5", "opcode == 1",
+            "opcode == 2", "opcode == 3", "opcode >= 4 && opcode <= 7",
+            "opcode >= 0x14 && opcode <= 0x17", "function == 8",
+            "function == 9", "call_offset + 4",
+            "zeroCtrlMipsGprWriteDestination(delay)"):
+        if token not in liveness:
+            fail("VSH +3F568 caller a1 liveness proof lacks " + token)
+    if "zeroCtrlVsh3f568A1PairReaches(vsh, back - 4, call)" not in vsh3 or \
+            'known ? "PROVEN" : "UNKNOWN"' not in vsh3 or \
+            'known ? "KNOWN" : "UNKNOWN"' in vsh3:
+        fail("VSH +3F568 caller summary overstates nearby a1 pairs")
+    if kernel.count("zeroCtrlWriteFunctionalVsh3f568Analysis();") != 1 or \
+            "if (!vsh3f568_scan_written && slide_diag.functional_enabled" \
+            not in minimal or "vsh3f568_scan_written = 1;" not in minimal:
+        fail("VSH +3F568 analysis is not one-shot deferred output")
+    minimal_gate = kernel[kernel.find("slide_diag.minimal_memory_test ="):
+        kernel.find("slide_diag.global_predicate_enabled =")]
+    for token in ("model == 0", "devkit == 0x06060110",
+            'strcmp(psp1000SlidePlugin, "Enabled") == 0',
+            'strcmp(psp1000Diagnostics, "Enabled") == 0'):
+        if token not in minimal_gate:
+            fail("minimal memory test gate lacks " + token)
+    fast_memory_start = kernel.find("static void zeroCtrlWriteFastMemory(")
+    fast_memory_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(",
+            fast_memory_start)
+    fast_memory = kernel[fast_memory_start:fast_memory_end]
+    for token in ("[mem-fast] %s total_free=%u largest_block=%u",
+            "unsigned int total_free", "unsigned int largest_block"):
+        if token not in fast_memory:
+            fail("minimal memory checkpoint lacks " + token)
+    if any(token in fast_memory for token in ("sceKernelAlloc", "malloc", "_sw(",
+            "sceKernelPartitionTotalFreeMemSize",
+            "sceKernelPartitionMaxFreeMemSize")):
+        fail("deferred minimal memory output does not use stored snapshots")
+    minimal_final = writer[writer.find("if (slide_diag.minimal_memory_test)",
+        minimal_end):writer.find(
+            'zeroCtrlDiagnosticsText("[checkpoint] slide_observation_window_complete')]
+    for token in ("minimal_observation_window_complete",
+            "sceKernelExitDeleteThread(0)", "return 0"):
+        if token not in minimal_final:
+            fail("minimal memory test does not bypass final verbose dumps")
+    probe_scope = kernel[kernel.find("int zeroCtrlModuleProbe("):
+        kernel.find("int zeroCtrlHookModule(")]
+    start_scope = kernel[kernel.find("int OnModuleStart("):
+        kernel.find("int zeroCtrlLoadStartModule(")]
+    for scope, prefix in ((probe_scope, "minimal_probe"),
+            (start_scope, "minimal_start")):
+        for token in ("if (slide_diag.minimal_memory_test)",
+                "sceKernelPartitionTotalFreeMemSize(",
+                "sceKernelPartitionMaxFreeMemSize(",
+                "PSP_MEMORY_PARTITION_USER", prefix + "_total_free",
+                prefix + "_largest_block", prefix + "_memory_valid = 1"):
+            if token not in scope:
+                fail("minimal memory snapshot boundary lacks " + token)
+        if scope.find(prefix + "_memory_valid = 1") < \
+                scope.find(prefix + "_largest_block"):
+            fail("minimal memory snapshot is published before capture completes")
+    if re.search(r"hook_import_bynid\([^\n]*(?:Alloc|Malloc|SysMem)", kernel,
+            re.IGNORECASE):
+        fail("minimal memory test introduces a global allocator hook")
+    functional_gate = kernel[kernel.find("slide_diag.functional_enabled ="):
+        kernel.find("slide_diag.minimal_memory_test =")]
+    for token in ("model == 0", "devkit == 0x06060110",
+            'strcmp(psp1000SlidePlugin, "Enabled") == 0',
+            'strcmp(useSlide, "Enabled") == 0'):
+        if token not in functional_gate:
+            fail("PSP-1000 functional gate lacks " + token)
+    if "PSP1000Diagnostics" in functional_gate:
+        fail("PSP-1000 functional mode incorrectly requires diagnostics")
+    for token in ("[psp1000-functional] enabled=1",
+            "[psp1000-functional] button_thread=1",
+            "[psp1000-functional] runtime_request_blocked=1",
+            "[psp1000-functional] runtime_request_valid=1",
+            "[psp1000-functional] runtime_request_called=%u",
+            "[psp1000-functional] runtime_request_result=0x%08X",
+            "[psp1000-functional] slide_module_seen=1",
+            "[psp1000-functional] activation_hits=%u"):
+        if token not in minimal:
+            fail("functional compact diagnostics lack " + token)
+    trigger_leaf = assembly[assembly.find("zeroCtrlTrigger58D4:"):
+        assembly.find("zeroCtrlTrigger58D4End:")]
+    for token in ("zeroCtrlTrigger58D4FunctionalMode",
+            "zeroCtrlTrigger58D4Request", "zeroCtrlTrigger58D4OriginalTarget",
+            "sw      $zero, %lo(zeroCtrlTrigger58D4Request)",
+            "lw      $t0, %lo(zeroCtrlTrigger58D4OriginalTarget)($t0)",
+            "jr      $t0", "jr      $ra", "addiu   $v0, $zero, 1"):
+        if token not in trigger_leaf:
+            fail("functional 58D4 helper lacks " + token)
+    if any(token in trigger_leaf for token in
+            ("$k0", "$k1", "$sp", "$gp", "jal ", "jalr")):
+        fail("functional 58D4 helper uses reserved/stateful registers or calls")
+    record_start = kernel.find("void zeroCtrlRecordVshSlideTarget(")
+    record_end = kernel.find("int (*msIoOpen)", record_start)
+    record = kernel[record_start:record_end]
+    for token in ("stub_58d4_end - stub_58d4",
+            "evidence->request_addr", "evidence->original_target_addr",
+            "evidence->functional_mode_addr",
+            "_sw(0, request_evidence->request_addr)",
+            "_sw(request_evidence->original_target",
+            "_sw(slide_diag.functional_enabled ? 1 : 0",
+            "sceKernelDcacheWritebackInvalidateRange("):
+        if token not in record:
+            fail("functional 58D4 registration lacks " + token)
+    scalar_init = record.find("_sw(0, request_evidence->request_addr)")
+    trigger_commit = record.find("_sw(evidence->replacement_word")
+    if not 0 <= scalar_init < trigger_commit:
+        fail("functional 58D4 routing scalars are not initialized before patch")
+    button_start = kernel.find("void zeroCtrlReadButtons(")
+    button_end = kernel.find("void zeroCtrlCreateBtnThread(", button_start)
+    button = kernel[button_start:button_end]
+    for token in ("ZERO_SLIDE_STOPPED", "slideStartBtn",
+            "slide_diag.functional_enabled",
+            "functional_runtime_request_blocked = 1", "request_ready",
+            "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
+        if token not in button:
+            fail("functional StartBtn request gating lacks " + token)
+    if "_sw(1, slide_diag.functional_runtime_request_addr)" in button or \
+            "_sw(1, slide_diag.triggers[0].request_addr)" in button or \
+            "functional_request_armed = 1" in button:
+        fail("functional HOME can still publish an experimental VSH request")
+    button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
+        kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
+        kernel.find("zeroCtrlCreatePatchThread();"))]
+    for token in ("zeroCtrlCreateBtnThread()",
+            "sctrlHENSetStartModuleHandler(OnModuleStart)",
+            "else if (slide_diag.armed)"):
+        if token not in button_install:
+            fail("functional button thread/handler gate lacks " + token)
+    kernel_module_start = kernel[kernel.find("int OnModuleStart(SceModule2 *mod)"):
+        kernel.find("int zeroCtrlLoadStartModule(")]
+    for token in ('hook_import_bynid(mod, "sceBSMan", 0x23E3A9B6',
+            "zeroCtrlDummyFunc, 1",
+            'hook_import_bynid(mod, "sceVshBridge", 0x639C3CB3',
+            "zeroCtrlGetParam, 1"):
+        if token not in kernel_module_start:
+            fail("functional SlidePlugin import integration lacks " + token)
+    bsman_hook = kernel_module_start.find(
+            'hook_import_bynid(mod, "sceBSMan", 0x23E3A9B6')
+    vsh_hook = kernel_module_start.find(
+            'hook_import_bynid(mod, "sceVshBridge", 0x639C3CB3')
+    sony_install = kernel_module_start.find("zeroCtrlInstallSonyStartTrace(mod)")
+    compat_install = kernel_module_start.find("zeroCtrlInstallBSManClosedShim(mod)")
+    cache_clear = kernel_module_start.find("ClearCaches()", compat_install)
+    functional_return = kernel_module_start.find("return previous_result", cache_clear)
+    if not 0 <= bsman_hook < vsh_hook < sony_install < compat_install < \
+            cache_clear < functional_return:
+        fail("functional SlidePlugin cache clear is missing or incorrectly ordered")
+    for gate_name in ("bsman_not_linked_compat_enabled =",
+            "post_vsh_compat_enabled ="):
+        gate = kernel[kernel.find(gate_name):kernel.find(";", kernel.find(gate_name))]
+        if "!slide_diag.functional_enabled" not in gate:
+            fail("functional mode double-enables experimental compatibility")
+    user_module_start = user[user.find("int OnModuleStart(SceModule2 *mod)"):
+        user.find("int module_start(")]
+    for token in ("zeroCtrlIsPsp1000SlideFunctionalEnabled()",
+            "mod->text_size >= 0xC994",
+            "(_lw(mod->text_addr + 0xC990) >> 26) == 3",
+            "_lw(mod->text_addr + 0x9038) == 0x27BDFFC0",
+            "_lw(mod->text_addr + 0x903C) == 0xAFB40030",
+            "MAKE_CALL(mod->text_addr+0xC990",
+            "zeroCtrlRedir2Stub(mod->text_addr+0x9038"):
+        if token not in user_module_start:
+            fail("functional user SlidePlugin integration lacks " + token)
+    if "PSP_EXPORT_FUNC_NID(zeroCtrlIsPsp1000SlideFunctionalEnabled, 0x1337357F)" \
+            not in kernel_exports or \
+            "STUB_FUNC 0x1337357F, zeroCtrlIsPsp1000SlideFunctionalEnabled" \
+            not in user_imports:
+        fail("functional mode query import/export is missing")
+    runtime_validate_start = user.find(
+            "static int zeroCtrlValidatePsp1000RuntimeRequest(")
+    runtime_validate_end = user.find(
+            "static int zeroCtrlPsp1000RuntimeRequestWorker(",
+            runtime_validate_start)
+    runtime_validate = user[runtime_validate_start:runtime_validate_end]
+    if runtime_validate_start < 0 or runtime_validate_end < 0:
+        fail("PSP-1000 runtime request validation is missing")
+    for token in ("model != 0", "devkit != 0x06060110",
+            "zeroCtrlIsPsp1000SlideFunctionalEnabled()",
+            "mod->text_addr == 0", "mod->text_size <= 0x5898",
+            "target = text + 0x57B0",
+            "text > 0xFFFFFFFFU - 0x42FF8",
+            "expected_pointer = text + 0x42FF8",
+            "zeroCtrlUserModuleRangeValid(mod, target, 0xEC)",
+            "zeroCtrlUserModuleRangeValid(mod, text + 0xF7C4, 4)",
+            "zeroCtrlUserModuleRangeValid(mod, text + 0x58D4, 0x28)",
+            "zeroCtrlUserMipsJumpTarget(text + 0x58D4, original_58d4)",
+            "text + 0x6F84", "_lw(text + 0x58D8) != 0",
+            "word_58dc = _lw(text + 0x58DC)",
+            "word_58dc != 0x14400004",
+            "zeroCtrlUserMipsBranchTarget(text + 0x58DC,",
+            "text + 0x58F0", "_lw(text + 0x58E0) != 0",
+            "word_58f0 = _lw(text + 0x58F0)",
+            "zeroCtrlUserMipsJumpTarget(text + 0x58F0, word_58f0)",
+            "word_58f8 = _lw(text + 0x58F8)",
+            "zeroCtrlUserMipsJumpTarget(text + 0x58F8, word_58f8)",
+            "text + 0x58E8", "word_57d0 = _lw(text + 0x57D0)",
+            "zeroCtrlUserMipsJumpTarget(text + 0x57D0, word_57d0)",
+            "text + 0xF7C4", "word_57b8 = _lw(text + 0x57B8)",
+            "word_57bc = _lw(text + 0x57BC)",
+            "(word_57b8 >> 26) != 0x0F",
+            "((word_57b8 >> 21) & 0x1F) != 0",
+            "((word_57b8 >> 16) & 0x1F) != 16",
+            "(word_57bc >> 26) != 0x09",
+            "((word_57bc >> 21) & 0x1F) != 16",
+            "((word_57bc >> 16) & 0x1F) != 16",
+            "upper = (word_57b8 & 0xFFFF) << 16",
+            "displacement = (short)(word_57bc & 0xFFFF)",
+            "decoded_pointer = upper + displacement",
+            "decoded_pointer != expected_pointer",
+            "zeroCtrlUserModuleRangeValid(mod, decoded_pointer, 4)",
+            "psp1000RuntimeRequestTarget = target",
+            "psp1000RuntimeRequestValid = 1"):
+        if token not in runtime_validate:
+            fail("PSP-1000 runtime request validation lacks " + token)
+    for word in ("0x27BDFF80", "0xAFB00070",
+            "0x02002021", "0xAFBF007C", "0xAFB20078",
+            "0x27B2000C", "0x8FBF007C", "0x8FB20078", "0x8FB10074",
+            "0x8FB00070", "0x03E00008", "0x27BD0080"):
+        if word not in runtime_validate:
+            fail("PSP-1000 +57B0 fingerprint lacks " + word)
+    for relocation_word in ("0x3C1009C7", "0x2610CBF8"):
+        if relocation_word in runtime_validate:
+            fail("PSP-1000 +57B0 validation hardcodes relocated word " +
+                    relocation_word)
+    target_publish = runtime_validate.find("psp1000RuntimeRequestTarget = target")
+    valid_publish = runtime_validate.find("psp1000RuntimeRequestValid = 1")
+    last_fingerprint = runtime_validate.rfind("_lw(text + 0x5884")
+    if not 0 <= last_fingerprint < target_publish < valid_publish:
+        fail("runtime request target is published before complete validation")
+    worker_start = user.find("static int zeroCtrlPsp1000RuntimeRequestWorker(")
+    worker_end = user.find("static void zeroCtrlCreatePsp1000RuntimeRequestWorker(",
+            worker_start)
+    worker = user[worker_start:worker_end]
+    if "#define PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED 0" not in user or \
+            "if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&" not in worker:
+        fail("direct +57B0 runtime execution is not compile-time disabled")
+    for token in ("psp1000RuntimeRequestValid && psp1000RuntimeRequest",
+            "psp1000RuntimeRequest = 0", "psp1000RuntimeRequestCalled++",
+            "psp1000RuntimeRequestTarget", "request_function()",
+            "psp1000RuntimeRequestResult", "sceKernelDelayThread(20000)"):
+        if token not in worker:
+            fail("PSP-1000 runtime request worker lacks " + token)
+    if not worker.find("psp1000RuntimeRequest = 0") < \
+            worker.find("psp1000RuntimeRequestCalled++") < \
+            worker.find("request_function()"):
+        fail("runtime request worker does not consume once before calling")
+    worker_create = user[user.find(
+            "static void zeroCtrlCreatePsp1000RuntimeRequestWorker("):
+            user.find("//OK\nvoid *zeroCtrlRedir2Stub", worker_end)]
+    for token in ('sceKernelCreateThread("zeroctrl_vsh_request"',
+            "zeroCtrlPsp1000RuntimeRequestWorker", "0x4000",
+            "sceKernelStartThread", "sceKernelDeleteThread"):
+        if token not in worker_create:
+            fail("PSP-1000 runtime request worker creation lacks " + token)
+    user_start_prefix = user[user.find("int module_start("):
+            user.find("sonyStartTraceRegistration.entry_addr")]
+    for token in ("PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED",
+            "model == 0", "devkit == 0x06060110",
+            "zeroCtrlIsPsp1000SlideFunctionalEnabled()",
+            "zeroCtrlCreatePsp1000RuntimeRequestWorker()"):
+        if token not in user_start_prefix:
+            fail("runtime request worker is not restricted to functional PSP-1000")
+    runtime_record = record[record.find("helper = sceKernelFindModuleByName"):
+            record.find("all_selected_valid =")]
+    for token in ("runtime_request & 3", "runtime_request_valid & 3",
+            "runtime_request_called & 3", "runtime_request_result & 3",
+            "zeroCtrlVshModuleRangeValid(helper, runtime_request, 4)",
+            "runtime_request_valid, 4", "runtime_request_called, 4",
+            "runtime_request_result, 4",
+            "functional_runtime_registration_valid = 1"):
+        if token not in runtime_record:
+            fail("kernel runtime request scalar registration lacks " + token)
+    if "_sw(1, slide_diag.triggers[0].request_addr)" in button or \
+            re.search(r"\(.*\*.*\)\s*\(.*0x58D4", button):
+        fail("functional HOME still arms/calls the old +58D4 mechanism")
+    caller_ra_start = writer.find("if (slide_diag.bsman.activation_enabled)")
+    caller_ra_end = writer.find(
+            "if (slide_diag.bsman.activation_wide_enabled)", caller_ra_start)
+    caller_ra = writer[caller_ra_start:caller_ra_end]
+    for token in ("[activation-caller-ra]", "registered=%u validation=%d",
+            "activation_hits_addr", "activation_caller_ra_addr[0]",
+            "activation_caller_ra_addr[1]", "activation_caller_ra_addr[2]",
+            "sceKernelFindModuleByAddress(ra)",
+            "(ra & 3) == 0",
+            "((unsigned int)owner & 3) == 0",
+            "(unsigned int)owner >= 0x88000000", "owner->text_addr != 0",
+            "(unsigned int)owner < 0x8C000000",
+            "owner->text_size >= 8", "owner->nsegment != 0",
+            "owner->nsegment <= 4",
+            "ra >= owner->text_addr + 8",
+            "ra <= owner->text_addr + owner->text_size",
+            "callsite = ra - 8", "word = _lw(callsite)",
+            "delay = _lw(ra - 4)", "[activation-caller-ra-resolve]",
+            "opcode=0x%02X rs=%u rt=%u rd=%u", "function=0x%02X",
+            "opcode == 3 ? \"JAL\"", "function == 9 ? \"JALR\"",
+            "zeroCtrlMipsJumpTarget(callsite, word)",
+            "direct_target == bsman->activation_addr"):
+        if token not in caller_ra:
+            fail("deferred activation caller RA resolution lacks " + token)
+    if caller_ra_start < 0 or caller_ra_end < 0 or any(token in caller_ra for
+            token in ("_sw(", "sceKernelDcache", "sceKernelIcache")):
+        fail("deferred activation caller RA resolution is not read-only")
+    if "[activation-caller-ra]" in assembly or \
+            "[activation-caller-ra-resolve]" in assembly:
+        fail("activation caller RA output leaked into assembly helpers")
+    for token in ('strcmp(owner->modname, "scePaf_Module") == 0',
+            "window_start = callsite - 0xC0",
+            "window_end = callsite + 0x60",
+            "callsite >= owner->text_addr + 0xC0",
+            "callsite - owner->text_addr <=",
+            "owner->text_size - 0x64", "window_start + item * 4",
+            "owner->text_size >= 0x124", "group < 13", "_lw(pc)",
+            "[paf-dispatch-window-%u]", "[paf-dispatch-control]",
+            "zeroCtrlMipsJumpTarget(pc, instruction)",
+            "zeroCtrlMipsBranchTarget(", "regimm_branch",
+            "instruction_rt >= 16", "likely_branch",
+            "instruction_opcode >= 20", "instruction_opcode <= 23",
+            "likely=%d", "instruction_function == 8",
+            "instruction_function == 9", "[paf-jalr-t0-def]",
+            "instruction_rt == 8", "instruction_rd == 8",
+            "instruction_opcode == 35", "instruction_opcode == 36",
+            "instruction_opcode == 37", "base=%u displacement=%d",
+            "load ? instruction_rs : 0",
+            "load ? (short)(instruction & 0xFFFF) : 0",
+            "[paf-dispatch-reg-def]", "instruction_rt == 9",
+            "instruction_rt == 16", "instruction_rt == 17",
+            "instruction_rt == 18", "destination = tracked_immediate",
+            "[paf-dispatch-frame-candidate]", "stack_adjust",
+            "ra_stack", "return_jump",
+            "which == 0 || caller_ra[1] != caller_ra[2]",
+            "dispatcher_start = callsite - 0xA0",
+            "dispatcher_offset <= owner->text_size - 0xD8",
+            "0x27BDFFD0", "0xAFB00020", "0x2403FFFF",
+            "0xAFBF002C", "0xAFB20028", "0xAFB10024",
+            "0x0100F809", "0x8CE7002C", "0x8FBF002C",
+            "0x8FB20028", "0x8FB10024", "0x8FB00020",
+            "0x00601021", "0x03E00008", "0x27BD0030",
+            "_lw(fingerprint_pc)", "[paf-dispatch-callers]",
+            "validation=%d", "jal_matches=%u jump_matches=%u",
+            "loaded_words=%u truncated=%u", "scan_offset += 4",
+            "scan_opcode == 2 || scan_opcode == 3",
+            "zeroCtrlMipsJumpTarget(", "dispatcher_start",
+            "[paf-dispatch-caller]", "scan_opcode == 3 ? \"JAL\" : \"J\"",
+            "delay_valid = scan_offset <=", "_lw(scan_pc + 4)",
+            "reported < 8"):
+        if token not in caller_ra:
+            fail("PAF JALR window diagnostic lacks " + token)
+    if any(label in assembly for label in ("[paf-dispatch-window-",
+            "[paf-dispatch-control]", "[paf-jalr-t0-def]",
+            "[paf-dispatch-reg-def]", "[paf-dispatch-frame-candidate]",
+            "[paf-dispatch-callers]", "[paf-dispatch-caller]")):
+        fail("PAF JALR window diagnostic leaked into assembly helpers")
+    fingerprint_read = caller_ra.find("_lw(fingerprint_pc)")
+    direct_scan = caller_ra.find("for (scan_offset = 0;")
+    caller_summary = caller_ra.find('"[paf-dispatch-callers] validation=%d "')
+    caller_candidate = caller_ra.find('"[paf-dispatch-caller] index=%u "')
+    verbose_window = caller_ra.find('"[paf-dispatch-window-%u]"')
+    if not 0 <= fingerprint_read < direct_scan < caller_summary < \
+            caller_candidate < verbose_window:
+        fail("PAF dispatcher caller scan is not ahead of verbose decoding")
+    if caller_ra.count("static const unsigned int fingerprint_offset[]") != 1 or \
+            caller_ra.count("dispatcher_start = callsite - 0xA0") != 1 or \
+            caller_ra.count('"[paf-dispatch-callers] validation=%d "') != 1 or \
+            caller_ra.count('"[paf-dispatch-caller] index=%u "') != 1:
+        fail("PAF dispatcher caller scan implementation is duplicated")
+    parent_summary = caller_ra.find('"[paf-parent-a0] validation=%d "')
+    parent_def = caller_ra.find('"[paf-parent-a0-def] "')
+    parent_control = caller_ra.find('"[paf-parent-control] "')
+    parent_reaching = caller_ra.find('"[paf-parent-a0-reaching] "')
+    if not caller_candidate < parent_summary < parent_def < parent_reaching < \
+            verbose_window or parent_control < parent_def:
+        fail("PAF parent A0 evidence is not prioritized before verbose output")
+    for token in ("unique_caller_pc = scan_pc",
+            "dispatcher_start + 0xD8",
+            "parent_end = unique_caller_pc + 4",
+            "unique_caller_pc - parent_start == 0x1E4",
+            "parent_end - owner->text_addr <=", "owner->text_size - 4",
+            "0x27BDFFC0", "0xAFB00030", "0x2403FFFF",
+            "0xAFBF0038", "0xAFB10034", "0x90820018",
+            "0x1440002E", "0x00808021", "0x94820012",
+            "0x30420001", "0x1440002A", "0x0E241B07",
+            "0xAE2364A0", "jal_matches == 1", "jump_matches == 0",
+            "_lw(parent_start +", "_lw(unique_caller_pc + 4)",
+            "parent_rt == 4", "parent_rd == 4",
+            "[paf-parent-a0-def]", "load ? parent_rs : 0",
+            "load ? (short)(parent_instruction &",
+            "[paf-parent-control]", "likely=%d",
+            "for (phase = 0; phase < 2; phase++)",
+            "phase == 0", "phase == 1",
+            "zeroCtrlMipsJumpTarget(", "zeroCtrlMipsBranchTarget(",
+            "[paf-parent-frame-candidate]",
+            "status=ambiguous a0_defs=%u"):
+        if token not in caller_ra:
+            fail("PAF parent A0 diagnostic lacks " + token)
+    if any(label in assembly for label in ("[paf-parent-a0]",
+            "[paf-parent-a0-def]", "[paf-parent-control]",
+            "[paf-parent-frame-candidate]", "[paf-parent-a0-reaching]")):
+        fail("PAF parent A0 diagnostic leaked into assembly helpers")
     sony_diag_start = writer.find("if (slide_diag.sony_start_trace.enabled)")
     bsman_diag_start = writer.find(
         "if (slide_diag.bsman.enabled || slide_diag.bsman.activation_enabled)",
@@ -426,6 +1034,29 @@ def check_sources(root):
     if any(token in localization_leaves for token in
             ("$gp", "jal ", "jalr", "sceIo", "Alloc", "malloc")):
         fail("activation localization leaves use gp, calls, I/O, or allocation")
+    activation_leaf = assembly[activation_start:activation_end]
+    for scalar in ("zeroCtrlSlideActivationCallerRAFirst",
+            "zeroCtrlSlideActivationCallerRALast",
+            "zeroCtrlSlideActivationCallerRAChanges"):
+        if assembly.count(scalar + ": .space 4") != 1:
+            fail("activation caller RA lacks exactly one BSS scalar " + scalar)
+        if scalar not in activation_leaf:
+            fail("activation entry does not record " + scalar)
+    if activation_leaf.find("zeroCtrlSlideActivationCallerRAFirst") > \
+            activation_leaf.find("zeroCtrlSlideActivationHits") or \
+            activation_leaf.find("zeroCtrlSlideActivationCallerRAFirst") > \
+            activation_leaf.find("addiu   $sp, $sp, -32"):
+        fail("activation caller RA is not captured before existing entry work")
+    if any(token in activation_leaf for token in ("lw      $ra", "move    $ra",
+            "addu    $ra", "addiu   $ra")) or \
+            "sw      $ra, %lo(zeroCtrlSlideActivationCallerRAFirst)" not in \
+                activation_leaf or \
+            "sw      $ra, %lo(zeroCtrlSlideActivationCallerRALast)" not in \
+                activation_leaf:
+        fail("activation caller RA capture modifies RA or misses first/last")
+    if "addiu   $sp, $sp, -32" not in activation_leaf or \
+            "sw      $s1, 4($sp)" not in activation_leaf:
+        fail("activation caller RA capture changed Sony prologue reproduction")
     return_leaf = assembly[return_start:return_end]
     natural_result_store = return_leaf.find(
         "sw      $v0, %lo(zeroCtrlPostBSManNaturalResult)")
@@ -619,9 +1250,9 @@ def check_sources(root):
         if post_paf_source.count(
                 "sw      $v0, %lo(" + result_symbol + ")($t0)") != 1:
             fail("post-BSMan PAF return trace lacks exact store to " + result_symbol)
-    fast_poll = kernel[kernel.find(
-        "if (slide_diag.bsman.activation_enabled)"):kernel.find(
-            "#undef WRITE_LATE_FLAG")]
+    fast_poll_start = kernel.find("if (slide_diag.topmenu_validation)")
+    fast_poll_end = kernel.find("#undef WRITE_LATE_FLAG", fast_poll_start)
+    fast_poll = kernel[fast_poll_start:fast_poll_end]
     if "zeroCtrlDiagnosticsMemory" in fast_poll or \
             "zeroCtrlDiagnosticsCapturePartitions" in fast_poll:
         fail("activation fast-poll path performs a memory query")
@@ -1217,10 +1848,11 @@ def check_sources(root):
         kernel.find("zeroCtrlDiagnosticsInit", kernel.find(
             "post_vsh_compat_enabled ="))]
     for gate in ("slide_diag.bsman.activation_enabled",
-            "slide_diag.bsman.state_zero_15to14_compat_enabled",
             'strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0'):
         if gate not in t31_gate:
             fail("T31 impose compatibility gating lacks " + gate)
+    if "state_zero_15to14_compat_enabled" in t31_gate:
+        fail("T31 impose compatibility still depends on the T30 experiment")
     if "[vsh-impose-param-8000000d-compat]" not in writer:
         fail("T31 deferred impose diagnostic is missing")
     for field in ("post_vsh_argument_addr", "post_vsh_compat_mode_addr",
@@ -1289,7 +1921,396 @@ def check_sources(root):
         if ("CHECK_POST_SCALAR(" + field + ")") not in kernel:
             fail("T33 registration does not range-validate " + field)
     if "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header:
-        fail("T39 registration ABI is not exactly 1012 bytes")
+        fail("legacy registration ABI is not exactly 1012 bytes")
+    # T40 is one default-disabled, all-or-none, observation-only bundle.
+    if "PSP1000ActivationWideTrace = Disabled" not in sample_config or \
+            '"PSP1000ActivationWideTrace", "Disabled"' not in kernel:
+        fail("T40 wide activation trace is not default-disabled")
+    caller_register_start = kernel.find("void zeroCtrlRegisterActivationCallerRA(")
+    caller_register_end = kernel.find("void zeroCtrlRecordVshSlideTarget(",
+            caller_register_start)
+    caller_register = kernel[caller_register_start:caller_register_end]
+    for token in ("bsman->activation_enabled", "bsman->registered",
+            'sceKernelFindModuleByName("ZeroVSH_Patcher_User")',
+            "((unsigned int)helper & 3) != 0",
+            "(unsigned int)helper < 0x88000000",
+            "(unsigned int)helper >= 0x8C000000",
+            "helper->text_addr == 0", "helper->text_size == 0",
+            "helper->nsegment == 0", "helper->nsegment > 4",
+            "(address[index] & 3) != 0",
+            "zeroCtrlVshModuleRangeValid(helper, address[index], 4)",
+            "for (index = 0; index < 3; index++)",
+            "bsman->activation_caller_ra_validation = 1",
+            "_sw(0, address[index])",
+            "sceKernelDcacheWritebackInvalidateRange((const void *)address[index], 4)",
+            "bsman->activation_caller_ra_registered = 1"):
+        if token not in caller_register:
+            fail("activation caller RA registration lacks " + token)
+    validation = caller_register.find("zeroCtrlVshModuleRangeValid")
+    initialization = caller_register.find("_sw(0, address[index])")
+    registered = caller_register.find(
+            "bsman->activation_caller_ra_registered = 1")
+    if caller_register_start < 0 or not 0 <= validation < initialization < registered or \
+            "sceKernelIcache" in caller_register or \
+            "activation_addr" in caller_register:
+        fail("activation caller RA registration ordering patches code or is unsafe")
+    if "PSP_EXPORT_FUNC_NID(zeroCtrlRegisterActivationCallerRA, 0x1337357E)" \
+            not in kernel_exports or \
+            "STUB_FUNC 0x1337357E, zeroCtrlRegisterActivationCallerRA" \
+            not in user_imports:
+        fail("activation caller RA registration import/export is missing")
+    caller_user_registration = user[user.find(
+        "zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);"):
+        user.find("sctrlHENSetStartModuleHandler(OnModuleStart)")]
+    for token in ("zeroCtrlRegisterActivationCallerRA(",
+            "&zeroCtrlSlideActivationCallerRAFirst",
+            "&zeroCtrlSlideActivationCallerRALast",
+            "&zeroCtrlSlideActivationCallerRAChanges"):
+        if token not in caller_user_registration:
+            fail("activation caller RA user registration lacks " + token)
+    if "scalar_addr[54]" not in bsman_header or \
+            "leaf_addr[11]" not in bsman_header or \
+            "sizeof(ZeroCtrlActivationWideRegistration) == 304" not in bsman_header:
+        fail("optional T40 registration fields are incomplete")
+    for token in ("copied.leaf_addr[wide_index]",
+            "copied.scalar_addr[wide_index], 4",
+            "zeroCtrlVshModuleRangeValid(helper,\n"
+            "                        bsman->activation_wide_leaf_addr[wide_index]",
+            "bsman->activation_wide_validation = 1",
+            "bsman->activation_wide_install = 1",
+            "bsman->activation_wide_cache_sync = 1"):
+        if token not in kernel:
+            fail("T40 registration/transaction lacks " + token)
+    legacy_register = kernel[kernel.find("void zeroCtrlRegisterBSManClosedShim("):
+            kernel.find("int zeroCtrlRegisterActivationWide(")]
+    optional_register = kernel[kernel.find("int zeroCtrlRegisterActivationWide("):
+            kernel.find("void zeroCtrlRecordVshSlideTarget(")]
+    if "ZeroCtrlBSManClosedRegistration copied;" not in legacy_register or \
+            "activation_wide" in legacy_register:
+        fail("disabled T40 still changes or can block legacy registration")
+    if "if (!registration) return bsman->activation_wide_enabled;" not in \
+            optional_register or \
+            optional_register.find("if (!registration)") > optional_register.find("memcpy("):
+        fail("optional T40 registration does not gate before descriptor copying")
+    legacy_call = user.find("zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);")
+    t40_query = user.find("if (zeroCtrlRegisterActivationWide(NULL))")
+    t40_population = user.find("activationWideRegistration.leaf_addr[0]")
+    handler_install = user.find("sctrlHENSetStartModuleHandler(OnModuleStart)", t40_population)
+    if min(legacy_call, t40_query, t40_population, handler_install) < 0 or not \
+            legacy_call < t40_query < t40_population < handler_install:
+        fail("user T40 population is not optional and after legacy registration")
+    if "PSP_EXPORT_FUNC_NID(zeroCtrlRegisterActivationWide, 0x1337357D)" not in \
+            kernel_exports or \
+            "STUB_FUNC 0x1337357D, zeroCtrlRegisterActivationWide" not in user_imports:
+        fail("optional T40 registration export/import is missing")
+    if "zeroCtrlTextRangeValid" in kernel or "bsman->helper" in kernel:
+        fail("T40 uses an invented helper range API or evidence member")
+    if "static const unsigned int offset[7]" in kernel or \
+            "static const unsigned int offset[8]" in kernel:
+        fail("masked PAF offset arrays shadow the installer's offset local")
+    t40_initialize = kernel.find(
+            "for (wide_index = 0; wide_index < 54; wide_index++)\n"
+            "                _sw(0, bsman->activation_wide_scalar_addr[wide_index]);")
+    t40_scalar_sync = kernel.find(
+            "/* Routing and counters must be coherent before any owner is live. */",
+            t40_initialize)
+    t40_patch_write = kernel.find(
+            "_sw(bsman->activation_wide_replacement[wide_index]",
+            t40_scalar_sync)
+    t40_code_sync = kernel.find(
+            "sceKernelIcacheInvalidateRange(\n"
+            "                        (const void *)(bsman->activation_addr +\n"
+            "                            wide_offset[wide_index]), 4);",
+            t40_patch_write)
+    t40_install_flag = kernel.find("bsman->activation_wide_install = 1;",
+            t40_code_sync)
+    t40_cache_flag = kernel.find("bsman->activation_wide_cache_sync = 1;",
+            t40_install_flag)
+    if min(t40_initialize, t40_scalar_sync, t40_patch_write, t40_code_sync,
+            t40_install_flag, t40_cache_flag) < 0 or not (
+            t40_initialize < t40_scalar_sync < t40_patch_write < t40_code_sync <
+            t40_install_flag < t40_cache_flag):
+        fail("T40 scalar initialization/cache and code commit ordering is unsafe")
+    scalar_sync = kernel[t40_scalar_sync:t40_patch_write]
+    if "for (wide_index = 0; wide_index < 54; wide_index++)" not in scalar_sync or \
+            "sceKernelDcacheWritebackInvalidateRange(" not in scalar_sync or \
+            "activation_wide_scalar_addr[\n                            wide_index], 4" not in scalar_sync or \
+            "sceKernelIcacheInvalidateRange" in scalar_sync:
+        fail("T40 does not D-cache synchronize all 52 data scalars")
+    code_commit = kernel[t40_patch_write:t40_install_flag]
+    if "for (wide_index = 0; wide_index < 6; wide_index++)" not in \
+            code_commit or "sceKernelDcacheWritebackInvalidateRange(" not in \
+            code_commit or "sceKernelIcacheInvalidateRange(" not in code_commit:
+        fail("T40 does not synchronize all six code patches before success")
+    t40_validation = kernel[kernel.find("if (bsman->activation_wide_enabled) {",
+            kernel.find("static void zeroCtrlInstallBSManClosedShim")):
+            t40_initialize]
+    for token in ("bsman->activation_wide_pre_original =",
+            "_lw(bsman->activation_addr + 0x1E8)",
+            "(bsman->activation_wide_pre_original >> 26) != 3",
+            "bsman->activation_addr - 0x9304 + 0x2A168",
+            "_lw(bsman->activation_addr + 0x1EC) != 0",
+            "bsman->activation_wide_pre_replacement = 0x0C000000",
+            "bsman->activation_wide_leaf_addr[10]"):
+        if token not in t40_validation:
+            fail("T40 +0x1E8 entry validation lacks " + token)
+    pre_scalar_init = kernel.find(
+            "_sw(bsman->activation_addr - 0x9304 + 0x2A168,\n"
+            "                    bsman->activation_wide_scalar_addr[52]);",
+            t40_initialize)
+    pre_patch = kernel.find("_sw(bsman->activation_wide_pre_replacement,",
+            t40_scalar_sync)
+    pre_code_sync = kernel.find(
+            "(const void *)(bsman->activation_addr + 0x1E8), 4);",
+            pre_patch)
+    if min(pre_scalar_init, pre_patch, pre_code_sync) < 0 or not (
+            pre_scalar_init < t40_scalar_sync < pre_patch < pre_code_sync <
+            t40_install_flag):
+        fail("T40 +0x1E8 scalar/patch cache ordering is unsafe")
+    entry_helper = assembly[assembly.find("zeroCtrlWide02374143Entry:"):
+            assembly.find("zeroCtrlWide02374143EntryEnd:")]
+    for token in ("sw $t0, 0($sp)", "sw $t1, 4($sp)",
+            "zeroCtrlWide02374143Hits", "zeroCtrlWide02374143Target",
+            "jr $t0", "lw $t0, -8($sp)"):
+        if token not in entry_helper:
+            fail("T40 +0x1E8 entry helper lacks " + token)
+    if any(token in entry_helper for token in ("$ra", "$v0", "$a0", "$a1",
+            "$a2", "$a3", "$s0", "jal", "sce", "malloc")):
+        fail("T40 +0x1E8 entry helper changes live state or performs a call/I/O")
+    for word in ("0x1040000C", "0x1040FFF2", "0x26100001",
+            "0x8FBF001C", "0x00002021"):
+        if word not in kernel:
+            fail("T40 Sony fingerprint lacks " + word)
+    for offset in ("0x1F8", "0x200", "0x20C", "0x214", "0x21C", "0x22C"):
+        if kernel.count(offset) < 2:
+            fail("T40 lacks unique validated patch owner for " + offset)
+    for helper in ("zeroCtrlActivationWideCompareTrace", "zeroCtrlWide662Call",
+            "zeroCtrlWide440Call", "zeroCtrlWideFCFCall",
+            "zeroCtrlActivationWideLoopTrace", "zeroCtrlWide090Call"):
+        if helper not in assembly or helper not in user:
+            fail("T40 helper is not declared/registered: " + helper)
+    if "WIDE_DECISION" not in assembly or "WIDE_CALL" not in assembly or \
+            "jal " in assembly[assembly.find("/* T40 wide activation diagnostics"):] or \
+            "zeroCtrlMipsBranchTarget" not in kernel:
+        fail("T40 transparency or branch-target validation regressed")
+    for label in ("[activation-wide-compare]", "662922b9", "440665db",
+            "fcf265d8", "[activation-wide-loop]", "090ccb3f"):
+        if label not in kernel:
+            fail("T40 deferred diagnostic missing " + label)
+    writer_start = kernel.find("static int zeroCtrlWriteSlideDiagnostics(")
+    writer_end = kernel.find("static void zeroCtrlCreateSlideDiagnosticsThread(",
+            writer_start)
+    writer = kernel[writer_start:writer_end]
+    early_start = writer.find("if (slide_diag.bsman.activation_wide_enabled)")
+    early_end = writer.find("if (slide_diag.sony_start_trace.enabled)",
+            early_start)
+    early = writer[early_start:early_end]
+    if early_start < 0 or early_end < 0 or \
+            "[activation-wide-early]" not in early:
+        fail("T40 compact early diagnostic is missing from the writer thread")
+    for token in ("registered=%d validation=%d", "install=%d cache_sync=%d",
+            "compare=%u/%u/%u", "662=%u/%u/%u", "440=%u/%u/%u",
+            "fcf=%u/%u/%u", "loop=%u/%u/%u", "090=%u/%u/%u",
+            "pre02374143=%u", "activation_wide_scalar_addr[53]",
+            "scalar_index[18]", "zeroCtrlReadHelperCounter(",
+            "memcpy(observed_wide_early, current, sizeof(current))"):
+        if token not in early:
+            fail("T40 early snapshot lacks " + token)
+    if any(token in early for token in ("_sw(", "sceKernelDcache",
+            "sceKernelIcache", "activation_wide_replacement")):
+        fail("T40 early snapshot modifies hot-path or patch state")
+    for later in ("[state-zero-vcall-resolve]", "[topmenu-state]",
+            "post_bsman_counts="):
+        if writer.find("[activation-wide-early]") > writer.find(later):
+            fail("T40 early snapshot is ordered after verbose " + later)
+    if "[activation-wide-early]" in assembly:
+        fail("T40 early file output leaked into assembly helpers")
+    if "[activation-prewide-early]" not in early:
+        fail("early T37/T38/T39 evidence is missing from the writer thread")
+    for token in ("t37=%u/%u/0x%08X", "t38=%u/%u/0x%08X",
+            "t39=%u/%u/0x%08X",
+            "post_collection_paf_fcf265d8_hits_addr",
+            "post_collection_paf_fcf265d8_nonzero_hits_addr",
+            "post_collection_paf_fcf265d8_natural_result_addr",
+            "masked_paf_c59fc3d0_hits_addr",
+            "masked_paf_c59fc3d0_nonzero_hits_addr",
+            "masked_paf_c59fc3d0_decision_value_addr",
+            "masked_paf_c59fc3d0_second_hits_addr",
+            "masked_paf_c59fc3d0_second_nonzero_hits_addr",
+            "masked_paf_c59fc3d0_second_decision_value_addr",
+            "observed_prewide_early[9]", "observed_prewide_early_ready"):
+        if token not in writer:
+            fail("early T37/T38/T39 snapshot lacks " + token)
+    prewide_start = early.find("if (bsman->registered)")
+    prewide_end = early.find("if (slide_diag.sony_start_trace.enabled)",
+            prewide_start)
+    prewide = early[prewide_start:prewide_end]
+    if prewide_start < 0 or any(token in prewide for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache",
+            "activation_wide_replacement")):
+        fail("early T37/T38/T39 snapshot modifies patch or cache state")
+    if "[activation-prewide-early]" in assembly:
+        fail("early T37/T38/T39 output leaked into assembly helpers")
+    if "[activation-collection-early]" not in early:
+        fail("early T33-T36 collection evidence is missing from the writer")
+    for token in ("enabled=%d", "t33=%u/%u/0x%08X",
+            "t34=%u/%u/0x%08X", "t35=%u/%u/0x%08X/0x%08X",
+            "t36=%u/%u/0x%08X/0x%08X",
+            "post_minus_one_vcall64_hits_addr",
+            "post_minus_one_vcall64_return_hits_addr",
+            "post_minus_one_vcall64_natural_result_addr",
+            "post_minus_one_vcall64_count_snapshot_addr",
+            "post_minus_one_vcall64_array_read_hits_addr",
+            "post_minus_one_vcall64_array_snapshot_addr",
+            "collection_paf_fcf265d8_hits_addr",
+            "collection_paf_fcf265d8_nonzero_hits_addr",
+            "collection_paf_fcf265d8_natural_result_addr",
+            "collection_paf_fcf265d8_last_item_addr",
+            "collection_paf_9a285882_hits_addr",
+            "collection_paf_9a285882_nonzero_hits_addr",
+            "collection_paf_9a285882_natural_result_addr",
+            "collection_paf_9a285882_last_item_addr",
+            "observed_collection_early[14]",
+            "observed_collection_early_ready",
+            "observed_collection_enabled"):
+        if token not in writer:
+            fail("early T33-T36 collection snapshot lacks " + token)
+    collection_start = early.find("unsigned int collection[14]")
+    collection = early[collection_start:]
+    if collection_start < 0 or any(token in collection for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache",
+            "activation_wide_replacement")):
+        fail("early T33-T36 collection snapshot modifies patch/cache state")
+    for later in ("[state-zero-vcall-resolve]", "[topmenu-state]",
+            "post_bsman_counts="):
+        if writer.find("[activation-collection-early]") > writer.find(later):
+            fail("early T33-T36 collection snapshot follows verbose " + later)
+    if "[activation-collection-early]" in assembly:
+        fail("early T33-T36 collection output leaked into assembly helpers")
+    for label in ("[activation-post-early]", "[activation-post-early-call]"):
+        if label not in early:
+            fail("early post-BSMan snapshot is missing " + label)
+    for token in ("mask=0x%03X", "bs=%u/%u", "state=%u/%u/0x%08X",
+            "paf0=%u/%u/0x%08X", "paf1=%u/%u/0x%08X",
+            "vsh=%u/%u/arg:0x%08X/nat:0x%08X/",
+            "eff:0x%08X/sub:%u",
+            "t32=%u/%u/target:0x%08X/nat:0x%08X",
+            "post_path_mask_addr", "post_bs_counter_addr[0]",
+            "post_bs_counter_addr[1]", "post_state_counter_addr[0]",
+            "post_state_counter_addr[1]", "post_state_natural_value_addr",
+            "post_paf_entry_counter_addr[0]",
+            "post_paf_return_counter_addr[0]", "post_paf_result_addr[0]",
+            "post_paf_entry_counter_addr[1]",
+            "post_paf_return_counter_addr[1]", "post_paf_result_addr[1]",
+            "post_vsh_entry_hits_addr", "post_vsh_return_hits_addr",
+            "post_vsh_argument_addr", "post_vsh_natural_result_addr",
+            "post_vsh_effective_result_addr",
+            "post_vsh_substitution_hits_addr",
+            "post_impose_vcall_hits_addr",
+            "post_impose_vcall_return_hits_addr",
+            "post_impose_vcall_target_addr",
+            "post_impose_vcall_natural_result_addr",
+            "observed_post_early[22]", "observed_post_early_ready"):
+        if token not in writer:
+            fail("early post-BSMan snapshot lacks " + token)
+    post_early_start = early.find("unsigned int post[22]")
+    post_early = early[post_early_start:]
+    if post_early_start < 0 or any(token in post_early for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache",
+            "activation_wide_replacement")):
+        fail("early post-BSMan snapshot modifies patch/cache state")
+    for later in ("[state-zero-vcall-resolve]", "[topmenu-state]",
+            "post_bsman_counts="):
+        if writer.find("[activation-post-early]") > writer.find(later):
+            fail("early post-BSMan snapshot follows verbose " + later)
+    if "[activation-post-early]" in assembly or \
+            "[activation-post-early-call]" in assembly:
+        fail("early post-BSMan output leaked into assembly helpers")
+    gap_start = writer.find("unsigned int word_f0 = _lw(")
+    gap_end = writer.find("if (bsman->post_collection_paf_fcf265d8_enabled)",
+            gap_start)
+    gap = writer[gap_start:gap_end]
+    for token in ("bsman->activation_addr + 0xF0",
+            "bsman->activation_addr + 0xF4", "[post-paf0-gap]",
+            "word_f0=0x%08X", "word_f4=0x%08X", "opcode=0x%02X",
+            "conditional_branch", "zeroCtrlMipsBranchTarget(",
+            "branch_target=0x%08X", "target_offset=0x%08X"):
+        if token not in gap:
+            fail("read-only post-PAF0 gap diagnostic lacks " + token)
+    if gap_start < 0 or gap_end < 0 or any(token in gap for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache")):
+        fail("post-PAF0 gap diagnostic is not read-only")
+    if "[post-paf0-gap]" in assembly:
+        fail("post-PAF0 gap diagnostic leaked into assembly helpers")
+    exit_start = writer.find("static const unsigned int exit_offsets[18]")
+    exit_end = writer.find("if (bsman->post_collection_paf_fcf265d8_enabled)",
+            exit_start)
+    exit_window = writer[exit_start:exit_end]
+    for offset in range(0x234, 0x279, 4):
+        if "0x%03X" % offset not in exit_window:
+            fail("T40 exit window lacks static read offset 0x%03X" % offset)
+    for token in ("exit_words[exit_index] = _lw(bsman->activation_addr +",
+            "[t40-exit-window-%u]", "[t40-exit-control]",
+            "word=0x%08X", "opcode=0x%02X", "rs=%u", "rt=%u",
+            "zeroCtrlMipsJumpTarget(pc, word)",
+            "zeroCtrlMipsBranchTarget(pc, word)", "target=0x%08X",
+            "target_offset=0x%08X", "direct_jump || branch || register_jump"):
+        if token not in exit_window:
+            fail("read-only T40 exit-window diagnostic lacks " + token)
+    if exit_start < 0 or exit_end < 0 or any(token in exit_window for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache")):
+        fail("T40 exit-window diagnostic is not read-only")
+    for label in ("[t40-exit-window-", "[t40-exit-control]"):
+        if label in assembly:
+            fail("T40 exit-window output leaked into assembly helpers")
+    if ("_sw(bsman->activation_addr + 0x234,\n"
+            "                    bsman->activation_wide_scalar_addr[45]);") \
+            not in kernel:
+        fail("T40 090 wrapper resume is not activation+0x234")
+    natural_start = writer.find("static const unsigned int natural_offsets[26]")
+    natural_end = writer.find(
+            "if (bsman->post_collection_paf_fcf265d8_enabled)", natural_start)
+    natural_window = writer[natural_start:natural_end]
+    for offset in range(0x4C, 0xB1, 4):
+        if "0x%03X" % offset not in natural_window:
+            fail("natural +0x50 window lacks static read offset 0x%03X" % offset)
+    for token in ("natural_words[natural_index] = _lw(",
+            "[natural-50-window-%u]", "[natural-50-window-4]",
+            "[natural-50-control]", "word=0x%08X", "opcode=0x%02X",
+            "rs=%u", "rt=%u", "zeroCtrlMipsJumpTarget(pc, word)",
+            "zeroCtrlMipsBranchTarget(pc, word)", "target=0x%08X",
+            "target_offset=0x%08X", "direct_jump || branch || register_jump"):
+        if token not in natural_window:
+            fail("read-only natural +0x50 diagnostic lacks " + token)
+    if natural_start < 0 or natural_end < 0 or any(
+            token in natural_window for token in (
+                "_sw(", "sceKernelDcache", "sceKernelIcache")):
+        fail("natural +0x50 instruction diagnostic is not read-only")
+    for label in ("[natural-50-window-", "[natural-50-control]"):
+        if label in assembly:
+            fail("natural +0x50 diagnostic leaked into assembly helpers")
+    callers_start = writer.find(
+            'SceModule2 *slide = sceKernelFindModuleByName(\n'
+            '                                "slide_plugin_module")')
+    callers_end = writer.find(
+            "if (bsman->post_collection_paf_fcf265d8_enabled)", callers_start)
+    callers = writer[callers_start:callers_end]
+    for token in ("slide->text_addr", "slide->text_size",
+            "scan_offset + 8 <=", "word = _lw(pc)",
+            "(word >> 26) == 3", "(word >> 26) == 2",
+            "zeroCtrlMipsJumpTarget(pc, word) ==",
+            "bsman->activation_addr", "[activation-callers]",
+            "[activation-caller]", "[activation-jump]",
+            "delay=0x%08X", "_lw(pc + 4)", "return=0x%08X", "pc + 8"):
+        if token not in callers:
+            fail("read-only activation direct-caller scan lacks " + token)
+    if callers_start < 0 or callers_end < 0 or any(token in callers for token in (
+            "_sw(", "sceKernelDcache", "sceKernelIcache", "jalr")):
+        fail("activation direct-caller scan is not read-only/direct-only")
+    for label in ("[activation-callers]", "[activation-caller]",
+            "[activation-jump]"):
+        if label in assembly:
+            fail("activation caller-scan output leaked into assembly helpers")
     if "PSP1000PostVCall64CollectionTrace = Disabled" not in sample_config or \
             '"PSP1000PostVCall64CollectionTrace", "Disabled"' not in kernel:
         fail("T34 collection trace is not default-disabled")
@@ -1493,7 +2514,7 @@ def check_sources(root):
                 "[post-collection-paf-fcf265d8]"):
         fail("T37.1 deferred failure diagnostic is not outside success-only tracing")
     if "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header:
-        fail("T39 registration ABI is not exactly 1012 bytes")
+        fail("legacy registration ABI is not exactly 1012 bytes")
     if "post_collection_paf_fcf265d8_original[2] != 0x8C440DC4" in kernel:
         fail("T37.2 retains the invalid literal relocated LW comparison")
     t372 = bsman_install[bsman_install.rfind(
@@ -1872,6 +2893,11 @@ def check_sources(root):
         if "SONY_START_GUARD_" + reason not in installer:
             fail("Sony installer lost initial guard reason " + reason)
     for stub, counter in zip(STUBS, COUNTERS):
+        if stub == "zeroCtrlTrigger58D4":
+            if counter not in assembly or "zeroCtrlTrigger58D4Request" not in \
+                    assembly or "zeroCtrlTrigger58D4OriginalTarget" not in assembly:
+                fail("functional 58D4 trigger lacks counter/request/target state")
+            continue
         invocation = "CREATE_TRIGGER_STUB " + stub + ", " + counter
         if invocation not in assembly:
             fail(stub + " does not reference its dedicated counter")
@@ -3071,11 +4097,43 @@ def check_stub_object(stub_object):
             if not relocation_bound_to_instruction(t39, counter, op):
                 fail("T39 tracer does not bind t1 counter operation")
     for symbol, counter in zip(STUBS, COUNTERS):
+        if symbol == "zeroCtrlTrigger58D4":
+            continue
         body = function_body(disassembly, symbol)
-        if not re.search(r"R_MIPS_HI16\s+" + counter + r"\b", body):
-            fail(symbol + " has no HI16 relocation to its dedicated counter")
-        if len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
-            fail(symbol + " does not have two LO16 counter relocations")
+        if len(re.findall(r"R_MIPS_HI16\s+" + counter + r"\b", body)) != 1 or \
+                len(re.findall(r"R_MIPS_LO16\s+" + counter + r"\b", body)) != 2:
+            fail(symbol + " has wrong simple-trigger counter relocations")
+        for operation in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+            if not relocation_bound_to_instruction(body, counter, operation):
+                fail(symbol + " does not bind its simple counter " + operation)
+    trigger58 = function_body(disassembly, "zeroCtrlTrigger58D4")
+    for scalar, hi_count, lo_count in (
+            ("zeroCtrlTrigger58D4FunctionalMode", 1, 1),
+            ("zeroCtrlTrigger58D4Request", 1, 2),
+            ("zeroCtrlTrigger58D4OriginalTarget", 1, 1),
+            ("zeroCtrlTrigger58D4Hits", 2, 4)):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b",
+                trigger58)) != hi_count or len(re.findall(
+                r"R_MIPS_LO16\s+" + scalar + r"\b", trigger58)) != lo_count:
+            fail("zeroCtrlTrigger58D4 has wrong relocations for " + scalar)
+    for scalar, operation in (
+            ("zeroCtrlTrigger58D4FunctionalMode", r"\blw\s+t1,"),
+            ("zeroCtrlTrigger58D4Request", r"\blw\s+t1,"),
+            ("zeroCtrlTrigger58D4Request", r"\bsw\s+zero,"),
+            ("zeroCtrlTrigger58D4OriginalTarget", r"\blw\s+t0,")):
+        if not relocation_bound_to_instruction(trigger58, scalar, operation):
+            fail("zeroCtrlTrigger58D4 does not bind " + scalar + " to " + operation)
+    for operation in (r"\blw\s+t1,", r"\bsw\s+t1,"):
+        if len(re.findall(operation + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlTrigger58D4Hits\b", trigger58)) != 2:
+            fail("zeroCtrlTrigger58D4 lacks two exact counter " + operation +
+                    " sequences")
+    if not re.search(r"\blw\s+t0,[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+            r"zeroCtrlTrigger58D4OriginalTarget\b[\s\S]*?\bjr\s+t0\b[\s\S]*?"
+            r"\bnop\b", trigger58):
+        fail("zeroCtrlTrigger58D4 natural target is not tail-jumped through t0")
+    if re.search(r"\b(?:k0|k1|sp|gp)\b|\bjalr?\b", trigger58):
+        fail("zeroCtrlTrigger58D4 uses reserved/stateful registers or nested calls")
     for symbol, _end, counter, result in T22_CONSUMER_WRAPPERS:
         body = function_body(disassembly, symbol)
         check_selective_consumer_semantics(body, symbol)

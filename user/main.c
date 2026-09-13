@@ -56,6 +56,8 @@ enum zeroCtrlSlideState {
 	ZERO_SLIDE_UNLOADED,
 };
 
+#define PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED 0
+
 
 typedef struct
 {
@@ -86,17 +88,27 @@ void zeroCtrlSetSlideConfig(const char *item, char *value);
 int zeroCtrlContrast2Hour(void);
 int zeroCtrlGetModel(void);
 int zeroCtrlIsPsp1000SlideExperimentEnabled(void);
+int zeroCtrlIsPsp1000SlideFunctionalEnabled(void);
 void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int text_size, unsigned int module_start_addr,
         unsigned int elf_entry_addr, unsigned int target,
-        unsigned int stub_58d4, unsigned int stub_13f6c,
+        unsigned int stub_58d4, unsigned int stub_58d4_end,
+        unsigned int stub_13f6c,
         unsigned int stub_14020, unsigned int counter_58d4,
         unsigned int counter_13f6c, unsigned int counter_14020,
-        unsigned int global_stub, unsigned int global_counter);
+        unsigned int global_stub, unsigned int global_counter,
+        unsigned int request_58d4, unsigned int original_target_58d4,
+        unsigned int functional_mode_58d4,
+        unsigned int runtime_request, unsigned int runtime_request_valid,
+        unsigned int runtime_request_called, unsigned int runtime_request_result);
 void zeroCtrlRegisterSonyStartTrace(
         const ZeroCtrlSonyStartTraceRegistration *registration);
 void zeroCtrlRegisterBSManClosedShim(
         const ZeroCtrlBSManClosedRegistration *registration);
+int zeroCtrlRegisterActivationWide(
+        const ZeroCtrlActivationWideRegistration *registration);
+void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
+        unsigned int last_addr, unsigned int changes_addr);
 void zeroCtrlSetLEDState(void);
 void zeroCtrlSetBrightness(void);
 void zeroCtrlSetClockSpeed(void);
@@ -104,6 +116,150 @@ void zeroCtrlSetClockSpeed(void);
 int model;
 static ZeroCtrlSonyStartTraceRegistration sonyStartTraceRegistration;
 static ZeroCtrlBSManClosedRegistration bsmanClosedRegistration;
+static ZeroCtrlActivationWideRegistration activationWideRegistration;
+static volatile unsigned int psp1000RuntimeRequest;
+static volatile unsigned int psp1000RuntimeRequestValid;
+static volatile unsigned int psp1000RuntimeRequestCalled;
+static volatile unsigned int psp1000RuntimeRequestResult;
+static volatile unsigned int psp1000RuntimeRequestTarget;
+
+typedef int (*Psp1000RuntimeRequestFn)(void);
+
+static int zeroCtrlUserModuleRangeValid(SceModule2 *mod, unsigned int address,
+        unsigned int size) {
+    unsigned int i;
+
+    if (!mod || !address || !size || mod->nsegment == 0 || mod->nsegment > 4)
+        return 0;
+    for (i = 0; i < mod->nsegment; i++) {
+        unsigned int start = mod->segmentaddr[i];
+        unsigned int segment_size = mod->segmentsize[i];
+        if (segment_size >= size && address >= start &&
+                address - start <= segment_size - size)
+            return 1;
+    }
+    return 0;
+}
+
+static unsigned int zeroCtrlUserMipsJumpTarget(unsigned int pc,
+        unsigned int instruction) {
+    return ((pc + 4) & 0xF0000000) |
+            ((instruction & 0x03FFFFFF) << 2);
+}
+
+static unsigned int zeroCtrlUserMipsBranchTarget(unsigned int pc,
+        unsigned int instruction) {
+    return pc + 4 + ((int)(short)(instruction & 0xFFFF) << 2);
+}
+
+static int zeroCtrlValidatePsp1000RuntimeRequest(SceModule2 *mod,
+        unsigned int original_58d4) {
+    static const unsigned int epilogue[] = {
+        0x8FBF007C, 0x8FB20078, 0x8FB10074, 0x8FB00070,
+        0x03E00008, 0x27BD0080
+    };
+    unsigned int text;
+    unsigned int target;
+    unsigned int expected_pointer;
+    unsigned int decoded_pointer;
+    unsigned int upper;
+    int displacement;
+    unsigned int word_57b8;
+    unsigned int word_57bc;
+    unsigned int word_57d0;
+    unsigned int word_58dc;
+    unsigned int word_58f0;
+    unsigned int word_58f8;
+    unsigned int i;
+
+    psp1000RuntimeRequestValid = 0;
+    psp1000RuntimeRequestTarget = 0;
+    if (model != 0 || devkit != 0x06060110 ||
+            !zeroCtrlIsPsp1000SlideFunctionalEnabled() || !mod ||
+            mod->text_addr == 0 || mod->text_size <= 0x5898 ||
+            mod->text_addr > 0xFFFFFFFFU - mod->text_size)
+        return 0;
+    text = mod->text_addr;
+    target = text + 0x57B0;
+    if (text > 0xFFFFFFFFU - 0x42FF8) return 0;
+    expected_pointer = text + 0x42FF8;
+    if (!zeroCtrlUserModuleRangeValid(mod, target, 0xEC) ||
+            !zeroCtrlUserModuleRangeValid(mod, text + 0xF7C4, 4) ||
+            !zeroCtrlUserModuleRangeValid(mod, text + 0x58D4, 0x28))
+        return 0;
+    word_58dc = _lw(text + 0x58DC);
+    if ((original_58d4 >> 26) != 3 ||
+            zeroCtrlUserMipsJumpTarget(text + 0x58D4, original_58d4) !=
+                text + 0x6F84 ||
+            _lw(text + 0x58D8) != 0 ||
+            word_58dc != 0x14400004 ||
+            zeroCtrlUserMipsBranchTarget(text + 0x58DC,
+                word_58dc) != text + 0x58F0 ||
+            _lw(text + 0x58E0) != 0 || _lw(text + 0x58F4) != 0)
+        return 0;
+    word_58f0 = _lw(text + 0x58F0);
+    word_58f8 = _lw(text + 0x58F8);
+    if ((word_58f0 >> 26) != 3 ||
+            zeroCtrlUserMipsJumpTarget(text + 0x58F0, word_58f0) != target ||
+            (word_58f8 >> 26) != 2 ||
+            zeroCtrlUserMipsJumpTarget(text + 0x58F8, word_58f8) !=
+                text + 0x58E8)
+        return 0;
+    word_57b8 = _lw(text + 0x57B8);
+    word_57bc = _lw(text + 0x57BC);
+    upper = (word_57b8 & 0xFFFF) << 16;
+    displacement = (short)(word_57bc & 0xFFFF);
+    decoded_pointer = upper + displacement;
+    if (_lw(text + 0x57B0) != 0x27BDFF80 ||
+            _lw(text + 0x57B4) != 0xAFB00070 ||
+            (word_57b8 >> 26) != 0x0F ||
+            ((word_57b8 >> 21) & 0x1F) != 0 ||
+            ((word_57b8 >> 16) & 0x1F) != 16 ||
+            (word_57bc >> 26) != 0x09 ||
+            ((word_57bc >> 21) & 0x1F) != 16 ||
+            ((word_57bc >> 16) & 0x1F) != 16 ||
+            decoded_pointer != expected_pointer ||
+            !zeroCtrlUserModuleRangeValid(mod, decoded_pointer, 4) ||
+            _lw(text + 0x57C0) != 0x02002021 ||
+            _lw(text + 0x57C4) != 0xAFBF007C ||
+            _lw(text + 0x57C8) != 0xAFB20078 ||
+            _lw(text + 0x57CC) != 0x27B2000C)
+        return 0;
+    word_57d0 = _lw(text + 0x57D0);
+    if ((word_57d0 >> 26) != 3 ||
+            zeroCtrlUserMipsJumpTarget(text + 0x57D0, word_57d0) !=
+                text + 0xF7C4)
+        return 0;
+    for (i = 0; i < sizeof(epilogue) / sizeof(epilogue[0]); i++)
+        if (_lw(text + 0x5884 + i * 4) != epilogue[i]) return 0;
+
+    psp1000RuntimeRequestTarget = target;
+    psp1000RuntimeRequestValid = 1;
+    return 1;
+}
+
+static int zeroCtrlPsp1000RuntimeRequestWorker(
+        SceSize args UNUSED, void *argp UNUSED) {
+    while (1) {
+        if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&
+                psp1000RuntimeRequestValid && psp1000RuntimeRequest) {
+            Psp1000RuntimeRequestFn request_function;
+            psp1000RuntimeRequest = 0;
+            psp1000RuntimeRequestCalled++;
+            request_function = (Psp1000RuntimeRequestFn)
+                    psp1000RuntimeRequestTarget;
+            psp1000RuntimeRequestResult = request_function();
+        }
+        sceKernelDelayThread(20000);
+    }
+}
+
+static void zeroCtrlCreatePsp1000RuntimeRequestWorker(void) {
+    SceUID thid = sceKernelCreateThread("zeroctrl_vsh_request",
+            zeroCtrlPsp1000RuntimeRequestWorker, 0x20, 0x4000, 0, NULL);
+    if (thid >= 0 && sceKernelStartThread(thid, 0, NULL) < 0)
+        sceKernelDeleteThread(thid);
+}
 
 //OK
 void *zeroCtrlRedir2Stub(u32 address, void *stub, void *func) {
@@ -132,9 +288,13 @@ int zeroCtrlDummyFunc2(void) {
 	return 0;
 }
 extern int zeroCtrlTrigger58D4(void);
+extern void zeroCtrlTrigger58D4End(void);
 extern int zeroCtrlTrigger13F6C(void);
 extern int zeroCtrlTrigger14020(void);
 extern volatile unsigned int zeroCtrlTrigger58D4Hits;
+extern volatile unsigned int zeroCtrlTrigger58D4Request;
+extern volatile unsigned int zeroCtrlTrigger58D4OriginalTarget;
+extern volatile unsigned int zeroCtrlTrigger58D4FunctionalMode;
 extern volatile unsigned int zeroCtrlTrigger13F6CHits;
 extern volatile unsigned int zeroCtrlTrigger14020Hits;
 extern int zeroCtrlGlobalPredicate6F84True(void);
@@ -274,6 +434,37 @@ extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondHits;
 extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondNonzeroHits;
 extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondZeroResumeTarget;
 extern volatile unsigned int zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget;
+extern volatile unsigned int zeroCtrlSlideActivationCallerRAFirst;
+extern volatile unsigned int zeroCtrlSlideActivationCallerRALast;
+extern volatile unsigned int zeroCtrlSlideActivationCallerRAChanges;
+#define WIDE_HELPER_DECL(name) extern void name(void), name##End(void)
+WIDE_HELPER_DECL(zeroCtrlActivationWideCompareTrace);
+WIDE_HELPER_DECL(zeroCtrlWide662Call); WIDE_HELPER_DECL(zeroCtrlWide662Return);
+WIDE_HELPER_DECL(zeroCtrlWide440Call); WIDE_HELPER_DECL(zeroCtrlWide440Return);
+WIDE_HELPER_DECL(zeroCtrlWideFCFCall); WIDE_HELPER_DECL(zeroCtrlWideFCFReturn);
+WIDE_HELPER_DECL(zeroCtrlActivationWideLoopTrace);
+WIDE_HELPER_DECL(zeroCtrlWide090Call); WIDE_HELPER_DECL(zeroCtrlWide090Return);
+WIDE_HELPER_DECL(zeroCtrlWide02374143Entry);
+#undef WIDE_HELPER_DECL
+#define WIDE_SCALAR_DECL(name) extern volatile unsigned int name
+WIDE_SCALAR_DECL(zeroCtrlWideCompareHits); WIDE_SCALAR_DECL(zeroCtrlWideCompareZero);
+WIDE_SCALAR_DECL(zeroCtrlWideCompareNonzero); WIDE_SCALAR_DECL(zeroCtrlWideCompareFirst);
+WIDE_SCALAR_DECL(zeroCtrlWideCompareLast); WIDE_SCALAR_DECL(zeroCtrlWideCompareChanges);
+WIDE_SCALAR_DECL(zeroCtrlWideCompareZeroTarget); WIDE_SCALAR_DECL(zeroCtrlWideCompareNonzeroTarget);
+#define WIDE_CALL_DECL(tag) \
+ WIDE_SCALAR_DECL(zeroCtrlWide##tag##Target); WIDE_SCALAR_DECL(zeroCtrlWide##tag##RA); \
+ WIDE_SCALAR_DECL(zeroCtrlWide##tag##Resume); WIDE_SCALAR_DECL(zeroCtrlWide##tag##Hits); \
+ WIDE_SCALAR_DECL(zeroCtrlWide##tag##First); WIDE_SCALAR_DECL(zeroCtrlWide##tag##Last); \
+ WIDE_SCALAR_DECL(zeroCtrlWide##tag##Changes); WIDE_SCALAR_DECL(zeroCtrlWide##tag##Zero); \
+ WIDE_SCALAR_DECL(zeroCtrlWide##tag##Nonzero)
+WIDE_CALL_DECL(662); WIDE_CALL_DECL(440); WIDE_CALL_DECL(FCF); WIDE_CALL_DECL(090);
+WIDE_SCALAR_DECL(zeroCtrlWideLoopHits); WIDE_SCALAR_DECL(zeroCtrlWideLoopBack);
+WIDE_SCALAR_DECL(zeroCtrlWideLoopExit); WIDE_SCALAR_DECL(zeroCtrlWideLoopFirst);
+WIDE_SCALAR_DECL(zeroCtrlWideLoopLast); WIDE_SCALAR_DECL(zeroCtrlWideLoopChanges);
+WIDE_SCALAR_DECL(zeroCtrlWideLoopBackTarget); WIDE_SCALAR_DECL(zeroCtrlWideLoopExitTarget);
+WIDE_SCALAR_DECL(zeroCtrlWide02374143Target); WIDE_SCALAR_DECL(zeroCtrlWide02374143Hits);
+#undef WIDE_CALL_DECL
+#undef WIDE_SCALAR_DECL
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
 extern volatile unsigned int zeroCtrlPostVshEntryHits;
 extern void zeroCtrlStateZeroCompareTrace(void), zeroCtrlStateZeroCompareTraceEnd(void);
@@ -364,24 +555,39 @@ void InjectionEntryFuncInit(u32 *unk0) {
 	origFuncInit(unk0);
 }
 //OK
-int OnModuleStart(SceModule2 *mod) {       
+int OnModuleStart(SceModule2 *mod) {
 	int psp1000_experiment = zeroCtrlIsPsp1000SlideExperimentEnabled();
+	int psp1000_functional = zeroCtrlIsPsp1000SlideFunctionalEnabled();
 	if(((model != 0) && (model != 4)) || psp1000_experiment) {
 		if(strcmp(mod->modname, "vsh_module") == 0) {
 			if(psp1000_experiment) {
 				unsigned int target = mod->text_addr + 0x6F84;
 				if(devkit == 0x06060110) {
+					unsigned int original_58d4 =
+							mod->text_addr && mod->text_size >= 0x58D8 ?
+							_lw(mod->text_addr + 0x58D4) : 0;
+					if (psp1000_functional)
+						zeroCtrlValidatePsp1000RuntimeRequest(mod,
+								original_58d4);
 					zeroCtrlRecordVshSlideTarget(mod->modid, mod->text_addr,
 							mod->text_size, mod->module_start_func,
 							mod->entry_addr, target,
 							(unsigned int)zeroCtrlTrigger58D4,
+							(unsigned int)zeroCtrlTrigger58D4End,
 							(unsigned int)zeroCtrlTrigger13F6C,
 							(unsigned int)zeroCtrlTrigger14020,
 							(unsigned int)&zeroCtrlTrigger58D4Hits,
 							(unsigned int)&zeroCtrlTrigger13F6CHits,
 							(unsigned int)&zeroCtrlTrigger14020Hits,
 							(unsigned int)zeroCtrlGlobalPredicate6F84True,
-							(unsigned int)&zeroCtrlGlobalPredicate6F84Hits);
+							(unsigned int)&zeroCtrlGlobalPredicate6F84Hits,
+							(unsigned int)&zeroCtrlTrigger58D4Request,
+							(unsigned int)&zeroCtrlTrigger58D4OriginalTarget,
+							(unsigned int)&zeroCtrlTrigger58D4FunctionalMode,
+							(unsigned int)&psp1000RuntimeRequest,
+							(unsigned int)&psp1000RuntimeRequestValid,
+							(unsigned int)&psp1000RuntimeRequestCalled,
+							(unsigned int)&psp1000RuntimeRequestResult);
 				}
 			} else if(devkit == 0x06020010) {								
 				zeroCtrlRedir2Stub(mod->text_addr+0x6D78, slide_check_stub, zeroCtrlDummyFunc);			
@@ -404,9 +610,19 @@ int OnModuleStart(SceModule2 *mod) {
 		}  
 	}
 	
-	if(!psp1000_experiment && strcmp(mod->modname, "slide_plugin_module") == 0) {
-		MAKE_CALL(mod->text_addr+0xC990, zeroCtrlGetCurrentClockLocalTime);
-		origFuncInit = zeroCtrlRedir2Stub(mod->text_addr+0x9038, slide_start_stub, InjectionEntryFuncInit);		
+	if((!psp1000_experiment || psp1000_functional) &&
+			strcmp(mod->modname, "slide_plugin_module") == 0) {
+		int functional_valid = !psp1000_functional ||
+			(devkit == 0x06060110 && mod->text_addr != 0 &&
+			mod->text_size >= 0xC994 &&
+			(_lw(mod->text_addr + 0xC990) >> 26) == 3 &&
+			_lw(mod->text_addr + 0x9038) == 0x27BDFFC0 &&
+			_lw(mod->text_addr + 0x903C) == 0xAFB40030);
+		if (functional_valid) {
+			MAKE_CALL(mod->text_addr+0xC990, zeroCtrlGetCurrentClockLocalTime);
+			origFuncInit = zeroCtrlRedir2Stub(mod->text_addr+0x9038,
+					slide_start_stub, InjectionEntryFuncInit);
+		}
 	}
 	
        return previous ? previous(mod) : 0;
@@ -415,6 +631,15 @@ int OnModuleStart(SceModule2 *mod) {
 int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	model = zeroCtrlGetModel();
 	devkit = sceKernelDevkitVersion();
+	psp1000RuntimeRequest = 0;
+	psp1000RuntimeRequestValid = 0;
+	psp1000RuntimeRequestCalled = 0;
+	psp1000RuntimeRequestResult = 0xFFFFFFFF;
+	psp1000RuntimeRequestTarget = 0;
+	if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&
+			model == 0 && devkit == 0x06060110 &&
+			zeroCtrlIsPsp1000SlideFunctionalEnabled())
+		zeroCtrlCreatePsp1000RuntimeRequestWorker();
 	sonyStartTraceRegistration.entry_addr =
 			(u32)zeroCtrlSonyModuleStartEntryTrace;
 	sonyStartTraceRegistration.entry_end_addr =
@@ -798,6 +1023,89 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	bsmanClosedRegistration.masked_paf_c59fc3d0_second_zero_resume_target_addr = (u32)&zeroCtrlMaskedPafC59FC3D0SecondZeroResumeTarget;
 	bsmanClosedRegistration.masked_paf_c59fc3d0_second_nonzero_target_addr = (u32)&zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget;
 	zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);
+	zeroCtrlRegisterActivationCallerRA(
+			(u32)&zeroCtrlSlideActivationCallerRAFirst,
+			(u32)&zeroCtrlSlideActivationCallerRALast,
+			(u32)&zeroCtrlSlideActivationCallerRAChanges);
+	if (zeroCtrlRegisterActivationWide(NULL)) {
+		activationWideRegistration.leaf_addr[0] = (u32)zeroCtrlActivationWideCompareTrace;
+		activationWideRegistration.leaf_end_addr[0] = (u32)zeroCtrlActivationWideCompareTraceEnd;
+		activationWideRegistration.leaf_addr[1] = (u32)zeroCtrlWide662Call;
+		activationWideRegistration.leaf_end_addr[1] = (u32)zeroCtrlWide662CallEnd;
+		activationWideRegistration.leaf_addr[2] = (u32)zeroCtrlWide662Return;
+		activationWideRegistration.leaf_end_addr[2] = (u32)zeroCtrlWide662ReturnEnd;
+		activationWideRegistration.leaf_addr[3] = (u32)zeroCtrlWide440Call;
+		activationWideRegistration.leaf_end_addr[3] = (u32)zeroCtrlWide440CallEnd;
+		activationWideRegistration.leaf_addr[4] = (u32)zeroCtrlWide440Return;
+		activationWideRegistration.leaf_end_addr[4] = (u32)zeroCtrlWide440ReturnEnd;
+		activationWideRegistration.leaf_addr[5] = (u32)zeroCtrlWideFCFCall;
+		activationWideRegistration.leaf_end_addr[5] = (u32)zeroCtrlWideFCFCallEnd;
+		activationWideRegistration.leaf_addr[6] = (u32)zeroCtrlWideFCFReturn;
+		activationWideRegistration.leaf_end_addr[6] = (u32)zeroCtrlWideFCFReturnEnd;
+		activationWideRegistration.leaf_addr[7] = (u32)zeroCtrlActivationWideLoopTrace;
+		activationWideRegistration.leaf_end_addr[7] = (u32)zeroCtrlActivationWideLoopTraceEnd;
+		activationWideRegistration.leaf_addr[8] = (u32)zeroCtrlWide090Call;
+		activationWideRegistration.leaf_end_addr[8] = (u32)zeroCtrlWide090CallEnd;
+		activationWideRegistration.leaf_addr[9] = (u32)zeroCtrlWide090Return;
+		activationWideRegistration.leaf_end_addr[9] = (u32)zeroCtrlWide090ReturnEnd;
+		activationWideRegistration.leaf_addr[10] = (u32)zeroCtrlWide02374143Entry;
+		activationWideRegistration.leaf_end_addr[10] = (u32)zeroCtrlWide02374143EntryEnd;
+		activationWideRegistration.scalar_addr[0] = (u32)&zeroCtrlWideCompareHits;
+		activationWideRegistration.scalar_addr[1] = (u32)&zeroCtrlWideCompareZero;
+		activationWideRegistration.scalar_addr[2] = (u32)&zeroCtrlWideCompareNonzero;
+		activationWideRegistration.scalar_addr[3] = (u32)&zeroCtrlWideCompareFirst;
+		activationWideRegistration.scalar_addr[4] = (u32)&zeroCtrlWideCompareLast;
+		activationWideRegistration.scalar_addr[5] = (u32)&zeroCtrlWideCompareChanges;
+		activationWideRegistration.scalar_addr[6] = (u32)&zeroCtrlWideCompareZeroTarget;
+		activationWideRegistration.scalar_addr[7] = (u32)&zeroCtrlWideCompareNonzeroTarget;
+		activationWideRegistration.scalar_addr[8] = (u32)&zeroCtrlWide662Target;
+		activationWideRegistration.scalar_addr[9] = (u32)&zeroCtrlWide662RA;
+		activationWideRegistration.scalar_addr[10] = (u32)&zeroCtrlWide662Resume;
+		activationWideRegistration.scalar_addr[11] = (u32)&zeroCtrlWide662Hits;
+		activationWideRegistration.scalar_addr[12] = (u32)&zeroCtrlWide662First;
+		activationWideRegistration.scalar_addr[13] = (u32)&zeroCtrlWide662Last;
+		activationWideRegistration.scalar_addr[14] = (u32)&zeroCtrlWide662Changes;
+		activationWideRegistration.scalar_addr[15] = (u32)&zeroCtrlWide662Zero;
+		activationWideRegistration.scalar_addr[16] = (u32)&zeroCtrlWide662Nonzero;
+		activationWideRegistration.scalar_addr[17] = (u32)&zeroCtrlWide440Target;
+		activationWideRegistration.scalar_addr[18] = (u32)&zeroCtrlWide440RA;
+		activationWideRegistration.scalar_addr[19] = (u32)&zeroCtrlWide440Resume;
+		activationWideRegistration.scalar_addr[20] = (u32)&zeroCtrlWide440Hits;
+		activationWideRegistration.scalar_addr[21] = (u32)&zeroCtrlWide440First;
+		activationWideRegistration.scalar_addr[22] = (u32)&zeroCtrlWide440Last;
+		activationWideRegistration.scalar_addr[23] = (u32)&zeroCtrlWide440Changes;
+		activationWideRegistration.scalar_addr[24] = (u32)&zeroCtrlWide440Zero;
+		activationWideRegistration.scalar_addr[25] = (u32)&zeroCtrlWide440Nonzero;
+		activationWideRegistration.scalar_addr[26] = (u32)&zeroCtrlWideFCFTarget;
+		activationWideRegistration.scalar_addr[27] = (u32)&zeroCtrlWideFCFRA;
+		activationWideRegistration.scalar_addr[28] = (u32)&zeroCtrlWideFCFResume;
+		activationWideRegistration.scalar_addr[29] = (u32)&zeroCtrlWideFCFHits;
+		activationWideRegistration.scalar_addr[30] = (u32)&zeroCtrlWideFCFFirst;
+		activationWideRegistration.scalar_addr[31] = (u32)&zeroCtrlWideFCFLast;
+		activationWideRegistration.scalar_addr[32] = (u32)&zeroCtrlWideFCFChanges;
+		activationWideRegistration.scalar_addr[33] = (u32)&zeroCtrlWideFCFZero;
+		activationWideRegistration.scalar_addr[34] = (u32)&zeroCtrlWideFCFNonzero;
+		activationWideRegistration.scalar_addr[35] = (u32)&zeroCtrlWideLoopHits;
+		activationWideRegistration.scalar_addr[36] = (u32)&zeroCtrlWideLoopBack;
+		activationWideRegistration.scalar_addr[37] = (u32)&zeroCtrlWideLoopExit;
+		activationWideRegistration.scalar_addr[38] = (u32)&zeroCtrlWideLoopFirst;
+		activationWideRegistration.scalar_addr[39] = (u32)&zeroCtrlWideLoopLast;
+		activationWideRegistration.scalar_addr[40] = (u32)&zeroCtrlWideLoopChanges;
+		activationWideRegistration.scalar_addr[41] = (u32)&zeroCtrlWideLoopBackTarget;
+		activationWideRegistration.scalar_addr[42] = (u32)&zeroCtrlWideLoopExitTarget;
+		activationWideRegistration.scalar_addr[43] = (u32)&zeroCtrlWide090Target;
+		activationWideRegistration.scalar_addr[44] = (u32)&zeroCtrlWide090RA;
+		activationWideRegistration.scalar_addr[45] = (u32)&zeroCtrlWide090Resume;
+		activationWideRegistration.scalar_addr[46] = (u32)&zeroCtrlWide090Hits;
+		activationWideRegistration.scalar_addr[47] = (u32)&zeroCtrlWide090First;
+		activationWideRegistration.scalar_addr[48] = (u32)&zeroCtrlWide090Last;
+		activationWideRegistration.scalar_addr[49] = (u32)&zeroCtrlWide090Changes;
+		activationWideRegistration.scalar_addr[50] = (u32)&zeroCtrlWide090Zero;
+		activationWideRegistration.scalar_addr[51] = (u32)&zeroCtrlWide090Nonzero;
+		activationWideRegistration.scalar_addr[52] = (u32)&zeroCtrlWide02374143Target;
+		activationWideRegistration.scalar_addr[53] = (u32)&zeroCtrlWide02374143Hits;
+		zeroCtrlRegisterActivationWide(&activationWideRegistration);
+	}
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        
 	return 0;

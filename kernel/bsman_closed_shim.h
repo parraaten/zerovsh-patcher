@@ -252,4 +252,14 @@ typedef struct {
 typedef char ZeroCtrlBSManClosedRegistration_size[
     sizeof(ZeroCtrlBSManClosedRegistration) == 1012 ? 1 : -1];
 
+/* Optional T40 extension; never required by the mature T32-T39 registration. */
+typedef struct {
+    u32 leaf_addr[11];
+    u32 leaf_end_addr[11];
+    u32 scalar_addr[54];
+} ZeroCtrlActivationWideRegistration;
+
+typedef char ZeroCtrlActivationWideRegistration_size[
+    sizeof(ZeroCtrlActivationWideRegistration) == 304 ? 1 : -1];
+
 #endif
