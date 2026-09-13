@@ -498,6 +498,23 @@ def check_sources(root):
             "zeroCtrlRedir", "request_function()"):
         if forbidden in vsh3:
             fail("VSH +3F568 analysis is not read-only: " + forbidden)
+    destination_start = kernel.find(
+            "static int zeroCtrlMipsGprWriteDestination(")
+    destination_end = kernel.find(
+            "static void zeroCtrlWriteVsh3f568CallerWindow(",
+            destination_start)
+    destination_decoder = kernel[destination_start:destination_end]
+    sc_destination = "if (opcode == 0x38)\n        return (word >> 16) & 0x1F;"
+    for token in (sc_destination,
+            "(opcode >= 0x28 && opcode <= 0x2F)",
+            "(opcode >= 0x20 && opcode <= 0x26) || opcode == 0x30",
+            "return -1;"):
+        if token not in destination_decoder:
+            fail("conservative GPR destination decoder lacks " + token)
+    if destination_decoder.find(sc_destination) > destination_decoder.find(
+            "(opcode >= 0x28 && opcode <= 0x2F)") or \
+            "opcode <= 0x2F) || opcode == 0x38" in destination_decoder:
+        fail("SC is incorrectly classified as a no-destination store")
     a1_start = kernel.find("static void zeroCtrlWriteVsh3f568A1Flow(")
     a1_end = vsh3_start
     a1_flow = kernel[a1_start:a1_end]

@@ -3687,9 +3687,11 @@ static int zeroCtrlMipsGprWriteDestination(unsigned int word) {
         return -1;
     }
     if (opcode == 3) return 31;
+    if (opcode == 0x38)
+        return (word >> 16) & 0x1F;
     if (opcode == 1 || opcode == 2 || (opcode >= 4 && opcode <= 7) ||
             (opcode >= 0x14 && opcode <= 0x17) ||
-            (opcode >= 0x28 && opcode <= 0x2F) || opcode == 0x38)
+            (opcode >= 0x28 && opcode <= 0x2F))
         return 0;
     if ((opcode >= 8 && opcode <= 0x0F) ||
             (opcode >= 0x20 && opcode <= 0x26) || opcode == 0x30)
