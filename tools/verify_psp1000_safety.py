@@ -449,8 +449,6 @@ def check_sources(root):
     if vsh3_start < 0 or vsh3_end < 0:
         fail("VSH +3F568 implementation analysis is missing")
     vsh3 = kernel[vsh3_start:vsh3_end]
-    impl_flow_start = kernel.find("static void zeroCtrlWriteVsh3f568ImplFlow(")
-    impl_flow = kernel[impl_flow_start:vsh3_start]
     for token in ("model != 0", "sceKernelDevkitVersion() != 0x06060110",
             "!slide_diag.functional_enabled", "!slide_diag.minimal_memory_test",
             "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x3F568, 8)",
@@ -463,9 +461,8 @@ def check_sources(root):
             "((word_5708 >> 11) & 0x1F) != 4",
             "[vsh3f568-callsite] validation=1 caller=0x05704",
             "thunk_word = _lw(stub)", "(thunk_word >> 26) != 2",
-            "_lw(stub + 4) != 0",
+            "_lw(stub + 4) != 0", "[vsh3f568-thunk] validation=1",
             "resolved = zeroCtrlMipsJumpTarget(stub, thunk_word)",
-            "[vsh3f568-thunk] validation=1",
             "table_addr = (unsigned int)vsh->stub_top",
             "table_size = vsh->stub_size",
             "zeroCtrlVshModuleRangeValid(vsh, table_addr, table_size)",
@@ -475,35 +472,63 @@ def check_sources(root):
             "stubtable + i * 8 != stub", "matches != 1",
             "zeroCtrlCopyVshImportLibrary(vsh, entry->libname",
             "[vsh3f568-import] validation=1",
+            "import_nid != 0xA989A2C4", 'strcmp(import_library, "scePaf")',
+            'strcmp(owner->modname, "scePaf_Module")',
             "sceKernelFindModuleByAddress(resolved)",
             "zeroCtrlLoadedModuleMetadataValid(owner)",
-            "owner->nsegment", "owner->segmentaddr[i]",
-            "owner->segmentsize[i]", "impl_size > 0x100",
-            "zeroCtrlVshModuleRangeValid(owner, resolved, impl_size)",
-            "target_in_text = resolved >= owner->text_addr &&",
-            "resolved - owner->text_addr < owner->text_size",
-            "target_in_text=0 target_off=OUTSIDE_TEXT",
-            "[vsh3f568-owner] validation=1", "[vsh3f568-impl-map]",
-            "[vsh3f568-impl-cf]", "[vsh3f568-impl-frame]",
-            "zeroCtrlWriteVsh3f568ImplFlow(owner, resolved, impl_size",
-            "[vsh3f568-use]", "[vsh3f568-summary]"):
+            "zeroCtrlVshModuleRangeValid(owner, resolved, sizeof(wrapper))",
+            "zeroCtrlMipsMove(wrapper[1], 2, 4)",
+            "zeroCtrlMipsMove(wrapper[4], 6, 5)",
+            "zeroCtrlMipsMove(wrapper[7], 5, 2)",
+            "inner = zeroCtrlMipsJumpTarget(resolved + 0x18, wrapper[6])",
+            "context_slot = ((wrapper[0] & 0xFFFF) << 16) +",
+            "(int)(short)(wrapper[2] & 0xFFFF)",
+            "[paf-a989-wrapper] validation=1", "callback_reg=6",
+            "descriptor_reg=5 context_reg=4", "[paf-a989-context-slot]",
+            "zeroCtrlModuleContainingSegment(owner, inner",
+            "zeroCtrlVshModuleRangeValid(owner, inner, 4)",
+            "inner - owner->text_addr < owner->text_size",
+            "[paf-a989-inner] validation=1", "inner_remaining > 0x200",
+            "zeroCtrlWritePafA989Inner(owner, inner, inner_size",
+            "[paf-a989-summary] wrapper_valid=1 inner_valid=1"):
         if token not in vsh3:
-            fail("resolved VSH +3F568 analysis lacks " + token)
-    for token in ("tracked_a1 = 5", "[vsh3f568-impl-a1] status=STORED",
-            "[vsh3f568-impl-a0]",
+            fail("PAF A989 inner analysis lacks " + token)
+    inner_start = kernel.find("static void zeroCtrlWritePafA989Inner(")
+    inner_end = kernel.find("static void zeroCtrlWriteVsh3f568ImplFlow(", inner_start)
+    inner = kernel[inner_start:inner_end]
+    for token in ("unsigned int tracked_callback = 6", "map_size > 0x200",
+            "zeroCtrlVshModuleRangeValid(paf, target, map_size)",
+            "[paf-a989-inner-map]", "row += 0x20", "unsigned int words[8]",
+            '"J"', '"JAL"', '"JR"', '"JALR"', '"BEQ"', '"BNE"',
+            '"BLEZ"', '"BGTZ"', '"REGIMM"', '"BRANCH_LIKELY"',
+            '"STACK_ALLOC"', '"STACK_FREE"', '"SAVE_RA"',
+            '"RESTORE_RA"', "class=RETURN", "[paf-a989-callback] status=STORED",
+            "[paf-a989-callback-store]", "[paf-a989-storage-base]",
+            "source_input=%s", "status=COPIED", "status=USED_IMMEDIATELY",
+            "status=PASSED_TO_CALL", "tracked_callback < 4 || tracked_callback > 7",
             "delay = _lw(target + offset + 4)",
             "zeroCtrlMipsGprWriteDestination(delay)",
-            "OVERWRITTEN_IN_DELAY_SLOT", "PASSED_TO_CALL",
-            "USED_IMMEDIATELY", "opcode == 1 || opcode == 2"):
-        if token not in impl_flow:
-            fail("real +3F568 input analysis lacks " + token)
-    if "[vsh3f568-map]" in vsh3 or "[vsh3f568-cf]" in vsh3:
-        fail("superseded VSH stub-table map is still emitted")
-    for section in (vsh3, impl_flow):
+            "(unsigned int)delay_destination == tracked_callback",
+            "function == 9 && rs == tracked_callback", "[paf-a989-next]",
+            "next_remaining > 0x100", "[paf-a989-next-map]",
+            "input_source[4] = 1", "input_source[5] = 2",
+            'input_source[rs] == 2 ? "descriptor" : "context"'):
+        if token not in inner:
+            fail("PAF A989 callback/structural flow lacks " + token)
+    delay_check = inner.find("zeroCtrlMipsGprWriteDestination(delay)")
+    overwrite_check = inner.find("(unsigned int)delay_destination == tracked_callback")
+    jalr_use = inner.find("function == 9 && rs == tracked_callback")
+    argument_gate = inner.find("tracked_callback < 4 || tracked_callback > 7")
+    passed = inner.find("status=PASSED_TO_CALL")
+    if not 0 <= delay_check < overwrite_check < jalr_use < argument_gate < passed:
+        fail("PAF A989 call classification precedes conservative delay-slot checks")
+    if "[vsh3f568-impl-map]" in vsh3 or "[vsh3f568-use]" in vsh3:
+        fail("superseded wrapper/caller output is still automatic")
+    for section in (vsh3, inner):
         for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
                 "zeroCtrlRedir", "request_function()"):
             if forbidden in section:
-                fail("resolved VSH +3F568 analysis is not read-only: " + forbidden)
+                fail("PAF A989 analysis is not strictly read-only: " + forbidden)
     destination_start = kernel.find(
             "static int zeroCtrlMipsGprWriteDestination(")
     destination_end = kernel.find(
@@ -521,32 +546,6 @@ def check_sources(root):
             "(opcode >= 0x28 && opcode <= 0x2F)") or \
             "opcode <= 0x2F) || opcode == 0x38" in destination_decoder:
         fail("SC is incorrectly classified as a no-destination store")
-    delay_check = impl_flow.find("zeroCtrlMipsGprWriteDestination(delay)")
-    overwritten_delay = impl_flow.find("OVERWRITTEN_IN_DELAY_SLOT")
-    used_immediately = impl_flow.find("status=USED_IMMEDIATELY")
-    passed_call = impl_flow.find("PASSED_TO_CALL")
-    ambiguous_call = impl_flow.find("status=AMBIGUOUS_CALL")
-    argument_gate = impl_flow.find("tracked_a1 >= 4 && tracked_a1 <= 7")
-    jalr_target_gate = impl_flow.find("function == 9 && rs == tracked_a1")
-    if not 0 <= delay_check < overwritten_delay < jalr_target_gate < \
-            used_immediately < argument_gate < passed_call < ambiguous_call:
-        fail("real +3F568 call classification precedes delay-slot validation")
-    liveness_start = kernel.find("static int zeroCtrlVsh3f568A1PairReaches(")
-    liveness_end = vsh3_start
-    liveness = kernel[liveness_start:liveness_end]
-    for token in ("for (offset = low_offset + 4; offset < call_offset",
-            "zeroCtrlMipsGprWriteDestination(word)",
-            "destination < 0 || destination == 5", "opcode == 1",
-            "opcode == 2", "opcode == 3", "opcode >= 4 && opcode <= 7",
-            "opcode >= 0x14 && opcode <= 0x17", "function == 8",
-            "function == 9", "call_offset + 4",
-            "zeroCtrlMipsGprWriteDestination(delay)"):
-        if token not in liveness:
-            fail("VSH +3F568 caller a1 liveness proof lacks " + token)
-    if "zeroCtrlVsh3f568A1PairReaches(vsh, back - 4, call)" not in vsh3 or \
-            'known ? "PROVEN" : "UNKNOWN"' not in vsh3 or \
-            'known ? "KNOWN" : "UNKNOWN"' in vsh3:
-        fail("VSH +3F568 caller summary overstates nearby a1 pairs")
     if kernel.count("zeroCtrlWriteFunctionalVsh3f568Analysis();") != 1 or \
             "if (!vsh3f568_scan_written && slide_diag.functional_enabled" \
             not in minimal or "vsh3f568_scan_written = 1;" not in minimal:
