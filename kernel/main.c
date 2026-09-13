@@ -3668,6 +3668,34 @@ static void zeroCtrlWriteFunctionalVshRequestCallers(void) {
 #define VSH3F568_MAP_END   0x3F768
 #define VSH3F568_CALLER_WINDOW_BEFORE 0x40
 #define VSH3F568_CALLER_WINDOW_AFTER  0x20
+#define VSH_CALLER_SAVED_GPR_MASK 0x8300FFFCU
+
+/* Returns -1 when this bounded decoder cannot prove the destination shape. */
+static int zeroCtrlMipsGprWriteDestination(unsigned int word) {
+    unsigned int opcode = word >> 26;
+    unsigned int function = word & 0x3F;
+
+    if (opcode == 0) {
+        if (function == 9 || function == 0x10 || function == 0x12 ||
+                function <= 7 || (function >= 0x20 && function <= 0x27) ||
+                function == 0x2A || function == 0x2B)
+            return (word >> 11) & 0x1F;
+        if (function == 8 || function == 0x0C || function == 0x0D ||
+                function == 0x11 || function == 0x13 ||
+                (function >= 0x18 && function <= 0x1B))
+            return 0;
+        return -1;
+    }
+    if (opcode == 3) return 31;
+    if (opcode == 1 || opcode == 2 || (opcode >= 4 && opcode <= 7) ||
+            (opcode >= 0x14 && opcode <= 0x17) ||
+            (opcode >= 0x28 && opcode <= 0x2F) || opcode == 0x38)
+        return 0;
+    if ((opcode >= 8 && opcode <= 0x0F) ||
+            (opcode >= 0x20 && opcode <= 0x26) || opcode == 0x30)
+        return (word >> 16) & 0x1F;
+    return -1;
+}
 
 static void zeroCtrlWriteVsh3f568CallerWindow(SceModule2 *vsh,
         unsigned int index, unsigned int center) {
@@ -3707,6 +3735,7 @@ static void zeroCtrlWriteVsh3f568Dispatch(SceModule2 *vsh,
         if (opcode == 0x23 && rs == base &&
                 (unsigned int)(unsigned short)(word & 0xFFFF) == displacement) {
             unsigned int look;
+            int candidate_live = 1;
             for (look = offset + 4; look < offset + 0x20 &&
                     look < VSH3F568_MAP_END; look += 4) {
                 unsigned int candidate = _lw(vsh->text_addr + look);
@@ -3723,15 +3752,41 @@ static void zeroCtrlWriteVsh3f568Dispatch(SceModule2 *vsh,
                 if (candidate_opcode == 1 || candidate_opcode == 2 ||
                         candidate_opcode == 3 ||
                         (candidate_opcode >= 4 && candidate_opcode <= 7) ||
-                        (candidate_opcode >= 0x14 && candidate_opcode <= 0x17))
+                        (candidate_opcode >= 0x14 && candidate_opcode <= 0x17) ||
+                        (candidate_opcode == 0 &&
+                         ((candidate & 0x3F) == 8 ||
+                          (candidate & 0x3F) == 9))) {
+                    candidate_live = 0;
                     break;
+                }
+                {
+                    int destination = zeroCtrlMipsGprWriteDestination(candidate);
+                    if (destination < 0 || (unsigned int)destination == rt) {
+                        candidate_live = 0;
+                        break;
+                    }
+                }
             }
+            if (!candidate_live) continue;
         }
         if (opcode == 1 || opcode == 2 || opcode == 3 ||
                 (opcode >= 4 && opcode <= 7) ||
                 (opcode >= 0x14 && opcode <= 0x17) ||
                 (opcode == 0 && (function == 8 || function == 9)))
             break;
+        {
+            int destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0 || (unsigned int)destination == base) {
+                if ((unsigned int)destination == base) {
+                    snprintf(line, sizeof(line),
+                            "[vsh589c-dispatch] status=BASE_CLOBBERED off=0x%05X\n",
+                            offset);
+                    zeroCtrlDiagnosticsText(line);
+                    return;
+                }
+                break;
+            }
+        }
     }
     zeroCtrlDiagnosticsText(
             "[vsh589c-dispatch] status=NOT_IDENTIFIED_IN_BOUNDED_FLOW\n");
@@ -3775,6 +3830,35 @@ static void zeroCtrlWriteVsh3f568A1Flow(SceModule2 *vsh) {
             zeroCtrlDiagnosticsText(line);
             tracked = destination;
             continue;
+        }
+        if (opcode == 3 || (opcode == 0 && function == 9)) {
+            unsigned int delay;
+            int delay_destination;
+            if (offset + 8 > VSH3F568_MAP_END) {
+                snprintf(line, sizeof(line),
+                        "[vsh3f568-a1-flow] status=AMBIGUOUS "
+                        "missing_delay_slot=1 call_off=0x%05X\n", offset);
+                zeroCtrlDiagnosticsText(line);
+                return;
+            }
+            delay = _lw(vsh->text_addr + offset + 4);
+            delay_destination = zeroCtrlMipsGprWriteDestination(delay);
+            if (delay_destination < 0) {
+                snprintf(line, sizeof(line),
+                        "[vsh3f568-a1-flow] status=AMBIGUOUS_DELAY_SLOT "
+                        "call_off=0x%05X delay_off=0x%05X tracked_reg=%u\n",
+                        offset, offset + 4, tracked);
+                zeroCtrlDiagnosticsText(line);
+                return;
+            }
+            if ((unsigned int)delay_destination == tracked) {
+                snprintf(line, sizeof(line),
+                        "[vsh3f568-a1-flow] status=OVERWRITTEN_IN_DELAY_SLOT "
+                        "call_off=0x%05X delay_off=0x%05X tracked_reg=%u\n",
+                        offset, offset + 4, tracked);
+                zeroCtrlDiagnosticsText(line);
+                return;
+            }
         }
         if (opcode == 0 && function == 9 && rs == tracked) {
             snprintf(line, sizeof(line),
@@ -3846,6 +3930,7 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     unsigned int jal_total = 0, jump_total = 0;
     unsigned int known_value[32] = { 0 };
     unsigned int known_mask = 0;
+    int pending_call_clobber = 0;
     unsigned int offset;
     unsigned int row;
     unsigned int i;
@@ -3981,7 +4066,8 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
         unsigned int opcode = word >> 26;
         unsigned int rs = (word >> 21) & 0x1F;
         unsigned int rt = (word >> 16) & 0x1F;
-        unsigned int rd = (word >> 11) & 0x1F;
+        unsigned int function = word & 0x3F;
+        int destination = zeroCtrlMipsGprWriteDestination(word);
         if (opcode == 0x0F && rs == 0) {
             known_value[rt] = (word & 0xFFFF) << 16;
             known_mask |= 1U << rt;
@@ -3991,10 +4077,15 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
                     (int)(short)(word & 0xFFFF) :
                     known_value[rs] | (word & 0xFFFF);
             known_mask |= 1U << rt;
-        } else if (opcode != 0 && opcode != 0x2B && rt != 0) {
-            known_mask &= ~(1U << rt);
-        } else if (opcode == 0 && rd != 0) {
-            known_mask &= ~(1U << rd);
+        } else if (opcode == 0 && (function == 0x21 || function == 0x25) &&
+                destination > 0 && (rs == 0 || rt == 0) &&
+                (known_mask & (1U << (rs == 0 ? rt : rs)))) {
+            known_value[destination] = known_value[rs == 0 ? rt : rs];
+            known_mask |= 1U << destination;
+        } else if (destination < 0) {
+            known_mask = 0;
+        } else if (destination > 0) {
+            known_mask &= ~(1U << destination);
         }
         if (opcode == 0x2B && rs == 29) {
             snprintf(line, sizeof(line),
@@ -4004,6 +4095,11 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
                     (known_mask >> rt) & 1, known_value[rt]);
             zeroCtrlDiagnosticsText(line);
         }
+        /* A call's delay slot is processed above before caller-saved state dies. */
+        if (pending_call_clobber)
+            known_mask &= ~VSH_CALLER_SAVED_GPR_MASK;
+        pending_call_clobber = opcode == 3 ||
+                (opcode == 0 && function == 9);
     }
     zeroCtrlWriteVsh3f568A1Flow(vsh);
 

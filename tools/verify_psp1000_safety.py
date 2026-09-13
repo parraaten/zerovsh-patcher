@@ -477,7 +477,11 @@ def check_sources(root):
             "[vsh3f568-callsite] validation=1 caller=0x05704",
             "[vsh3f568-map]", "[vsh3f568-cf]", "[vsh3f568-frame]",
             "for (offset = 0x56AC; offset < 0x570C; offset += 4)",
-            "[vsh5704-arg0]", "zeroCtrlWriteVsh3f568A1Flow(vsh)",
+            "[vsh5704-arg0]", "pending_call_clobber",
+            "known_mask &= ~VSH_CALLER_SAVED_GPR_MASK",
+            "pending_call_clobber = opcode == 3",
+            "zeroCtrlMipsGprWriteDestination(word)",
+            "zeroCtrlWriteVsh3f568A1Flow(vsh)",
             "for (offset = 0; offset + 8 <= vsh->text_size; offset += 4)",
             "zeroCtrlMipsJumpTarget(pc, word) == text + 0x3F568",
             "[vsh3f568-callers]", "[vsh3f568-caller]",
@@ -499,6 +503,9 @@ def check_sources(root):
     a1_flow = kernel[a1_start:a1_end]
     for token in ("tracked = 5", "[vsh3f568-a1-store]",
             "[vsh3f568-a1-copy]", "PASSED_TO_CALL", "USED_IMMEDIATELY",
+            "delay = _lw(vsh->text_addr + offset + 4)",
+            "delay_destination = zeroCtrlMipsGprWriteDestination(delay)",
+            "OVERWRITTEN_IN_DELAY_SLOT", "AMBIGUOUS_DELAY_SLOT",
             "[vsh3f568-next-map]", "zeroCtrlVshModuleRangeValid(vsh, target, 0x40)",
             "zeroCtrlWriteVsh3f568Dispatch(vsh, offset + 4, rs,",
             "status=AMBIGUOUS",
@@ -515,9 +522,29 @@ def check_sources(root):
     caller_window = kernel[caller_window_start:caller_window_end]
     for token in ("[vsh3f568-window]", "row += 0x20",
             "_lw(address + 28)", "[vsh589c-dispatch]",
-            "status=NOT_IDENTIFIED_IN_BOUNDED_FLOW"):
+            "status=NOT_IDENTIFIED_IN_BOUNDED_FLOW", "BASE_CLOBBERED",
+            "zeroCtrlMipsGprWriteDestination(candidate)",
+            "(unsigned int)destination == rt",
+            "zeroCtrlMipsGprWriteDestination(word)",
+            "(unsigned int)destination == base"):
         if token not in caller_window:
             fail("bounded VSH +3F568 caller window lacks " + token)
+    delay_check = a1_flow.find(
+            "delay_destination = zeroCtrlMipsGprWriteDestination(delay)")
+    overwritten_delay = a1_flow.find("OVERWRITTEN_IN_DELAY_SLOT")
+    passed_call = a1_flow.find("status=PASSED_TO_CALL")
+    used_immediately = a1_flow.find("status=USED_IMMEDIATELY")
+    if not 0 <= delay_check < overwritten_delay < used_immediately < passed_call:
+        fail("VSH +3F568 JAL/JALR classification precedes delay-slot validation")
+    structure_loop = vsh3[vsh3.find(
+            "for (offset = 0x56AC;"):vsh3.find(
+            "zeroCtrlWriteVsh3f568A1Flow(vsh)")]
+    store_output = structure_loop.find("[vsh5704-arg0]")
+    call_clobber = structure_loop.find(
+            "known_mask &= ~VSH_CALLER_SAVED_GPR_MASK")
+    if not 0 <= store_output < call_clobber or \
+            "VSH_CALLER_SAVED_GPR_MASK 0x8300FFFCU" not in kernel:
+        fail("caller known values are clobbered before the JAL delay slot")
     if kernel.count("zeroCtrlWriteFunctionalVsh3f568Analysis();") != 1 or \
             "if (!vsh3f568_scan_written && slide_diag.functional_enabled" \
             not in minimal or "vsh3f568_scan_written = 1;" not in minimal:
