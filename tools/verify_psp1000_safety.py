@@ -1171,6 +1171,8 @@ def check_sources(root):
             "sceKernelStartThread", "request_function()"):
         if forbidden in nearby_apply or forbidden in nearby:
             fail("nearby provenance analysis is not read-only: " + forbidden)
+    call_clear_start = kernel.find(
+            "static void zeroCtrlPafA989ClearCallArgSource(")
     call_apply_start = kernel.find(
             "static int zeroCtrlPafA989ApplyCallArgInstruction(")
     call_apply_end = kernel.find(
@@ -1178,27 +1180,44 @@ def check_sources(root):
     call_args_start = kernel.find(
             "static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf) {",
             nearby_start)
+    unknown_call_start = kernel.find(
+            "static void zeroCtrlWritePafA989UnknownCallArgs(", nearby_start)
     call_args_end = kernel.find(
             "static int zeroCtrlPafA989ValidateCodeRange(", call_args_start)
-    if min(call_apply_start, call_apply_end, call_args_start, call_args_end) < 0:
+    if min(call_clear_start, call_apply_start, call_apply_end, unknown_call_start,
+            call_args_start, call_args_end) < 0:
         fail("four-site A989 caller argument capture is missing")
+    call_clear = kernel[call_clear_start:call_apply_start]
     call_apply = kernel[call_apply_start:call_apply_end]
+    unknown_call = kernel[unknown_call_start:call_args_start]
     call_args = kernel[call_args_start:call_args_end]
+    for token in ("source->kind = ZERO_PAF_CALL_ARG_UNKNOWN",
+            "source->parent_reg = 0", "source->disp = 0", "source->value = 0"):
+        if token not in call_clear:
+            fail("call argument UNKNOWN clearing omits " + token)
     for token in ("ZERO_PAF_CALL_ARG_UNKNOWN", "ZERO_PAF_CALL_ARG_COPY",
             "ZERO_PAF_CALL_ARG_LW", "ZERO_PAF_CALL_ARG_ADDIU",
             "ZERO_PAF_CALL_ARG_CONSTANT", "zeroCtrlMipsGprWriteDestination(word)",
             "if (destination < 0) return 0", "zeroCtrlMipsMove(word, rd, rs)",
             "opcode == 9", "opcode == 0x0F", "opcode == 0x0D",
-            "opcode == 0x23", "source[destination].kind = ZERO_PAF_CALL_ARG_UNKNOWN"):
+            "opcode == 0x23",
+            "zeroCtrlPafA989ClearCallArgSource(&source[destination])"):
         if token not in call_apply:
             fail("four-site call argument transfer lacks " + token)
+    for token in ("call_validation=0", "flow_status=UNKNOWN",
+            "a0_kind=UNKNOWN a0_parent_reg=0 a0_disp=0 a0_value=0x00000000",
+            "a1_kind=UNKNOWN a1_parent_reg=0 a1_disp=0 a1_value=0x00000000",
+            "a2_kind=UNKNOWN a2_parent_reg=0 a2_disp=0 a2_value=0x00000000",
+            "a3_kind=UNKNOWN a3_parent_reg=0 a3_disp=0 a3_value=0x00000000"):
+        if token not in unknown_call:
+            fail("invalid call record can retain UNKNOWN metadata: " + token)
     for token in ("0xCFC64, 0x345B8, 0x34884, 0x344A4",
             "0xCFADC, 0xCF9A8, 0xCFB70, 0xCFB70", "index < 4",
             "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)",
             "zeroCtrlVshModuleRangeValid(paf, call, 8)",
             "zeroCtrlVshModuleRangeValid(paf, target, 4)",
             "(word >> 26) != 3", "zeroCtrlMipsJumpTarget(call, word) != target",
-            "[paf-a989-nearby-call-args] validation=0",
+            "zeroCtrlWritePafA989UnknownCallArgs(call_off, target_off)",
             "start_off = call_off > 0x40 ? call_off - 0x40 : 0",
             "end_off = call_off + 0x24", "map_size = (end_off - start_off) & ~3U",
             "zeroCtrlVshModuleRangeValid(paf,\n                    paf->text_addr + start_off, map_size)",
@@ -1207,12 +1226,16 @@ def check_sources(root):
             "opcode == 0 && function == 9", "flow_valid = 0",
             "zeroCtrlPafA989ApplyCallArgInstruction(delay, source)",
             "for (reg = 2; reg <= 15; reg++)",
-            "source[24].kind = ZERO_PAF_CALL_ARG_UNKNOWN",
-            "source[25].kind = ZERO_PAF_CALL_ARG_UNKNOWN",
-            "delay = _lw(call + 4)", "if (!flow_valid)",
+            "zeroCtrlPafA989ClearCallArgSource(&source[reg])",
+            "zeroCtrlPafA989ClearCallArgSource(&source[24])",
+            "zeroCtrlPafA989ClearCallArgSource(&source[25])",
+            "zeroCtrlPafA989ClearCallArgSource(&source[31])",
+            "delay = _lw(call + 4)", "if (!flow_valid ||",
+            "source[reg].kind == ZERO_PAF_CALL_ARG_UNKNOWN",
             "COPY_OF_SAVED_REG", "COPY_OF_REG", '"LW"', '"ADDIU"',
             '"CONSTANT"', '"UNKNOWN"',
-            "[paf-a989-nearby-call-args] validation=1",
+            "[paf-a989-nearby-call-args] call_validation=1",
+            "flow_status=%s", 'flow_valid ? "VALID" : "UNKNOWN"',
             "a0_kind=%s", "a1_kind=%s", "a2_kind=%s", "a3_kind=%s",
             "execution=NOT_OBSERVED", "0xCFC44", "0x50",
             "zeroCtrlVshModuleRangeValid(paf, paf->text_addr + 0xCFC44",
@@ -1231,16 +1254,23 @@ def check_sources(root):
     delay_read = call_args.find("delay = _lw(call + 4)", flow_start)
     delay_apply = call_args.find(
             "zeroCtrlPafA989ApplyCallArgInstruction(delay, source)", delay_read)
-    result = call_args.find("[paf-a989-nearby-call-args] validation=1",
-            delay_apply)
+    final_clear = call_args.find(
+            "zeroCtrlPafA989ClearCallArgSource(&source[reg])", delay_apply)
+    kind_finalize = call_args.find("kind[arg] =", final_clear)
+    result = call_args.find(
+            "[paf-a989-nearby-call-args] call_validation=1", kind_finalize)
     context_range = call_args.find(
             "zeroCtrlVshModuleRangeValid(paf, paf->text_addr + 0xCFC44",
             result)
     context_read = call_args.find("mapped[column] = _lw", context_range)
     if not 0 <= call_range < call_read < dynamic_target < map_range < map_read < \
-            flow_start < delay_read < delay_apply < result < context_range < \
+            flow_start < delay_read < delay_apply < final_clear < kind_finalize < \
+            result < context_range < \
             context_read:
         fail("four-site caller capture reads or reports before validation")
+    if ".kind = ZERO_PAF_CALL_ARG_UNKNOWN" in call_apply or \
+            ".kind = ZERO_PAF_CALL_ARG_UNKNOWN" in call_args:
+        fail("call argument UNKNOWN transition bypasses full metadata clearing")
     if call_args.count("0xCFC64") != 1 or call_args.count("0x345B8") != 1 or \
             call_args.count("0x34884") != 1 or call_args.count("0x344A4") != 1 or \
             "outer14-exact-chain" in call_args:
@@ -1248,7 +1278,8 @@ def check_sources(root):
     for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP", "REDIRECT_FUNCTION",
             "zeroCtrlRedir", "Dcache", "Icache", "sceKernelCreateThread",
             "sceKernelStartThread", "request_function()"):
-        if forbidden in call_apply or forbidden in call_args:
+        if forbidden in call_clear or forbidden in call_apply or \
+                forbidden in unknown_call or forbidden in call_args:
             fail("four-site caller capture is not read-only: " + forbidden)
     downstream_start = kernel.find("static void zeroCtrlWritePafA989Downstream(",
             consumer_start + 1)

@@ -3970,6 +3970,14 @@ typedef struct ZeroCtrlPafA989CallArgSource {
     unsigned int value;
 } ZeroCtrlPafA989CallArgSource;
 
+static void zeroCtrlPafA989ClearCallArgSource(
+        ZeroCtrlPafA989CallArgSource *source) {
+    source->kind = ZERO_PAF_CALL_ARG_UNKNOWN;
+    source->parent_reg = 0;
+    source->disp = 0;
+    source->value = 0;
+}
+
 static int zeroCtrlPafA989ApplyNearbyInstruction(unsigned int word,
         ZeroCtrlPafA989NearbySource source[32]) {
     unsigned int opcode = word >> 26;
@@ -4060,10 +4068,7 @@ static int zeroCtrlPafA989ApplyCallArgInstruction(unsigned int word,
         source[rt].disp = (short)(word & 0xFFFF);
         source[rt].value = 0;
     } else if (destination != 0) {
-        source[destination].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
-        source[destination].parent_reg = 0;
-        source[destination].disp = 0;
-        source[destination].value = 0;
+        zeroCtrlPafA989ClearCallArgSource(&source[destination]);
     }
     return 1;
 }
@@ -5282,6 +5287,20 @@ static void zeroCtrlWritePafA989NearbyFlows(SceModule2 *paf) {
     zeroCtrlWritePafA989NearbyCallArgs(paf);
 }
 
+static void zeroCtrlWritePafA989UnknownCallArgs(unsigned int call_off,
+        unsigned int target_off) {
+    char line[320];
+    snprintf(line, sizeof(line),
+            "[paf-a989-nearby-call-args] call_validation=0 "
+            "flow_status=UNKNOWN caller_off=0x%X target_off=0x%X "
+            "a0_kind=UNKNOWN a0_parent_reg=0 a0_disp=0 a0_value=0x00000000 "
+            "a1_kind=UNKNOWN a1_parent_reg=0 a1_disp=0 a1_value=0x00000000 "
+            "a2_kind=UNKNOWN a2_parent_reg=0 a2_disp=0 a2_value=0x00000000 "
+            "a3_kind=UNKNOWN a3_parent_reg=0 a3_disp=0 a3_value=0x00000000 "
+            "execution=NOT_OBSERVED\n", call_off, target_off);
+    zeroCtrlDiagnosticsText(line);
+}
+
 static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf) {
     static const unsigned int call_offsets[4] = {
         0xCFC64, 0x345B8, 0x34884, 0x344A4
@@ -5305,13 +5324,7 @@ static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf) {
 
         if (paf->text_size < 8 || call_off > paf->text_size - 8 ||
                 target_off > paf->text_size - 4) {
-            snprintf(line, sizeof(line),
-                    "[paf-a989-nearby-call-args] validation=0 "
-                    "caller_off=0x%X target_off=0x%X "
-                    "a0_kind=UNKNOWN a1_kind=UNKNOWN "
-                    "a2_kind=UNKNOWN a3_kind=UNKNOWN\n",
-                    call_off, target_off);
-            zeroCtrlDiagnosticsText(line);
+            zeroCtrlWritePafA989UnknownCallArgs(call_off, target_off);
             continue;
         }
         call = paf->text_addr + call_off;
@@ -5319,25 +5332,13 @@ static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf) {
         if (call < paf->text_addr || target < paf->text_addr ||
                 !zeroCtrlVshModuleRangeValid(paf, call, 8) ||
                 !zeroCtrlVshModuleRangeValid(paf, target, 4)) {
-            snprintf(line, sizeof(line),
-                    "[paf-a989-nearby-call-args] validation=0 "
-                    "caller_off=0x%X target_off=0x%X "
-                    "a0_kind=UNKNOWN a1_kind=UNKNOWN "
-                    "a2_kind=UNKNOWN a3_kind=UNKNOWN\n",
-                    call_off, target_off);
-            zeroCtrlDiagnosticsText(line);
+            zeroCtrlWritePafA989UnknownCallArgs(call_off, target_off);
             continue;
         }
         word = _lw(call);
         if ((word >> 26) != 3 ||
                 zeroCtrlMipsJumpTarget(call, word) != target) {
-            snprintf(line, sizeof(line),
-                    "[paf-a989-nearby-call-args] validation=0 "
-                    "caller_off=0x%X target_off=0x%X "
-                    "a0_kind=UNKNOWN a1_kind=UNKNOWN "
-                    "a2_kind=UNKNOWN a3_kind=UNKNOWN\n",
-                    call_off, target_off);
-            zeroCtrlDiagnosticsText(line);
+            zeroCtrlWritePafA989UnknownCallArgs(call_off, target_off);
             continue;
         }
         start_off = call_off > 0x40 ? call_off - 0x40 : 0;
@@ -5391,10 +5392,10 @@ static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf) {
                     break;
                 }
                 for (reg = 2; reg <= 15; reg++)
-                    source[reg].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
-                source[24].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
-                source[25].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
-                source[31].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
+                    zeroCtrlPafA989ClearCallArgSource(&source[reg]);
+                zeroCtrlPafA989ClearCallArgSource(&source[24]);
+                zeroCtrlPafA989ClearCallArgSource(&source[25]);
+                zeroCtrlPafA989ClearCallArgSource(&source[31]);
                 cursor += 4;
                 continue;
             }
@@ -5410,7 +5411,9 @@ static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf) {
         }
         for (arg = 0; arg < 4; arg++) {
             unsigned int reg = arg + 4;
-            if (!flow_valid) source[reg].kind = ZERO_PAF_CALL_ARG_UNKNOWN;
+            if (!flow_valid ||
+                    source[reg].kind == ZERO_PAF_CALL_ARG_UNKNOWN)
+                zeroCtrlPafA989ClearCallArgSource(&source[reg]);
             kind[arg] = source[reg].kind == ZERO_PAF_CALL_ARG_COPY ?
                     (source[reg].parent_reg >= 16 &&
                      source[reg].parent_reg <= 23 ?
@@ -5421,14 +5424,15 @@ static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf) {
                 "UNKNOWN";
         }
         snprintf(line, sizeof(line),
-                "[paf-a989-nearby-call-args] validation=1 "
+                "[paf-a989-nearby-call-args] call_validation=1 "
+                "flow_status=%s "
                 "caller_off=0x%X target_off=0x%X "
                 "a0_kind=%s a0_parent_reg=%u a0_disp=%d a0_value=0x%08X "
                 "a1_kind=%s a1_parent_reg=%u a1_disp=%d a1_value=0x%08X "
                 "a2_kind=%s a2_parent_reg=%u a2_disp=%d a2_value=0x%08X "
                 "a3_kind=%s a3_parent_reg=%u a3_disp=%d a3_value=0x%08X "
                 "execution=NOT_OBSERVED\n",
-                call_off, target_off,
+                flow_valid ? "VALID" : "UNKNOWN", call_off, target_off,
                 kind[0], source[4].parent_reg, source[4].disp, source[4].value,
                 kind[1], source[5].parent_reg, source[5].disp, source[5].value,
                 kind[2], source[6].parent_reg, source[6].disp, source[6].value,

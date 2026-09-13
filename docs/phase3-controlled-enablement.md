@@ -2375,7 +2375,7 @@ New records are:
 
 ```text
 [paf-a989-nearby-caller-map] caller_off=... off=... w0=... ... w7=...
-[paf-a989-nearby-call-args] validation=... caller_off=... target_off=... a0_kind=... a0_parent_reg=... a0_disp=... a0_value=... ... a3_kind=... execution=NOT_OBSERVED
+[paf-a989-nearby-call-args] call_validation=... flow_status=VALID|UNKNOWN caller_off=... target_off=... a0_kind=... a0_parent_reg=... a0_disp=... a0_value=... ... a3_kind=... execution=NOT_OBSERVED
 [paf-a989-cfc64-context] off=... w0=... ... w7=...
 ```
 
@@ -2386,3 +2386,11 @@ the local boundary relationship around `0xCFC64`, and any connection to known
 A989 objects remain **HYPOTHESIS / UNKNOWN** until the next hardware log. The
 three candidate base results and primary callback flow remain `UNKNOWN` and
 `AMBIGUOUS`, respectively.
+
+`call_validation` describes only the dynamically decoded JAL and its validated
+loaded-text target. `flow_status` separately describes whether the bounded
+argument-provenance suffix remained valid through the target delay slot. Every
+transition to `UNKNOWN` now clears the source kind, parent register,
+displacement, and value together; consequently an UNKNOWN `a0-a3` field always
+reports `parent_reg=0`, `disp=0`, and `value=0x00000000`. This is a fail-closed
+metadata correction and does not change the four callsites or add evidence.
