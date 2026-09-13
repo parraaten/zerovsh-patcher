@@ -359,6 +359,49 @@ def check_sources(root):
         fail("minimal memory test forces permanent 10 ms polling")
     if minimal_start + minimal.find("continue;") > writer.find("[paf-parent-a0]"):
         fail("minimal memory test does not bypass parent/PAF diagnostics")
+    vsh58_start = kernel.find("static void zeroCtrlWriteFunctionalVsh58Map(void)")
+    vsh58_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(",
+            vsh58_start)
+    if vsh58_start < 0 or vsh58_end < 0:
+        fail("functional PSP-1000 VSH+58D4 map is missing")
+    vsh58 = kernel[vsh58_start:vsh58_end]
+    for token in ("VSH58_MAP_END - VSH58_MAP_START", "model != 0",
+            "sceKernelDevkitVersion() != 0x06060110",
+            "!slide_diag.functional_enabled",
+            "!slide_diag.minimal_memory_test", "!slide_diag.vsh_module_seen",
+            "vsh->text_addr == 0", "vsh->text_size < VSH58_MAP_END",
+            "vsh->text_addr > 0xFFFFFFFFU - VSH58_MAP_END",
+            "zeroCtrlVshModuleRangeValid(vsh,",
+            "vsh->text_addr + VSH58_MAP_START, map_size)",
+            "candidate->source_offset == 0x58D4",
+            "candidate->predicate_index == 2", "candidate->kind == 3",
+            "original_word = reference->instruction",
+            "zeroCtrlMipsJumpTarget(reference->source_addr, original_word)",
+            "[vsh58] source=", "[vsh58-callsite] original=",
+            "offset == 0x58D4 ? original_word", "[vsh58-map]",
+            "offset += 0x20", "unsigned int words[8]", "[vsh58-cf]",
+            "zeroCtrlMipsJumpTarget(pc, word)",
+            "zeroCtrlMipsBranchTarget(pc, word)", "opcode == 1",
+            "opcode >= 0x14 && opcode <= 0x17", "[vsh58-frame]",
+            '"STACK_ALLOC"', '"SAVE_RA"', '"RESTORE_RA"', "class=RETURN"):
+        if token not in vsh58:
+            fail("functional PSP-1000 VSH+58D4 map lacks " + token)
+    for definition in ("#define VSH58_MAP_START 0x54D4",
+            "#define VSH58_MAP_END   0x5CD4"):
+        if definition not in kernel:
+            fail("functional PSP-1000 VSH+58D4 map lacks " + definition)
+    range_validation = vsh58.find("zeroCtrlVshModuleRangeValid(vsh,")
+    first_read = vsh58.find("_lw(")
+    if not 0 <= range_validation < first_read:
+        fail("VSH+58D4 map reads loaded text before validating the full range")
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
+            "zeroCtrlRedir", "vsh->text_addr + 0x58D4)("):
+        if forbidden in vsh58:
+            fail("VSH+58D4 map is not strictly read-only: " + forbidden)
+    if kernel.count("zeroCtrlWriteFunctionalVsh58Map();") != 1 or \
+            "if (!vsh58_map_written && slide_diag.functional_enabled" not in minimal or \
+            "vsh58_map_written = 1;" not in minimal:
+        fail("VSH+58D4 map is not emitted at most once by the deferred writer")
     minimal_gate = kernel[kernel.find("slide_diag.minimal_memory_test ="):
         kernel.find("slide_diag.global_predicate_enabled =")]
     for token in ("model == 0", "devkit == 0x06060110",

@@ -3219,6 +3219,146 @@ static void zeroCtrlWriteFastMemory(const char *boundary,
     zeroCtrlDiagnosticsText(line);
 }
 
+#define VSH58_MAP_START 0x54D4
+#define VSH58_MAP_END   0x5CD4
+
+/* Deferred read-only map; VSH58_MAP_END is exclusive (exactly 0x800 bytes). */
+static void zeroCtrlWriteFunctionalVsh58Map(void) {
+    SceModule2 *vsh;
+    ZeroCtrlVshDirectReference *reference = NULL;
+    unsigned int original_word;
+    unsigned int map_size = VSH58_MAP_END - VSH58_MAP_START;
+    unsigned int offset;
+    unsigned int i;
+    char line[256];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            !slide_diag.vsh_module_seen)
+        return;
+    vsh = sceKernelFindModuleByName("vsh_module");
+    if (!vsh || ((unsigned int)vsh & 3) != 0 ||
+            (unsigned int)vsh < 0x88000000 ||
+            (unsigned int)vsh >= 0x8C000000 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr == 0 || vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size < VSH58_MAP_END ||
+            vsh->text_addr > 0xFFFFFFFFU - VSH58_MAP_END ||
+            vsh->nsegment == 0 || vsh->nsegment > 4 ||
+            !zeroCtrlVshModuleRangeValid(vsh,
+                vsh->text_addr + VSH58_MAP_START, map_size)) {
+        zeroCtrlDiagnosticsText("[vsh58] validation=0\n");
+        return;
+    }
+
+    for (i = 0; i < slide_diag.vsh_direct_reference_count; i++) {
+        ZeroCtrlVshDirectReference *candidate =
+                &slide_diag.vsh_direct_references[i];
+        if (candidate->source_offset == 0x58D4 &&
+                candidate->predicate_index == 2 && candidate->kind == 3) {
+            reference = candidate;
+            break;
+        }
+    }
+    if (!reference) {
+        zeroCtrlDiagnosticsText("[vsh58] validation=0 reference=0\n");
+        return;
+    }
+    original_word = reference->instruction;
+    snprintf(line, sizeof(line),
+            "[vsh58] source=0x%08X offset=0x%05X original_word=0x%08X "
+            "decoded_predicate_target=0x%08X existing_window_start=0x%05X "
+            "existing_window_size=0x%03X\n",
+            reference->source_addr, reference->source_offset, original_word,
+            zeroCtrlMipsJumpTarget(reference->source_addr, original_word),
+            reference->window_start_offset, reference->window_size);
+    zeroCtrlDiagnosticsText(line);
+    snprintf(line, sizeof(line),
+            "[vsh58-callsite] original=0x%08X current=0x%08X\n",
+            original_word, _lw(vsh->text_addr + 0x58D4));
+    zeroCtrlDiagnosticsText(line);
+
+    for (offset = VSH58_MAP_START; offset < VSH58_MAP_END; offset += 0x20) {
+        unsigned int words[8];
+        for (i = 0; i < 8; i++) {
+            unsigned int word_offset = offset + i * 4;
+            words[i] = word_offset == 0x58D4 ? original_word :
+                    _lw(vsh->text_addr + word_offset);
+        }
+        snprintf(line, sizeof(line),
+                "[vsh58-map] off=0x%05X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                offset, words[0], words[1], words[2], words[3],
+                words[4], words[5], words[6], words[7]);
+        zeroCtrlDiagnosticsText(line);
+    }
+
+    for (offset = VSH58_MAP_START; offset < VSH58_MAP_END; offset += 4) {
+        unsigned int pc = vsh->text_addr + offset;
+        unsigned int word = offset == 0x58D4 ? original_word : _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int function = word & 0x3F;
+        unsigned int rs = (word >> 21) & 0x1F;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int target = 0;
+        unsigned int likely = 0;
+        const char *class_name = NULL;
+
+        if (opcode == 2 || opcode == 3) {
+            class_name = opcode == 2 ? "J" : "JAL";
+            target = zeroCtrlMipsJumpTarget(pc, word);
+        } else if (opcode == 0 && (function == 8 || function == 9)) {
+            class_name = function == 8 ? "JR" : "JALR";
+        } else if (opcode == 1) {
+            class_name = "REGIMM";
+            target = zeroCtrlMipsBranchTarget(pc, word);
+            likely = rt == 2 || rt == 3 || rt == 0x12 || rt == 0x13;
+        } else if ((opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
+            static const char *branch_names[4] = {
+                "BEQ", "BNE", "BLEZ", "BGTZ"
+            };
+            static const char *likely_branch_names[4] = {
+                "BEQL", "BNEL", "BLEZL", "BGTZL"
+            };
+            class_name = opcode >= 0x14 ? likely_branch_names[opcode & 3] :
+                    branch_names[opcode & 3];
+            target = zeroCtrlMipsBranchTarget(pc, word);
+            likely = opcode >= 0x14;
+        }
+        if (class_name) {
+            snprintf(line, sizeof(line),
+                    "[vsh58-cf] off=0x%05X word=0x%08X class=%s "
+                    "target=0x%08X rs=%u rt=%u likely=%u\n",
+                    offset, word, class_name, target, rs, rt, likely);
+            zeroCtrlDiagnosticsText(line);
+        }
+
+        if (opcode == 9 && rs == 29 && rt == 29) {
+            int amount = (short)(word & 0xFFFF);
+            snprintf(line, sizeof(line),
+                    "[vsh58-frame] off=0x%05X word=0x%08X class=%s amount=%d\n",
+                    offset, word, amount < 0 ? "STACK_ALLOC" : "STACK_FREE",
+                    amount < 0 ? -amount : amount);
+            zeroCtrlDiagnosticsText(line);
+        } else if ((opcode == 0x2B || opcode == 0x23) &&
+                rs == 29 && rt == 31) {
+            snprintf(line, sizeof(line),
+                    "[vsh58-frame] off=0x%05X word=0x%08X class=%s "
+                    "displacement=%d\n", offset, word,
+                    opcode == 0x2B ? "SAVE_RA" : "RESTORE_RA",
+                    (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+        } else if (opcode == 0 && function == 8 && rs == 31) {
+            snprintf(line, sizeof(line),
+                    "[vsh58-frame] off=0x%05X word=0x%08X class=RETURN\n",
+                    offset, word);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+}
+
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
     unsigned int elapsed = 0;
     unsigned int written = 0;
@@ -3274,6 +3414,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_dispatch_entry_pre_slide = 0;
     int observed_consumer_install = 0, observed_consumer_pre_slide = 0;
     unsigned int minimal_memory_written = 0;
+    int vsh58_map_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -3288,6 +3429,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     slide_diag.bsman.activation_hits_addr);
             unsigned int state;
             zeroCtrlRefreshSonyStartTrace();
+            if (!vsh58_map_written && slide_diag.functional_enabled &&
+                    slide_diag.vsh_module_seen) {
+                vsh58_map_written = 1;
+                zeroCtrlWriteFunctionalVsh58Map();
+            }
             if (slide_diag.functional_enabled &&
                     !(minimal_memory_written & 0x0080)) {
                 zeroCtrlDiagnosticsText("[psp1000-functional] enabled=1\n");
