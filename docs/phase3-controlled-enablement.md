@@ -2240,3 +2240,8 @@ The second constructed-address map is extended to at most `0x100`; its
 **Not proven:** that any described path or write executed during this boot, that
 any indirect target invokes `VSH+589C`, or any semantic role for the adjacent
 function, linked objects, call targets, or constructed addresses.
+
+The first-call body proof now dynamically requires its BLTZ to target local
+`+0x1C` and its BNE to target local `+0x20`. Both internal-edge checks precede
+the `body_size=0x28` and no-`a2`/`a3`-read conclusion; this is a static
+validation correction and not new hardware evidence.

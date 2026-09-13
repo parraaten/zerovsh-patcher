@@ -863,7 +863,8 @@ def check_sources(root):
     for token in ("zeroCtrlPafA989ValidateCodeRange(paf, first_target",
             "sizeof(first)", "first_size != sizeof(first)",
             "(first[0] >> 26) != 1", "((first[0] >> 21) & 0x1F) != 4",
-            "first[1] != 0x24050001", "(first[2] >> 26) != 0x0F",
+            "zeroCtrlMipsBranchTarget(first_target, first[0])",
+            "first_target + 0x1C", "first[1] != 0x24050001", "(first[2] >> 26) != 0x0F",
             "((first[2] >> 16) & 0x1F) != 3",
             "(first[3] >> 26) != 0x23",
             "((first[3] >> 21) & 0x1F) != 3",
@@ -871,6 +872,8 @@ def check_sources(root):
             "(first[4] & 0x3F) != 0x2A",
             "((first[4] >> 21) & 0x1F) != 4",
             "((first[4] >> 16) & 0x1F) != 2",
+            "zeroCtrlMipsBranchTarget(first_target + 0x14, first[5])",
+            "first_target + 0x20",
             "first[8] != 0x03E00008", "zeroCtrlMipsMove(first[9], 2, 5)",
             "body_size=0x28", "a2_read=0 a3_read=0 container_arg_used=0",
             "bound_slot = ((first[2] & 0xFFFF) << 16) +",
@@ -913,9 +916,18 @@ def check_sources(root):
     first_range = downstream.find(
             "zeroCtrlPafA989ValidateCodeRange(paf, first_target")
     first_read = downstream.find("_lw(first_target", first_range)
+    first_bltz_target = downstream.find(
+            "zeroCtrlMipsBranchTarget(first_target, first[0])")
+    first_bne_target = downstream.find(
+            "zeroCtrlMipsBranchTarget(first_target + 0x14, first[5])",
+            first_bltz_target)
     body_valid = downstream.find("[paf-a989-first-call-body] validation=1")
-    if not 0 <= first_range < first_read < body_valid:
-        fail("first-call body read/conclusion is not range ordered")
+    body_size = downstream.find("body_size=0x28", body_valid)
+    no_container_use = downstream.find("a2_read=0 a3_read=0 container_arg_used=0",
+            body_size)
+    if not 0 <= first_range < first_read < first_bltz_target < \
+            first_bne_target < body_valid < body_size < no_container_use:
+        fail("first-call internal branches are not proven before body conclusion")
     bound_segment = downstream.find(
             "zeroCtrlModuleContainingSegment(paf, bound_slot")
     bound_range = downstream.find(

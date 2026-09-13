@@ -4692,7 +4692,9 @@ static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
     }
     for (i = 0; i < 10; i++) first[i] = _lw(first_target + i * 4);
     if ((first[0] >> 26) != 1 || ((first[0] >> 21) & 0x1F) != 4 ||
-            ((first[0] >> 16) & 0x1F) != 0 || first[1] != 0x24050001 ||
+            ((first[0] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(first_target, first[0]) !=
+                first_target + 0x1C || first[1] != 0x24050001 ||
             (first[2] >> 26) != 0x0F || ((first[2] >> 21) & 0x1F) != 0 ||
             ((first[2] >> 16) & 0x1F) != 3 ||
             (first[3] >> 26) != 0x23 || ((first[3] >> 21) & 0x1F) != 3 ||
@@ -4702,7 +4704,9 @@ static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
             ((first[4] >> 16) & 0x1F) != 2 ||
             ((first[4] >> 11) & 0x1F) != 2 ||
             (first[5] >> 26) != 5 || ((first[5] >> 21) & 0x1F) != 2 ||
-            ((first[5] >> 16) & 0x1F) != 0 || first[6] != 0 ||
+            ((first[5] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(first_target + 0x14, first[5]) !=
+                first_target + 0x20 || first[6] != 0 ||
             !zeroCtrlMipsMove(first[7], 5, 0) || first[8] != 0x03E00008 ||
             !zeroCtrlMipsMove(first[9], 2, 5)) {
         zeroCtrlDiagnosticsText("[paf-a989-first-call-body] validation=0\n");
