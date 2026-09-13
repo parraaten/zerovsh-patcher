@@ -2306,3 +2306,39 @@ definition offers a concrete next provenance edge from candidates that remain
 opaque. It adds no object dereference, runtime call, execution claim, semantic
 Sony name, or change to the primary `callback_flow=AMBIGUOUS` result. A new
 PSP-1000 run is required to collect these loaded-image records.
+
+#### A989 targeted nearby-function provenance
+
+The next read-only capture is restricted to the hardware-reported candidates
+at PAF text offsets `0xCFA38`, `0xCFB30`, and `0xCFBF4`; it does not widen the
+generic candidate scan or its reporting cap. For each offset, it searches back
+at most `0x100` bytes for the nearest conventional negative stack allocation
+with an RA save. That tentative entry is accepted only when it is immediately
+preceded by a `JR ra` boundary or is the dynamically decoded target of a direct
+loaded-text J/JAL. Otherwise the function entry is reported as `UNKNOWN`.
+
+From an accepted entry, a bounded forward pass tracks only entry arguments,
+simple copies, and one load through an entry argument or its saved-register
+copy. Conditional branches and non-call transfers stop the proof rather than
+merge paths. Direct and indirect calls process their validated delay slot,
+invalidate caller-saved provenance, and retain saved-register provenance only
+for registers mechanically saved by the containing function. Unknown GPR
+destination behavior also stops the proof. Direct callers are reported only
+for the three accepted entries and are capped at 16 per entry.
+
+New records are:
+
+```text
+[paf-a989-nearby-function] candidate_off=... entry_off=... status=VALID|UNKNOWN
+[paf-a989-nearby-base-flow] candidate_off=... base_reg=... origin=ENTRY_A0|ENTRY_A1|ENTRY_A2|ENTRY_A3|COPY_OF_ENTRY_ARG|LW_FROM_ENTRY_ARG|LW_FROM_SAVED_ARG|UNKNOWN source_reg=... disp=...
+[paf-a989-nearby-caller] candidate_off=... function_entry=... caller_off=... kind=JAL|J
+```
+
+**PROVEN BY HARDWARE:** the three selected generic candidates exist in the
+loaded PSP-1000 PAF image and their earlier `0x40` suffix observations were
+unknown. **PROVEN BY SOURCE:** the new capture is limited, range-validated,
+read-only, and fail-closed as described above. The containing entries, forward
+base provenance, and direct caller relationships remain **HYPOTHESIS / UNKNOWN**
+until another PSP-1000 run supplies the new records. No proximity or field
+offset is promoted to A989 OUTER identity, and the primary callback flow stays
+`AMBIGUOUS`.

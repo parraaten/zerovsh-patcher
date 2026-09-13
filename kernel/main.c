@@ -3941,6 +3941,62 @@ static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
             ((rs == source && rt == 0) || (rs == 0 && rt == source));
 }
 
+enum ZeroCtrlPafA989NearbyOrigin {
+    ZERO_PAF_NEARBY_UNKNOWN = 0,
+    ZERO_PAF_NEARBY_ENTRY_ARG,
+    ZERO_PAF_NEARBY_COPY_ENTRY_ARG,
+    ZERO_PAF_NEARBY_LW_ENTRY_ARG,
+    ZERO_PAF_NEARBY_LW_SAVED_ARG
+};
+
+typedef struct ZeroCtrlPafA989NearbySource {
+    unsigned char origin;
+    unsigned char entry_reg;
+    signed short disp;
+} ZeroCtrlPafA989NearbySource;
+
+static int zeroCtrlPafA989ApplyNearbyInstruction(unsigned int word,
+        ZeroCtrlPafA989NearbySource source[32]) {
+    unsigned int opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int rd = (word >> 11) & 0x1F;
+    int destination = zeroCtrlMipsGprWriteDestination(word);
+
+    if (destination < 0) return 0;
+    if ((zeroCtrlMipsMove(word, rd, rs) ||
+                zeroCtrlMipsMove(word, rd, rt)) && rd != 0) {
+        unsigned int copy_reg = rs == 0 ? rt : rs;
+        source[rd] = source[copy_reg];
+        if (source[rd].origin == ZERO_PAF_NEARBY_ENTRY_ARG)
+            source[rd].origin = ZERO_PAF_NEARBY_COPY_ENTRY_ARG;
+    } else if (opcode == 9 && (short)(word & 0xFFFF) == 0 && rt != 0) {
+        source[rt] = source[rs];
+        if (source[rt].origin == ZERO_PAF_NEARBY_ENTRY_ARG)
+            source[rt].origin = ZERO_PAF_NEARBY_COPY_ENTRY_ARG;
+    } else if (opcode == 0x23 && rt != 0) {
+        ZeroCtrlPafA989NearbySource next = {
+            ZERO_PAF_NEARBY_UNKNOWN, 0, 0
+        };
+        if (source[rs].origin == ZERO_PAF_NEARBY_ENTRY_ARG) {
+            next.origin = ZERO_PAF_NEARBY_LW_ENTRY_ARG;
+            next.entry_reg = source[rs].entry_reg;
+            next.disp = (short)(word & 0xFFFF);
+        } else if (rs >= 16 && rs <= 23 &&
+                source[rs].origin == ZERO_PAF_NEARBY_COPY_ENTRY_ARG) {
+            next.origin = ZERO_PAF_NEARBY_LW_SAVED_ARG;
+            next.entry_reg = source[rs].entry_reg;
+            next.disp = (short)(word & 0xFFFF);
+        }
+        source[rt] = next;
+    } else if (destination != 0) {
+        source[destination].origin = ZERO_PAF_NEARBY_UNKNOWN;
+        source[destination].entry_reg = 0;
+        source[destination].disp = 0;
+    }
+    return 1;
+}
+
 static int zeroCtrlModuleContainingSegment(SceModule2 *mod,
         unsigned int address, unsigned int *segment, unsigned int *remaining) {
     unsigned int i;
@@ -4231,6 +4287,8 @@ static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
 
 static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
         const unsigned int constructed[2]);
+
+static void zeroCtrlWritePafA989NearbyFlows(SceModule2 *paf);
 
 static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
         unsigned int consumer, const unsigned int constructed[2]);
@@ -4958,6 +5016,181 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 "evidence=LOADED_CODE_STRUCTURE if_base_is_a989_outer=1 "
                 "target=0x%08X a1=inner_container execution=NOT_OBSERVED\n",
                 constructed[1]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    zeroCtrlWritePafA989NearbyFlows(paf);
+}
+
+static void zeroCtrlWritePafA989NearbyFlows(SceModule2 *paf) {
+    static const unsigned int candidate_offsets[3] = {
+        0xCFA38, 0xCFB30, 0xCFBF4
+    };
+    unsigned int index;
+    char line[256];
+
+    if (!zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size))
+        return;
+    for (index = 0; index < 3; index++) {
+        unsigned int candidate_off = candidate_offsets[index];
+        unsigned int candidate, candidate_word, base;
+        unsigned int search_start, entry_off = 0, entry_valid = 0;
+        unsigned int cursor, ra_saved = 0, direct_callers = 0;
+        unsigned int caller_reported = 0;
+        unsigned int saved_mask = 0;
+        ZeroCtrlPafA989NearbySource source[32] = { { 0, 0, 0 } };
+        const char *origin = "UNKNOWN";
+
+        if (paf->text_size < 4 || candidate_off > paf->text_size - 4)
+            continue;
+        candidate = paf->text_addr + candidate_off;
+        if (candidate < paf->text_addr ||
+                !zeroCtrlVshModuleRangeValid(paf, candidate, 4)) continue;
+        candidate_word = _lw(candidate);
+        base = (candidate_word >> 21) & 0x1F;
+        if ((candidate_word >> 26) != 0x23 ||
+                (short)(candidate_word & 0xFFFF) != 0x14) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-nearby-function] candidate_off=0x%X "
+                    "entry_off=UNKNOWN status=UNKNOWN\n", candidate_off);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        search_start = candidate_off > 0x100 ? candidate_off - 0x100 : 0;
+        for (cursor = candidate_off; cursor >= search_start + 4; cursor -= 4) {
+            unsigned int prologue = _lw(paf->text_addr + cursor - 4);
+            unsigned int save;
+            if ((prologue >> 26) != 9 ||
+                    ((prologue >> 21) & 0x1F) != 29 ||
+                    ((prologue >> 16) & 0x1F) != 29 ||
+                    (short)(prologue & 0xFFFF) >= 0)
+                continue;
+            entry_off = cursor - 4;
+            for (save = entry_off + 4;
+                    save <= entry_off + 0x20 && save < candidate_off;
+                    save += 4) {
+                unsigned int save_word = _lw(paf->text_addr + save);
+                if ((save_word >> 26) == 0x2B &&
+                        ((save_word >> 21) & 0x1F) == 29 &&
+                        ((save_word >> 16) & 0x1F) == 31) {
+                    ra_saved = 1;
+                    break;
+                }
+            }
+            break;
+        }
+        if (ra_saved && zeroCtrlVshModuleRangeValid(paf,
+                    paf->text_addr + entry_off, candidate_off - entry_off + 4)) {
+            if (entry_off >= 8 &&
+                    _lw(paf->text_addr + entry_off - 8) == 0x03E00008)
+                entry_valid = 1;
+            for (cursor = 0; cursor + 4 <= paf->text_size; cursor += 4) {
+                unsigned int caller_word = _lw(paf->text_addr + cursor);
+                unsigned int caller_opcode = caller_word >> 26;
+                if ((caller_opcode == 2 || caller_opcode == 3) &&
+                        zeroCtrlMipsJumpTarget(paf->text_addr + cursor,
+                            caller_word) == paf->text_addr + entry_off) {
+                    direct_callers++;
+                    entry_valid = 1;
+                }
+            }
+        }
+        if (!entry_valid) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-nearby-function] candidate_off=0x%X "
+                    "entry_off=UNKNOWN status=UNKNOWN\n", candidate_off);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        snprintf(line, sizeof(line),
+                "[paf-a989-nearby-function] candidate_off=0x%X "
+                "entry_off=0x%X status=VALID\n", candidate_off, entry_off);
+        zeroCtrlDiagnosticsText(line);
+        if (direct_callers != 0) {
+            for (cursor = 0; cursor + 4 <= paf->text_size &&
+                    caller_reported < 16; cursor += 4) {
+                unsigned int caller_word = _lw(paf->text_addr + cursor);
+                unsigned int caller_opcode = caller_word >> 26;
+                if ((caller_opcode == 2 || caller_opcode == 3) &&
+                        zeroCtrlMipsJumpTarget(paf->text_addr + cursor,
+                            caller_word) == paf->text_addr + entry_off) {
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-nearby-caller] candidate_off=0x%X "
+                            "function_entry=0x%X caller_off=0x%X kind=%s\n",
+                            candidate_off, entry_off, cursor,
+                            caller_opcode == 3 ? "JAL" : "J");
+                    zeroCtrlDiagnosticsText(line);
+                    caller_reported++;
+                }
+            }
+        }
+        for (cursor = 4; cursor <= 7; cursor++) {
+            source[cursor].origin = ZERO_PAF_NEARBY_ENTRY_ARG;
+            source[cursor].entry_reg = cursor;
+        }
+        for (cursor = entry_off; cursor < candidate_off; cursor += 4) {
+            unsigned int word = _lw(paf->text_addr + cursor);
+            unsigned int opcode = word >> 26;
+            unsigned int function = word & 0x3F;
+            if (opcode == 0x2B && ((word >> 21) & 0x1F) == 29 &&
+                    ((word >> 16) & 0x1F) >= 16 &&
+                    ((word >> 16) & 0x1F) <= 23)
+                saved_mask |= 1U << (((word >> 16) & 0x1F) - 16);
+            if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17) || opcode == 2 ||
+                    (opcode == 0 && function == 8))
+                break;
+            if (opcode == 0 && function == 9 &&
+                    ((word >> 11) & 0x1F) != 31)
+                break;
+            if (opcode == 3 || (opcode == 0 && function == 9 &&
+                        ((word >> 11) & 0x1F) == 31)) {
+                unsigned int delay;
+                unsigned int reg;
+                if (cursor + 4 >= candidate_off) break;
+                delay = _lw(paf->text_addr + cursor + 4);
+                if ((delay >> 26) == 0x2B &&
+                        ((delay >> 21) & 0x1F) == 29 &&
+                        ((delay >> 16) & 0x1F) >= 16 &&
+                        ((delay >> 16) & 0x1F) <= 23)
+                    saved_mask |= 1U <<
+                            (((delay >> 16) & 0x1F) - 16);
+                if (!zeroCtrlPafA989ApplyNearbyInstruction(delay, source))
+                    break;
+                for (reg = 2; reg <= 15; reg++)
+                    source[reg].origin = ZERO_PAF_NEARBY_UNKNOWN;
+                source[24].origin = ZERO_PAF_NEARBY_UNKNOWN;
+                source[25].origin = ZERO_PAF_NEARBY_UNKNOWN;
+                source[31].origin = ZERO_PAF_NEARBY_UNKNOWN;
+                for (reg = 16; reg <= 23; reg++)
+                    if ((saved_mask & (1U << (reg - 16))) == 0)
+                        source[reg].origin = ZERO_PAF_NEARBY_UNKNOWN;
+                cursor += 4;
+                continue;
+            }
+            if (!zeroCtrlPafA989ApplyNearbyInstruction(word, source)) break;
+        }
+        if (cursor == candidate_off) {
+            if (source[base].origin == ZERO_PAF_NEARBY_ENTRY_ARG)
+                origin = source[base].entry_reg == 4 ? "ENTRY_A0" :
+                        source[base].entry_reg == 5 ? "ENTRY_A1" :
+                        source[base].entry_reg == 6 ? "ENTRY_A2" : "ENTRY_A3";
+            else if (source[base].origin == ZERO_PAF_NEARBY_COPY_ENTRY_ARG)
+                origin = "COPY_OF_ENTRY_ARG";
+            else if (source[base].origin == ZERO_PAF_NEARBY_LW_ENTRY_ARG)
+                origin = "LW_FROM_ENTRY_ARG";
+            else if (source[base].origin == ZERO_PAF_NEARBY_LW_SAVED_ARG)
+                origin = "LW_FROM_SAVED_ARG";
+        }
+        if (cursor != candidate_off ||
+                source[base].origin == ZERO_PAF_NEARBY_UNKNOWN) {
+            source[base].entry_reg = 0;
+            source[base].disp = 0;
+        }
+        snprintf(line, sizeof(line),
+                "[paf-a989-nearby-base-flow] candidate_off=0x%X "
+                "base_reg=%u origin=%s source_reg=%u disp=%d\n",
+                candidate_off, base, origin, source[base].entry_reg,
+                source[base].disp);
         zeroCtrlDiagnosticsText(line);
     }
 }

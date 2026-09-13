@@ -1061,6 +1061,92 @@ def check_sources(root):
             "sceKernelStartThread", "request_function()"):
         if forbidden in constructed_flow:
             fail("constructed/OUTER+0x14 analysis is not read-only: " + forbidden)
+    nearby_apply_start = kernel.find(
+            "static int zeroCtrlPafA989ApplyNearbyInstruction(")
+    nearby_apply_end = kernel.find(
+            "static int zeroCtrlModuleContainingSegment(", nearby_apply_start)
+    nearby_start = kernel.find(
+            "static void zeroCtrlWritePafA989NearbyFlows(SceModule2 *paf) {",
+            constructed_flow_start)
+    nearby_end = kernel.find(
+            "static int zeroCtrlPafA989ValidateCodeRange(", nearby_start)
+    if min(nearby_apply_start, nearby_apply_end, nearby_start, nearby_end) < 0:
+        fail("targeted A989 nearby-function provenance analysis is missing")
+    nearby_apply = kernel[nearby_apply_start:nearby_apply_end]
+    nearby = kernel[nearby_start:nearby_end]
+    for token in ("ZERO_PAF_NEARBY_UNKNOWN", "ZERO_PAF_NEARBY_ENTRY_ARG",
+            "ZERO_PAF_NEARBY_COPY_ENTRY_ARG", "ZERO_PAF_NEARBY_LW_ENTRY_ARG",
+            "ZERO_PAF_NEARBY_LW_SAVED_ARG",
+            "zeroCtrlMipsGprWriteDestination(word)",
+            "if (destination < 0) return 0",
+            "zeroCtrlMipsMove(word, rd, rs)",
+            "opcode == 9 && (short)(word & 0xFFFF) == 0",
+            "opcode == 0x23", "source[destination].origin = ZERO_PAF_NEARBY_UNKNOWN"):
+        if token not in nearby_apply:
+            fail("nearby provenance transfer is not conservative: " + token)
+    for token in ("0xCFA38, 0xCFB30, 0xCFBF4", "index < 3",
+            "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)",
+            "candidate_off > paf->text_size - 4",
+            "zeroCtrlVshModuleRangeValid(paf, candidate, 4)",
+            "search_start = candidate_off > 0x100",
+            "(prologue >> 26) != 9", "(short)(prologue & 0xFFFF) >= 0",
+            "save <= entry_off + 0x20", "((save_word >> 16) & 0x1F) == 31",
+            "_lw(paf->text_addr + entry_off - 8) == 0x03E00008",
+            "caller_opcode == 2 || caller_opcode == 3",
+            "zeroCtrlMipsJumpTarget(paf->text_addr + cursor",
+            "candidate_off - entry_off + 4",
+            "[paf-a989-nearby-function]", "entry_off=UNKNOWN status=UNKNOWN",
+            "entry_off=0x%X status=VALID", "caller_reported < 16",
+            "[paf-a989-nearby-caller]", "kind=%s",
+            "source[cursor].origin = ZERO_PAF_NEARBY_ENTRY_ARG",
+            "opcode == 1 || (opcode >= 4 && opcode <= 7)",
+            "opcode == 0 && function == 9", "((word >> 11) & 0x1F) != 31",
+            "zeroCtrlPafA989ApplyNearbyInstruction(delay, source)",
+            "for (reg = 2; reg <= 15; reg++)",
+            "source[24].origin = ZERO_PAF_NEARBY_UNKNOWN",
+            "source[25].origin = ZERO_PAF_NEARBY_UNKNOWN",
+            "saved_mask & (1U << (reg - 16))",
+            "zeroCtrlPafA989ApplyNearbyInstruction(word, source)",
+            "if (cursor == candidate_off)", "ENTRY_A0", "ENTRY_A1",
+            "ENTRY_A2", "ENTRY_A3", "COPY_OF_ENTRY_ARG",
+            "LW_FROM_ENTRY_ARG", "LW_FROM_SAVED_ARG",
+            "cursor != candidate_off ||",
+            "source[base].origin == ZERO_PAF_NEARBY_UNKNOWN",
+            "source[base].entry_reg = 0", "source[base].disp = 0",
+            "[paf-a989-nearby-base-flow]", "origin=%s source_reg=%u disp=%d"):
+        if token not in nearby:
+            fail("targeted A989 nearby provenance lacks " + token)
+    nearby_range = nearby.find(
+            "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)")
+    nearby_first_read = nearby.find("_lw(", nearby_range)
+    nearby_local_range = nearby.find(
+            "candidate_off - entry_off + 4", nearby_first_read)
+    nearby_valid_output = nearby.find("entry_off=0x%X status=VALID",
+            nearby_local_range)
+    nearby_trace = nearby.find("for (cursor = entry_off; cursor < candidate_off",
+            nearby_valid_output)
+    nearby_delay = nearby.find(
+            "zeroCtrlPafA989ApplyNearbyInstruction(delay, source)", nearby_trace)
+    nearby_call_clear = nearby.find(
+            "for (reg = 2; reg <= 15; reg++)", nearby_delay)
+    nearby_saved_guard = nearby.find(
+            "saved_mask & (1U << (reg - 16))", nearby_call_clear)
+    nearby_result = nearby.find("[paf-a989-nearby-base-flow]",
+            nearby_saved_guard)
+    if not 0 <= nearby_range < nearby_first_read < nearby_local_range < \
+            nearby_valid_output < nearby_trace < nearby_delay < \
+            nearby_call_clear < nearby_saved_guard < nearby_result:
+        fail("nearby function provenance reads or reports before validation")
+    if nearby.count("0xCFA38") != 1 or nearby.count("0xCFB30") != 1 or \
+            nearby.count("0xCFBF4") != 1 or "outer14-exact-chain" in nearby:
+        fail("nearby analysis broadens candidates or overstates A989 identity")
+    if "look <= offset + 0x40" not in constructed_flow:
+        fail("generic OUTER+0x14 search window was widened")
+    for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP", "REDIRECT_FUNCTION",
+            "zeroCtrlRedir", "Dcache", "Icache", "sceKernelCreateThread",
+            "sceKernelStartThread", "request_function()"):
+        if forbidden in nearby_apply or forbidden in nearby:
+            fail("nearby provenance analysis is not read-only: " + forbidden)
     downstream_start = kernel.find("static void zeroCtrlWritePafA989Downstream(",
             consumer_start + 1)
     downstream_end = kernel.find(
