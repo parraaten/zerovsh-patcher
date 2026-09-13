@@ -4229,6 +4229,9 @@ static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
         unsigned int first_target, unsigned int header_target,
         unsigned int global_target);
 
+static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
+        const unsigned int constructed[2]);
+
 static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
         unsigned int consumer, const unsigned int constructed[2]);
 
@@ -4656,8 +4659,182 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
                 slot);
         zeroCtrlDiagnosticsText(line);
     }
+    zeroCtrlWritePafA989ConstructedFlows(paf, constructed);
     zeroCtrlWritePafA989Downstream(paf, call_targets[0], call_targets[2],
             call_targets[3]);
+}
+
+static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
+        const unsigned int constructed[2]) {
+    unsigned int segment, remaining, offset, look;
+    unsigned int constructed0_size, constructed1_size;
+    unsigned int saved_base = 0, preserved_return = 0, constructed0_found = 0;
+    unsigned int candidates = 0, reported = 0, closure = 0;
+    char line[256];
+
+    if (!zeroCtrlModuleContainingSegment(paf, constructed[1], &segment,
+                &remaining) || remaining < 0xBC ||
+            !zeroCtrlVshModuleRangeValid(paf, constructed[1], 0xBC) ||
+            (short)(_lw(constructed[1]) & 0xFFFF) >= 0 ||
+            (_lw(constructed[1]) >> 26) != 9 ||
+            ((_lw(constructed[1]) >> 21) & 0x1F) != 29 ||
+            ((_lw(constructed[1]) >> 16) & 0x1F) != 29) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-constructed1-indirect] validation=0\n");
+    } else {
+        unsigned int entry_move = 0;
+        unsigned int load = _lw(constructed[1] + 0x40);
+        unsigned int branch = _lw(constructed[1] + 0x44);
+        unsigned int delay = _lw(constructed[1] + 0x48);
+        unsigned int jalr = _lw(constructed[1] + 0xB4);
+        unsigned int jalr_delay = _lw(constructed[1] + 0xB8);
+        for (offset = 4; offset < 0x20; offset += 4)
+            if (zeroCtrlMipsMove(_lw(constructed[1] + offset), 16, 5))
+                entry_move = 1;
+        if (entry_move && (load >> 26) == 0x23 &&
+                ((load >> 21) & 0x1F) == 16 &&
+                ((load >> 16) & 0x1F) == 2 &&
+                (short)(load & 0xFFFF) == 12 &&
+                (branch >> 26) == 5 && ((branch >> 21) & 0x1F) == 2 &&
+                ((branch >> 16) & 0x1F) == 0 &&
+                zeroCtrlMipsBranchTarget(constructed[1] + 0x44, branch) ==
+                    constructed[1] + 0xB4 && delay == 0 &&
+                (jalr >> 26) == 0 && (jalr & 0x3F) == 9 &&
+                ((jalr >> 21) & 0x1F) == 2 &&
+                ((jalr >> 11) & 0x1F) == 31 &&
+                (jalr_delay >> 26) == 0x23 &&
+                ((jalr_delay >> 21) & 0x1F) == 16 &&
+                ((jalr_delay >> 16) & 0x1F) == 4 &&
+                (short)(jalr_delay & 0xFFFF) == 4)
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-constructed1-indirect] validation=1 "
+                    "base_arg_reg=5 target_field_off=0x0C "
+                    "arg0_field_off=0x04 jalr_off=0xB4\n");
+        else
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-constructed1-indirect] validation=0\n");
+    }
+
+    if (!zeroCtrlModuleContainingSegment(paf, constructed[0], &segment,
+                &remaining)) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-constructed0-write] validation=0\n");
+    } else {
+        constructed0_size = remaining > 0x80 ? 0x80 : remaining;
+        constructed0_size &= ~3U;
+        if (constructed0_size != 0 && zeroCtrlVshModuleRangeValid(paf,
+                    constructed[0], constructed0_size)) {
+            for (offset = 0; offset < constructed0_size; offset += 4) {
+                unsigned int word = _lw(constructed[0] + offset);
+                unsigned int rd = (word >> 11) & 0x1F;
+                if (!saved_base && zeroCtrlMipsMove(word, rd, 4) && rd != 0)
+                    saved_base = rd;
+                if ((word >> 26) == 3 && offset + 8 < constructed0_size) {
+                    unsigned int next = _lw(constructed[0] + offset + 8);
+                    unsigned int next_rd = (next >> 11) & 0x1F;
+                    if (zeroCtrlMipsMove(next, next_rd, 2) && next_rd != 0)
+                        preserved_return = next_rd;
+                }
+                if (saved_base && preserved_return && (word >> 26) == 0x2B &&
+                        ((word >> 21) & 0x1F) == saved_base &&
+                        ((word >> 16) & 0x1F) == preserved_return &&
+                        (short)(word & 0xFFFF) == 4) {
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-constructed0-write] validation=1 "
+                            "base_arg_reg=4 field_off=0x04 "
+                            "source=preserved_call_return source_reg=%u "
+                            "base_reg=%u store_off=0x%X\n", preserved_return,
+                            saved_base, offset);
+                    zeroCtrlDiagnosticsText(line);
+                    constructed0_found = 1;
+                    break;
+                }
+            }
+        }
+        if (!constructed0_found)
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-constructed0-write] validation=0\n");
+    }
+
+    if (!zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size))
+        return;
+    for (offset = 0; offset + 8 <= paf->text_size; offset += 4) {
+        unsigned int load = _lw(paf->text_addr + offset);
+        unsigned int base = (load >> 21) & 0x1F;
+        unsigned int target = (load >> 16) & 0x1F;
+        unsigned int provenance_reg = 0;
+        unsigned int provenance = 0;
+        if ((load >> 26) != 0x23 || target == 0 ||
+                (short)(load & 0xFFFF) != 0x14) continue;
+        for (look = offset + 4; look <= offset + 0x40 &&
+                look + 4 <= paf->text_size; look += 4) {
+            unsigned int word = _lw(paf->text_addr + look);
+            unsigned int opcode = word >> 26;
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int rd = (word >> 11) & 0x1F;
+            unsigned int function = word & 0x3F;
+            int destination;
+            if (opcode == 0x23 && rs == base &&
+                    (short)(word & 0xFFFF) == 4 && rt != 0) {
+                provenance_reg = rt;
+                provenance = rt == 5;
+            } else if (provenance_reg &&
+                    ((zeroCtrlMipsMove(word, rd, provenance_reg) && rd != 0) ||
+                     (opcode == 9 && rs == provenance_reg &&
+                      (short)(word & 0xFFFF) == 0 && rt != 0))) {
+                provenance_reg = opcode == 9 ? rt : rd;
+                if (provenance_reg == 5) provenance = 1;
+            }
+            if (opcode == 0 && function == 9 && rs == target && rd == 31) {
+                int delay_destination = zeroCtrlMipsGprWriteDestination(
+                        _lw(paf->text_addr + look + 4));
+                if (delay_destination < 0 ||
+                        (unsigned int)delay_destination == target) break;
+                candidates++;
+                if (reported < 16) {
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-outer14-call-candidate] load_off=0x%X "
+                            "jalr_off=0x%X base_reg=%u target_reg=%u\n",
+                            offset, look, base, target);
+                    zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-outer14-call-provenance] jalr_off=0x%X "
+                            "a1_source=%s\n", look,
+                            provenance ? "base_plus_0x04" : "UNKNOWN");
+                    zeroCtrlDiagnosticsText(line);
+                    reported++;
+                }
+                if (provenance) closure = 1;
+                break;
+            }
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0 || (unsigned int)destination == target) break;
+            if (provenance_reg && (unsigned int)destination == provenance_reg) {
+                provenance_reg = 0;
+                provenance = 0;
+            }
+            if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                    (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17) ||
+                    (opcode == 0 && function == 8)) break;
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[paf-a989-outer14-scan] candidates=%u reported=%u\n",
+            candidates, reported);
+    zeroCtrlDiagnosticsText(line);
+    if (closure) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-outer14-dispatch-shape] validation=1 "
+                "target_field_off=0x14 arg1_field_off=0x04\n");
+        snprintf(line, sizeof(line),
+                "[paf-a989-constructed1-provenance] "
+                "evidence=LOADED_CODE_STRUCTURE if_base_is_a989_outer=1 "
+                "target=0x%08X a1=inner_container execution=NOT_OBSERVED\n",
+                constructed[1]);
+        zeroCtrlDiagnosticsText(line);
+    }
 }
 
 static int zeroCtrlPafA989ValidateCodeRange(SceModule2 *paf,
@@ -4680,6 +4857,7 @@ static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
     unsigned int adjacent, adjacent_segment, adjacent_size;
     unsigned int indirect_off = 0xFFFFFFFFU, adjacent_ra_saved = 0;
     unsigned int caller_total = 0, caller_reported = 0, reference_total = 0;
+    unsigned int data_total = 0, data_reported = 0;
     unsigned int header_segment, header_size, global_segment, global_size;
     unsigned int offset, i, row;
     char line[256];
@@ -4843,6 +5021,32 @@ static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
             "[paf-a989-adjacent-scan] direct_callers=%u reported=%u "
             "address_refs=%u\n", caller_total, caller_reported,
             reference_total);
+    zeroCtrlDiagnosticsText(line);
+    for (i = 0; i < paf->nsegment; i++) {
+        unsigned int start = paf->segmentaddr[i];
+        unsigned int size = paf->segmentsize[i];
+        unsigned int scan_size = size > 0x40000 ? 0x40000 : size;
+        scan_size &= ~3U;
+        if ((start & 3) != 0 || scan_size == 0 ||
+                !zeroCtrlVshModuleRangeValid(paf, start, scan_size)) continue;
+        for (offset = 0; offset < scan_size; offset += 4) {
+            unsigned int address = start + offset;
+            if (address >= paf->text_addr &&
+                    address - paf->text_addr < paf->text_size) continue;
+            if (_lw(address) != adjacent) continue;
+            data_total++;
+            if (data_reported < 16) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-adjacent-data-ref] segment=%u offset=0x%X\n",
+                        i, offset);
+                zeroCtrlDiagnosticsText(line);
+                data_reported++;
+            }
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[paf-a989-adjacent-data-scan] matches=%u reported=%u\n",
+            data_total, data_reported);
     zeroCtrlDiagnosticsText(line);
 
     if (!zeroCtrlPafA989ValidateCodeRange(paf, header_target, 8,

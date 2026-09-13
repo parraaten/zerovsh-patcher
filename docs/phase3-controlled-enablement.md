@@ -2245,3 +2245,17 @@ The first-call body proof now dynamically requires its BLTZ to target local
 `+0x1C` and its BNE to target local `+0x20`. Both internal-edge checks precede
 the `body_size=0x28` and no-`a2`/`a3`-read conclusion; this is a static
 validation correction and not new hardware evidence.
+
+#### A989 OUTER+0x14 structural search
+
+The second constructed address now has a dedicated read-only proof for its
+local `base+0x0C` load, branch to `+0xB4`, indirect JALR, and `base+0x04`
+argument load. The first constructed address is independently checked for a
+preserved call return written to its argument base at `+0x04`. A bounded scan of
+validated PAF text reports generic `base+0x14` indirect-call candidates and
+conservative `a1` provenance; any connection to the A989 OUTER layout is
+explicitly conditional on `if_base_is_a989_outer=1`. No exact runtime object
+identity is claimed. A separately capped non-text-segment scan reports aligned
+words equal to the dynamically derived adjacent address without inspecting
+surrounding objects. The prior first-call scalar result and primary ambiguous
+callback flow are unchanged.

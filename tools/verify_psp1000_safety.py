@@ -827,8 +827,8 @@ def check_sources(root):
     constructed_range = consumer.find("constructed[i], map_size", constructed_cap)
     constructed_read = consumer.find("_lw(constructed[i]", constructed_range)
     if not 0 <= constructed_segment < constructed_cap < constructed_range < \
-            constructed_read:
-        fail("constructed-address map lacks segment/range/0x80 ordering")
+            constructed_read or "(i == 0 ? 0x80 : 0x100)" not in consumer:
+        fail("constructed-address map lacks segment/range/per-address cap ordering")
     slot_reconstruct = consumer.find(
             "slot = ((words[0xA8 / 4] & 0xFFFF) << 16) +")
     slot_segment_check = consumer.find(
@@ -853,6 +853,69 @@ def check_sources(root):
             "constructor", "vtable", "handler"):
         if semantic in consumer.lower():
             fail("PAF A989 consumer output invents semantics: " + semantic)
+    constructed_flow_start = kernel.find(
+            "static void zeroCtrlWritePafA989ConstructedFlows(",
+            consumer_start + 1)
+    constructed_flow_end = kernel.find(
+            "static int zeroCtrlPafA989ValidateCodeRange(", constructed_flow_start)
+    if constructed_flow_start < 0 or constructed_flow_end < 0:
+        fail("constructed-address structural flow analysis is missing")
+    constructed_flow = kernel[constructed_flow_start:constructed_flow_end]
+    for token in ("constructed[1]", "remaining < 0xBC",
+            "zeroCtrlVshModuleRangeValid(paf, constructed[1], 0xBC)",
+            "zeroCtrlMipsMove(_lw(constructed[1] + offset), 16, 5)",
+            "load = _lw(constructed[1] + 0x40)",
+            "(short)(load & 0xFFFF) == 12",
+            "branch = _lw(constructed[1] + 0x44)",
+            "zeroCtrlMipsBranchTarget(constructed[1] + 0x44, branch)",
+            "constructed[1] + 0xB4", "delay == 0",
+            "jalr = _lw(constructed[1] + 0xB4)",
+            "jalr_delay = _lw(constructed[1] + 0xB8)",
+            "(short)(jalr_delay & 0xFFFF) == 4",
+            "[paf-a989-constructed1-indirect] validation=1",
+            "base_arg_reg=5 target_field_off=0x0C",
+            "arg0_field_off=0x04 jalr_off=0xB4",
+            "constructed[0]", "remaining > 0x80 ? 0x80",
+            "zeroCtrlVshModuleRangeValid(paf,\n                    constructed[0], constructed0_size)",
+            "zeroCtrlMipsMove(word, rd, 4)", "preserved_return",
+            "(short)(word & 0xFFFF) == 4",
+            "[paf-a989-constructed0-write] validation=1",
+            "base_arg_reg=4 field_off=0x04",
+            "source=preserved_call_return",
+            "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)",
+            "(short)(load & 0xFFFF) != 0x14", "look <= offset + 0x40",
+            "zeroCtrlMipsGprWriteDestination(word)",
+            "(unsigned int)destination == target", "function == 9",
+            "[paf-a989-outer14-call-candidate]", "reported < 16",
+            "[paf-a989-outer14-call-provenance]", "base_plus_0x04",
+            'provenance ? "base_plus_0x04" : "UNKNOWN"',
+            "[paf-a989-outer14-dispatch-shape] validation=1",
+            "target_field_off=0x14 arg1_field_off=0x04",
+            "[paf-a989-constructed1-provenance]",
+            "if_base_is_a989_outer=1", "execution=NOT_OBSERVED"):
+        if token not in constructed_flow:
+            fail("constructed/OUTER+0x14 structural search lacks " + token)
+    c1_range = constructed_flow.find(
+            "zeroCtrlVshModuleRangeValid(paf, constructed[1], 0xBC)")
+    c1_read = constructed_flow.find("_lw(constructed[1]", c1_range)
+    outer_text_range = constructed_flow.find(
+            "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)")
+    outer_scan_read = constructed_flow.find("_lw(paf->text_addr + offset)",
+            outer_text_range)
+    if not 0 <= c1_range < c1_read < outer_text_range < outer_scan_read:
+        fail("constructed/OUTER+0x14 analysis reads before range validation")
+    generic_shape = constructed_flow.find(
+            "[paf-a989-outer14-dispatch-shape] validation=1")
+    conditional_identity = constructed_flow.find("if_base_is_a989_outer=1",
+            generic_shape)
+    if not 0 <= generic_shape < conditional_identity or \
+            "outer14-exact-chain] validation=1" in constructed_flow:
+        fail("generic OUTER+0x14 shape overstates exact A989 object identity")
+    for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP", "REDIRECT_FUNCTION",
+            "zeroCtrlRedir", "Dcache", "Icache", "sceKernelCreateThread",
+            "sceKernelStartThread", "request_function()"):
+        if forbidden in constructed_flow:
+            fail("constructed/OUTER+0x14 analysis is not read-only: " + forbidden)
     downstream_start = kernel.find("static void zeroCtrlWritePafA989Downstream(",
             consumer_start + 1)
     downstream_end = kernel.find(
@@ -893,6 +956,12 @@ def check_sources(root):
             "offset + 0x40 <= paf->text_size", "0x80",
             "[paf-a989-adjacent-caller]", "[paf-a989-adjacent-caller-map]",
             "[paf-a989-adjacent-scan] direct_callers=%u",
+            "paf->segmentsize[i]", "size > 0x40000 ? 0x40000",
+            "zeroCtrlVshModuleRangeValid(paf, start, scan_size)",
+            "address - paf->text_addr < paf->text_size",
+            "_lw(address) != adjacent", "data_reported < 16",
+            "[paf-a989-adjacent-data-ref]",
+            "[paf-a989-adjacent-data-scan] matches=%u",
             "low_opcode == 9 || low_opcode == 0x0D",
             "address + (int)(short)(low & 0xFFFF)",
             "address | (low & 0xFFFF)",
