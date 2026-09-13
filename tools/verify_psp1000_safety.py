@@ -671,6 +671,117 @@ def check_sources(root):
             "callback manager", "registration"):
         if semantic in container.lower():
             fail("secondary PAF output invents semantics: " + semantic)
+    consumer_start = kernel.find(
+            "static void zeroCtrlWritePafA989ConsumerStructure(",
+            container_start + 1)
+    consumer_end = kernel.find(
+            "static void zeroCtrlWriteVsh3f568ImplFlow(", consumer_start)
+    if consumer_start < 0 or consumer_end < 0:
+        fail("PAF A989 downstream consumer capture is missing")
+    consumer = kernel[consumer_start:consumer_end]
+    for token in ("zeroCtrlVshModuleRangeValid(paf, consumer, sizeof(words))",
+            "words[i] = _lw(consumer + i * 4)",
+            "zeroCtrlMipsMove(words[0x08 / 4], 23, 4)",
+            "zeroCtrlMipsMove(words[0x10 / 4], 22, 8)",
+            "zeroCtrlMipsMove(words[0x18 / 4], 21, 6)",
+            "zeroCtrlMipsMove(words[0x20 / 4], 20, 9)",
+            "zeroCtrlMipsMove(words[0x28 / 4], 19, 7)",
+            "zeroCtrlMipsMove(words[0x30 / 4], 18, 5)",
+            "(words[0x3C / 4] >> 26) != 3",
+            "zeroCtrlMipsGprWriteDestination(words[0x40 / 4])",
+            "for (i = 0x44 / 4; i < 0x54 / 4; i++)",
+            "(short)(word & 0xFFFF) == 20",
+            "signed_compare_20 != 1 || s2_nonzero_test != 1",
+            "zeroCtrlPafA989Branch(words[0x54 / 4])",
+            "zeroCtrlPafA989Branch(words[0x5C / 4])",
+            "zeroCtrlPafA989Branch(words[0x64 / 4])",
+            "words[0x70 / 4] != 0x24040028",
+            "zeroCtrlMipsMove(words[0x74 / 4], 17, 2)",
+            "zeroCtrlMipsMove(words[0x7C / 4], 4, 2)",
+            "zeroCtrlMipsMove(words[0x84 / 4], 5, 16)",
+            "words[0x88 / 4] != 0xAE150004",
+            "words[0x8C / 4] != 0xAE130008",
+            "words[0x90 / 4] != 0xAE16000C",
+            "words[0x9C / 4] != 0xAE140014",
+            "words[0xA4 / 4] != 0xAE000018",
+            "zeroCtrlMipsMove(words[0xB4 / 4], 5, 17)",
+            "zeroCtrlMipsMove(words[0xC4 / 4], 4, 23)",
+            "function == 0x0A || function == 0x0B", "0x03E00008",
+            "constructed[0] == 0 || constructed[1] == 0",
+            "[paf-a989-consumer-structure] validation=1",
+            "container_saved_reg=21", "first_call_off=0x3C",
+            "first_call_container_arg_reg=6", "a2_source=inner_container",
+            "field_off=0x00 source=constructed_0",
+            "field_off=0x04 source=inner_container",
+            "field_off=0x08 source=minus_one",
+            "field_off=0x0C source=minus_one",
+            "field_off=0x14 source=constructed_1",
+            "field_off=0x18 source=zero", "delay_slot_of=0xA0",
+            "[paf-a989-consumer-known-branch] off=0x5C outcome=NOT_TAKEN",
+            "[paf-a989-consumer-known-branch] off=0x64 outcome=NOT_TAKEN",
+            "source=caller_known_values",
+            "call_offsets[5]", "0x3C, 0x6C, 0xA0, 0xB8, 0xC0",
+            "zeroCtrlMipsJumpTarget(", "consumer + call_offsets[i]",
+            "zeroCtrlModuleContainingSegment(paf, call_targets[i]",
+            "remaining > 0x100 ? 0x100", "map_size &= ~3U",
+            "zeroCtrlVshModuleRangeValid(paf,", "call_targets[i], map_size",
+            "call_targets[i] >= paf->text_addr &&",
+            "call_targets[i] - paf->text_addr < paf->text_size",
+            "[paf-a989-consumer-call]", "container_direct_arg=%u",
+            "[paf-a989-consumer-call-map]", "row < map_size",
+            "remaining > 0x80 ? 0x80", "[paf-a989-constructed-map]",
+            "mapped[j] = _lw(constructed[i] + row + j * 4)",
+            "slot = ((words[0xA8 / 4] & 0xFFFF) << 16) +",
+            "(int)(short)(words[0xAC / 4] & 0xFFFF)",
+            "zeroCtrlModuleContainingSegment(paf, slot",
+            "zeroCtrlVshModuleRangeValid(paf, slot, 4)",
+            "[paf-a989-consumer-slot]", "value=0x%08X"):
+        if token not in consumer:
+            fail("PAF A989 downstream consumer capture lacks " + token)
+    consumer_guard = consumer.find("if (!zeroCtrlMipsMove(words[0x08 / 4]")
+    entry_liveness = consumer.find("for (i = 0; i < 0x3C / 4; i++)")
+    validated_consumer = consumer.find(
+            "[paf-a989-consumer-structure] validation=1")
+    if not 0 <= consumer_guard < entry_liveness < validated_consumer:
+        fail("consumer provenance/shape is not validated before conclusions")
+    target_segment = consumer.find(
+            "zeroCtrlModuleContainingSegment(paf, call_targets[i]")
+    target_range = consumer.find("call_targets[i], map_size", target_segment)
+    target_read = consumer.find("_lw(call_targets[i]", target_range)
+    if not 0 <= target_segment < target_range < target_read:
+        fail("consumer call map reads before segment/full-range validation")
+    constructed_segment = consumer.find(
+            "zeroCtrlModuleContainingSegment(paf, constructed[i]")
+    constructed_cap = consumer.find("remaining > 0x80 ? 0x80", constructed_segment)
+    constructed_range = consumer.find("constructed[i], map_size", constructed_cap)
+    constructed_read = consumer.find("_lw(constructed[i]", constructed_range)
+    if not 0 <= constructed_segment < constructed_cap < constructed_range < \
+            constructed_read:
+        fail("constructed-address map lacks segment/range/0x80 ordering")
+    slot_reconstruct = consumer.find(
+            "slot = ((words[0xA8 / 4] & 0xFFFF) << 16) +")
+    slot_segment_check = consumer.find(
+            "zeroCtrlModuleContainingSegment(paf, slot", slot_reconstruct)
+    slot_range = consumer.find(
+            "zeroCtrlVshModuleRangeValid(paf, slot, 4)", slot_segment_check)
+    slot_read = consumer.find("_lw(slot)", slot_range)
+    if not 0 <= slot_reconstruct < slot_segment_check < slot_range < slot_read:
+        fail("consumer slot is read before signed reconstruction/four-byte validation")
+    if "field_off=0x10" in consumer:
+        fail("consumer capture invents an outer-block +0x10 value")
+    if "zeroCtrlWritePafA989ConsumerStructure(paf, consumer_target, constructed);" \
+            not in container:
+        fail("validated container does not feed the downstream capture")
+    for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP", "REDIRECT_FUNCTION",
+            "zeroCtrlRedir", "Dcache", "Icache", "sceKernelCreateThread",
+            "sceKernelStartThread", "request_function()"):
+        if forbidden in consumer:
+            fail("PAF A989 consumer capture is not read-only: " + forbidden)
+    for semantic in ("allocator", "validator", "registrar", "registration",
+            "dispatcher", "event manager", "callback manager", "factory",
+            "constructor", "vtable", "handler"):
+        if semantic in consumer.lower():
+            fail("PAF A989 consumer output invents semantics: " + semantic)
     if "[vsh3f568-impl-map]" in vsh3 or "[vsh3f568-use]" in vsh3:
         fail("superseded wrapper/caller output is still automatic")
     for section in (vsh3, inner):

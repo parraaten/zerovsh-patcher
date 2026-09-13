@@ -4225,6 +4225,9 @@ static void zeroCtrlWritePafA989Inner(SceModule2 *paf,
     zeroCtrlDiagnosticsText("[paf-a989-callback] status=AMBIGUOUS bounded_map_exhausted=1\n");
 }
 
+static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
+        unsigned int consumer, const unsigned int constructed[2]);
+
 static void zeroCtrlWritePafA989ContainerStructure(SceModule2 *paf,
         unsigned int inner, unsigned int inner_size) {
     unsigned int words[0x98 / 4];
@@ -4396,6 +4399,239 @@ static void zeroCtrlWritePafA989ContainerStructure(SceModule2 *paf,
                 "w4=%08X w5=%08X w6=%08X w7=%08X\n", row,
                 mapped[0], mapped[1], mapped[2], mapped[3], mapped[4],
                 mapped[5], mapped[6], mapped[7]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    zeroCtrlWritePafA989ConsumerStructure(paf, consumer_target, constructed);
+}
+
+static int zeroCtrlPafA989Branch(unsigned int word) {
+    unsigned int opcode = word >> 26;
+    return opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+            (opcode >= 0x14 && opcode <= 0x17);
+}
+
+static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
+        unsigned int consumer, const unsigned int constructed[2]) {
+    static const unsigned int call_offsets[5] = {
+        0x3C, 0x6C, 0xA0, 0xB8, 0xC0
+    };
+    unsigned int words[0x100 / 4];
+    unsigned int call_targets[5];
+    unsigned int slot, slot_segment, slot_remaining;
+    unsigned int signed_compare_20 = 0, s2_nonzero_test = 0;
+    unsigned int i, row;
+    char line[256];
+
+    if (!zeroCtrlVshModuleRangeValid(paf, consumer, sizeof(words))) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-consumer-structure] validation=0\n");
+        return;
+    }
+    for (i = 0; i < sizeof(words) / sizeof(words[0]); i++)
+        words[i] = _lw(consumer + i * 4);
+    for (i = 0x44 / 4; i < 0x54 / 4; i++) {
+        unsigned int word = words[i];
+        if ((word >> 26) == 0x0A &&
+                (short)(word & 0xFFFF) == 20) signed_compare_20++;
+        if ((word >> 26) == 0 && (word & 0x3F) == 0x2B &&
+                (((((word >> 21) & 0x1F) == 18) &&
+                  (((word >> 16) & 0x1F) == 0)) ||
+                 ((((word >> 21) & 0x1F) == 0) &&
+                  (((word >> 16) & 0x1F) == 18)))) s2_nonzero_test++;
+    }
+
+    if (!zeroCtrlMipsMove(words[0x08 / 4], 23, 4) ||
+            !zeroCtrlMipsMove(words[0x10 / 4], 22, 8) ||
+            !zeroCtrlMipsMove(words[0x18 / 4], 21, 6) ||
+            !zeroCtrlMipsMove(words[0x20 / 4], 20, 9) ||
+            !zeroCtrlMipsMove(words[0x28 / 4], 19, 7) ||
+            !zeroCtrlMipsMove(words[0x30 / 4], 18, 5) ||
+            (words[0x3C / 4] >> 26) != 3 ||
+            (zeroCtrlMipsGprWriteDestination(words[0x40 / 4]) < 0) ||
+            (zeroCtrlMipsGprWriteDestination(words[0x40 / 4]) >= 4 &&
+             zeroCtrlMipsGprWriteDestination(words[0x40 / 4]) <= 7) ||
+            signed_compare_20 != 1 || s2_nonzero_test != 1 ||
+            !zeroCtrlPafA989Branch(words[0x54 / 4]) ||
+            !zeroCtrlPafA989Branch(words[0x5C / 4]) ||
+            !zeroCtrlPafA989Branch(words[0x64 / 4]) ||
+            (words[0x6C / 4] >> 26) != 3 ||
+            words[0x70 / 4] != 0x24040028 ||
+            !zeroCtrlMipsMove(words[0x74 / 4], 17, 2) ||
+            (words[0x78 / 4] >> 26) != 9 ||
+            ((words[0x78 / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0x78 / 4] >> 16) & 0x1F) != 16 ||
+            (short)(words[0x78 / 4] & 0xFFFF) != 8 ||
+            !zeroCtrlMipsMove(words[0x7C / 4], 4, 2) ||
+            (words[0x80 / 4] >> 26) != 0x2B ||
+            ((words[0x80 / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0x80 / 4] >> 16) & 0x1F) != 18 ||
+            (short)(words[0x80 / 4] & 0xFFFF) != 8 ||
+            !zeroCtrlMipsMove(words[0x84 / 4], 5, 16) ||
+            words[0x88 / 4] != 0xAE150004 ||
+            words[0x8C / 4] != 0xAE130008 ||
+            words[0x90 / 4] != 0xAE16000C ||
+            words[0x9C / 4] != 0xAE140014 ||
+            (words[0xA0 / 4] >> 26) != 3 ||
+            words[0xA4 / 4] != 0xAE000018 ||
+            (words[0xA8 / 4] >> 26) != 0x0F ||
+            (words[0xAC / 4] >> 26) != 0x23 ||
+            ((words[0xAC / 4] >> 21) & 0x1F) !=
+                ((words[0xA8 / 4] >> 16) & 0x1F) ||
+            (words[0xB0 / 4] >> 26) != 0 ||
+            (words[0xB0 / 4] & 0x3F) != 0 ||
+            ((words[0xB0 / 4] >> 21) & 0x1F) != 0 ||
+            ((words[0xB0 / 4] >> 16) & 0x1F) != 23 ||
+            ((words[0xB0 / 4] >> 6) & 0x1F) != 3 ||
+            !zeroCtrlMipsMove(words[0xB4 / 4], 5, 17) ||
+            (words[0xB8 / 4] >> 26) != 3 ||
+            (words[0xBC / 4] >> 26) != 0 ||
+            ((words[0xBC / 4] >> 11) & 0x1F) != 4 ||
+            (words[0xC0 / 4] >> 26) != 3 ||
+            !zeroCtrlMipsMove(words[0xC4 / 4], 4, 23)) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-consumer-structure] validation=0\n");
+        return;
+    }
+    for (i = 0; i < 0x3C / 4; i++) {
+        int destination = zeroCtrlMipsGprWriteDestination(words[i]);
+        if (destination < 0 || (destination >= 4 && destination <= 7)) {
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-consumer-structure] validation=0\n");
+            return;
+        }
+    }
+    {
+        unsigned int conditional_move = 0, return_seen = 0;
+        for (i = 0xC8 / 4; i < sizeof(words) / sizeof(words[0]); i++) {
+            unsigned int function = words[i] & 0x3F;
+            if ((words[i] >> 26) == 0 &&
+                    (function == 0x0A || function == 0x0B))
+                conditional_move = 1;
+            if (words[i] == 0x03E00008) return_seen = 1;
+        }
+        if (!conditional_move || !return_seen) {
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-consumer-structure] validation=0\n");
+            return;
+        }
+    }
+
+    if (constructed[0] == 0 || constructed[1] == 0) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-consumer-structure] validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-consumer-structure] validation=1 "
+            "container_saved_reg=21 first_call_off=0x3C "
+            "first_call_container_arg_reg=6\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-consumer-entry] a0_source=caller_zero "
+            "a1_source=constructed_0 a2_source=inner_container "
+            "a3_source=caller_minus_one t0_source=caller_minus_one "
+            "t1_source=constructed_1\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x00 source=constructed_0\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x04 source=inner_container\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x08 source=minus_one\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x0C source=minus_one\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x14 source=constructed_1\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x18 source=zero "
+            "delay_slot_of=0xA0\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-consumer-known-branch] off=0x5C outcome=NOT_TAKEN "
+            "source=caller_known_values\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-consumer-known-branch] off=0x64 outcome=NOT_TAKEN "
+            "source=caller_known_values\n");
+
+    for (i = 0; i < 5; i++) {
+        unsigned int segment, remaining, map_size, in_text;
+        call_targets[i] = zeroCtrlMipsJumpTarget(
+                consumer + call_offsets[i], words[call_offsets[i] / 4]);
+        if (!zeroCtrlModuleContainingSegment(paf, call_targets[i],
+                    &segment, &remaining)) continue;
+        map_size = remaining > 0x100 ? 0x100 : remaining;
+        map_size &= ~3U;
+        if (map_size == 0 || !zeroCtrlVshModuleRangeValid(paf,
+                    call_targets[i], map_size)) continue;
+        in_text = call_targets[i] >= paf->text_addr &&
+                call_targets[i] - paf->text_addr < paf->text_size;
+        if (in_text)
+            snprintf(line, sizeof(line),
+                    "[paf-a989-consumer-call] call_off=0x%X target=0x%08X "
+                    "target_in_text=1 target_off=0x%X segment=%u "
+                    "container_direct_arg=%u\n", call_offsets[i],
+                    call_targets[i], call_targets[i] - paf->text_addr,
+                    segment, call_offsets[i] == 0x3C);
+        else
+            snprintf(line, sizeof(line),
+                    "[paf-a989-consumer-call] call_off=0x%X target=0x%08X "
+                    "target_in_text=0 target_off=OUTSIDE_TEXT segment=%u "
+                    "container_direct_arg=%u\n", call_offsets[i],
+                    call_targets[i], segment, call_offsets[i] == 0x3C);
+        zeroCtrlDiagnosticsText(line);
+        for (row = 0; row < map_size; row += 0x20) {
+            unsigned int mapped[8] = { 0 };
+            unsigned int count = (map_size - row) / 4;
+            unsigned int j;
+            if (count > 8) count = 8;
+            for (j = 0; j < count; j++)
+                mapped[j] = _lw(call_targets[i] + row + j * 4);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-consumer-call-map] call_off=0x%X off=0x%X "
+                    "w0=%08X w1=%08X w2=%08X w3=%08X "
+                    "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                    call_offsets[i], row, mapped[0], mapped[1], mapped[2],
+                    mapped[3], mapped[4], mapped[5], mapped[6], mapped[7]);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+
+    for (i = 0; i < 2; i++) {
+        unsigned int segment, remaining, map_size;
+        if ((constructed[i] & 3) != 0 ||
+                !zeroCtrlModuleContainingSegment(paf, constructed[i],
+                    &segment, &remaining)) continue;
+        map_size = remaining > 0x80 ? 0x80 : remaining;
+        map_size &= ~3U;
+        if (map_size == 0 || !zeroCtrlVshModuleRangeValid(paf,
+                    constructed[i], map_size)) continue;
+        for (row = 0; row < map_size; row += 0x20) {
+            unsigned int mapped[8] = { 0 };
+            unsigned int count = (map_size - row) / 4;
+            unsigned int j;
+            if (count > 8) count = 8;
+            for (j = 0; j < count; j++)
+                mapped[j] = _lw(constructed[i] + row + j * 4);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-constructed-map] reg=%u off=0x%X "
+                    "w0=%08X w1=%08X w2=%08X w3=%08X "
+                    "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                    i == 0 ? 5 : 9, row, mapped[0], mapped[1], mapped[2],
+                    mapped[3], mapped[4], mapped[5], mapped[6], mapped[7]);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+
+    slot = ((words[0xA8 / 4] & 0xFFFF) << 16) +
+            (int)(short)(words[0xAC / 4] & 0xFFFF);
+    if ((slot & 3) == 0 && zeroCtrlModuleContainingSegment(paf, slot,
+                &slot_segment, &slot_remaining) &&
+            zeroCtrlVshModuleRangeValid(paf, slot, 4)) {
+        snprintf(line, sizeof(line),
+                "[paf-a989-consumer-slot] address=0x%08X segment_valid=1 "
+                "value=0x%08X segment=%u\n", slot, _lw(slot), slot_segment);
+        zeroCtrlDiagnosticsText(line);
+    } else {
+        snprintf(line, sizeof(line),
+                "[paf-a989-consumer-slot] address=0x%08X segment_valid=0\n",
+                slot);
         zeroCtrlDiagnosticsText(line);
     }
 }

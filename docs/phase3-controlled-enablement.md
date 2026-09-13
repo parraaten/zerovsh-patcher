@@ -2187,3 +2187,20 @@ the dynamically decoded, segment-validated downstream target.
 
 **Not yet proven:** that the downstream routine registers, dispatches, invokes,
 or otherwise semantically consumes `VSH+589C` in any particular way.
+
+#### A989 immediate consumer capture
+
+**Proven by hardware:** the downstream consumer bytes were captured from the
+loaded PSP-1000 `scePaf` image.
+
+**Proven by loaded PSP-1000 6.61 code:** the consumer preserves the inner-
+container pointer in `s5`. Its first direct call occurs before `a0`–`a3` are
+modified and therefore receives the inner container in `a2`. On the normal
+fallthrough path, the inner-container pointer is later stored inside a second
+block. The observation maps the five immediate direct targets, both previously
+reconstructed addresses, and the validated four-byte slot without executing or
+semantically naming any target.
+
+**Not proven:** that either block was dynamically constructed during this
+diagnostic boot; that any downstream routine invokes `VSH+589C`; or the
+semantics of any mapped PAF call target or constructed address.
