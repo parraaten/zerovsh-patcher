@@ -505,28 +505,64 @@ def check_sources(root):
             '"RESTORE_RA"', "class=RETURN", "[paf-a989-callback] status=STORED",
             "[paf-a989-callback-store]", "[paf-a989-storage-base]",
             "source_input=%s", "status=COPIED", "status=USED_IMMEDIATELY",
-            "status=PASSED_TO_CALL", "tracked_callback < 4 || tracked_callback > 7",
+            "status=PASSED_TO_CALL", "callback_argument == 0",
+            "map_size < 8 || offset > map_size - 8",
+            "zeroCtrlVshModuleRangeValid(paf, target + offset + 4, 4)",
             "delay = _lw(target + offset + 4)",
             "zeroCtrlMipsGprWriteDestination(delay)",
             "(unsigned int)delay_destination == tracked_callback",
+            "status=OVERWRITTEN_IN_DELAY_SLOT",
+            "zeroCtrlMipsMove(delay,", "callback_argument = delay_copy",
             "function == 9 && rs == tracked_callback", "[paf-a989-next]",
             "next_remaining > 0x100", "[paf-a989-next-map]",
             "input_source[4] = 1", "input_source[5] = 2",
             'input_source[rs] == 2 ? "descriptor" : "context"'):
         if token not in inner:
             fail("PAF A989 callback/structural flow lacks " + token)
+    copy_start = inner.find("unsigned int callback_copy =")
+    provenance_clear = inner.find("input_source[callback_copy] = 0", copy_start)
+    tracked_update = inner.find("tracked_callback = callback_copy", copy_start)
+    copy_continue = inner.find("continue;", tracked_update)
+    if not 0 <= copy_start < provenance_clear < tracked_update < copy_continue:
+        fail("callback copy does not invalidate stale input provenance first")
+    delay_range = inner.find("map_size < 8 || offset > map_size - 8")
+    delay_owner_range = inner.find(
+            "zeroCtrlVshModuleRangeValid(paf, target + offset + 4, 4)")
+    delay_read = inner.find("delay = _lw(target + offset + 4)")
     delay_check = inner.find("zeroCtrlMipsGprWriteDestination(delay)")
-    overwrite_check = inner.find("(unsigned int)delay_destination == tracked_callback")
-    jalr_use = inner.find("function == 9 && rs == tracked_callback")
-    argument_gate = inner.find("tracked_callback < 4 || tracked_callback > 7")
-    passed = inner.find("status=PASSED_TO_CALL")
-    if not 0 <= delay_check < overwrite_check < jalr_use < argument_gate < passed:
-        fail("PAF A989 call classification precedes conservative delay-slot checks")
+    unknown_handling = inner.find("if (delay_destination < 0)", delay_check)
+    overwrite_check = inner.find(
+            "(unsigned int)delay_destination == tracked_callback", unknown_handling)
+    overwritten_status = inner.find("status=OVERWRITTEN_IN_DELAY_SLOT", overwrite_check)
+    delay_forward = inner.find("zeroCtrlMipsMove(delay,", overwritten_status)
+    delay_argument = inner.find("callback_argument = delay_copy", delay_forward)
+    jalr_use = inner.find("function == 9 && rs == tracked_callback", delay_argument)
+    used = inner.find("status=USED_IMMEDIATELY", jalr_use)
+    argument_gate = inner.find("callback_argument == 0", used)
+    passed = inner.find("status=PASSED_TO_CALL", argument_gate)
+    if not 0 <= delay_range < delay_owner_range < delay_read < delay_check < \
+            unknown_handling < overwrite_check < overwritten_status < \
+            delay_forward < delay_argument < jalr_use < used < argument_gate < passed:
+        fail("PAF A989 delay-slot forwarding/classification ordering is unsafe")
+    inner_decode = vsh3.find(
+            "inner = zeroCtrlMipsJumpTarget(resolved + 0x18, wrapper[6])")
+    wrapper_text_lower = vsh3.find("inner >= owner->text_addr", inner_decode)
+    wrapper_text_upper = vsh3.find(
+            "inner - owner->text_addr < owner->text_size", wrapper_text_lower)
+    wrapper_text_flag = vsh3.find("inner_in_text=1 inner_off=0x%X", wrapper_text_upper)
+    wrapper_outside = vsh3.find(
+            "inner_in_text=0 inner_off=OUTSIDE_TEXT", wrapper_text_flag)
+    if not 0 <= inner_decode < wrapper_text_lower < wrapper_text_upper < \
+            wrapper_text_flag < wrapper_outside:
+        fail("wrapper inner_off lacks two-bound text classification")
+    if "inner >= owner->text_addr ? inner - owner->text_addr" in vsh3:
+        fail("wrapper inner_off still uses a lower-bound-only calculation")
     if "[vsh3f568-impl-map]" in vsh3 or "[vsh3f568-use]" in vsh3:
         fail("superseded wrapper/caller output is still automatic")
     for section in (vsh3, inner):
         for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
-                "zeroCtrlRedir", "request_function()"):
+                "MAKE_JUMP", "REDIRECT_FUNCTION", "zeroCtrlRedir",
+                "request_function()"):
             if forbidden in section:
                 fail("PAF A989 analysis is not strictly read-only: " + forbidden)
     destination_start = kernel.find(

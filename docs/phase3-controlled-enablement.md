@@ -2152,3 +2152,16 @@ whether the inner routine stores GPR 6, invokes it immediately, or forwards it
 once more, and whether any proven storage base derives structurally from input
 `a0` or `a1`. The recommended next phase is hardware review of these bounded
 records before adding any deeper read-only target analysis or behavior change.
+
+#### A989 conservative-flow correctness follow-up
+
+The bounded analyzer now clears descriptor/context provenance before a callback
+copy takes ownership of that destination register. At calls it range-validates
+and decodes the delay slot first, reports tracked-register replacement as the
+distinct `OVERWRITTEN_IN_DELAY_SLOT` condition, and recognizes a supported
+delay-slot callback copy into `a0`–`a3` without discarding an argument location
+that was already valid. Wrapper output now applies both text bounds before
+printing a text-relative inner offset; a valid target in another PAF segment is
+reported as outside text rather than given a misleading offset. These are
+analysis-correctness changes only and add no new hardware finding or runtime
+behavior.

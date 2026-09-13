@@ -4056,7 +4056,9 @@ static void zeroCtrlWritePafA989Inner(SceModule2 *paf,
         }
         if ((zeroCtrlMipsMove(word, rd, tracked_callback) && rd != 0) ||
                 (opcode == 9 && rs == tracked_callback && rt != 0)) {
-            tracked_callback = opcode == 9 ? rt : rd;
+            unsigned int callback_copy = opcode == 9 ? rt : rd;
+            input_source[callback_copy] = 0;
+            tracked_callback = callback_copy;
             snprintf(line, sizeof(line),
                     "[paf-a989-callback] status=COPIED off=0x%X dst=%u\n",
                     offset, tracked_callback);
@@ -4065,20 +4067,48 @@ static void zeroCtrlWritePafA989Inner(SceModule2 *paf,
         }
         if (opcode == 3 || (opcode == 0 && function == 9)) {
             unsigned int delay, next_segment, next_remaining;
+            unsigned int callback_argument =
+                    tracked_callback >= 4 && tracked_callback <= 7 ?
+                    tracked_callback : 0;
             int delay_destination;
-            if (offset + 8 > map_size) break;
+            if (map_size < 8 || offset > map_size - 8 ||
+                    !zeroCtrlVshModuleRangeValid(paf, target + offset + 4, 4)) {
+                zeroCtrlDiagnosticsText(
+                        "[paf-a989-callback] status=AMBIGUOUS missing_delay_slot=1\n");
+                return;
+            }
             delay = _lw(target + offset + 4);
             delay_destination = zeroCtrlMipsGprWriteDestination(delay);
-            if (delay_destination < 0 ||
-                    (unsigned int)delay_destination == tracked_callback) {
+            if (delay_destination < 0) {
                 snprintf(line, sizeof(line),
-                        "[paf-a989-callback] status=%s call_off=0x%X delay_off=0x%X\n",
-                        delay_destination < 0 ? "AMBIGUOUS" : "OVERWRITTEN",
+                        "[paf-a989-callback] status=AMBIGUOUS call_off=0x%X delay_off=0x%X\n",
                         offset, offset + 4);
                 zeroCtrlDiagnosticsText(line);
-                snprintf(flow, flow_size, "%s", delay_destination < 0 ?
-                        "AMBIGUOUS" : "OVERWRITTEN");
                 return;
+            }
+            if ((unsigned int)delay_destination == tracked_callback) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=OVERWRITTEN_IN_DELAY_SLOT "
+                        "call_off=0x%X delay_off=0x%X\n", offset, offset + 4);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(flow, flow_size, "OVERWRITTEN");
+                return;
+            }
+            if ((zeroCtrlMipsMove(delay,
+                        (delay >> 11) & 0x1F, tracked_callback) &&
+                        ((delay >> 11) & 0x1F) != 0) ||
+                    ((delay >> 26) == 9 &&
+                     ((delay >> 21) & 0x1F) == tracked_callback &&
+                     ((delay >> 16) & 0x1F) != 0)) {
+                unsigned int delay_copy = (delay >> 26) == 9 ?
+                        (delay >> 16) & 0x1F : (delay >> 11) & 0x1F;
+                input_source[delay_copy] = 0;
+                if (delay_copy >= 4 && delay_copy <= 7)
+                    callback_argument = delay_copy;
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=COPIED delay_off=0x%X dst=%u\n",
+                        offset + 4, delay_copy);
+                zeroCtrlDiagnosticsText(line);
             }
             if (opcode == 0 && function == 9 && rs == tracked_callback) {
                 snprintf(line, sizeof(line),
@@ -4088,7 +4118,7 @@ static void zeroCtrlWritePafA989Inner(SceModule2 *paf,
                 snprintf(flow, flow_size, "USED_IMMEDIATELY");
                 return;
             }
-            if (tracked_callback < 4 || tracked_callback > 7) {
+            if (callback_argument == 0) {
                 snprintf(line, sizeof(line),
                         "[paf-a989-callback] status=AMBIGUOUS call_off=0x%X tracked_reg=%u\n",
                         offset, tracked_callback);
@@ -4097,7 +4127,7 @@ static void zeroCtrlWritePafA989Inner(SceModule2 *paf,
             }
             snprintf(line, sizeof(line),
                     "[paf-a989-callback] status=PASSED_TO_CALL off=0x%X reg=%u\n",
-                    offset, tracked_callback);
+                    offset, callback_argument);
             zeroCtrlDiagnosticsText(line);
             snprintf(flow, flow_size, "PASSED_TO_CALL");
             if (opcode == 3) {
@@ -4109,7 +4139,7 @@ static void zeroCtrlWritePafA989Inner(SceModule2 *paf,
                     snprintf(line, sizeof(line),
                             "[paf-a989-next] target=0x%08X target_off=0x%X tracked_reg=%u segment=%u\n",
                             next, next >= paf->text_addr ?
-                            next - paf->text_addr : 0, tracked_callback,
+                            next - paf->text_addr : 0, callback_argument,
                             next_segment);
                     zeroCtrlDiagnosticsText(line);
                     if (zeroCtrlVshModuleRangeValid(paf, next, next_size))
@@ -4476,6 +4506,7 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
                 resolved - owner->text_addr < owner->text_size ?
                 resolved - owner->text_addr : 0;
         unsigned int wrapper_valid;
+        unsigned int inner_in_text;
         unsigned int context_valid;
         char callback_flow[32];
 
@@ -4503,17 +4534,26 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
             return;
         }
         inner = zeroCtrlMipsJumpTarget(resolved + 0x18, wrapper[6]);
+        inner_in_text = inner >= owner->text_addr &&
+                inner - owner->text_addr < owner->text_size;
         context_slot = ((wrapper[0] & 0xFFFF) << 16) +
                 (int)(short)(wrapper[2] & 0xFFFF);
         context_valid = (context_slot & 3) == 0 &&
                 zeroCtrlModuleContainingSegment(owner, context_slot,
                     &context_segment, &context_remaining) &&
                 zeroCtrlVshModuleRangeValid(owner, context_slot, 4);
-        snprintf(line, sizeof(line),
-                "[paf-a989-wrapper] validation=1 wrapper_off=0x%X "
-                "inner=0x%08X inner_off=0x%X callback_reg=6 "
-                "descriptor_reg=5 context_reg=4\n", wrapper_off, inner,
-                inner >= owner->text_addr ? inner - owner->text_addr : 0);
+        if (inner_in_text)
+            snprintf(line, sizeof(line),
+                    "[paf-a989-wrapper] validation=1 wrapper_off=0x%X "
+                    "inner=0x%08X inner_in_text=1 inner_off=0x%X "
+                    "callback_reg=6 descriptor_reg=5 context_reg=4\n",
+                    wrapper_off, inner, inner - owner->text_addr);
+        else
+            snprintf(line, sizeof(line),
+                    "[paf-a989-wrapper] validation=1 wrapper_off=0x%X "
+                    "inner=0x%08X inner_in_text=0 inner_off=OUTSIDE_TEXT "
+                    "callback_reg=6 descriptor_reg=5 context_reg=4\n",
+                    wrapper_off, inner);
         zeroCtrlDiagnosticsText(line);
         snprintf(line, sizeof(line),
                 "[paf-a989-context-slot] address=0x%08X segment_valid=%u\n",
