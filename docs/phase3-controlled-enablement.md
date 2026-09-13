@@ -2170,3 +2170,20 @@ The one-level A989 next-target record now applies both declared-text bounds and
 reports `target_in_text` explicitly. A segment-valid target outside text remains
 eligible for the bounded read-only map, but its offset is reported as
 `OUTSIDE_TEXT`; the record labels the proven register as `callback_arg_reg`.
+
+#### A989 callback-container structural map
+
+**Proven by hardware:** the PSP-1000 loaded `scePaf` image contains the captured
+inner routine, and the wrapper/import resolution is valid.
+
+**Proven by loaded PSP-1000 6.61 code:** the bounded routine contains a normal
+fallthrough path that copies `a2` into `s4`, later stores `s4` at `+0x0C` of a
+container-like block, copies that block into `a2`, and then performs a direct
+JAL. The secondary diagnostic validates the complete local instruction pattern
+before reporting this fallthrough structure. It does not change the primary
+conservative callback-flow result and does not prove that the path executed.
+It also reconstructs the two interleaved LUI/signed-low addresses and maps only
+the dynamically decoded, segment-validated downstream target.
+
+**Not yet proven:** that the downstream routine registers, dispatches, invokes,
+or otherwise semantically consumes `VSH+589C` in any particular way.

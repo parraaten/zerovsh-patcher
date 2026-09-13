@@ -577,6 +577,100 @@ def check_sources(root):
         fail("next PAF target still uses a lower-bound-only offset")
     if "tracked_reg=%u" in inner[next_target:next_map_range]:
         fail("next PAF target mislabels the proven callback argument register")
+    container_start = kernel.find(
+            "static void zeroCtrlWritePafA989ContainerStructure(")
+    container_end = kernel.find(
+            "static void zeroCtrlWriteVsh3f568ImplFlow(", container_start)
+    if container_start < 0 or container_end < 0:
+        fail("secondary PAF A989 container analysis is missing")
+    container = kernel[container_start:container_end]
+    for token in ("inner_size < sizeof(words)",
+            "zeroCtrlVshModuleRangeValid(paf, inner, sizeof(words))",
+            "words[i] = _lw(inner + i * 4)",
+            "zeroCtrlMipsMove(words[0x14 / 4], 17, 4)",
+            "((words[0x20 / 4] >> 16) & 0x1F) != 20",
+            "zeroCtrlMipsMove(words[0x24 / 4], 20, 6)",
+            "zeroCtrlMipsMove(words[0x2C / 4], 19, 5)",
+            "(words[0x40 / 4] >> 26) != 3",
+            "words[0x44 / 4] != 0x24040010",
+            "!zeroCtrlMipsMove(words[0x50 / 4], 16, 2)",
+            "(words[0x54 / 4] >> 26) != 3",
+            "(short)(words[0x58 / 4] & 0xFFFF) != 4",
+            "zeroCtrlMipsMove(words[0x5C / 4], 17, 2)",
+            "zeroCtrlMipsMove(words[0x60 / 4], 4, 2)",
+            "zeroCtrlMipsMove(words[0x68 / 4], 5, 19)",
+            "(short)(words[0x6C / 4] & 0xFFFF) != 8",
+            "(short)(words[0x78 / 4] & 0xFFFF) != 12",
+            "zeroCtrlMipsMove(words[0x7C / 4], 6, 16)",
+            "(words[0x90 / 4] >> 26) != 3",
+            "zeroCtrlMipsMove(words[0x94 / 4], 4, 0)",
+            "[paf-a989-container] validation=1",
+            "base_origin=CALL_RETURN", "base_call_off=0x40",
+            "base_call_arg0=0x10",
+            "off=0x48 field_off=0x0 source=context",
+            "off=0x58 field_off=0x4 source=zero",
+            "delay_slot_of=0x54",
+            "off=0x6C field_off=0x8",
+            "source=second_call_return",
+            "off=0x78 field_off=0xC source=callback",
+            "status=STORED_ON_NORMAL_FALLTHROUGH",
+            "[paf-a989-container-forward] off=0x7C container_reg=16 arg_reg=6",
+            "zeroCtrlMipsJumpTarget(inner + 0x40",
+            "zeroCtrlMipsJumpTarget(inner + 0x54",
+            "first_target == second_target",
+            "consumer_target = zeroCtrlMipsJumpTarget(inner + 0x90",
+            "zeroCtrlModuleContainingSegment(paf, consumer_target",
+            "consumer_remaining > 0x100", "consumer_size &= ~3U",
+            "zeroCtrlVshModuleRangeValid(paf, consumer_target, consumer_size)",
+            "consumer_target >= paf->text_addr &&",
+            "consumer_target - paf->text_addr < paf->text_size",
+            "container_arg_reg=6 target_in_text=1 target_off=0x%X",
+            "container_arg_reg=6 target_in_text=0",
+            "target_off=OUTSIDE_TEXT segment=%u",
+            "[paf-a989-container-consumer-map]", "row < consumer_size"):
+        if token not in container:
+            fail("secondary PAF A989 container analysis lacks " + token)
+    first_guard = container.find("if (!zeroCtrlMipsMove(words[0x14 / 4]")
+    delay_store_guard = container.find(
+            "(short)(words[0x58 / 4] & 0xFFFF) != 4", first_guard)
+    second_return_guard = container.find(
+            "zeroCtrlMipsMove(words[0x5C / 4], 17, 2)", delay_store_guard)
+    validated_output = container.find("[paf-a989-container] validation=1")
+    if not 0 <= first_guard < delay_store_guard < second_return_guard < validated_output:
+        fail("PAF container conclusions precede full structure/delay validation")
+    for index, reg in ((0x70, 5), (0x74, 9)):
+        if f"words[0x{index:X} / 4]" not in container:
+            fail(f"constructed PAF address lacks loaded LUI at +0x{index:X}")
+    for index in (0x80, 0x84):
+        if f"(int)(short)(words[0x{index:X} / 4] & 0xFFFF)" not in container:
+            fail(f"constructed PAF address lacks signed low half at +0x{index:X}")
+    for absolute in ("0x08860910", "0x08860958", "0x088FBF74"):
+        if absolute in container:
+            fail("secondary PAF analysis hardcodes hardware address " + absolute)
+    segment_check = container.find(
+            "zeroCtrlModuleContainingSegment(paf, consumer_target")
+    full_range = container.find(
+            "zeroCtrlVshModuleRangeValid(paf, consumer_target, consumer_size)",
+            segment_check)
+    first_consumer_read = container.find("_lw(consumer_target", full_range)
+    if not 0 <= segment_check < full_range < first_consumer_read:
+        fail("PAF consumer map reads before segment/full-range validation")
+    secondary_call = vsh3.find(
+            "zeroCtrlWritePafA989ContainerStructure(owner, inner, inner_size)")
+    primary_call = vsh3.find("zeroCtrlWritePafA989Inner(owner, inner, inner_size")
+    primary_summary = vsh3.find("callback_flow=%s", secondary_call)
+    if not 0 <= primary_call < secondary_call < primary_summary or \
+            "callback_flow" in container:
+        fail("secondary PAF analysis alters the conservative primary result")
+    for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP", "REDIRECT_FUNCTION",
+            "zeroCtrlRedir", "Dcache", "Icache", "sceKernelCreateThread",
+            "sceKernelStartThread", "request_function()"):
+        if forbidden in container:
+            fail("secondary PAF container analysis is not read-only: " + forbidden)
+    for semantic in ("allocator", "dispatcher", "event manager",
+            "callback manager", "registration"):
+        if semantic in container.lower():
+            fail("secondary PAF output invents semantics: " + semantic)
     if "[vsh3f568-impl-map]" in vsh3 or "[vsh3f568-use]" in vsh3:
         fail("superseded wrapper/caller output is still automatic")
     for section in (vsh3, inner):
