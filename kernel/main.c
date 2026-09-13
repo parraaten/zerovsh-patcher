@@ -3986,14 +3986,23 @@ static void zeroCtrlWriteVsh3f568ImplFlow(SceModule2 *owner,
                         "AMBIGUOUS" : "OVERWRITTEN");
                 return;
             }
-            snprintf(line, sizeof(line),
-                    "[vsh3f568-impl-a1] status=%s call_off=0x%X reg=%u\n",
-                    opcode == 0 && function == 9 && rs == tracked_a1 ?
-                    "USED_IMMEDIATELY" : "PASSED_TO_CALL", offset, tracked_a1);
+            if (opcode == 0 && function == 9 && rs == tracked_a1) {
+                snprintf(line, sizeof(line),
+                        "[vsh3f568-impl-a1] status=USED_IMMEDIATELY "
+                        "call_off=0x%X reg=%u\n", offset, tracked_a1);
+                snprintf(status, status_size, "USED_IMMEDIATELY");
+            } else if (tracked_a1 >= 4 && tracked_a1 <= 7) {
+                snprintf(line, sizeof(line),
+                        "[vsh3f568-impl-a1] status=PASSED_TO_CALL "
+                        "call_off=0x%X reg=%u\n", offset, tracked_a1);
+                snprintf(status, status_size, "PASSED_TO_CALL");
+            } else {
+                snprintf(line, sizeof(line),
+                        "[vsh3f568-impl-a1] status=AMBIGUOUS_CALL "
+                        "call_off=0x%X tracked_reg=%u\n", offset, tracked_a1);
+                snprintf(status, status_size, "AMBIGUOUS_CALL");
+            }
             zeroCtrlDiagnosticsText(line);
-            snprintf(status, status_size, "%s",
-                    opcode == 0 && function == 9 && rs == tracked_a1 ?
-                    "USED_IMMEDIATELY" : "PASSED_TO_CALL");
             return;
         }
         if (opcode == 1 || opcode == 2 || (opcode >= 4 && opcode <= 7) ||
@@ -4024,6 +4033,36 @@ static void zeroCtrlWriteVsh3f568ImplFlow(SceModule2 *owner,
     zeroCtrlDiagnosticsText("[vsh3f568-impl-a1] status=AMBIGUOUS\n");
 }
 
+static int zeroCtrlVsh3f568A1PairReaches(SceModule2 *vsh,
+        unsigned int low_offset, unsigned int call_offset) {
+    unsigned int offset;
+
+    if (low_offset >= call_offset ||
+            !zeroCtrlVshModuleRangeValid(vsh,
+                vsh->text_addr + low_offset, call_offset - low_offset + 4))
+        return 0;
+    for (offset = low_offset + 4; offset < call_offset; offset += 4) {
+        unsigned int word = _lw(vsh->text_addr + offset);
+        unsigned int opcode = word >> 26;
+        unsigned int function = word & 0x3F;
+        int destination;
+
+        if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && (function == 8 || function == 9)))
+            return 0;
+        destination = zeroCtrlMipsGprWriteDestination(word);
+        if (destination < 0 || destination == 5) return 0;
+    }
+    {
+        unsigned int delay = _lw(vsh->text_addr + call_offset + 4);
+        int delay_destination = zeroCtrlMipsGprWriteDestination(delay);
+        if (delay_destination < 0 || delay_destination == 5) return 0;
+    }
+    return 1;
+}
+
 static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     unsigned int callers[16];
     unsigned int caller_count = 0;
@@ -4037,6 +4076,7 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     SceModule2 *owner;
     unsigned int owner_segment = 0xFFFFFFFFU;
     unsigned int impl_size = 0;
+    unsigned int target_in_text = 0;
     char a1_status[32];
     char line[256];
 
@@ -4168,14 +4208,23 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
                 "[vsh3f568-summary] stub=1 import_match=1 owner_match=0 a1_flow=AMBIGUOUS\n");
         return;
     }
-    snprintf(line, sizeof(line),
-            "[vsh3f568-owner] validation=1 module=%s modid=0x%08X "
-            "text=0x%08X text_size=0x%08X target=0x%08X "
-            "target_off=%s0x%X segment=%u\n", owner->modname, owner->modid,
-            owner->text_addr, owner->text_size, resolved,
-            resolved >= owner->text_addr ? "" : "outside_text_",
-            resolved >= owner->text_addr ? resolved - owner->text_addr : 0,
-            owner_segment);
+    target_in_text = resolved >= owner->text_addr &&
+            resolved - owner->text_addr < owner->text_size;
+    if (target_in_text)
+        snprintf(line, sizeof(line),
+                "[vsh3f568-owner] validation=1 module=%s modid=0x%08X "
+                "text=0x%08X text_size=0x%08X target=0x%08X "
+                "target_in_text=1 target_off=0x%X segment=%u\n",
+                owner->modname, owner->modid, owner->text_addr,
+                owner->text_size, resolved, resolved - owner->text_addr,
+                owner_segment);
+    else
+        snprintf(line, sizeof(line),
+                "[vsh3f568-owner] validation=1 module=%s modid=0x%08X "
+                "text=0x%08X text_size=0x%08X target=0x%08X "
+                "target_in_text=0 target_off=OUTSIDE_TEXT segment=%u\n",
+                owner->modname, owner->modid, owner->text_addr,
+                owner->text_size, resolved, owner_segment);
     zeroCtrlDiagnosticsText(line);
 
     for (row = 0; row + 4 <= impl_size; row += 0x20) {
@@ -4184,10 +4233,12 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
         if (count > 8) count = 8;
         for (i = 0; i < count; i++) words[i] = _lw(resolved + row + i * 4);
         snprintf(line, sizeof(line),
-                "[vsh3f568-impl-map] module=%s target_off=0x%X row=0x%X "
+                "[vsh3f568-impl-map] module=%s target_in_text=%u "
+                "target_off=0x%X row=0x%X "
                 "w0=%08X w1=%08X w2=%08X w3=%08X "
                 "w4=%08X w5=%08X w6=%08X w7=%08X\n", owner->modname,
-                resolved >= owner->text_addr ? resolved - owner->text_addr : 0,
+                target_in_text,
+                target_in_text ? resolved - owner->text_addr : 0,
                 row, words[0], words[1], words[2], words[3], words[4],
                 words[5], words[6], words[7]);
         zeroCtrlDiagnosticsText(line);
@@ -4268,8 +4319,10 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
                 unsigned int upper = (lui & 0xFFFF) << 16;
                 pointer = low_opcode == 9 ? upper + (int)(short)(low & 0xFFFF) :
                         upper | (low & 0xFFFF);
-                known = 1;
-                break;
+                if (zeroCtrlVsh3f568A1PairReaches(vsh, back - 4, call)) {
+                    known = 1;
+                    break;
+                }
             }
         }
         snprintf(line, sizeof(line),
@@ -4277,8 +4330,8 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
                 "delay_word=0x%08X a0_delay_source=%s a1_status=%s "
                 "a1_pointer=0x%08X a1_relative_to_vsh=%s0x%X\n", i, call,
                 delay, ((delay >> 26) == 0 && ((delay >> 11) & 0x1F) == 4) ?
-                "decoded_gpr" : "UNKNOWN", known ? "KNOWN" : "UNKNOWN",
-                pointer, known && pointer >= text ? "" : "UNKNOWN_",
+                "decoded_gpr" : "UNKNOWN", known ? "PROVEN" : "UNKNOWN",
+                known ? pointer : 0, known && pointer >= text ? "" : "UNKNOWN_",
                 known && pointer >= text ? pointer - text : 0);
         zeroCtrlDiagnosticsText(line);
     }

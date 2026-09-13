@@ -480,6 +480,9 @@ def check_sources(root):
             "owner->nsegment", "owner->segmentaddr[i]",
             "owner->segmentsize[i]", "impl_size > 0x100",
             "zeroCtrlVshModuleRangeValid(owner, resolved, impl_size)",
+            "target_in_text = resolved >= owner->text_addr &&",
+            "resolved - owner->text_addr < owner->text_size",
+            "target_in_text=0 target_off=OUTSIDE_TEXT",
             "[vsh3f568-owner] validation=1", "[vsh3f568-impl-map]",
             "[vsh3f568-impl-cf]", "[vsh3f568-impl-frame]",
             "zeroCtrlWriteVsh3f568ImplFlow(owner, resolved, impl_size",
@@ -520,9 +523,30 @@ def check_sources(root):
         fail("SC is incorrectly classified as a no-destination store")
     delay_check = impl_flow.find("zeroCtrlMipsGprWriteDestination(delay)")
     overwritten_delay = impl_flow.find("OVERWRITTEN_IN_DELAY_SLOT")
+    used_immediately = impl_flow.find("status=USED_IMMEDIATELY")
     passed_call = impl_flow.find("PASSED_TO_CALL")
-    if not 0 <= delay_check < overwritten_delay < passed_call:
+    ambiguous_call = impl_flow.find("status=AMBIGUOUS_CALL")
+    argument_gate = impl_flow.find("tracked_a1 >= 4 && tracked_a1 <= 7")
+    jalr_target_gate = impl_flow.find("function == 9 && rs == tracked_a1")
+    if not 0 <= delay_check < overwritten_delay < jalr_target_gate < \
+            used_immediately < argument_gate < passed_call < ambiguous_call:
         fail("real +3F568 call classification precedes delay-slot validation")
+    liveness_start = kernel.find("static int zeroCtrlVsh3f568A1PairReaches(")
+    liveness_end = vsh3_start
+    liveness = kernel[liveness_start:liveness_end]
+    for token in ("for (offset = low_offset + 4; offset < call_offset",
+            "zeroCtrlMipsGprWriteDestination(word)",
+            "destination < 0 || destination == 5", "opcode == 1",
+            "opcode == 2", "opcode == 3", "opcode >= 4 && opcode <= 7",
+            "opcode >= 0x14 && opcode <= 0x17", "function == 8",
+            "function == 9", "call_offset + 4",
+            "zeroCtrlMipsGprWriteDestination(delay)"):
+        if token not in liveness:
+            fail("VSH +3F568 caller a1 liveness proof lacks " + token)
+    if "zeroCtrlVsh3f568A1PairReaches(vsh, back - 4, call)" not in vsh3 or \
+            'known ? "PROVEN" : "UNKNOWN"' not in vsh3 or \
+            'known ? "KNOWN" : "UNKNOWN"' in vsh3:
+        fail("VSH +3F568 caller summary overstates nearby a1 pairs")
     if kernel.count("zeroCtrlWriteFunctionalVsh3f568Analysis();") != 1 or \
             "if (!vsh3f568_scan_written && slide_diag.functional_enabled" \
             not in minimal or "vsh3f568_scan_written = 1;" not in minimal:
