@@ -573,6 +573,8 @@ def check_sources(root):
             "zeroCtrlIsPsp1000SlideFunctionalEnabled()",
             "mod->text_addr == 0", "mod->text_size <= 0x5898",
             "target = text + 0x57B0",
+            "text > 0xFFFFFFFFU - 0x42FF8",
+            "expected_pointer = text + 0x42FF8",
             "zeroCtrlUserModuleRangeValid(mod, target, 0xEC)",
             "zeroCtrlUserModuleRangeValid(mod, text + 0xF7C4, 4)",
             "zeroCtrlUserModuleRangeValid(mod, text + 0x58D4, 0x28)",
@@ -588,16 +590,33 @@ def check_sources(root):
             "zeroCtrlUserMipsJumpTarget(text + 0x58F8, word_58f8)",
             "text + 0x58E8", "word_57d0 = _lw(text + 0x57D0)",
             "zeroCtrlUserMipsJumpTarget(text + 0x57D0, word_57d0)",
-            "text + 0xF7C4", "psp1000RuntimeRequestTarget = target",
+            "text + 0xF7C4", "word_57b8 = _lw(text + 0x57B8)",
+            "word_57bc = _lw(text + 0x57BC)",
+            "(word_57b8 >> 26) != 0x0F",
+            "((word_57b8 >> 21) & 0x1F) != 0",
+            "((word_57b8 >> 16) & 0x1F) != 16",
+            "(word_57bc >> 26) != 0x09",
+            "((word_57bc >> 21) & 0x1F) != 16",
+            "((word_57bc >> 16) & 0x1F) != 16",
+            "upper = (word_57b8 & 0xFFFF) << 16",
+            "displacement = (short)(word_57bc & 0xFFFF)",
+            "decoded_pointer = upper + displacement",
+            "decoded_pointer != expected_pointer",
+            "zeroCtrlUserModuleRangeValid(mod, decoded_pointer, 4)",
+            "psp1000RuntimeRequestTarget = target",
             "psp1000RuntimeRequestValid = 1"):
         if token not in runtime_validate:
             fail("PSP-1000 runtime request validation lacks " + token)
-    for word in ("0x27BDFF80", "0xAFB00070", "0x3C1009C7",
-            "0x2610CBF8", "0x02002021", "0xAFBF007C", "0xAFB20078",
+    for word in ("0x27BDFF80", "0xAFB00070",
+            "0x02002021", "0xAFBF007C", "0xAFB20078",
             "0x27B2000C", "0x8FBF007C", "0x8FB20078", "0x8FB10074",
             "0x8FB00070", "0x03E00008", "0x27BD0080"):
         if word not in runtime_validate:
             fail("PSP-1000 +57B0 fingerprint lacks " + word)
+    for relocation_word in ("0x3C1009C7", "0x2610CBF8"):
+        if relocation_word in runtime_validate:
+            fail("PSP-1000 +57B0 validation hardcodes relocated word " +
+                    relocation_word)
     target_publish = runtime_validate.find("psp1000RuntimeRequestTarget = target")
     valid_publish = runtime_validate.find("psp1000RuntimeRequestValid = 1")
     last_fingerprint = runtime_validate.rfind("_lw(text + 0x5884")

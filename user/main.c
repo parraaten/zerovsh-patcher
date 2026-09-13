@@ -152,16 +152,18 @@ static unsigned int zeroCtrlUserMipsBranchTarget(unsigned int pc,
 
 static int zeroCtrlValidatePsp1000RuntimeRequest(SceModule2 *mod,
         unsigned int original_58d4) {
-    static const unsigned int prologue[] = {
-        0x27BDFF80, 0xAFB00070, 0x3C1009C7, 0x2610CBF8,
-        0x02002021, 0xAFBF007C, 0xAFB20078, 0x27B2000C
-    };
     static const unsigned int epilogue[] = {
         0x8FBF007C, 0x8FB20078, 0x8FB10074, 0x8FB00070,
         0x03E00008, 0x27BD0080
     };
     unsigned int text;
     unsigned int target;
+    unsigned int expected_pointer;
+    unsigned int decoded_pointer;
+    unsigned int upper;
+    int displacement;
+    unsigned int word_57b8;
+    unsigned int word_57bc;
     unsigned int word_57d0;
     unsigned int word_58dc;
     unsigned int word_58f0;
@@ -177,6 +179,8 @@ static int zeroCtrlValidatePsp1000RuntimeRequest(SceModule2 *mod,
         return 0;
     text = mod->text_addr;
     target = text + 0x57B0;
+    if (text > 0xFFFFFFFFU - 0x42FF8) return 0;
+    expected_pointer = text + 0x42FF8;
     if (!zeroCtrlUserModuleRangeValid(mod, target, 0xEC) ||
             !zeroCtrlUserModuleRangeValid(mod, text + 0xF7C4, 4) ||
             !zeroCtrlUserModuleRangeValid(mod, text + 0x58D4, 0x28))
@@ -199,8 +203,26 @@ static int zeroCtrlValidatePsp1000RuntimeRequest(SceModule2 *mod,
             zeroCtrlUserMipsJumpTarget(text + 0x58F8, word_58f8) !=
                 text + 0x58E8)
         return 0;
-    for (i = 0; i < sizeof(prologue) / sizeof(prologue[0]); i++)
-        if (_lw(target + i * 4) != prologue[i]) return 0;
+    word_57b8 = _lw(text + 0x57B8);
+    word_57bc = _lw(text + 0x57BC);
+    upper = (word_57b8 & 0xFFFF) << 16;
+    displacement = (short)(word_57bc & 0xFFFF);
+    decoded_pointer = upper + displacement;
+    if (_lw(text + 0x57B0) != 0x27BDFF80 ||
+            _lw(text + 0x57B4) != 0xAFB00070 ||
+            (word_57b8 >> 26) != 0x0F ||
+            ((word_57b8 >> 21) & 0x1F) != 0 ||
+            ((word_57b8 >> 16) & 0x1F) != 16 ||
+            (word_57bc >> 26) != 0x09 ||
+            ((word_57bc >> 21) & 0x1F) != 16 ||
+            ((word_57bc >> 16) & 0x1F) != 16 ||
+            decoded_pointer != expected_pointer ||
+            !zeroCtrlUserModuleRangeValid(mod, decoded_pointer, 4) ||
+            _lw(text + 0x57C0) != 0x02002021 ||
+            _lw(text + 0x57C4) != 0xAFBF007C ||
+            _lw(text + 0x57C8) != 0xAFB20078 ||
+            _lw(text + 0x57CC) != 0x27B2000C)
+        return 0;
     word_57d0 = _lw(text + 0x57D0);
     if ((word_57d0 >> 26) != 3 ||
             zeroCtrlUserMipsJumpTarget(text + 0x57D0, word_57d0) !=
