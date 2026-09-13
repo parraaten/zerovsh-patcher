@@ -459,7 +459,9 @@ def check_sources(root):
     for token in ("[psp1000-functional] enabled=1",
             "[psp1000-functional] button_thread=1",
             "[psp1000-functional] request_armed=1",
-            "[psp1000-functional] trigger_consumed=1",
+            "[psp1000-functional] runtime_request_valid=1",
+            "[psp1000-functional] runtime_request_called=%u",
+            "[psp1000-functional] runtime_request_result=0x%08X",
             "[psp1000-functional] slide_module_seen=1",
             "[psp1000-functional] activation_hits=%u"):
         if token not in minimal:
@@ -496,12 +498,21 @@ def check_sources(root):
     button_end = kernel.find("void zeroCtrlCreateBtnThread(", button_start)
     button = kernel[button_start:button_end]
     for token in ("ZERO_SLIDE_STOPPED", "slideStartBtn",
-            "slide_diag.functional_enabled", "request_addr",
-            "_sw(1, slide_diag.triggers[0].request_addr)",
+            "slide_diag.functional_enabled",
+            "functional_runtime_registration_valid",
+            "functional_runtime_request_addr",
+            "functional_runtime_valid_addr",
+            "_sw(1, slide_diag.functional_runtime_request_addr)",
             "functional_request_armed = 1", "request_ready",
             "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
         if token not in button:
             fail("functional StartBtn request gating lacks " + token)
+    state_start = button.find("zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)")
+    request_publish = button.find(
+            "_sw(1, slide_diag.functional_runtime_request_addr)")
+    if not 0 <= state_start < request_publish or \
+            "_sw(1, slide_diag.triggers[0].request_addr)" in button:
+        fail("functional HOME does not publish one runtime request after STARTING")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
@@ -550,6 +561,90 @@ def check_sources(root):
             "STUB_FUNC 0x1337357F, zeroCtrlIsPsp1000SlideFunctionalEnabled" \
             not in user_imports:
         fail("functional mode query import/export is missing")
+    runtime_validate_start = user.find(
+            "static int zeroCtrlValidatePsp1000RuntimeRequest(")
+    runtime_validate_end = user.find(
+            "static int zeroCtrlPsp1000RuntimeRequestWorker(",
+            runtime_validate_start)
+    runtime_validate = user[runtime_validate_start:runtime_validate_end]
+    if runtime_validate_start < 0 or runtime_validate_end < 0:
+        fail("PSP-1000 runtime request validation is missing")
+    for token in ("model != 0", "devkit != 0x06060110",
+            "zeroCtrlIsPsp1000SlideFunctionalEnabled()",
+            "mod->text_addr == 0", "mod->text_size <= 0x5898",
+            "target = text + 0x57B0",
+            "zeroCtrlUserModuleRangeValid(mod, target, 0xEC)",
+            "zeroCtrlUserModuleRangeValid(mod, text + 0xF7C4, 4)",
+            "zeroCtrlUserModuleRangeValid(mod, text + 0x58D4, 0x28)",
+            "zeroCtrlUserMipsJumpTarget(text + 0x58D4, original_58d4)",
+            "text + 0x6F84", "_lw(text + 0x58D8) != 0",
+            "word_58dc = _lw(text + 0x58DC)",
+            "word_58dc != 0x14400004",
+            "zeroCtrlUserMipsBranchTarget(text + 0x58DC,",
+            "text + 0x58F0", "_lw(text + 0x58E0) != 0",
+            "word_58f0 = _lw(text + 0x58F0)",
+            "zeroCtrlUserMipsJumpTarget(text + 0x58F0, word_58f0)",
+            "word_58f8 = _lw(text + 0x58F8)",
+            "zeroCtrlUserMipsJumpTarget(text + 0x58F8, word_58f8)",
+            "text + 0x58E8", "word_57d0 = _lw(text + 0x57D0)",
+            "zeroCtrlUserMipsJumpTarget(text + 0x57D0, word_57d0)",
+            "text + 0xF7C4", "psp1000RuntimeRequestTarget = target",
+            "psp1000RuntimeRequestValid = 1"):
+        if token not in runtime_validate:
+            fail("PSP-1000 runtime request validation lacks " + token)
+    for word in ("0x27BDFF80", "0xAFB00070", "0x3C1009C7",
+            "0x2610CBF8", "0x02002021", "0xAFBF007C", "0xAFB20078",
+            "0x27B2000C", "0x8FBF007C", "0x8FB20078", "0x8FB10074",
+            "0x8FB00070", "0x03E00008", "0x27BD0080"):
+        if word not in runtime_validate:
+            fail("PSP-1000 +57B0 fingerprint lacks " + word)
+    target_publish = runtime_validate.find("psp1000RuntimeRequestTarget = target")
+    valid_publish = runtime_validate.find("psp1000RuntimeRequestValid = 1")
+    last_fingerprint = runtime_validate.rfind("_lw(text + 0x5884")
+    if not 0 <= last_fingerprint < target_publish < valid_publish:
+        fail("runtime request target is published before complete validation")
+    worker_start = user.find("static int zeroCtrlPsp1000RuntimeRequestWorker(")
+    worker_end = user.find("static void zeroCtrlCreatePsp1000RuntimeRequestWorker(",
+            worker_start)
+    worker = user[worker_start:worker_end]
+    for token in ("psp1000RuntimeRequestValid && psp1000RuntimeRequest",
+            "psp1000RuntimeRequest = 0", "psp1000RuntimeRequestCalled++",
+            "psp1000RuntimeRequestTarget", "request_function()",
+            "psp1000RuntimeRequestResult", "sceKernelDelayThread(20000)"):
+        if token not in worker:
+            fail("PSP-1000 runtime request worker lacks " + token)
+    if not worker.find("psp1000RuntimeRequest = 0") < \
+            worker.find("psp1000RuntimeRequestCalled++") < \
+            worker.find("request_function()"):
+        fail("runtime request worker does not consume once before calling")
+    worker_create = user[user.find(
+            "static void zeroCtrlCreatePsp1000RuntimeRequestWorker("):
+            user.find("//OK\nvoid *zeroCtrlRedir2Stub", worker_end)]
+    for token in ('sceKernelCreateThread("zeroctrl_vsh_request"',
+            "zeroCtrlPsp1000RuntimeRequestWorker", "0x4000",
+            "sceKernelStartThread", "sceKernelDeleteThread"):
+        if token not in worker_create:
+            fail("PSP-1000 runtime request worker creation lacks " + token)
+    user_start_prefix = user[user.find("int module_start("):
+            user.find("sonyStartTraceRegistration.entry_addr")]
+    for token in ("model == 0", "devkit == 0x06060110",
+            "zeroCtrlIsPsp1000SlideFunctionalEnabled()",
+            "zeroCtrlCreatePsp1000RuntimeRequestWorker()"):
+        if token not in user_start_prefix:
+            fail("runtime request worker is not restricted to functional PSP-1000")
+    runtime_record = record[record.find("helper = sceKernelFindModuleByName"):
+            record.find("all_selected_valid =")]
+    for token in ("runtime_request & 3", "runtime_request_valid & 3",
+            "runtime_request_called & 3", "runtime_request_result & 3",
+            "zeroCtrlVshModuleRangeValid(helper, runtime_request, 4)",
+            "runtime_request_valid, 4", "runtime_request_called, 4",
+            "runtime_request_result, 4",
+            "functional_runtime_registration_valid = 1"):
+        if token not in runtime_record:
+            fail("kernel runtime request scalar registration lacks " + token)
+    if "_sw(1, slide_diag.triggers[0].request_addr)" in button or \
+            re.search(r"\(.*\*.*\)\s*\(.*0x58D4", button):
+        fail("functional HOME still arms/calls the old +58D4 mechanism")
     caller_ra_start = writer.find("if (slide_diag.bsman.activation_enabled)")
     caller_ra_end = writer.find(
             "if (slide_diag.bsman.activation_wide_enabled)", caller_ra_start)

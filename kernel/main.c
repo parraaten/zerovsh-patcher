@@ -589,6 +589,11 @@ typedef struct {
     volatile int functional_request_armed;
     volatile int functional_trigger_consumed;
     volatile int functional_button_thread;
+    int functional_runtime_registration_valid;
+    unsigned int functional_runtime_request_addr;
+    unsigned int functional_runtime_valid_addr;
+    unsigned int functional_runtime_called_addr;
+    unsigned int functional_runtime_result_addr;
     int minimal_memory_test;
     volatile int minimal_probe_memory_valid;
     unsigned int minimal_probe_total_free;
@@ -2140,7 +2145,9 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int counter_13f6c, unsigned int counter_14020,
         unsigned int global_stub, unsigned int global_counter,
         unsigned int request_58d4, unsigned int original_target_58d4,
-        unsigned int functional_mode_58d4) {
+        unsigned int functional_mode_58d4,
+        unsigned int runtime_request, unsigned int runtime_request_valid,
+        unsigned int runtime_request_called, unsigned int runtime_request_result) {
     const unsigned int stubs[VSH_TRIGGER_COUNT] = {
         stub_58d4, stub_13f6c, stub_14020
     };
@@ -2200,6 +2207,29 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
             slide_diag.vsh_code_capture_result = 0;
 
             helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+            if (slide_diag.functional_enabled && helper &&
+                    ((unsigned int)helper & 3) == 0 &&
+                    (unsigned int)helper >= 0x88000000 &&
+                    (unsigned int)helper < 0x8C000000 &&
+                    helper->text_addr != 0 && helper->text_size != 0 &&
+                    helper->nsegment != 0 && helper->nsegment <= 4 &&
+                    (runtime_request & 3) == 0 &&
+                    (runtime_request_valid & 3) == 0 &&
+                    (runtime_request_called & 3) == 0 &&
+                    (runtime_request_result & 3) == 0 &&
+                    zeroCtrlVshModuleRangeValid(helper, runtime_request, 4) &&
+                    zeroCtrlVshModuleRangeValid(helper,
+                        runtime_request_valid, 4) &&
+                    zeroCtrlVshModuleRangeValid(helper,
+                        runtime_request_called, 4) &&
+                    zeroCtrlVshModuleRangeValid(helper,
+                        runtime_request_result, 4)) {
+                slide_diag.functional_runtime_request_addr = runtime_request;
+                slide_diag.functional_runtime_valid_addr = runtime_request_valid;
+                slide_diag.functional_runtime_called_addr = runtime_request_called;
+                slide_diag.functional_runtime_result_addr = runtime_request_result;
+                slide_diag.functional_runtime_registration_valid = 1;
+            }
             all_selected_valid =
                     slide_diag.trigger_mode != ZERO_TRIGGER_DISABLED &&
                     target_offset == 0x6F84;
@@ -3415,6 +3445,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_consumer_install = 0, observed_consumer_pre_slide = 0;
     unsigned int minimal_memory_written = 0;
     int vsh58_map_written = 0;
+    unsigned int observed_runtime_request_called = 0;
+    unsigned int observed_runtime_request_result = 0xFFFFFFFF;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -3451,15 +3483,38 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         "[psp1000-functional] request_armed=1\n");
                 minimal_memory_written |= 0x0200;
             }
-            if (slide_diag.functional_request_armed &&
-                    slide_diag.triggers[0].request_addr &&
+            if (slide_diag.functional_runtime_registration_valid &&
+                    slide_diag.functional_runtime_valid_addr &&
                     *(volatile unsigned int *)
-                        slide_diag.triggers[0].request_addr == 0 &&
+                        slide_diag.functional_runtime_valid_addr &&
                     !(minimal_memory_written & 0x0400)) {
-                slide_diag.functional_trigger_consumed = 1;
                 zeroCtrlDiagnosticsText(
-                        "[psp1000-functional] trigger_consumed=1\n");
+                        "[psp1000-functional] runtime_request_valid=1\n");
                 minimal_memory_written |= 0x0400;
+            }
+            if (slide_diag.functional_runtime_registration_valid &&
+                    slide_diag.functional_runtime_called_addr &&
+                    slide_diag.functional_runtime_result_addr) {
+                unsigned int called = *(volatile unsigned int *)
+                        slide_diag.functional_runtime_called_addr;
+                unsigned int result = *(volatile unsigned int *)
+                        slide_diag.functional_runtime_result_addr;
+                int called_changed = called != observed_runtime_request_called;
+                if (called != observed_runtime_request_called) {
+                    observed_runtime_request_called = called;
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional] runtime_request_called=%u\n",
+                            called);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                if (called && (called_changed ||
+                        result != observed_runtime_request_result)) {
+                    observed_runtime_request_result = result;
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional] runtime_request_result=0x%08X\n",
+                            result);
+                    zeroCtrlDiagnosticsText(line);
+                }
             }
             if (slide_diag.saw_probe && !(minimal_memory_written & 0x0800)) {
                 zeroCtrlDiagnosticsText(
@@ -7574,13 +7629,18 @@ void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 				int request_ready = !slide_diag.functional_enabled;
 				zeroCtrlWriteDebug("Starting slide\n\n");
 				if (slide_diag.functional_enabled &&
-						slide_diag.triggers[0].validation &&
-						slide_diag.triggers[0].request_addr) {
-					_sw(1, slide_diag.triggers[0].request_addr);
+						slide_diag.functional_runtime_registration_valid &&
+						slide_diag.functional_runtime_request_addr &&
+						slide_diag.functional_runtime_valid_addr &&
+						*(volatile unsigned int *)
+							slide_diag.functional_runtime_valid_addr) {
+					zeroCtrlSetSlideState(ZERO_SLIDE_STARTING);
+					_sw(1, slide_diag.functional_runtime_request_addr);
 					sceKernelDcacheWritebackInvalidateRange(
-							(const void *)slide_diag.triggers[0].request_addr, 4);
+							(const void *)
+							slide_diag.functional_runtime_request_addr, 4);
 					slide_diag.functional_request_armed = 1;
-					request_ready = 1;
+					request_ready = 0;
 				}
 				if (request_ready)
 					zeroCtrlSetSlideState(ZERO_SLIDE_STARTING);

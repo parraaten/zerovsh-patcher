@@ -96,7 +96,9 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
         unsigned int counter_13f6c, unsigned int counter_14020,
         unsigned int global_stub, unsigned int global_counter,
         unsigned int request_58d4, unsigned int original_target_58d4,
-        unsigned int functional_mode_58d4);
+        unsigned int functional_mode_58d4,
+        unsigned int runtime_request, unsigned int runtime_request_valid,
+        unsigned int runtime_request_called, unsigned int runtime_request_result);
 void zeroCtrlRegisterSonyStartTrace(
         const ZeroCtrlSonyStartTraceRegistration *registration);
 void zeroCtrlRegisterBSManClosedShim(
@@ -113,6 +115,126 @@ int model;
 static ZeroCtrlSonyStartTraceRegistration sonyStartTraceRegistration;
 static ZeroCtrlBSManClosedRegistration bsmanClosedRegistration;
 static ZeroCtrlActivationWideRegistration activationWideRegistration;
+static volatile unsigned int psp1000RuntimeRequest;
+static volatile unsigned int psp1000RuntimeRequestValid;
+static volatile unsigned int psp1000RuntimeRequestCalled;
+static volatile unsigned int psp1000RuntimeRequestResult;
+static volatile unsigned int psp1000RuntimeRequestTarget;
+
+typedef int (*Psp1000RuntimeRequestFn)(void);
+
+static int zeroCtrlUserModuleRangeValid(SceModule2 *mod, unsigned int address,
+        unsigned int size) {
+    unsigned int i;
+
+    if (!mod || !address || !size || mod->nsegment == 0 || mod->nsegment > 4)
+        return 0;
+    for (i = 0; i < mod->nsegment; i++) {
+        unsigned int start = mod->segmentaddr[i];
+        unsigned int segment_size = mod->segmentsize[i];
+        if (segment_size >= size && address >= start &&
+                address - start <= segment_size - size)
+            return 1;
+    }
+    return 0;
+}
+
+static unsigned int zeroCtrlUserMipsJumpTarget(unsigned int pc,
+        unsigned int instruction) {
+    return ((pc + 4) & 0xF0000000) |
+            ((instruction & 0x03FFFFFF) << 2);
+}
+
+static unsigned int zeroCtrlUserMipsBranchTarget(unsigned int pc,
+        unsigned int instruction) {
+    return pc + 4 + ((int)(short)(instruction & 0xFFFF) << 2);
+}
+
+static int zeroCtrlValidatePsp1000RuntimeRequest(SceModule2 *mod,
+        unsigned int original_58d4) {
+    static const unsigned int prologue[] = {
+        0x27BDFF80, 0xAFB00070, 0x3C1009C7, 0x2610CBF8,
+        0x02002021, 0xAFBF007C, 0xAFB20078, 0x27B2000C
+    };
+    static const unsigned int epilogue[] = {
+        0x8FBF007C, 0x8FB20078, 0x8FB10074, 0x8FB00070,
+        0x03E00008, 0x27BD0080
+    };
+    unsigned int text;
+    unsigned int target;
+    unsigned int word_57d0;
+    unsigned int word_58dc;
+    unsigned int word_58f0;
+    unsigned int word_58f8;
+    unsigned int i;
+
+    psp1000RuntimeRequestValid = 0;
+    psp1000RuntimeRequestTarget = 0;
+    if (model != 0 || devkit != 0x06060110 ||
+            !zeroCtrlIsPsp1000SlideFunctionalEnabled() || !mod ||
+            mod->text_addr == 0 || mod->text_size <= 0x5898 ||
+            mod->text_addr > 0xFFFFFFFFU - mod->text_size)
+        return 0;
+    text = mod->text_addr;
+    target = text + 0x57B0;
+    if (!zeroCtrlUserModuleRangeValid(mod, target, 0xEC) ||
+            !zeroCtrlUserModuleRangeValid(mod, text + 0xF7C4, 4) ||
+            !zeroCtrlUserModuleRangeValid(mod, text + 0x58D4, 0x28))
+        return 0;
+    word_58dc = _lw(text + 0x58DC);
+    if ((original_58d4 >> 26) != 3 ||
+            zeroCtrlUserMipsJumpTarget(text + 0x58D4, original_58d4) !=
+                text + 0x6F84 ||
+            _lw(text + 0x58D8) != 0 ||
+            word_58dc != 0x14400004 ||
+            zeroCtrlUserMipsBranchTarget(text + 0x58DC,
+                word_58dc) != text + 0x58F0 ||
+            _lw(text + 0x58E0) != 0 || _lw(text + 0x58F4) != 0)
+        return 0;
+    word_58f0 = _lw(text + 0x58F0);
+    word_58f8 = _lw(text + 0x58F8);
+    if ((word_58f0 >> 26) != 3 ||
+            zeroCtrlUserMipsJumpTarget(text + 0x58F0, word_58f0) != target ||
+            (word_58f8 >> 26) != 2 ||
+            zeroCtrlUserMipsJumpTarget(text + 0x58F8, word_58f8) !=
+                text + 0x58E8)
+        return 0;
+    for (i = 0; i < sizeof(prologue) / sizeof(prologue[0]); i++)
+        if (_lw(target + i * 4) != prologue[i]) return 0;
+    word_57d0 = _lw(text + 0x57D0);
+    if ((word_57d0 >> 26) != 3 ||
+            zeroCtrlUserMipsJumpTarget(text + 0x57D0, word_57d0) !=
+                text + 0xF7C4)
+        return 0;
+    for (i = 0; i < sizeof(epilogue) / sizeof(epilogue[0]); i++)
+        if (_lw(text + 0x5884 + i * 4) != epilogue[i]) return 0;
+
+    psp1000RuntimeRequestTarget = target;
+    psp1000RuntimeRequestValid = 1;
+    return 1;
+}
+
+static int zeroCtrlPsp1000RuntimeRequestWorker(
+        SceSize args UNUSED, void *argp UNUSED) {
+    while (1) {
+        if (psp1000RuntimeRequestValid && psp1000RuntimeRequest) {
+            Psp1000RuntimeRequestFn request_function;
+            psp1000RuntimeRequest = 0;
+            psp1000RuntimeRequestCalled++;
+            request_function = (Psp1000RuntimeRequestFn)
+                    psp1000RuntimeRequestTarget;
+            psp1000RuntimeRequestResult = request_function();
+        }
+        sceKernelDelayThread(20000);
+    }
+}
+
+static void zeroCtrlCreatePsp1000RuntimeRequestWorker(void) {
+    SceUID thid = sceKernelCreateThread("zeroctrl_vsh_request",
+            zeroCtrlPsp1000RuntimeRequestWorker, 0x20, 0x4000, 0, NULL);
+    if (thid >= 0 && sceKernelStartThread(thid, 0, NULL) < 0)
+        sceKernelDeleteThread(thid);
+}
 
 //OK
 void *zeroCtrlRedir2Stub(u32 address, void *stub, void *func) {
@@ -416,6 +538,12 @@ int OnModuleStart(SceModule2 *mod) {
 			if(psp1000_experiment) {
 				unsigned int target = mod->text_addr + 0x6F84;
 				if(devkit == 0x06060110) {
+					unsigned int original_58d4 =
+							mod->text_addr && mod->text_size >= 0x58D8 ?
+							_lw(mod->text_addr + 0x58D4) : 0;
+					if (psp1000_functional)
+						zeroCtrlValidatePsp1000RuntimeRequest(mod,
+								original_58d4);
 					zeroCtrlRecordVshSlideTarget(mod->modid, mod->text_addr,
 							mod->text_size, mod->module_start_func,
 							mod->entry_addr, target,
@@ -430,7 +558,11 @@ int OnModuleStart(SceModule2 *mod) {
 							(unsigned int)&zeroCtrlGlobalPredicate6F84Hits,
 							(unsigned int)&zeroCtrlTrigger58D4Request,
 							(unsigned int)&zeroCtrlTrigger58D4OriginalTarget,
-							(unsigned int)&zeroCtrlTrigger58D4FunctionalMode);
+							(unsigned int)&zeroCtrlTrigger58D4FunctionalMode,
+							(unsigned int)&psp1000RuntimeRequest,
+							(unsigned int)&psp1000RuntimeRequestValid,
+							(unsigned int)&psp1000RuntimeRequestCalled,
+							(unsigned int)&psp1000RuntimeRequestResult);
 				}
 			} else if(devkit == 0x06020010) {								
 				zeroCtrlRedir2Stub(mod->text_addr+0x6D78, slide_check_stub, zeroCtrlDummyFunc);			
@@ -474,6 +606,14 @@ int OnModuleStart(SceModule2 *mod) {
 int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	model = zeroCtrlGetModel();
 	devkit = sceKernelDevkitVersion();
+	psp1000RuntimeRequest = 0;
+	psp1000RuntimeRequestValid = 0;
+	psp1000RuntimeRequestCalled = 0;
+	psp1000RuntimeRequestResult = 0xFFFFFFFF;
+	psp1000RuntimeRequestTarget = 0;
+	if (model == 0 && devkit == 0x06060110 &&
+			zeroCtrlIsPsp1000SlideFunctionalEnabled())
+		zeroCtrlCreatePsp1000RuntimeRequestWorker();
 	sonyStartTraceRegistration.entry_addr =
 			(u32)zeroCtrlSonyModuleStartEntryTrace;
 	sonyStartTraceRegistration.entry_end_addr =
