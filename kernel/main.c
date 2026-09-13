@@ -3663,6 +3663,416 @@ static void zeroCtrlWriteFunctionalVshRequestCallers(void) {
     }
 }
 
+
+#define VSH3F568_MAP_START 0x3F468
+#define VSH3F568_MAP_END   0x3F768
+#define VSH3F568_CALLER_WINDOW_BEFORE 0x40
+#define VSH3F568_CALLER_WINDOW_AFTER  0x20
+
+static void zeroCtrlWriteVsh3f568CallerWindow(SceModule2 *vsh,
+        unsigned int index, unsigned int center) {
+    unsigned int start;
+    unsigned int row;
+    char line[256];
+
+    if (center < VSH3F568_CALLER_WINDOW_BEFORE ||
+            center > vsh->text_size - VSH3F568_CALLER_WINDOW_AFTER)
+        return;
+    start = center - VSH3F568_CALLER_WINDOW_BEFORE;
+    for (row = 0; row < VSH3F568_CALLER_WINDOW_BEFORE +
+            VSH3F568_CALLER_WINDOW_AFTER; row += 0x20) {
+        unsigned int address = vsh->text_addr + start + row;
+        snprintf(line, sizeof(line),
+                "[vsh3f568-window] caller=%u off=0x%05X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                index, start + row, _lw(address), _lw(address + 4),
+                _lw(address + 8), _lw(address + 12), _lw(address + 16),
+                _lw(address + 20), _lw(address + 24), _lw(address + 28));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
+static void zeroCtrlWriteVsh3f568Dispatch(SceModule2 *vsh,
+        unsigned int start, unsigned int base, unsigned int displacement) {
+    unsigned int offset;
+    char line[160];
+
+    for (offset = start; offset < VSH3F568_MAP_END; offset += 4) {
+        unsigned int word = _lw(vsh->text_addr + offset);
+        unsigned int opcode = word >> 26;
+        unsigned int rs = (word >> 21) & 0x1F;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int function = word & 0x3F;
+        if (opcode == 0x23 && rs == base &&
+                (unsigned int)(unsigned short)(word & 0xFFFF) == displacement) {
+            unsigned int look;
+            for (look = offset + 4; look < offset + 0x20 &&
+                    look < VSH3F568_MAP_END; look += 4) {
+                unsigned int candidate = _lw(vsh->text_addr + look);
+                unsigned int candidate_opcode = candidate >> 26;
+                if (candidate_opcode == 0 && (candidate & 0x3F) == 9 &&
+                        ((candidate >> 21) & 0x1F) == rt) {
+                    snprintf(line, sizeof(line),
+                            "[vsh589c-dispatch] load_off=0x%05X "
+                            "jalr_off=0x%05X base_reg=%u disp=%d\n",
+                            offset, look, base, (int)(short)displacement);
+                    zeroCtrlDiagnosticsText(line);
+                    return;
+                }
+                if (candidate_opcode == 1 || candidate_opcode == 2 ||
+                        candidate_opcode == 3 ||
+                        (candidate_opcode >= 4 && candidate_opcode <= 7) ||
+                        (candidate_opcode >= 0x14 && candidate_opcode <= 0x17))
+                    break;
+            }
+        }
+        if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && (function == 8 || function == 9)))
+            break;
+    }
+    zeroCtrlDiagnosticsText(
+            "[vsh589c-dispatch] status=NOT_IDENTIFIED_IN_BOUNDED_FLOW\n");
+}
+
+static void zeroCtrlWriteVsh3f568A1Flow(SceModule2 *vsh) {
+    unsigned int tracked = 5;
+    unsigned int offset;
+    char line[192];
+
+    for (offset = 0x3F568; offset < VSH3F568_MAP_END; offset += 4) {
+        unsigned int word = _lw(vsh->text_addr + offset);
+        unsigned int opcode = word >> 26;
+        unsigned int rs = (word >> 21) & 0x1F;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int rd = (word >> 11) & 0x1F;
+        unsigned int function = word & 0x3F;
+        unsigned int destination = 0;
+
+        if (opcode == 0x2B && rt == tracked) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-a1-store] off=0x%05X base=%u disp=%d "
+                    "classification=%s\n", offset, rs,
+                    (int)(short)(word & 0xFFFF),
+                    rs == 4 ? "CALLER_STRUCTURE" : "UNRESOLVED_STORAGE");
+            zeroCtrlDiagnosticsText(line);
+            zeroCtrlWriteVsh3f568Dispatch(vsh, offset + 4, rs,
+                    word & 0xFFFF);
+            return;
+        }
+        if (opcode == 0 && (function == 0x21 || function == 0x25) &&
+                (rs == tracked || rt == tracked) && (rs == 0 || rt == 0)) {
+            destination = rd;
+        } else if (opcode == 9 && rs == tracked) {
+            destination = rt;
+        }
+        if (destination && destination != tracked) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-a1-copy] off=0x%05X dst=%u word=0x%08X\n",
+                    offset, destination, word);
+            zeroCtrlDiagnosticsText(line);
+            tracked = destination;
+            continue;
+        }
+        if (opcode == 0 && function == 9 && rs == tracked) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-a1-flow] status=USED_IMMEDIATELY "
+                    "off=0x%05X tracked_reg=%u class=JALR\n",
+                    offset, tracked);
+            zeroCtrlDiagnosticsText(line);
+            return;
+        }
+        if (opcode == 3 || (opcode == 0 && function == 9)) {
+            if (tracked >= 4 && tracked <= 7) {
+                unsigned int target = opcode == 3 ?
+                        zeroCtrlMipsJumpTarget(vsh->text_addr + offset, word) : 0;
+                snprintf(line, sizeof(line),
+                        "[vsh3f568-a1-flow] status=PASSED_TO_CALL off=0x%05X "
+                        "tracked_reg=%u class=%s target=0x%08X\n", offset,
+                        tracked, opcode == 3 ? "JAL" : "JALR", target);
+                zeroCtrlDiagnosticsText(line);
+                if (opcode == 3 &&
+                        zeroCtrlVshModuleRangeValid(vsh, target, 0x40)) {
+                    unsigned int row;
+                    for (row = 0; row < 0x40; row += 0x20) {
+                        unsigned int address = target + row;
+                        snprintf(line, sizeof(line),
+                                "[vsh3f568-next-map] target=0x%08X row=0x%02X "
+                                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                                "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                                target, row, _lw(address), _lw(address + 4),
+                                _lw(address + 8), _lw(address + 12),
+                                _lw(address + 16), _lw(address + 20),
+                                _lw(address + 24), _lw(address + 28));
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                }
+            } else {
+                snprintf(line, sizeof(line),
+                        "[vsh3f568-a1-flow] status=AMBIGUOUS "
+                        "call_off=0x%05X tracked_reg=%u\n", offset, tracked);
+                zeroCtrlDiagnosticsText(line);
+            }
+            return;
+        }
+        if (opcode == 2 || opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && function == 8)) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-a1-flow] status=AMBIGUOUS control_off=0x%05X\n",
+                    offset);
+            zeroCtrlDiagnosticsText(line);
+            return;
+        }
+        if ((opcode != 0 && rt == tracked) || (opcode == 0 && rd == tracked)) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-a1-flow] status=OVERWRITTEN off=0x%05X\n",
+                    offset);
+            zeroCtrlDiagnosticsText(line);
+            return;
+        }
+    }
+    zeroCtrlDiagnosticsText(
+            "[vsh3f568-a1-flow] status=AMBIGUOUS bounded_map_exhausted=1\n");
+}
+
+static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
+    ZeroCtrlVsh589cDirect callers[VSH589C_REPORT_LIMIT];
+    ZeroCtrlVsh589cAddressRef address_refs[VSH589C_REPORT_LIMIT];
+    unsigned int caller_count = 0, address_count = 0;
+    unsigned int caller_total = 0, address_total = 0;
+    unsigned int jal_total = 0, jump_total = 0;
+    unsigned int known_value[32] = { 0 };
+    unsigned int known_mask = 0;
+    unsigned int offset;
+    unsigned int row;
+    unsigned int i;
+    unsigned int text;
+    unsigned int word_56fc;
+    unsigned int word_5700;
+    unsigned int word_5704;
+    unsigned int word_5708;
+    unsigned int decoded_a1;
+    SceModule2 *vsh;
+    char line[256];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            !slide_diag.vsh_module_seen)
+        return;
+    vsh = sceKernelFindModuleByName("vsh_module");
+    if (!vsh || ((unsigned int)vsh & 3) != 0 ||
+            (unsigned int)vsh < 0x88000000 ||
+            (unsigned int)vsh >= 0x8C000000 ||
+            vsh->modid != slide_diag.vsh_modid || vsh->text_addr == 0 ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size < VSH3F568_MAP_END || vsh->nsegment == 0 ||
+            vsh->nsegment > 4 ||
+            !zeroCtrlVshModuleRangeValid(vsh,
+                vsh->text_addr + VSH3F568_MAP_START,
+                VSH3F568_MAP_END - VSH3F568_MAP_START) ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x56AC,
+                0x570C - 0x56AC) ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr, vsh->text_size)) {
+        zeroCtrlDiagnosticsText("[vsh3f568-callsite] validation=0\n");
+        return;
+    }
+    text = vsh->text_addr;
+    word_56fc = _lw(text + 0x56FC);
+    word_5700 = _lw(text + 0x5700);
+    word_5704 = _lw(text + 0x5704);
+    word_5708 = _lw(text + 0x5708);
+    decoded_a1 = ((word_56fc & 0xFFFF) << 16) +
+            (int)(short)(word_5700 & 0xFFFF);
+    if ((word_56fc >> 26) != 0x0F || ((word_56fc >> 21) & 0x1F) != 0 ||
+            ((word_56fc >> 16) & 0x1F) != 5 ||
+            (word_5700 >> 26) != 9 || ((word_5700 >> 21) & 0x1F) != 5 ||
+            ((word_5700 >> 16) & 0x1F) != 5 ||
+            decoded_a1 != text + 0x589C || (word_5704 >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(text + 0x5704, word_5704) !=
+                text + 0x3F568 || (word_5708 >> 26) != 0 ||
+            ((word_5708 & 0x3F) != 0x21 &&
+             (word_5708 & 0x3F) != 0x25) ||
+            !((((word_5708 >> 21) & 0x1F) == 29 &&
+               ((word_5708 >> 16) & 0x1F) == 0) ||
+              (((word_5708 >> 21) & 0x1F) == 0 &&
+               ((word_5708 >> 16) & 0x1F) == 29)) ||
+            ((word_5708 >> 11) & 0x1F) != 4) {
+        zeroCtrlDiagnosticsText("[vsh3f568-callsite] validation=0\n");
+        return;
+    }
+    snprintf(line, sizeof(line),
+            "[vsh3f568-callsite] validation=1 caller=0x05704 "
+            "target=0x3F568 a0_source=sp a1=0x0589C\n");
+    zeroCtrlDiagnosticsText(line);
+
+    for (row = VSH3F568_MAP_START; row < VSH3F568_MAP_END; row += 0x20) {
+        unsigned int address = text + row;
+        snprintf(line, sizeof(line),
+                "[vsh3f568-map] off=0x%05X w0=%08X w1=%08X w2=%08X "
+                "w3=%08X w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                row, _lw(address), _lw(address + 4), _lw(address + 8),
+                _lw(address + 12), _lw(address + 16), _lw(address + 20),
+                _lw(address + 24), _lw(address + 28));
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (offset = VSH3F568_MAP_START; offset < VSH3F568_MAP_END; offset += 4) {
+        unsigned int pc = text + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int function = word & 0x3F;
+        unsigned int rs = (word >> 21) & 0x1F;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int target = 0;
+        unsigned int likely = 0;
+        const char *class_name = NULL;
+        if (opcode == 2 || opcode == 3) {
+            class_name = opcode == 2 ? "J" : "JAL";
+            target = zeroCtrlMipsJumpTarget(pc, word);
+        } else if (opcode == 0 && (function == 8 || function == 9)) {
+            class_name = function == 8 ? "JR" : "JALR";
+        } else if (opcode == 1) {
+            class_name = "REGIMM";
+            target = zeroCtrlMipsBranchTarget(pc, word);
+            likely = rt == 2 || rt == 3 || rt == 0x12 || rt == 0x13;
+        } else if ((opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
+            static const char *names[4] = { "BEQ", "BNE", "BLEZ", "BGTZ" };
+            static const char *likely_names[4] = {
+                "BEQL", "BNEL", "BLEZL", "BGTZL"
+            };
+            class_name = opcode >= 0x14 ? likely_names[opcode & 3] :
+                    names[opcode & 3];
+            target = zeroCtrlMipsBranchTarget(pc, word);
+            likely = opcode >= 0x14;
+        }
+        if (class_name) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-cf] off=0x%05X class=%s target=0x%08X "
+                    "rs=%u rt=%u likely=%u\n",
+                    offset, class_name, target, rs, rt, likely);
+            zeroCtrlDiagnosticsText(line);
+        }
+        if (opcode == 9 && rs == 29 && rt == 29) {
+            int amount = (short)(word & 0xFFFF);
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-frame] off=0x%05X class=%s amount=%d\n",
+                    offset, amount < 0 ? "STACK_ALLOC" : "STACK_FREE",
+                    amount < 0 ? -amount : amount);
+            zeroCtrlDiagnosticsText(line);
+        } else if ((opcode == 0x2B || opcode == 0x23) && rs == 29 && rt == 31) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-frame] off=0x%05X class=%s disp=%d\n",
+                    offset, opcode == 0x2B ? "SAVE_RA" : "RESTORE_RA",
+                    (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+        } else if (opcode == 0 && function == 8 && rs == 31) {
+            snprintf(line, sizeof(line),
+                    "[vsh3f568-frame] off=0x%05X class=RETURN\n", offset);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+
+    for (offset = 0x56AC; offset < 0x570C; offset += 4) {
+        unsigned int word = _lw(text + offset);
+        unsigned int opcode = word >> 26;
+        unsigned int rs = (word >> 21) & 0x1F;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int rd = (word >> 11) & 0x1F;
+        if (opcode == 0x0F && rs == 0) {
+            known_value[rt] = (word & 0xFFFF) << 16;
+            known_mask |= 1U << rt;
+        } else if ((opcode == 9 || opcode == 0x0D) &&
+                (known_mask & (1U << rs))) {
+            known_value[rt] = opcode == 9 ? known_value[rs] +
+                    (int)(short)(word & 0xFFFF) :
+                    known_value[rs] | (word & 0xFFFF);
+            known_mask |= 1U << rt;
+        } else if (opcode != 0 && opcode != 0x2B && rt != 0) {
+            known_mask &= ~(1U << rt);
+        } else if (opcode == 0 && rd != 0) {
+            known_mask &= ~(1U << rd);
+        }
+        if (opcode == 0x2B && rs == 29) {
+            snprintf(line, sizeof(line),
+                    "[vsh5704-arg0] off=0x%05X stack_disp=%d source_reg=%u "
+                    "word=0x%08X known=%u resolved=0x%08X\n",
+                    offset, (int)(short)(word & 0xFFFF), rt, word,
+                    (known_mask >> rt) & 1, known_value[rt]);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+    zeroCtrlWriteVsh3f568A1Flow(vsh);
+
+    for (offset = 0; offset + 8 <= vsh->text_size; offset += 4) {
+        unsigned int pc = text + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        if (opcode == 2 || opcode == 3) {
+            if (zeroCtrlMipsJumpTarget(pc, word) == text + 0x3F568) {
+                caller_total++;
+                if (opcode == 3) jal_total++; else jump_total++;
+                if (caller_count < VSH589C_REPORT_LIMIT) {
+                    callers[caller_count].offset = offset;
+                    callers[caller_count].word = word;
+                    callers[caller_count].kind = opcode;
+                    caller_count++;
+                }
+            }
+        }
+        if (opcode == 0x0F && ((word >> 21) & 0x1F) == 0) {
+            unsigned int reg = (word >> 16) & 0x1F;
+            unsigned int low = _lw(pc + 4);
+            unsigned int low_opcode = low >> 26;
+            if (reg != 0 && (low_opcode == 9 || low_opcode == 0x0D) &&
+                    ((low >> 21) & 0x1F) == reg &&
+                    ((low >> 16) & 0x1F) == reg) {
+                unsigned int upper = (word & 0xFFFF) << 16;
+                unsigned int resolved = low_opcode == 9 ?
+                        upper + (int)(short)(low & 0xFFFF) :
+                        upper | (low & 0xFFFF);
+                if (resolved == text + 0x3F568) {
+                    address_total++;
+                    if (address_count < VSH589C_REPORT_LIMIT) {
+                        address_refs[address_count].lui_offset = offset;
+                        address_refs[address_count].low_offset = offset + 4;
+                        address_refs[address_count].reg = reg;
+                        address_refs[address_count].resolved = resolved;
+                        address_count++;
+                    }
+                }
+            }
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[vsh3f568-callers] jal=%u jump=%u total=%u stored=%u\n",
+            jal_total, jump_total, caller_total, caller_count);
+    zeroCtrlDiagnosticsText(line);
+    for (i = 0; i < caller_count; i++) {
+        snprintf(line, sizeof(line),
+                "[vsh3f568-caller] index=%u off=0x%05X class=%s\n",
+                i, callers[i].offset, callers[i].kind == 3 ? "JAL" : "J");
+        zeroCtrlDiagnosticsText(line);
+        if (callers[i].kind == 3)
+            zeroCtrlWriteVsh3f568CallerWindow(vsh, i, callers[i].offset);
+    }
+    snprintf(line, sizeof(line),
+            "[vsh3f568-address-refs] total=%u stored=%u\n",
+            address_total, address_count);
+    zeroCtrlDiagnosticsText(line);
+    for (i = 0; i < address_count; i++) {
+        snprintf(line, sizeof(line),
+                "[vsh3f568-address-ref] index=%u lui_off=0x%05X "
+                "low_off=0x%05X reg=%u resolved=0x%08X\n",
+                i, address_refs[i].lui_offset, address_refs[i].low_offset,
+                address_refs[i].reg, address_refs[i].resolved);
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
     unsigned int elapsed = 0;
     unsigned int written = 0;
@@ -3718,7 +4128,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_dispatch_entry_pre_slide = 0;
     int observed_consumer_install = 0, observed_consumer_pre_slide = 0;
     unsigned int minimal_memory_written = 0;
-    int vsh_request_scan_written = 0;
+    int vsh3f568_scan_written = 0;
     unsigned int observed_runtime_request_called = 0;
     unsigned int observed_runtime_request_result = 0xFFFFFFFF;
     unsigned int minimal_last_state = 0xFFFFFFFF;
@@ -3735,10 +4145,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     slide_diag.bsman.activation_hits_addr);
             unsigned int state;
             zeroCtrlRefreshSonyStartTrace();
-            if (!vsh_request_scan_written && slide_diag.functional_enabled &&
+            if (!vsh3f568_scan_written && slide_diag.functional_enabled &&
                     slide_diag.vsh_module_seen) {
-                vsh_request_scan_written = 1;
-                zeroCtrlWriteFunctionalVshRequestCallers();
+                vsh3f568_scan_written = 1;
+                zeroCtrlWriteFunctionalVsh3f568Analysis();
             }
             if (slide_diag.functional_enabled &&
                     !(minimal_memory_written & 0x0080)) {
