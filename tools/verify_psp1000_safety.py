@@ -1729,6 +1729,12 @@ def check_sources(root):
             "_sw(1, bsman->bsman_compat_mode_addr)",
             "_sw(1, bsman->post_vsh_compat_mode_addr)",
             "_sw(1, bsman->state_zero_15to14_compat_mode_addr)",
+            "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[4])",
+            "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[5])",
+            "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[6])",
+            "_sw(0, bsman->state_zero_value_addr[4])",
+            "_sw(0, bsman->state_zero_value_addr[5])",
+            "_sw(0xFFFFFFFF, bsman->state_zero_value_addr[6])",
             "for (i = 0; i < scalar_count; i++)\n"
             "        sceKernelDcacheWritebackInvalidateRange",
             "for (i = 0; i < 4; i++) {",
@@ -1739,6 +1745,12 @@ def check_sources(root):
             "bsman->functional_cache_sync = 1"):
         if token not in functional:
             fail("narrow functional activation installer lacks " + token)
+    for invented in ("bsman->state_zero_vcall_target_addr",
+            "bsman->state_zero_vcall_ra_addr",
+            "bsman->state_zero_vcall_result_addr"):
+        if invented in functional:
+            fail("functional installer uses nonexistent state-zero member " +
+                    invented)
     first_scalar_write = functional.find("_sw(0, bsman->prefix_path_mask_addr)")
     validation_publish = functional.find("bsman->functional_validation = 1")
     scalar_validation = functional.find(

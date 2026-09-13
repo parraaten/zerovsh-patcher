@@ -9113,9 +9113,9 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_effective_result_addr);
     ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_substitution_hits_addr);
     ADD_FUNCTIONAL_SCALAR(bsman->state_zero_path_mask_addr);
-    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_vcall_target_addr);
-    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_vcall_ra_addr);
-    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_vcall_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[4]);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[5]);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[6]);
     ADD_FUNCTIONAL_SCALAR(bsman->state_zero_counter_addr[1]);
     ADD_FUNCTIONAL_SCALAR(bsman->state_zero_counter_addr[2]);
     ADD_FUNCTIONAL_SCALAR(bsman->state_zero_15to14_compat_mode_addr);
@@ -9155,9 +9155,9 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr);
     _sw(0, bsman->post_vsh_substitution_hits_addr);
     _sw(0, bsman->state_zero_path_mask_addr);
-    _sw(0, bsman->state_zero_vcall_target_addr);
-    _sw(0, bsman->state_zero_vcall_ra_addr);
-    _sw(0xFFFFFFFF, bsman->state_zero_vcall_result_addr);
+    _sw(0, bsman->state_zero_value_addr[4]);
+    _sw(0, bsman->state_zero_value_addr[5]);
+    _sw(0xFFFFFFFF, bsman->state_zero_value_addr[6]);
     _sw(0, bsman->state_zero_counter_addr[1]);
     _sw(0, bsman->state_zero_counter_addr[2]);
     _sw(1, bsman->state_zero_15to14_compat_mode_addr);
