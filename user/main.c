@@ -56,6 +56,8 @@ enum zeroCtrlSlideState {
 	ZERO_SLIDE_UNLOADED,
 };
 
+#define PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED 0
+
 
 typedef struct
 {
@@ -239,7 +241,8 @@ static int zeroCtrlValidatePsp1000RuntimeRequest(SceModule2 *mod,
 static int zeroCtrlPsp1000RuntimeRequestWorker(
         SceSize args UNUSED, void *argp UNUSED) {
     while (1) {
-        if (psp1000RuntimeRequestValid && psp1000RuntimeRequest) {
+        if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&
+                psp1000RuntimeRequestValid && psp1000RuntimeRequest) {
             Psp1000RuntimeRequestFn request_function;
             psp1000RuntimeRequest = 0;
             psp1000RuntimeRequestCalled++;
@@ -633,7 +636,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	psp1000RuntimeRequestCalled = 0;
 	psp1000RuntimeRequestResult = 0xFFFFFFFF;
 	psp1000RuntimeRequestTarget = 0;
-	if (model == 0 && devkit == 0x06060110 &&
+	if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&
+			model == 0 && devkit == 0x06060110 &&
 			zeroCtrlIsPsp1000SlideFunctionalEnabled())
 		zeroCtrlCreatePsp1000RuntimeRequestWorker();
 	sonyStartTraceRegistration.entry_addr =

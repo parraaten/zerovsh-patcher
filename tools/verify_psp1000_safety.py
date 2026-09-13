@@ -398,10 +398,53 @@ def check_sources(root):
             "zeroCtrlRedir", "vsh->text_addr + 0x58D4)("):
         if forbidden in vsh58:
             fail("VSH+58D4 map is not strictly read-only: " + forbidden)
-    if kernel.count("zeroCtrlWriteFunctionalVsh58Map();") != 1 or \
-            "if (!vsh58_map_written && slide_diag.functional_enabled" not in minimal or \
-            "vsh58_map_written = 1;" not in minimal:
-        fail("VSH+58D4 map is not emitted at most once by the deferred writer")
+    if "zeroCtrlWriteFunctionalVsh58Map();" in kernel:
+        fail("large VSH+58D4 map is still emitted automatically")
+    scan_start = kernel.find(
+            "static void zeroCtrlWriteFunctionalVshRequestCallers(void)")
+    scan_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(", scan_start)
+    if scan_start < 0 or scan_end < 0:
+        fail("read-only VSH +589C caller scan is missing")
+    request_scan = kernel[scan_start:scan_end]
+    for token in ("for (offset = 0; offset + 8 <= vsh->text_size; offset += 4)",
+            "opcode == 2 || opcode == 3",
+            "zeroCtrlMipsJumpTarget(pc, word)",
+            "target == vsh->text_addr + 0x589C",
+            "target == vsh->text_addr + 0x57B0",
+            "[vsh589c-callers] validation=1 jal=%u jump=%u",
+            "[vsh589c-caller]", "[vsh57b0-callers]",
+            "[vsh57b0-caller]", "opcode == 0x0F",
+            "low_opcode == 9 || low_opcode == 0x0D",
+            "upper + (int)(short)(low & 0xFFFF)",
+            "upper | (low & 0xFFFF)", "[vsh589c-address-ref]",
+            "VSH589C_REPORT_LIMIT"):
+        if token not in request_scan:
+            fail("VSH +589C/+57B0 scan lacks " + token)
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL",
+            "zeroCtrlRedir", "request_function()"):
+        if forbidden in request_scan:
+            fail("VSH +589C/+57B0 scan is not read-only: " + forbidden)
+    window_start = kernel.find("static void zeroCtrlWriteVsh589cWindow(")
+    a0_end = scan_start
+    request_helpers = kernel[window_start:a0_end]
+    for token in ("[vsh589c-window]", "row += 0x20", "_lw(address + 28)",
+            "zeroCtrlVsh589cA0Definition", "rt == 4 && opcode == 9",
+            "rt == 4 && opcode == 0x0D", "rt == 4 && opcode == 0x0F",
+            "rt == 4 && opcode == 0x23", "ADDU_MOVE", "OR_MOVE",
+            "zeroCtrlVsh589cControlBarrier", "status=AMBIGUOUS",
+            "NO_DEF_FRAME_BOUNDARY"):
+        if token not in request_helpers:
+            fail("bounded VSH +589C caller/A0 analysis lacks " + token)
+    for definition in ("#define VSH589C_WINDOW_BEFORE 0x50",
+            "#define VSH589C_WINDOW_AFTER  0x30"):
+        if definition not in kernel:
+            fail("bounded VSH +589C caller window lacks " + definition)
+    if any(token in request_helpers for token in ("_sw(", "Dcache", "Icache")):
+        fail("bounded VSH +589C caller/A0 analysis is not read-only")
+    if kernel.count("zeroCtrlWriteFunctionalVshRequestCallers();") != 1 or \
+            "if (!vsh_request_scan_written && slide_diag.functional_enabled" \
+            not in minimal or "vsh_request_scan_written = 1;" not in minimal:
+        fail("VSH request caller scan is not one-shot deferred output")
     minimal_gate = kernel[kernel.find("slide_diag.minimal_memory_test ="):
         kernel.find("slide_diag.global_predicate_enabled =")]
     for token in ("model == 0", "devkit == 0x06060110",
@@ -458,7 +501,7 @@ def check_sources(root):
         fail("PSP-1000 functional mode incorrectly requires diagnostics")
     for token in ("[psp1000-functional] enabled=1",
             "[psp1000-functional] button_thread=1",
-            "[psp1000-functional] request_armed=1",
+            "[psp1000-functional] runtime_request_blocked=1",
             "[psp1000-functional] runtime_request_valid=1",
             "[psp1000-functional] runtime_request_called=%u",
             "[psp1000-functional] runtime_request_result=0x%08X",
@@ -499,20 +542,14 @@ def check_sources(root):
     button = kernel[button_start:button_end]
     for token in ("ZERO_SLIDE_STOPPED", "slideStartBtn",
             "slide_diag.functional_enabled",
-            "functional_runtime_registration_valid",
-            "functional_runtime_request_addr",
-            "functional_runtime_valid_addr",
-            "_sw(1, slide_diag.functional_runtime_request_addr)",
-            "functional_request_armed = 1", "request_ready",
+            "functional_runtime_request_blocked = 1", "request_ready",
             "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
         if token not in button:
             fail("functional StartBtn request gating lacks " + token)
-    state_start = button.find("zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)")
-    request_publish = button.find(
-            "_sw(1, slide_diag.functional_runtime_request_addr)")
-    if not 0 <= state_start < request_publish or \
-            "_sw(1, slide_diag.triggers[0].request_addr)" in button:
-        fail("functional HOME does not publish one runtime request after STARTING")
+    if "_sw(1, slide_diag.functional_runtime_request_addr)" in button or \
+            "_sw(1, slide_diag.triggers[0].request_addr)" in button or \
+            "functional_request_armed = 1" in button:
+        fail("functional HOME can still publish an experimental VSH request")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
@@ -626,6 +663,9 @@ def check_sources(root):
     worker_end = user.find("static void zeroCtrlCreatePsp1000RuntimeRequestWorker(",
             worker_start)
     worker = user[worker_start:worker_end]
+    if "#define PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED 0" not in user or \
+            "if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&" not in worker:
+        fail("direct +57B0 runtime execution is not compile-time disabled")
     for token in ("psp1000RuntimeRequestValid && psp1000RuntimeRequest",
             "psp1000RuntimeRequest = 0", "psp1000RuntimeRequestCalled++",
             "psp1000RuntimeRequestTarget", "request_function()",
@@ -646,7 +686,8 @@ def check_sources(root):
             fail("PSP-1000 runtime request worker creation lacks " + token)
     user_start_prefix = user[user.find("int module_start("):
             user.find("sonyStartTraceRegistration.entry_addr")]
-    for token in ("model == 0", "devkit == 0x06060110",
+    for token in ("PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED",
+            "model == 0", "devkit == 0x06060110",
             "zeroCtrlIsPsp1000SlideFunctionalEnabled()",
             "zeroCtrlCreatePsp1000RuntimeRequestWorker()"):
         if token not in user_start_prefix:
