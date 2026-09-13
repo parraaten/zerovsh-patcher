@@ -2165,3 +2165,8 @@ printing a text-relative inner offset; a valid target in another PAF segment is
 reported as outside text rather than given a misleading offset. These are
 analysis-correctness changes only and add no new hardware finding or runtime
 behavior.
+
+The one-level A989 next-target record now applies both declared-text bounds and
+reports `target_in_text` explicitly. A segment-valid target outside text remains
+eligible for the bounded read-only map, but its offset is reported as
+`OUTSIDE_TEXT`; the record labels the proven register as `callback_arg_reg`.

@@ -4136,11 +4136,19 @@ static void zeroCtrlWritePafA989Inner(SceModule2 *paf,
                             &next_remaining)) {
                     unsigned int next_size = next_remaining > 0x100 ?
                             0x100 : next_remaining;
-                    snprintf(line, sizeof(line),
-                            "[paf-a989-next] target=0x%08X target_off=0x%X tracked_reg=%u segment=%u\n",
-                            next, next >= paf->text_addr ?
-                            next - paf->text_addr : 0, callback_argument,
-                            next_segment);
+                    unsigned int next_in_text = next >= paf->text_addr &&
+                            next - paf->text_addr < paf->text_size;
+                    if (next_in_text)
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-next] target=0x%08X target_in_text=1 "
+                                "target_off=0x%X callback_arg_reg=%u segment=%u\n",
+                                next, next - paf->text_addr, callback_argument,
+                                next_segment);
+                    else
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-next] target=0x%08X target_in_text=0 "
+                                "target_off=OUTSIDE_TEXT callback_arg_reg=%u segment=%u\n",
+                                next, callback_argument, next_segment);
                     zeroCtrlDiagnosticsText(line);
                     if (zeroCtrlVshModuleRangeValid(paf, next, next_size))
                         for (row = 0; row < next_size; row += 0x20) {

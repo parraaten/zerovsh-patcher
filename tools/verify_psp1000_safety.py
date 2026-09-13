@@ -557,6 +557,26 @@ def check_sources(root):
         fail("wrapper inner_off lacks two-bound text classification")
     if "inner >= owner->text_addr ? inner - owner->text_addr" in vsh3:
         fail("wrapper inner_off still uses a lower-bound-only calculation")
+    next_target = inner.find("unsigned int next = zeroCtrlMipsJumpTarget(pc, word)")
+    next_segment = inner.find("zeroCtrlModuleContainingSegment(paf, next", next_target)
+    next_text_lower = inner.find("next >= paf->text_addr", next_segment)
+    next_text_upper = inner.find(
+            "next - paf->text_addr < paf->text_size", next_text_lower)
+    next_in_text = inner.find(
+            "target_in_text=1 \"\n                                \"target_off=0x%X callback_arg_reg=%u",
+            next_text_upper)
+    next_outside = inner.find(
+            "target_in_text=0 \"\n                                \"target_off=OUTSIDE_TEXT callback_arg_reg=%u",
+            next_in_text)
+    next_map_range = inner.find(
+            "zeroCtrlVshModuleRangeValid(paf, next, next_size)", next_outside)
+    if not 0 <= next_target < next_segment < next_text_lower < next_text_upper < \
+            next_in_text < next_outside < next_map_range:
+        fail("next PAF target lacks two-bound text classification after segment validation")
+    if "next >= paf->text_addr ? next - paf->text_addr" in inner:
+        fail("next PAF target still uses a lower-bound-only offset")
+    if "tracked_reg=%u" in inner[next_target:next_map_range]:
+        fail("next PAF target mislabels the proven callback argument register")
     if "[vsh3f568-impl-map]" in vsh3 or "[vsh3f568-use]" in vsh3:
         fail("superseded wrapper/caller output is still automatic")
     for section in (vsh3, inner):
