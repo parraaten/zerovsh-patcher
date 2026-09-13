@@ -2292,17 +2292,20 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                 ZeroCtrlVshTriggerEvidence *request_evidence =
                         &slide_diag.triggers[0];
                 if (slide_diag.trigger_mode & ZERO_TRIGGER_58D4) {
-                    _sw(0, request_evidence->request_addr);
                     _sw(request_evidence->original_target,
                             request_evidence->original_target_addr);
                     _sw(slide_diag.functional_enabled ? 1 : 0,
                             request_evidence->functional_mode_addr);
                     sceKernelDcacheWritebackInvalidateRange(
-                            (const void *)request_evidence->request_addr, 4);
-                    sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->original_target_addr, 4);
                     sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->functional_mode_addr, 4);
+                    if (slide_diag.functional_enabled)
+                        _sw(1, request_evidence->request_addr);
+                    else
+                        _sw(0, request_evidence->request_addr);
+                    sceKernelDcacheWritebackInvalidateRange(
+                            (const void *)request_evidence->request_addr, 4);
                 }
                 for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
                     ZeroCtrlVshTriggerEvidence *evidence =
@@ -2318,6 +2321,11 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                             sizeof(unsigned int));
                     evidence->cache_sync = 1;
                 }
+                if (slide_diag.functional_enabled &&
+                        (slide_diag.trigger_mode & ZERO_TRIGGER_58D4) &&
+                        request_evidence->patch_applied == 1 &&
+                        request_evidence->cache_sync == 1)
+                    slide_diag.functional_request_armed = 1;
             }
 
             /* Dangerous global predicate block: never edits direct callers. */
@@ -6089,6 +6097,8 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     }
 
 }
+static unsigned int zeroCtrlReadTriggerHits(unsigned int index);
+
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
     unsigned int elapsed = 0;
     unsigned int written = 0;
@@ -6180,8 +6190,27 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             if (slide_diag.functional_request_armed &&
                     !(minimal_memory_written & 0x0200)) {
                 zeroCtrlDiagnosticsText(
-                        "[psp1000-functional] request_armed=1\n");
+                        "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
+            }
+            if (slide_diag.functional_request_armed &&
+                    !slide_diag.functional_trigger_consumed) {
+                ZeroCtrlVshTriggerEvidence *trigger =
+                        &slide_diag.triggers[0];
+                SceModule2 *helper =
+                        sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+                if (trigger->validation == 1 &&
+                        trigger->patch_applied == 1 &&
+                        trigger->cache_sync == 1 &&
+                        (trigger->request_addr & 3) == 0 &&
+                        zeroCtrlVshModuleRangeValid(helper,
+                            trigger->request_addr, 4) &&
+                        zeroCtrlReadTriggerHits(0) != 0 &&
+                        *(volatile unsigned int *)trigger->request_addr == 0) {
+                    slide_diag.functional_trigger_consumed = 1;
+                    zeroCtrlDiagnosticsText(
+                            "[psp1000-functional] startup_58d4_consumed=1\n");
+                }
             }
             if (slide_diag.functional_runtime_request_blocked &&
                     !(minimal_memory_written & 0x1000)) {
@@ -10329,22 +10358,9 @@ void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 				int request_ready = !slide_diag.functional_enabled;
 				zeroCtrlWriteDebug("Starting slide\n\n");
 				if (slide_diag.functional_enabled) {
-					ZeroCtrlVshTriggerEvidence *trigger =
-							&slide_diag.triggers[0];
-					/* Never execute Sony directly; arm only the validated 58D4 scalar. */
+					/* Functional startup is pre-armed; HOME never executes Sony. */
 					slide_diag.functional_runtime_request_blocked = 1;
 					request_ready = 0;
-					if ((slide_diag.trigger_mode & ZERO_TRIGGER_58D4) &&
-							trigger->validation == 1 &&
-							trigger->patch_applied == 1 &&
-							trigger->cache_sync == 1 &&
-							trigger->request_addr != 0 &&
-							_lw(trigger->request_addr) == 0) {
-						_sw(1, trigger->request_addr);
-						sceKernelDcacheWritebackInvalidateRange(
-								(const void *)trigger->request_addr, 4);
-						slide_diag.functional_request_armed = 1;
-					}
 				}
 				if (request_ready)
 					zeroCtrlSetSlideState(ZERO_SLIDE_STARTING);

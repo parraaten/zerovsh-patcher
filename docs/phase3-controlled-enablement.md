@@ -2450,20 +2450,30 @@ PSP1000MaskedPafC59FC3D0SecondTrace = Disabled
 PSP1000ActivationWideTrace = Disabled
 ```
 
-`PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED` remains zero. HOME never invokes a
-Sony routine directly. In functional mode, while the slide state is stopped,
-HOME now arms only the already range/alignment-validated selective `+0x58D4`
-helper scalar, and only after its trigger validation, patch, and cache-sync
-records are complete. An already nonzero scalar is left unchanged. The
-existing `zeroCtrlTrigger58D4` leaf consumes the scalar by clearing it before
-returning the one-shot effective value `1`; with a zero scalar it tail-transfers
-to Sony's original predicate. The expected next log ordering is therefore
-`[psp1000-functional] request_armed=1`, followed by existing `+0x58D4` hit
-evidence only if Sony naturally reaches that caller.
+The first checkpoint wiring armed the selective scalar only after HOME. Real
+PSP-1000 hardware logged `request_armed=1` but no subsequent `+0x58D4` hit,
+SlidePlugin request, or activation during the observation window. This proves
+the HOME write worked mechanically but does not support an assumption that
+Sony revisits the startup caller after normal VSH startup. The checkpoint now
+pre-arms the same one-shot scalar during selective trigger installation.
+
+`PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED` remains zero. HOME never arms the
+selective request and never invokes a Sony routine directly. Instead, the
+validated selective `+0x58D4` installation transaction initializes the
+range/alignment-validated helper request scalar to one in functional mode,
+synchronizes it, and only then installs and cache-synchronizes the validated
+callsite patch. The transaction performs no writes if any selected validation
+fails. The existing `zeroCtrlTrigger58D4` leaf consumes the scalar by clearing
+it before returning the one-shot effective value `1`; with a zero scalar it
+tail-transfers to Sony's original predicate. The expected next log ordering is
+therefore `[psp1000-functional] startup_58d4_armed=1`, followed by existing
+`+0x58D4` hit evidence if Sony naturally reaches the startup caller, then the
+SlidePlugin request/observation, RCO request, activation, compatibility
+checkpoints, and Sony continuation.
 
 The broad `+0x6F84` mode remains prohibited, and A989 output is skipped when
 the functional checkpoint is active. The hardware action is one
-recovery-protected PSP-1000 6.61 boot with this configuration, followed by an
-ordinary HOME press through Sony's existing state-machine callsite, observation
-of whether the Clock & Date UI becomes visible, normal XMB stability testing,
-and return of the complete unedited diagnostic log.
+recovery-protected PSP-1000 6.61 boot with this configuration, observation of
+whether Sony naturally consumes the startup request and makes the Clock & Date
+UI visible, normal XMB stability testing, and return of the complete unedited
+diagnostic log. HOME is not part of this startup-gate checkpoint.

@@ -1495,6 +1495,8 @@ def check_sources(root):
         fail("PSP-1000 functional mode incorrectly requires diagnostics")
     for token in ("[psp1000-functional] enabled=1",
             "[psp1000-functional] button_thread=1",
+            "[psp1000-functional] startup_58d4_armed=1",
+            "[psp1000-functional] startup_58d4_consumed=1",
             "[psp1000-functional] runtime_request_blocked=1",
             "[psp1000-functional] runtime_request_valid=1",
             "[psp1000-functional] runtime_request_called=%u",
@@ -1536,22 +1538,51 @@ def check_sources(root):
             "(evidence->request_addr & 3) == 0",
             "zeroCtrlVshModuleRangeValid(helper,\n                                evidence->request_addr, 4)",
             "_sw(0, request_evidence->request_addr)",
+            "_sw(1, request_evidence->request_addr)",
             "_sw(request_evidence->original_target",
             "_sw(slide_diag.functional_enabled ? 1 : 0",
             "sceKernelDcacheWritebackInvalidateRange("):
         if token not in record:
             fail("functional 58D4 registration lacks " + token)
-    scalar_init = record.find("_sw(0, request_evidence->request_addr)")
-    trigger_commit = record.find("_sw(evidence->replacement_word")
-    if not 0 <= scalar_init < trigger_commit:
-        fail("functional 58D4 routing scalars are not initialized before patch")
+    validation_pass = record[record.find("/* Validation pass"):
+            record.find("/* Commit pass")]
+    if "_sw(" in validation_pass:
+        fail("functional 58D4 validation pass performs a partial write")
+    commit_guard = record.find("if (all_selected_valid)")
+    original_init = record.find("_sw(request_evidence->original_target",
+            commit_guard)
+    mode_init = record.find("_sw(slide_diag.functional_enabled ? 1 : 0",
+            original_init)
+    functional_request_guard = record.find(
+            "if (slide_diag.functional_enabled)", mode_init)
+    startup_prearm = record.find("_sw(1, request_evidence->request_addr)",
+            functional_request_guard)
+    request_sync = record.find("sceKernelDcacheWritebackInvalidateRange(\n"
+            "                            (const void *)request_evidence->request_addr, 4)",
+            startup_prearm)
+    trigger_commit = record.find("_sw(evidence->replacement_word",
+            request_sync)
+    patch_dcache = record.find("sceKernelDcacheWritebackInvalidateRange(",
+            trigger_commit)
+    patch_icache = record.find("sceKernelIcacheInvalidateRange(", patch_dcache)
+    patch_synced = record.find("evidence->cache_sync = 1", patch_icache)
+    armed_record = record.find("functional_request_armed = 1", patch_synced)
+    if not 0 <= commit_guard < original_init < mode_init < \
+            functional_request_guard < startup_prearm < request_sync < \
+            trigger_commit < patch_dcache < patch_icache < patch_synced < \
+            armed_record:
+        fail("functional 58D4 pre-arm/install transaction is out of order")
+    if record.count("_sw(1, request_evidence->request_addr)") != 1:
+        fail("functional 58D4 request is not pre-armed exactly once")
+    if "&slide_diag.triggers[0]" not in record:
+        fail("functional 58D4 pre-arm does not use trigger zero")
     request_alignment = record.find("(evidence->request_addr & 3) == 0")
     request_range = record.find("zeroCtrlVshModuleRangeValid(helper,\n"
             "                                evidence->request_addr, 4)",
             request_alignment)
     trigger_validation = record.find("evidence->validation = 1", request_range)
     if not 0 <= request_alignment < request_range < trigger_validation < \
-            scalar_init:
+            commit_guard:
         fail("58D4 request scalar is not aligned/range-validated before use")
     button_start = kernel.find("void zeroCtrlReadButtons(")
     button_end = kernel.find("void zeroCtrlCreateBtnThread(", button_start)
@@ -1559,35 +1590,39 @@ def check_sources(root):
     for token in ("ZERO_SLIDE_STOPPED", "slideStartBtn",
             "slide_diag.functional_enabled",
             "functional_runtime_request_blocked = 1", "request_ready",
-            "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)",
-            "slide_diag.trigger_mode & ZERO_TRIGGER_58D4",
-            "trigger->validation == 1", "trigger->patch_applied == 1",
-            "trigger->cache_sync == 1", "trigger->request_addr != 0",
-            "_lw(trigger->request_addr) == 0",
-            "_sw(1, trigger->request_addr)",
-            "sceKernelDcacheWritebackInvalidateRange(",
-            "functional_request_armed = 1"):
+            "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
         if token not in button:
             fail("functional StartBtn request gating lacks " + token)
-    readiness = button.find("slide_diag.trigger_mode & ZERO_TRIGGER_58D4")
-    request_read = button.find("_lw(trigger->request_addr) == 0", readiness)
-    request_write = button.find("_sw(1, trigger->request_addr)", request_read)
-    request_sync = button.find("sceKernelDcacheWritebackInvalidateRange(",
-            request_write)
-    request_armed = button.find("functional_request_armed = 1", request_sync)
-    if not 0 <= readiness < request_read < request_write < request_sync < \
-            request_armed:
-        fail("functional HOME does not arm the validated 58D4 scalar in order")
     functional_block = button[button.find("if (slide_diag.functional_enabled)"):
             button.find("if (request_ready)")]
     for forbidden in ("psp1000RuntimeRequestTarget",
             "zeroCtrlTrigger58D4(",
-            "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
+            "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)",
+            "trigger->request_addr", "request_evidence->request_addr",
+            "_sw(", "sceKernelDcache"):
         if forbidden in functional_block:
-            fail("functional HOME directly executes or forces Sony flow: " +
+            fail("functional HOME arms, executes, or forces Sony flow: " +
                     forbidden)
     if "_sw(1, slide_diag.functional_runtime_request_addr)" in button:
         fail("functional HOME publishes the forbidden direct runtime request")
+    consumed_start = minimal.find(
+            "if (slide_diag.functional_request_armed &&\n"
+            "                    !slide_diag.functional_trigger_consumed)")
+    consumed_range = minimal.find("zeroCtrlVshModuleRangeValid(helper,\n"
+            "                            trigger->request_addr, 4)",
+            consumed_start)
+    consumed_hits = minimal.find("zeroCtrlReadTriggerHits(0) != 0",
+            consumed_range)
+    consumed_read = minimal.find(
+            "*(volatile unsigned int *)trigger->request_addr == 0",
+            consumed_hits)
+    consumed_publish = minimal.find(
+            "slide_diag.functional_trigger_consumed = 1", consumed_read)
+    consumed_log = minimal.find(
+            "[psp1000-functional] startup_58d4_consumed=1", consumed_publish)
+    if not 0 <= consumed_start < consumed_range < consumed_hits < \
+            consumed_read < consumed_publish < consumed_log:
+        fail("functional 58D4 consumption marker is not range/hit validated")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
