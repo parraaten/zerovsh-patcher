@@ -863,7 +863,10 @@ def check_sources(root):
     constructed_flow = kernel[constructed_flow_start:constructed_flow_end]
     for token in ("constructed[1]", "remaining < 0xBC",
             "zeroCtrlVshModuleRangeValid(paf, constructed[1], 0xBC)",
-            "zeroCtrlMipsMove(_lw(constructed[1] + offset), 16, 5)",
+            "_lw(constructed[1]) == 0x27BDFFF0",
+            "_lw(constructed[1] + 4) == 0xAFBF0008",
+            "_lw(constructed[1] + 8) == 0xAFB00000",
+            "zeroCtrlMipsMove(_lw(constructed[1] + 0x0C), 16, 5)",
             "load = _lw(constructed[1] + 0x40)",
             "(short)(load & 0xFFFF) == 12",
             "branch = _lw(constructed[1] + 0x44)",
@@ -875,20 +878,32 @@ def check_sources(root):
             "[paf-a989-constructed1-indirect] validation=1",
             "base_arg_reg=5 target_field_off=0x0C",
             "arg0_field_off=0x04 jalr_off=0xB4",
-            "constructed[0]", "remaining > 0x80 ? 0x80",
+            "constructed[0]", "remaining > 0x30 ? 0x30",
+            "constructed0_size == 0x30",
             "zeroCtrlVshModuleRangeValid(paf,\n                    constructed[0], constructed0_size)",
-            "zeroCtrlMipsMove(word, rd, 4)", "preserved_return",
-            "(short)(word & 0xFFFF) == 4",
+            "zeroCtrlMipsMove(_lw(constructed[0] + 0x08), 17, 4)",
+            "(_lw(constructed[0] + 0x14) >> 26) == 3",
+            "zeroCtrlMipsMove(_lw(constructed[0] + 0x1C), 16, 2)",
+            "(_lw(constructed[0] + 0x24) >> 26) == 3",
+            "_lw(constructed[0] + 0x2C) == 0xAE300004",
+            "delay1_destination", "delay2_destination",
             "[paf-a989-constructed0-write] validation=1",
-            "base_arg_reg=4 field_off=0x04",
-            "source=preserved_call_return",
+            "base_arg_reg=4 base_saved_reg=17 field_off=0x04",
+            "source=first_call_return_saved_reg source_reg=16",
+            "store_off=0x2C",
             "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)",
             "(short)(load & 0xFFFF) != 0x14", "look <= offset + 0x40",
+            "unsigned char source[32] = { 0 }",
             "zeroCtrlMipsGprWriteDestination(word)",
             "(unsigned int)destination == target", "function == 9",
+            "if (rs != target || rd != 31) break",
+            "delay = _lw(paf->text_addr + look + 4)",
+            "zeroCtrlMipsGprWriteDestination(delay)",
+            "source[(delay >> 16) & 0x1F] = 1",
+            "source[delay_destination] = 0",
             "[paf-a989-outer14-call-candidate]", "reported < 16",
             "[paf-a989-outer14-call-provenance]", "base_plus_0x04",
-            'provenance ? "base_plus_0x04" : "UNKNOWN"',
+            'source[5] ? "base_plus_0x04" : "UNKNOWN"',
             "[paf-a989-outer14-dispatch-shape] validation=1",
             "target_field_off=0x14 arg1_field_off=0x04",
             "[paf-a989-constructed1-provenance]",
@@ -904,6 +919,41 @@ def check_sources(root):
             outer_text_range)
     if not 0 <= c1_range < c1_read < outer_text_range < outer_scan_read:
         fail("constructed/OUTER+0x14 analysis reads before range validation")
+    if "unsigned int provenance_reg" in constructed_flow or \
+            "unsigned int provenance =" in constructed_flow:
+        fail("OUTER+0x14 analysis retains sticky a1 provenance")
+    jalr_gate = constructed_flow.find("if (opcode == 0 && function == 9)",
+            outer_text_range)
+    unrelated_barrier = constructed_flow.find("if (rs != target || rd != 31) break",
+            jalr_gate)
+    delay_read = constructed_flow.find(
+            "delay = _lw(paf->text_addr + look + 4)", unrelated_barrier)
+    delay_decode = constructed_flow.find(
+            "zeroCtrlMipsGprWriteDestination(delay)", delay_read)
+    delay_update = constructed_flow.find("source[delay_destination] = 0",
+            delay_decode)
+    provenance_output = constructed_flow.find(
+            'source[5] ? "base_plus_0x04" : "UNKNOWN"', delay_update)
+    closure_update = constructed_flow.find("if (source[5]) closure = 1",
+            provenance_output)
+    if not 0 <= jalr_gate < unrelated_barrier < delay_read < delay_decode < \
+            delay_update < provenance_output < closure_update:
+        fail("JALR delay/current-a1 provenance ordering is not conservative")
+    c0_base = constructed_flow.find(
+            "zeroCtrlMipsMove(_lw(constructed[0] + 0x08), 17, 4)")
+    c0_first_call = constructed_flow.find(
+            "(_lw(constructed[0] + 0x14) >> 26) == 3", c0_base)
+    c0_return = constructed_flow.find(
+            "zeroCtrlMipsMove(_lw(constructed[0] + 0x1C), 16, 2)", c0_first_call)
+    c0_second_call = constructed_flow.find(
+            "(_lw(constructed[0] + 0x24) >> 26) == 3", c0_return)
+    c0_store = constructed_flow.find(
+            "_lw(constructed[0] + 0x2C) == 0xAE300004", c0_second_call)
+    c0_output = constructed_flow.find(
+            "[paf-a989-constructed0-write] validation=1", c0_store)
+    if not 0 <= c0_base < c0_first_call < c0_return < c0_second_call < \
+            c0_store < c0_output:
+        fail("constructed_0 write lacks exact local liveness proof")
     generic_shape = constructed_flow.find(
             "[paf-a989-outer14-dispatch-shape] validation=1")
     conditional_identity = constructed_flow.find("if_base_is_a989_outer=1",

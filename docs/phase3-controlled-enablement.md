@@ -2259,3 +2259,15 @@ identity is claimed. A separately capped non-text-segment scan reports aligned
 words equal to the dynamically derived adjacent address without inspecting
 surrounding objects. The prior first-call scalar result and primary ambiguous
 callback flow are unchanged.
+
+#### A989 provenance/liveness correction
+
+The OUTER `+0x14` scan now tracks `BASE_PLUS_04` independently for every GPR,
+invalidates provenance on other recognized writes, processes the JALR delay
+slot before classifying the live `a1`, and treats every unrelated JALR as a call
+barrier. The target register remains live only while no recognized or unknown
+instruction can overwrite it. Constructed_0 now uses the exact local
+`+0x08/+0x14/+0x1C/+0x24/+0x2C` shape, while constructed_1 requires its exact
+four-word entry frame through `s0=a1`. The adjacent data scan and all earlier
+first-call observations remain unchanged. These corrections add no hardware or
+runtime claim.
