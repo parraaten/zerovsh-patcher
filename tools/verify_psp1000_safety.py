@@ -1686,14 +1686,29 @@ def check_sources(root):
     user_module_start = user[user.find("int OnModuleStart(SceModule2 *mod)"):
         user.find("int module_start(")]
     for token in ("zeroCtrlIsPsp1000SlideFunctionalEnabled()",
-            "mod->text_size >= 0xC994",
-            "(_lw(mod->text_addr + 0xC990) >> 26) == 3",
-            "_lw(mod->text_addr + 0x9038) == 0x27BDFFC0",
-            "_lw(mod->text_addr + 0x903C) == 0xAFB40030",
+            "if(!psp1000_experiment &&",
+            'strcmp(mod->modname, "slide_plugin_module") == 0',
             "MAKE_CALL(mod->text_addr+0xC990",
             "zeroCtrlRedir2Stub(mod->text_addr+0x9038"):
         if token not in user_module_start:
-            fail("functional user SlidePlugin integration lacks " + token)
+            fail("legacy user SlidePlugin integration lacks " + token)
+    legacy_gate = user_module_start.find("if(!psp1000_experiment &&")
+    legacy_clock = user_module_start.find("MAKE_CALL(mod->text_addr+0xC990",
+            legacy_gate)
+    legacy_init = user_module_start.find(
+            "zeroCtrlRedir2Stub(mod->text_addr+0x9038", legacy_clock)
+    legacy_end = user_module_start.find("\n\t}", legacy_init)
+    if not 0 <= legacy_gate < legacy_clock < legacy_init < legacy_end:
+        fail("legacy SlidePlugin hooks are not contained by the experiment exclusion")
+    pre_legacy = user_module_start[:legacy_gate]
+    post_legacy = user_module_start[legacy_end:]
+    for hook in ("MAKE_CALL(mod->text_addr+0xC990",
+            "zeroCtrlRedir2Stub(mod->text_addr+0x9038"):
+        if hook in pre_legacy or hook in post_legacy:
+            fail("PSP-1000 experiment can reach a legacy SlidePlugin hook")
+    if "|| psp1000_functional" in user_module_start or \
+            "functional_valid" in user_module_start:
+        fail("functional PSP-1000 still opts into legacy SlidePlugin hooks")
     if "PSP_EXPORT_FUNC_NID(zeroCtrlIsPsp1000SlideFunctionalEnabled, 0x1337357F)" \
             not in kernel_exports or \
             "STUB_FUNC 0x1337357F, zeroCtrlIsPsp1000SlideFunctionalEnabled" \

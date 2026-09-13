@@ -610,19 +610,11 @@ int OnModuleStart(SceModule2 *mod) {
 		}  
 	}
 	
-	if((!psp1000_experiment || psp1000_functional) &&
+	if(!psp1000_experiment &&
 			strcmp(mod->modname, "slide_plugin_module") == 0) {
-		int functional_valid = !psp1000_functional ||
-			(devkit == 0x06060110 && mod->text_addr != 0 &&
-			mod->text_size >= 0xC994 &&
-			(_lw(mod->text_addr + 0xC990) >> 26) == 3 &&
-			_lw(mod->text_addr + 0x9038) == 0x27BDFFC0 &&
-			_lw(mod->text_addr + 0x903C) == 0xAFB40030);
-		if (functional_valid) {
-			MAKE_CALL(mod->text_addr+0xC990, zeroCtrlGetCurrentClockLocalTime);
-			origFuncInit = zeroCtrlRedir2Stub(mod->text_addr+0x9038,
-					slide_start_stub, InjectionEntryFuncInit);
-		}
+		MAKE_CALL(mod->text_addr+0xC990, zeroCtrlGetCurrentClockLocalTime);
+		origFuncInit = zeroCtrlRedir2Stub(mod->text_addr+0x9038,
+				slide_start_stub, InjectionEntryFuncInit);
 	}
 	
        return previous ? previous(mod) : 0;

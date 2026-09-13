@@ -2477,3 +2477,22 @@ recovery-protected PSP-1000 6.61 boot with this configuration, observation of
 whether Sony naturally consumes the startup request and makes the Clock & Date
 UI visible, normal XMB stability testing, and return of the complete unedited
 diagnostic log. HOME is not part of this startup-gate checkpoint.
+
+The startup-prearm hardware run reached the SlidePlugin request, probe/start
+callbacks, RCO request, and activation entry, then crashed immediately after
+the boot animation and before XMB icons appeared. The PSP-1000 functional path
+therefore no longer carries two legacy ZeroVSH SlidePlugin integrations into
+that downstream path: the `+0xC990` RTC-call replacement and the `+0x9038`
+initialization redirection through `InjectionEntryFuncInit`. Sony's original
+words remain untouched at both sites on the PSP-1000 experiment path, so that
+path also makes no ZeroVSH LED, brightness, or CPU/bus-clock change. The legacy
+hooks remain available for the established non-PSP-1000 path.
+
+The five hardware-proven PSP-1000 compatibility differences remain unchanged:
+the one-shot selective `+0x58D4` result, the exact PAF zero-to-one return, the
+exact BSMan error-to-zero return, state 15-to-14 substitution, and the exact
+VshBridge invalid-mode-to-zero return. The next recovery-protected hardware
+boot should establish whether removing only the two unproven legacy hooks lets
+the PSP reach a stable XMB, continue beyond activation, and display Sony's
+Clock & Date UI. If the crash remains, these hooks are not sufficient to
+explain it and should not be restored as a diagnostic response.
