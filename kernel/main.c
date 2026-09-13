@@ -2268,7 +2268,8 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                             i == 0 ? stub_58d4_end - stub_58d4 : 24) &&
                         zeroCtrlVshModuleRangeValid(helper, counters[i], 4) &&
                         (i != 0 ||
-                            (zeroCtrlVshModuleRangeValid(helper,
+                            (((evidence->request_addr & 3) == 0) &&
+                            zeroCtrlVshModuleRangeValid(helper,
                                 evidence->request_addr, 4) &&
                             zeroCtrlVshModuleRangeValid(helper,
                                 evidence->original_target_addr, 4) &&
@@ -10328,9 +10329,22 @@ void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 				int request_ready = !slide_diag.functional_enabled;
 				zeroCtrlWriteDebug("Starting slide\n\n");
 				if (slide_diag.functional_enabled) {
-					/* Diagnostic build: never execute an experimental VSH routine. */
+					ZeroCtrlVshTriggerEvidence *trigger =
+							&slide_diag.triggers[0];
+					/* Never execute Sony directly; arm only the validated 58D4 scalar. */
 					slide_diag.functional_runtime_request_blocked = 1;
 					request_ready = 0;
+					if ((slide_diag.trigger_mode & ZERO_TRIGGER_58D4) &&
+							trigger->validation == 1 &&
+							trigger->patch_applied == 1 &&
+							trigger->cache_sync == 1 &&
+							trigger->request_addr != 0 &&
+							_lw(trigger->request_addr) == 0) {
+						_sw(1, trigger->request_addr);
+						sceKernelDcacheWritebackInvalidateRange(
+								(const void *)trigger->request_addr, 4);
+						slide_diag.functional_request_armed = 1;
+					}
 				}
 				if (request_ready)
 					zeroCtrlSetSlideState(ZERO_SLIDE_STARTING);

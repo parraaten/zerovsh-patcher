@@ -1515,12 +1515,26 @@ def check_sources(root):
     if any(token in trigger_leaf for token in
             ("$k0", "$k1", "$sp", "$gp", "jal ", "jalr")):
         fail("functional 58D4 helper uses reserved/stateful registers or calls")
+    request_test = trigger_leaf.find("beqz    $t1, 1f")
+    request_clear = trigger_leaf.find(
+            "sw      $zero, %lo(zeroCtrlTrigger58D4Request)", request_test)
+    effective_true = trigger_leaf.find("addiu   $v0, $zero, 1", request_clear)
+    natural_label = trigger_leaf.find("1:", effective_true)
+    natural_target = trigger_leaf.find(
+            "lw      $t0, %lo(zeroCtrlTrigger58D4OriginalTarget)($t0)",
+            natural_label)
+    natural_tail = trigger_leaf.find("jr      $t0", natural_target)
+    if not 0 <= request_test < request_clear < effective_true < natural_label < \
+            natural_target < natural_tail:
+        fail("functional 58D4 helper does not consume once or preserve natural tail")
     record_start = kernel.find("void zeroCtrlRecordVshSlideTarget(")
     record_end = kernel.find("int (*msIoOpen)", record_start)
     record = kernel[record_start:record_end]
     for token in ("stub_58d4_end - stub_58d4",
             "evidence->request_addr", "evidence->original_target_addr",
             "evidence->functional_mode_addr",
+            "(evidence->request_addr & 3) == 0",
+            "zeroCtrlVshModuleRangeValid(helper,\n                                evidence->request_addr, 4)",
             "_sw(0, request_evidence->request_addr)",
             "_sw(request_evidence->original_target",
             "_sw(slide_diag.functional_enabled ? 1 : 0",
@@ -1531,19 +1545,49 @@ def check_sources(root):
     trigger_commit = record.find("_sw(evidence->replacement_word")
     if not 0 <= scalar_init < trigger_commit:
         fail("functional 58D4 routing scalars are not initialized before patch")
+    request_alignment = record.find("(evidence->request_addr & 3) == 0")
+    request_range = record.find("zeroCtrlVshModuleRangeValid(helper,\n"
+            "                                evidence->request_addr, 4)",
+            request_alignment)
+    trigger_validation = record.find("evidence->validation = 1", request_range)
+    if not 0 <= request_alignment < request_range < trigger_validation < \
+            scalar_init:
+        fail("58D4 request scalar is not aligned/range-validated before use")
     button_start = kernel.find("void zeroCtrlReadButtons(")
     button_end = kernel.find("void zeroCtrlCreateBtnThread(", button_start)
     button = kernel[button_start:button_end]
     for token in ("ZERO_SLIDE_STOPPED", "slideStartBtn",
             "slide_diag.functional_enabled",
             "functional_runtime_request_blocked = 1", "request_ready",
-            "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
+            "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)",
+            "slide_diag.trigger_mode & ZERO_TRIGGER_58D4",
+            "trigger->validation == 1", "trigger->patch_applied == 1",
+            "trigger->cache_sync == 1", "trigger->request_addr != 0",
+            "_lw(trigger->request_addr) == 0",
+            "_sw(1, trigger->request_addr)",
+            "sceKernelDcacheWritebackInvalidateRange(",
+            "functional_request_armed = 1"):
         if token not in button:
             fail("functional StartBtn request gating lacks " + token)
-    if "_sw(1, slide_diag.functional_runtime_request_addr)" in button or \
-            "_sw(1, slide_diag.triggers[0].request_addr)" in button or \
-            "functional_request_armed = 1" in button:
-        fail("functional HOME can still publish an experimental VSH request")
+    readiness = button.find("slide_diag.trigger_mode & ZERO_TRIGGER_58D4")
+    request_read = button.find("_lw(trigger->request_addr) == 0", readiness)
+    request_write = button.find("_sw(1, trigger->request_addr)", request_read)
+    request_sync = button.find("sceKernelDcacheWritebackInvalidateRange(",
+            request_write)
+    request_armed = button.find("functional_request_armed = 1", request_sync)
+    if not 0 <= readiness < request_read < request_write < request_sync < \
+            request_armed:
+        fail("functional HOME does not arm the validated 58D4 scalar in order")
+    functional_block = button[button.find("if (slide_diag.functional_enabled)"):
+            button.find("if (request_ready)")]
+    for forbidden in ("psp1000RuntimeRequestTarget",
+            "zeroCtrlTrigger58D4(",
+            "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
+        if forbidden in functional_block:
+            fail("functional HOME directly executes or forces Sony flow: " +
+                    forbidden)
+    if "_sw(1, slide_diag.functional_runtime_request_addr)" in button:
+        fail("functional HOME publishes the forbidden direct runtime request")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
@@ -1724,9 +1768,8 @@ def check_sources(root):
             "functional_runtime_registration_valid = 1"):
         if token not in runtime_record:
             fail("kernel runtime request scalar registration lacks " + token)
-    if "_sw(1, slide_diag.triggers[0].request_addr)" in button or \
-            re.search(r"\(.*\*.*\)\s*\(.*0x58D4", button):
-        fail("functional HOME still arms/calls the old +58D4 mechanism")
+    if re.search(r"\(.*\*.*\)\s*\(.*0x58D4", button):
+        fail("functional HOME directly calls the +58D4 mechanism")
     caller_ra_start = writer.find("if (slide_diag.bsman.activation_enabled)")
     caller_ra_end = writer.find(
             "if (slide_diag.bsman.activation_wide_enabled)", caller_ra_start)
