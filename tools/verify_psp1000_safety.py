@@ -1875,6 +1875,37 @@ def check_sources(root):
         if forbidden in post_t39_install_snapshot:
             fail("functional post-T39 install snapshot modifies runtime state: " +
                     forbidden)
+    post_t39_helper_marker = minimal.find(
+            "[psp1000-functional-post-t39-helper] fail=0x%X ")
+    post_t39_helper_start = minimal.rfind(
+            "if (slide_diag.functional_enabled &&", 0,
+            post_t39_helper_marker)
+    post_t39_helper_end = minimal.find(
+            "if (slide_diag.bsman.functional_post_t39_install",
+            post_t39_helper_marker)
+    post_t39_helper_snapshot = minimal[
+            post_t39_helper_start:post_t39_helper_end]
+    for token in ("functional_post_t39_stage >= 5",
+            "functional_post_t39_helper_fail",
+            "functional_post_t39_helper_owner",
+            "functional_post_t39_helper_call_size",
+            "functional_post_t39_helper_return_size",
+            "functional_post_t39_helper_text",
+            "functional_post_t39_helper_size",
+            "functional_post_t39_helper_replacement",
+            "functional_post_t39_helper_decoded",
+            "memcmp(post_t39_helper,",
+            "observed_functional_post_t39_helper",
+            "owner=0x%08X call=0x%08X call_size=%u",
+            "return=0x%08X return_size=%u helper_text=0x%08X",
+            "helper_size=%u replacement=0x%08X decoded=0x%08X"):
+        if token not in post_t39_helper_snapshot:
+            fail("functional post-T39 helper snapshot lacks " + token)
+    for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP",
+            "sceKernelDcache", "sceKernelIcache"):
+        if forbidden in post_t39_helper_snapshot:
+            fail("functional post-T39 helper snapshot modifies runtime state: " +
+                    forbidden)
     for token in ("functional_post_t39_cache_sync",
             "activation_wide_scalar_addr[9]",
             "activation_wide_scalar_addr[9]) != 0",
@@ -1957,6 +1988,11 @@ def check_sources(root):
             "bsman->activation_wide_scalar_addr[15]",
             "bsman->activation_wide_scalar_addr[16]",
             "replacement = 0x08000000",
+            "helper_fail |= 0x1",
+            "helper_fail |= 0x2",
+            "helper_fail |= 0x4",
+            "helper_fail |= 0x8",
+            "if (helper_fail != 0) return;",
             "_sw(activation + 0x1F0, scalar[2])",
             "_sw(0xFFFFFFFF, scalar[4])",
             "_sw(0xFFFFFFFF, scalar[5])",
@@ -1983,6 +2019,21 @@ def check_sources(root):
             "owner + 4" not in post_t39 or "_sw(" in post_t39[post_t39_code_write +
             len("_sw(replacement, owner)"):]:
         fail("functional post-T39 checkpoint does not own exactly A+0x1E8")
+    helper_observation_start = post_t39.find("helper_fail = 0;")
+    helper_fail_return = post_t39.find("if (helper_fail != 0) return;")
+    helper_stage6 = post_t39.find("bsman->functional_post_t39_stage = 6;")
+    first_scalar_init = post_t39.find(
+            "scalar[0] = bsman->activation_wide_scalar_addr[8]")
+    helper_code_write = post_t39.find("_sw(replacement, owner)")
+    helper_bits = [post_t39.find("helper_fail |= 0x%X" % bit,
+        helper_observation_start) for bit in (1, 2, 4, 8)]
+    if any(position < 0 for position in helper_bits) or not \
+            helper_observation_start < max(helper_bits) < helper_fail_return < \
+            helper_stage6 < first_scalar_init < helper_code_write:
+        fail("functional post-T39 helper failures are not fully observed "
+                "before the fail-closed return")
+    if "||" in post_t39[helper_observation_start:helper_fail_return]:
+        fail("functional post-T39 helper observations are short-circuited")
     for forbidden in ("activation + 0x120", "activation + 0x138",
             "activation + 0x170", "activation + 0x180", "activation + 0x1A4",
             "activation + 0x1C0", "activation + 0x1E0"):

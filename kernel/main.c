@@ -259,6 +259,16 @@ typedef struct {
     int functional_post_t39_validation, functional_post_t39_install;
     int functional_post_t39_cache_sync;
     unsigned int functional_post_t39_stage;
+    unsigned int functional_post_t39_helper_fail;
+    unsigned int functional_post_t39_helper_owner;
+    unsigned int functional_post_t39_helper_call;
+    unsigned int functional_post_t39_helper_call_size;
+    unsigned int functional_post_t39_helper_return;
+    unsigned int functional_post_t39_helper_return_size;
+    unsigned int functional_post_t39_helper_text;
+    unsigned int functional_post_t39_helper_size;
+    unsigned int functional_post_t39_helper_replacement;
+    unsigned int functional_post_t39_helper_decoded;
     int paf_compat_enabled;
     int bsman_not_linked_compat_enabled;
     int activation_cache_sync;
@@ -6171,6 +6181,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_functional_post_t39_install[4] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_functional_post_t39_helper[10] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6310,6 +6324,47 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             "stage=%u validation=%u install=%u cache_sync=%u\n",
                             post_t39_install[0], post_t39_install[1],
                             post_t39_install[2], post_t39_install[3]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled &&
+                    slide_diag.bsman.functional_post_t39_stage >= 5) {
+                unsigned int post_t39_helper[10];
+                post_t39_helper[0] =
+                        slide_diag.bsman.functional_post_t39_helper_fail;
+                post_t39_helper[1] =
+                        slide_diag.bsman.functional_post_t39_helper_owner;
+                post_t39_helper[2] =
+                        slide_diag.bsman.functional_post_t39_helper_call;
+                post_t39_helper[3] =
+                        slide_diag.bsman.functional_post_t39_helper_call_size;
+                post_t39_helper[4] =
+                        slide_diag.bsman.functional_post_t39_helper_return;
+                post_t39_helper[5] =
+                        slide_diag.bsman.functional_post_t39_helper_return_size;
+                post_t39_helper[6] =
+                        slide_diag.bsman.functional_post_t39_helper_text;
+                post_t39_helper[7] =
+                        slide_diag.bsman.functional_post_t39_helper_size;
+                post_t39_helper[8] =
+                        slide_diag.bsman.functional_post_t39_helper_replacement;
+                post_t39_helper[9] =
+                        slide_diag.bsman.functional_post_t39_helper_decoded;
+                if (memcmp(post_t39_helper,
+                            observed_functional_post_t39_helper,
+                            sizeof(post_t39_helper)) != 0) {
+                    memcpy(observed_functional_post_t39_helper,
+                            post_t39_helper, sizeof(post_t39_helper));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-post-t39-helper] fail=0x%X "
+                            "owner=0x%08X call=0x%08X call_size=%u "
+                            "return=0x%08X return_size=%u helper_text=0x%08X "
+                            "helper_size=%u replacement=0x%08X decoded=0x%08X\n",
+                            post_t39_helper[0], post_t39_helper[1],
+                            post_t39_helper[2], post_t39_helper[3],
+                            post_t39_helper[4], post_t39_helper[5],
+                            post_t39_helper[6], post_t39_helper[7],
+                            post_t39_helper[8], post_t39_helper[9]);
                     zeroCtrlDiagnosticsText(line);
                 }
             }
@@ -9328,6 +9383,7 @@ static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     unsigned int activation, owner, original, target, replacement;
     unsigned int call_leaf, return_leaf;
+    unsigned int helper_fail;
     unsigned int scalar[9], i;
 
     bsman->functional_post_t39_stage = 1;
@@ -9356,15 +9412,30 @@ static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
 
     call_leaf = bsman->activation_wide_leaf_addr[1];
     return_leaf = bsman->activation_wide_leaf_addr[2];
-    if (!zeroCtrlVshModuleRangeValid(helper, call_leaf,
-                bsman->activation_wide_leaf_size[1]) ||
-            !zeroCtrlVshModuleRangeValid(helper, return_leaf,
-                bsman->activation_wide_leaf_size[2]) ||
-            ((owner + 4) & 0xF0000000) != (call_leaf & 0xF0000000))
-        return;
     replacement = 0x08000000 | ((call_leaf >> 2) & 0x03FFFFFF);
+    helper_fail = 0;
+    if (!zeroCtrlVshModuleRangeValid(helper, call_leaf,
+                bsman->activation_wide_leaf_size[1])) helper_fail |= 0x1;
+    if (!zeroCtrlVshModuleRangeValid(helper, return_leaf,
+                bsman->activation_wide_leaf_size[2])) helper_fail |= 0x2;
+    if (((owner + 4) & 0xF0000000) !=
+            (call_leaf & 0xF0000000)) helper_fail |= 0x4;
     if (zeroCtrlMipsJumpTarget(owner, replacement) != call_leaf)
-        return;
+        helper_fail |= 0x8;
+    bsman->functional_post_t39_helper_fail = helper_fail;
+    bsman->functional_post_t39_helper_owner = owner;
+    bsman->functional_post_t39_helper_call = call_leaf;
+    bsman->functional_post_t39_helper_call_size =
+            bsman->activation_wide_leaf_size[1];
+    bsman->functional_post_t39_helper_return = return_leaf;
+    bsman->functional_post_t39_helper_return_size =
+            bsman->activation_wide_leaf_size[2];
+    bsman->functional_post_t39_helper_text = helper->text_addr;
+    bsman->functional_post_t39_helper_size = helper->text_size;
+    bsman->functional_post_t39_helper_replacement = replacement;
+    bsman->functional_post_t39_helper_decoded =
+            zeroCtrlMipsJumpTarget(owner, replacement);
+    if (helper_fail != 0) return;
     bsman->functional_post_t39_stage = 6;
 
     scalar[0] = bsman->activation_wide_scalar_addr[8];  /* target */

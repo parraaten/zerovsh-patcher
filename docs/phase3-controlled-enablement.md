@@ -2662,3 +2662,25 @@ of installation success:
 
 The literal revision distinguishes this diagnostic image. The existing
 `entered/return/natural` record remains success-gated and unchanged.
+
+Hardware reached post-T39 stage 5, localizing the fail-closed exit to Wide662
+helper reachability. Static inspection confirms that user registration assigns
+Wide662 Call/CallEnd to leaf 1 and Return/ReturnEnd to leaf 2. The kernel first
+validates every supplied leaf pair, then derives each recorded size as
+`end-start`. However, the user populates and submits this separate activation-
+wide registration only when its NULL gate query succeeds; functional mode does
+not enable the research ActivationWide path. This is a concrete reason that
+the registered values require hardware observation, but it is deliberately not
+corrected in this diagnostic-only checkpoint.
+
+The stage-5 block now evaluates all four guards independently and records a
+fail mask: bit 0 is call-leaf range, bit 1 is return-leaf range, bit 2 is the
+pseudodirect 256 MiB region comparison, and bit 3 is replacement-J decode-back.
+A nonzero mask returns at stage 5 before scalar initialization or the Sony code
+write. The changed-only record is:
+
+```text
+[psp1000-functional-post-t39-helper] fail=0x<n> owner=0x........ call=0x........ call_size=<n> return=0x........ return_size=<n> helper_text=0x........ helper_size=<n> replacement=0x........ decoded=0x........
+```
+
+It reports only loaded structural values and changes no validation outcome.
