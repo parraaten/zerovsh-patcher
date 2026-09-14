@@ -8956,7 +8956,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     };
     ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-    unsigned int activation, cursor, end, pc, candidates = 0;
+    unsigned int activation, cursor, end, pc;
     unsigned int paf_stub = 0, bsman_stub = 0, vshbridge_stub = 0;
     unsigned int paf_matches = 0, bsman_matches = 0, vshbridge_matches = 0;
     unsigned int bsman_callers = 0, bsman_caller = 0;
@@ -8970,20 +8970,14 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
             !zeroCtrlLoadedModuleMetadataValid(helper) ||
             !zeroCtrlVshModuleRangeValid(mod, mod->text_addr, mod->text_size))
         return;
-
-    for (pc = 0; pc + 20 <= mod->text_size; pc += 4) {
-        unsigned int address = mod->text_addr + pc;
-        if (_lw(address) == 0x27BDFFE0 &&
-                _lw(address + 4) == 0xAFB10004 &&
-                _lw(address + 8) == 0x00808821 &&
-                _lw(address + 12) == 0xAFB00000 &&
-                _lw(address + 16) == 0xAFBF001C) {
-            activation = address;
-            candidates++;
-        }
-    }
-    if (candidates != 1 || activation != mod->text_addr + 0x9304 ||
-            !zeroCtrlVshModuleRangeValid(mod, activation, 0x2BC + 8))
+    if (mod->text_addr > 0xFFFFFFFFU - 0x9304) return;
+    activation = mod->text_addr + 0x9304;
+    if (!zeroCtrlVshModuleRangeValid(mod, activation, 0x2BC + 8) ||
+            _lw(activation) != 0x27BDFFE0 ||
+            _lw(activation + 4) != 0xAFB10004 ||
+            _lw(activation + 8) != 0x00808821 ||
+            _lw(activation + 12) != 0xAFB00000 ||
+            _lw(activation + 16) != 0xAFBF001C)
         return;
 
     cursor = (unsigned int)mod->stub_top;

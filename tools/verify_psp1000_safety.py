@@ -1701,8 +1701,14 @@ def check_sources(root):
     functional = kernel[functional_start:functional_end]
     for token in (
             "0x02C, 0x0A8, 0x10C, 0x2B4",
-            "activation != mod->text_addr + 0x9304",
-            "candidates != 1",
+            "mod->text_addr > 0xFFFFFFFFU - 0x9304",
+            "activation = mod->text_addr + 0x9304",
+            "!zeroCtrlVshModuleRangeValid(mod, activation, 0x2BC + 8)",
+            "_lw(activation) != 0x27BDFFE0",
+            "_lw(activation + 4) != 0xAFB10004",
+            "_lw(activation + 8) != 0x00808821",
+            "_lw(activation + 12) != 0xAFB00000",
+            "_lw(activation + 16) != 0xAFBF001C",
             "nid == 0xED83BBCF", "nid == 0x23E3A9B6",
             "nid == 0x639C3CB3",
             "paf_matches != 1", "bsman_matches != 1",
@@ -1745,6 +1751,9 @@ def check_sources(root):
             "bsman->functional_cache_sync = 1"):
         if token not in functional:
             fail("narrow functional activation installer lacks " + token)
+    if "candidates" in functional or \
+            "for (pc = 0; pc + 20 <= mod->text_size" in functional:
+        fail("functional activation installer globally scans for the prologue")
     for invented in ("bsman->state_zero_vcall_target_addr",
             "bsman->state_zero_vcall_ra_addr",
             "bsman->state_zero_vcall_result_addr"):

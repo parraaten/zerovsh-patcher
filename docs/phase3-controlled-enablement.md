@@ -2504,7 +2504,8 @@ former functional route through `zeroCtrlInstallBSManClosedShim()` owned 22
 SlidePlugin activation words: the four compatibility call owners plus 18
 entry, branch, classification, and localization owners. Functional mode now
 uses `zeroCtrlInstallPsp1000FunctionalCompat()` and owns exactly four words,
-relative to the uniquely validated `SlidePlugin+0x9304` activation entry:
+relative to the hardware-established, directly validated
+`SlidePlugin+0x9304` activation entry:
 
 ```text
 +0x02C  PAF ED83BBCF call wrapper
@@ -2533,3 +2534,13 @@ hardware-proven compatibility conversions remain unchanged. The next
 recovery-protected PSP-1000 run should confirm both activation-compat markers,
 the existing four return/substitution counters, and whether Sony's otherwise
 untouched activation logic reaches a stable XMB and visible Clock & Date UI.
+
+The first four-owner hardware run reached SlidePlugin start and the RCO request
+but emitted neither activation-compat completion marker. This does not test the
+four wrappers: it shows that their installer failed closed. The functional
+installer had added an unproven whole-text uniqueness requirement for the
+activation prologue. That scan is removed. On PSP-1000 6.61 functional mode it
+now computes `text+0x9304` directly, after overflow checks, validates the full
+owned range, and requires the already hardware-proven five-word prologue
+fingerprint there. Import, owner, helper, scalar, and transactional commit
+validation remain unchanged. No additional guard scalar was added.
