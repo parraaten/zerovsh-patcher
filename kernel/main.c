@@ -9590,7 +9590,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0, bsman->prefix_path_mask_addr);
     _sw(paf_stub, bsman->prefix_paf_target_addr);
     _sw(0, bsman->prefix_paf_ra_addr);
-    _sw(1, bsman->prefix_paf_compat_mode_addr);
+    _sw(0, bsman->prefix_paf_compat_mode_addr);
     _sw(0, bsman->prefix_paf_natural_result_addr);
     _sw(0, bsman->prefix_paf_substitution_hits_addr);
     _sw(0, bsman->prefix_paf_return_hits_addr);
@@ -9600,7 +9600,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0, bsman->trace_stage_addr);
     _sw(0, bsman->post_path_mask_addr);
     _sw(0, bsman->bsman_natural_result_addr);
-    _sw(1, bsman->bsman_compat_mode_addr);
+    _sw(0, bsman->bsman_compat_mode_addr);
     _sw(0, bsman->bsman_substitution_hits_addr);
     _sw(0, bsman->bsman_effective_result_addr);
     _sw(0, bsman->bsman_return_hits_addr);
@@ -9610,7 +9610,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0, bsman->post_vsh_return_hits_addr);
     _sw(0, bsman->post_vsh_entry_hits_addr);
     _sw(0xFFFFFFFF, bsman->post_vsh_argument_addr);
-    _sw(1, bsman->post_vsh_compat_mode_addr);
+    _sw(0, bsman->post_vsh_compat_mode_addr);
     _sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr);
     _sw(0, bsman->post_vsh_substitution_hits_addr);
     _sw(0, bsman->state_zero_path_mask_addr);
@@ -9619,7 +9619,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0xFFFFFFFF, bsman->state_zero_value_addr[6]);
     _sw(0, bsman->state_zero_counter_addr[1]);
     _sw(0, bsman->state_zero_counter_addr[2]);
-    _sw(1, bsman->state_zero_15to14_compat_mode_addr);
+    _sw(0, bsman->state_zero_15to14_compat_mode_addr);
     _sw(0xFFFFFFFF, bsman->state_zero_15to14_effective_result_addr);
     _sw(0, bsman->state_zero_15to14_substitution_hits_addr);
     for (i = 0; i < scalar_count; i++)
@@ -11479,6 +11479,32 @@ void zeroCtrlSetClockSpeed(void) {
 #define ALL_FUNCTION (PSP_CTRL_SELECT|PSP_CTRL_START|PSP_CTRL_HOME|PSP_CTRL_HOLD|PSP_CTRL_NOTE)
 #define ALL_CTRL  (ALL_ALLOW|ALL_BUTTON|ALL_TRIGGER|ALL_FUNCTION)
 
+static void zeroCtrlArmPsp1000FunctionalCompatFromHome(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int address[4], mode[4], i;
+
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !bsman->functional_validation || !bsman->functional_install ||
+            !bsman->functional_cache_sync ||
+            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
+    address[0] = bsman->bsman_compat_mode_addr;
+    address[1] = bsman->state_zero_15to14_compat_mode_addr;
+    address[2] = bsman->post_vsh_compat_mode_addr;
+    address[3] = bsman->prefix_paf_compat_mode_addr;
+    for (i = 0; i < 4; i++)
+        if (address[i] == 0 || (address[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, address[i], 4)) return;
+    for (i = 0; i < 4; i++) mode[i] = _lw(address[i]);
+    if (mode[0] == 1 && mode[1] == 1 && mode[2] == 1 && mode[3] == 1) return;
+    if (mode[0] != 0 || mode[1] != 0 || mode[2] != 0 || mode[3] != 0) return;
+    for (i = 0; i < 4; i++) {
+        _sw(1, address[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)address[i], 4);
+    }
+}
+
 //OK
 void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 	SceCtrlLatch data;	
@@ -11491,8 +11517,9 @@ void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 				int request_ready = !slide_diag.functional_enabled;
 				zeroCtrlWriteDebug("Starting slide\n\n");
 				if (slide_diag.functional_enabled) {
-					/* Functional startup is pre-armed; HOME never executes Sony. */
+					/* HOME arms data-only compatibility; it never executes Sony. */
 					slide_diag.functional_runtime_request_blocked = 1;
+					zeroCtrlArmPsp1000FunctionalCompatFromHome();
 					request_ready = 0;
 				}
 				if (request_ready)

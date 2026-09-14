@@ -1590,6 +1590,7 @@ def check_sources(root):
     for token in ("ZERO_SLIDE_STOPPED", "slideStartBtn",
             "slide_diag.functional_enabled",
             "functional_runtime_request_blocked = 1", "request_ready",
+            "zeroCtrlArmPsp1000FunctionalCompatFromHome()",
             "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
         if token not in button:
             fail("functional StartBtn request gating lacks " + token)
@@ -1605,6 +1606,42 @@ def check_sources(root):
                     forbidden)
     if "_sw(1, slide_diag.functional_runtime_request_addr)" in button:
         fail("functional HOME publishes the forbidden direct runtime request")
+    home_arm_start = kernel.find(
+            "static void zeroCtrlArmPsp1000FunctionalCompatFromHome(void)")
+    home_arm_end = kernel.find("void zeroCtrlReadButtons(", home_arm_start)
+    home_arm = kernel[home_arm_start:home_arm_end]
+    for token in ("slide_diag.functional_enabled", "model != 0",
+            "sceKernelDevkitVersion() != 0x06060110",
+            "!bsman->functional_validation", "!bsman->functional_install",
+            "!bsman->functional_cache_sync",
+            'sceKernelFindModuleByName("ZeroVSH_Patcher_User")',
+            "!zeroCtrlLoadedModuleMetadataValid(helper)",
+            "address[i] == 0", "(address[i] & 3) != 0",
+            "!zeroCtrlVshModuleRangeValid(helper, address[i], 4)",
+            "mode[0] == 1 && mode[1] == 1 && mode[2] == 1 && mode[3] == 1",
+            "mode[0] != 0 || mode[1] != 0 || mode[2] != 0 || mode[3] != 0",
+            "for (i = 0; i < 4; i++) {", "_sw(1, address[i])",
+            "sceKernelDcacheWritebackInvalidateRange((const void *)address[i], 4)"):
+        if token not in home_arm:
+            fail("functional HOME compatibility arm lacks " + token)
+    address_order = tuple(home_arm.find(token) for token in (
+            "address[0] = bsman->bsman_compat_mode_addr",
+            "address[1] = bsman->state_zero_15to14_compat_mode_addr",
+            "address[2] = bsman->post_vsh_compat_mode_addr",
+            "address[3] = bsman->prefix_paf_compat_mode_addr"))
+    validation_end = home_arm.find("for (i = 0; i < 4; i++) mode[i] = _lw(address[i])")
+    all_one = home_arm.find("mode[0] == 1", validation_end)
+    mixed = home_arm.find("mode[0] != 0", all_one)
+    first_write = home_arm.find("_sw(1, address[i])")
+    if min(address_order) < 0 or address_order != tuple(sorted(address_order)) or \
+            not 0 <= validation_end < all_one < mixed < first_write or \
+            home_arm.count("_sw(1, address[i])") != 1:
+        fail("functional HOME validation/state checks/write ordering regressed")
+    for forbidden in ("sceKernelIcache", "zeroCtrlSetSlideState",
+            "psp1000RuntimeRequestTarget", "zeroCtrlTrigger58D4", "MAKE_CALL",
+            "MAKE_JUMP", "_sw(replacement", "sceIo", "malloc", "Alloc"):
+        if forbidden in home_arm:
+            fail("functional HOME arm performs forbidden operation " + forbidden)
     consumed_start = minimal.find(
             "if (slide_diag.functional_request_armed &&\n"
             "                    !slide_diag.functional_trigger_consumed)")
@@ -1732,10 +1769,10 @@ def check_sources(root):
             "original[3] != 0x0040F809", "_lw(owner[3] + 4) != 0",
             "zeroCtrlMipsJumpTarget(owner[i], replacement[i]) != leaf[i]",
             "bsman->functional_validation = 1",
-            "_sw(1, bsman->prefix_paf_compat_mode_addr)",
-            "_sw(1, bsman->bsman_compat_mode_addr)",
-            "_sw(1, bsman->post_vsh_compat_mode_addr)",
-            "_sw(1, bsman->state_zero_15to14_compat_mode_addr)",
+            "_sw(0, bsman->prefix_paf_compat_mode_addr)",
+            "_sw(0, bsman->bsman_compat_mode_addr)",
+            "_sw(0, bsman->post_vsh_compat_mode_addr)",
+            "_sw(0, bsman->state_zero_15to14_compat_mode_addr)",
             "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[4])",
             "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[5])",
             "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[6])",
@@ -1752,6 +1789,10 @@ def check_sources(root):
             "bsman->functional_cache_sync = 1"):
         if token not in functional:
             fail("narrow functional activation installer lacks " + token)
+    for mode in ("prefix_paf", "bsman", "post_vsh", "state_zero_15to14"):
+        if functional.count("_sw(0, bsman->" + mode + "_compat_mode_addr)") != 1 or \
+                "_sw(1, bsman->" + mode + "_compat_mode_addr)" in functional:
+            fail("functional installer does not initialize only " + mode + " mode to zero")
     if "candidates" in functional or \
             "for (pc = 0; pc + 20 <= mod->text_size" in functional:
         fail("functional activation installer globally scans for the prologue")
