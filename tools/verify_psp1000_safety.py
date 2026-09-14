@@ -2098,7 +2098,7 @@ def check_sources(root):
         fail("historical WIDE_CALL helper modifies natural v0")
 
     post1f0_start = post_t39_end
-    post1f0_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
+    post1f0_end = kernel.find("static void zeroCtrlInstallPsp1000ExitDiagnostic(",
             post1f0_start)
     post1f0 = kernel[post1f0_start:post1f0_end]
     for token in (
@@ -2157,11 +2157,13 @@ def check_sources(root):
     module_start_functional = kernel_module_start[module_start_functional_start:
             kernel_module_start.find("zeroCtrlInstallBSManClosedShim(mod)",
                 module_start_functional_start)]
-    if "zeroCtrlInstallPsp1000Post1F0Diagnostic(mod)" not in \
+    if "zeroCtrlInstallPsp1000ExitDiagnostic(mod)" not in \
             module_start_functional or \
             "zeroCtrlInstallPsp1000PostT39Diagnostic(mod)" in \
+            module_start_functional or \
+            "zeroCtrlInstallPsp1000Post1F0Diagnostic(mod)" in \
             module_start_functional:
-        fail("functional path does not retire the A+0x1E8 installer")
+        fail("functional path does not retire completed post-T39/post-1F0 owners")
 
     post1f0_install_marker = minimal.find(
             "[psp1000-functional-post1f0-install] rev=1 ")
@@ -2194,6 +2196,63 @@ def check_sources(root):
     for forbidden in ("_sw(", "sceKernelDcache", "sceKernelIcache"):
         if forbidden in post1f0_install_snapshot or forbidden in post1f0_runtime:
             fail("functional post-1F0 output modifies runtime state")
+    exit_start = post1f0_end
+    exit_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(", exit_start)
+    exit_diag = kernel[exit_start:exit_end]
+    for token in ("0x238, 0x248, 0x258, 0x268",
+            "(original[0] >> 26) != 5", "((original[0] >> 21) & 31) != 18",
+            "((original[0] >> 16) & 31) != 0", "a + 0x268",
+            "(_lw(a + 0x23C) >> 26) != 43",
+            "((_lw(a + 0x23C) >> 21) & 31) != 3",
+            "((_lw(a + 0x23C) >> 16) & 31) != 18",
+            "original[1] != 0x10400003", "a + 0x258",
+            "_lw(a + 0x24C) != 0", "mod->text_addr + 0x9038",
+            "_lw(a + 0x25C) != 0x02202021", "mod->text_addr + 0x89E4",
+            "_lw(a + 0x26C) != 0x02202021",
+            "_sw(a + 0x240, b->activation_wide_scalar_addr[53] + 12)",
+            "_sw(a + 0x268, b->activation_wide_scalar_addr[53] + 16)",
+            "_sw(a + 0x258, scalar[6])", "_sw(a + 0x250, scalar[7])",
+            "_sw(a + 0x260, scalar[10])", "_sw(a + 0x270, scalar[19])",
+            "_sw(replacement[i], owner[i])"):
+        if token not in exit_diag:
+            fail("functional exit diagnostic lacks " + token)
+    exit_validation = exit_diag.find(
+            "!zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)")
+    exit_scalar_write = exit_diag.find("_sw(0, scalar[i])")
+    exit_scalar_sync = exit_diag.find(
+            "sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4)")
+    exit_code_write = exit_diag.find("_sw(replacement[i], owner[i])")
+    exit_code_sync = exit_diag.find(
+            "sceKernelIcacheInvalidateRange((const void *)owner[i], 4)")
+    if not 0 <= exit_validation < exit_scalar_write < exit_scalar_sync < \
+            exit_code_write < exit_code_sync:
+        fail("functional exit validation/commit ordering regressed")
+    if exit_diag.count("_sw(replacement[i], owner[i])") != 1 or \
+            "for (i = 0; i < 4; i++)" not in \
+                exit_diag[exit_code_write - 80:exit_code_write]:
+        fail("functional exit diagnostic is not exactly four owner writes")
+    for forbidden in ("0x1E8", "0x1F8", "0x200", "0x20C", "0x214",
+            "0x21C", "0x22C"):
+        if "owner[" in exit_diag and "offset[4]" in exit_diag and \
+                forbidden in exit_diag[exit_code_write:]:
+            fail("functional exit commit restores completed owner " + forbidden)
+    if "zeroCtrlFunctionalExitS2Trace:" not in assembly or \
+            "beqz $s2" not in assembly[assembly.find(
+                "zeroCtrlFunctionalExitS2Trace:"):assembly.find(
+                "zeroCtrlFunctionalExitS2TraceEnd:")]:
+        fail("functional exit s2 helper does not preserve/test s2 transparently")
+    exit_install_marker = minimal.find("[psp1000-functional-exit-install] rev=1 ")
+    exit_runtime_marker = minimal.find("[psp1000-functional-exit] s2=%u/%u/%u ")
+    if min(exit_install_marker, exit_runtime_marker) < 0 or \
+            "memcmp(state, observed_functional_exit_install" not in minimal or \
+            "memcmp(state, observed_functional_exit" not in minimal:
+        fail("functional exit changed-only records are missing")
+    exit_runtime_gate = minimal.rfind(
+            "if (slide_diag.bsman.functional_exit_install &&", 0,
+            exit_runtime_marker)
+    if exit_runtime_gate < 0 or "functional_exit_cache_sync" not in \
+            minimal[exit_runtime_gate:exit_runtime_marker]:
+        fail("functional exit runtime record is not success-gated")
     research_state_owner = kernel[kernel.find(
             "static void zeroCtrlInstallBSManClosedShim("):
             kernel.find("int OnModuleStart(SceModule2 *mod)")]

@@ -1801,6 +1801,40 @@ zeroCtrlWide02374143Entry:
 zeroCtrlWide02374143EntryEnd:
 .end zeroCtrlWide02374143Entry
 
+/* Functional exit-block observer; address is derived from validated leaf-10 end. */
+.globl zeroCtrlFunctionalExitS2Trace
+.globl zeroCtrlFunctionalExitS2TraceEnd
+.ent zeroCtrlFunctionalExitS2Trace, 0
+zeroCtrlFunctionalExitS2Trace:
+    addiu $sp, $sp, -8
+    sw $t0, 0($sp)
+    sw $t1, 4($sp)
+    lui $t0, %hi(zeroCtrlWide02374143Hits)
+    lw $t1, %lo(zeroCtrlWide02374143Hits)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(zeroCtrlWide02374143Hits)($t0)
+    beqz $s2, 1f
+    nop
+    lui $t0, %hi(zeroCtrlFunctionalExitS2Nonzero)
+    lw $t1, %lo(zeroCtrlFunctionalExitS2Nonzero)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(zeroCtrlFunctionalExitS2Nonzero)($t0)
+    lui $t0, %hi(zeroCtrlFunctionalExitS2NonzeroTarget)
+    b 2f
+    lw $t0, %lo(zeroCtrlFunctionalExitS2NonzeroTarget)($t0)
+1:  lui $t0, %hi(zeroCtrlFunctionalExitS2Zero)
+    lw $t1, %lo(zeroCtrlFunctionalExitS2Zero)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(zeroCtrlFunctionalExitS2Zero)($t0)
+    lui $t0, %hi(zeroCtrlFunctionalExitS2ZeroTarget)
+    lw $t0, %lo(zeroCtrlFunctionalExitS2ZeroTarget)($t0)
+2:  lw $t1, 4($sp)
+    addiu $sp, $sp, 8
+    jr $t0
+    lw $t0, -8($sp)
+zeroCtrlFunctionalExitS2TraceEnd:
+.end zeroCtrlFunctionalExitS2Trace
+
 .section .bss
 .align 2
 .macro WIDE_SCALAR name
@@ -1840,6 +1874,10 @@ WIDE_SCALAR zeroCtrlWideLoopExitTarget
 WIDE_CALL_SCALARS 090
 WIDE_SCALAR zeroCtrlWide02374143Target
 WIDE_SCALAR zeroCtrlWide02374143Hits
+WIDE_SCALAR zeroCtrlFunctionalExitS2Zero
+WIDE_SCALAR zeroCtrlFunctionalExitS2Nonzero
+WIDE_SCALAR zeroCtrlFunctionalExitS2ZeroTarget
+WIDE_SCALAR zeroCtrlFunctionalExitS2NonzeroTarget
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits

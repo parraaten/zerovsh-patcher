@@ -2722,3 +2722,26 @@ Changed-only functional output is:
 The install record is failure-visible. The runtime record is emitted only after
 successful install/cache synchronization and reads existing historical scalar
 meanings without changing natural `v0`.
+
+Hardware completed that region: compare ran 13 times, the three loop-body calls
+returned 12 times, all 12 loop decisions returned to `A+0x1E8`, and the final
+zero route called and returned from `+0x2A6F8`. Functional startup therefore no
+longer invokes either the post-T39 or post-1F0 installer. A new four-owner exit
+diagnostic observes only `A+0x238`, `+0x248`, `+0x258`, and `+0x268`; the six
+completed post-1F0 words remain Sony-original on a fresh boot.
+
+The `+0x238` helper tests `s2` without modifying it and routes zero/nonzero to
+`A+0x240/A+0x268`. The historical WideCompare observes the `v0` branch at
+`+0x248`, while Wide662 and Wide440 transparently wrap the natural `+0x9038`
+and `+0x89E4` calls with resumes at `A+0x260/A+0x270`. All four owner shapes,
+delay slots, targets, helpers, and scalars validate before scalar initialization;
+all scalar cache synchronization precedes the four-word commit.
+
+```text
+[psp1000-functional-exit-install] rev=1 validation=<n> install=<n> cache_sync=<n>
+[psp1000-functional-exit] s2=<hits>/<zero>/<nonzero> flag=<hits>/<zero>/<nonzero> c9038=<entered>/<returns>/<last> c89e4=<entered>/<returns>/<last>
+```
+
+The old PSP-1000 `+0x9038` initialization redirection remains disabled: this
+checkpoint only routes to Sony's unchanged natural target and records its
+untouched return value.

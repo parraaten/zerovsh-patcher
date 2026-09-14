@@ -271,6 +271,8 @@ typedef struct {
     unsigned int functional_post_t39_helper_decoded;
     int functional_post1f0_validation, functional_post1f0_install;
     int functional_post1f0_cache_sync;
+    int functional_exit_validation, functional_exit_install;
+    int functional_exit_cache_sync;
     int paf_compat_enabled;
     int bsman_not_linked_compat_enabled;
     int activation_cache_sync;
@@ -6199,6 +6201,14 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_functional_exit_install[3] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_exit[12] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6455,6 +6465,50 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             "[psp1000-functional-post-t39] entered=%u return=%u "
                             "natural=0x%08X\n",
                             post_t39[0], post_t39[1], post_t39[2]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled) {
+                unsigned int state[3] = {
+                    slide_diag.bsman.functional_exit_validation,
+                    slide_diag.bsman.functional_exit_install,
+                    slide_diag.bsman.functional_exit_cache_sync
+                };
+                if (memcmp(state, observed_functional_exit_install,
+                            sizeof(state)) != 0) {
+                    memcpy(observed_functional_exit_install, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-exit-install] rev=1 "
+                            "validation=%u install=%u cache_sync=%u\n",
+                            state[0], state[1], state[2]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.bsman.functional_exit_install &&
+                    slide_diag.bsman.functional_exit_cache_sync) {
+                static const unsigned int index[12] = {
+                    53, 54, 55, 0, 1, 2, 9, 11, 13, 18, 20, 22
+                };
+                unsigned int state[12];
+                for (i = 0; i < 12; i++)
+                    state[i] = zeroCtrlReadHelperCounter(
+                            slide_diag.bsman.activation_wide_scalar_addr[53] +
+                            (index[i] - 53) * 4);
+                /* Registered indices use their original addresses. */
+                for (i = 3; i < 12; i++)
+                    state[i] = zeroCtrlReadHelperCounter(
+                            slide_diag.bsman.activation_wide_scalar_addr[index[i]]);
+                state[6] = state[6] != 0;
+                state[9] = state[9] != 0;
+                if (memcmp(state, observed_functional_exit, sizeof(state)) != 0) {
+                    memcpy(observed_functional_exit, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-exit] s2=%u/%u/%u "
+                            "flag=%u/%u/%u c9038=%u/%u/0x%08X "
+                            "c89e4=%u/%u/0x%08X\n",
+                            state[0], state[1], state[2], state[3], state[4],
+                            state[5], state[6], state[7], state[8], state[9],
+                            state[10], state[11]);
                     zeroCtrlDiagnosticsText(line);
                 }
             }
@@ -9641,6 +9695,91 @@ static void zeroCtrlInstallPsp1000Post1F0Diagnostic(SceModule2 *mod) {
     bsman->functional_post1f0_cache_sync = 1;
 }
 
+static void zeroCtrlInstallPsp1000ExitDiagnostic(SceModule2 *mod) {
+    static const unsigned int offset[4] = { 0x238, 0x248, 0x258, 0x268 };
+    static const unsigned int helper_index[3] = { 0, 1, 3 };
+    ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int a, owner[4], original[4], replacement[4], scalar[26];
+    unsigned int s2_leaf, i;
+    if (!b->functional_validation || !b->functional_install ||
+            !b->functional_cache_sync || b->functional_post1f0_install ||
+            !zeroCtrlLoadedModuleMetadataValid(mod) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
+    a = mod->text_addr + 0x9304;
+    if (b->activation_addr != a ||
+            !zeroCtrlVshModuleRangeValid(mod, a + 0x234, 0x44)) return;
+    s2_leaf = b->activation_wide_leaf_addr[10] +
+            b->activation_wide_leaf_size[10];
+    if (!zeroCtrlVshModuleRangeValid(helper, s2_leaf, 0x80) ||
+            !zeroCtrlVshModuleRangeValid(helper, b->activation_wide_leaf_addr[0],
+                b->activation_wide_leaf_size[0]) ||
+            !zeroCtrlVshModuleRangeValid(helper, b->activation_wide_leaf_addr[1],
+                b->activation_wide_leaf_size[1]) ||
+            !zeroCtrlVshModuleRangeValid(helper, b->activation_wide_leaf_addr[2],
+                b->activation_wide_leaf_size[2]) ||
+            !zeroCtrlVshModuleRangeValid(helper, b->activation_wide_leaf_addr[3],
+                b->activation_wide_leaf_size[3]) ||
+            !zeroCtrlVshModuleRangeValid(helper, b->activation_wide_leaf_addr[4],
+                b->activation_wide_leaf_size[4])) return;
+    for (i = 0; i < 4; i++) {
+        owner[i] = a + offset[i];
+        original[i] = _lw(owner[i]);
+    }
+    if ((original[0] >> 26) != 5 || ((original[0] >> 21) & 31) != 18 ||
+            ((original[0] >> 16) & 31) != 0 ||
+            zeroCtrlMipsBranchTarget(owner[0], original[0]) != a + 0x268 ||
+            (_lw(a + 0x23C) >> 26) != 43 ||
+            ((_lw(a + 0x23C) >> 21) & 31) != 3 ||
+            ((_lw(a + 0x23C) >> 16) & 31) != 18 ||
+            original[1] != 0x10400003 ||
+            zeroCtrlMipsBranchTarget(owner[1], original[1]) != a + 0x258 ||
+            _lw(a + 0x24C) != 0 || (original[2] >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner[2], original[2]) != mod->text_addr + 0x9038 ||
+            _lw(a + 0x25C) != 0x02202021 || (original[3] >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner[3], original[3]) != mod->text_addr + 0x89E4 ||
+            _lw(a + 0x26C) != 0x02202021 ||
+            !zeroCtrlVshModuleRangeValid(mod, mod->text_addr + 0x9038, 4) ||
+            !zeroCtrlVshModuleRangeValid(mod, mod->text_addr + 0x89E4, 4)) return;
+    replacement[0] = 0x08000000 | ((s2_leaf >> 2) & 0x03FFFFFF);
+    replacement[1] = 0x08000000 |
+            ((b->activation_wide_leaf_addr[helper_index[0]] >> 2) & 0x03FFFFFF);
+    replacement[2] = 0x08000000 |
+            ((b->activation_wide_leaf_addr[helper_index[1]] >> 2) & 0x03FFFFFF);
+    replacement[3] = 0x08000000 |
+            ((b->activation_wide_leaf_addr[helper_index[2]] >> 2) & 0x03FFFFFF);
+    for (i = 0; i < 4; i++)
+        if (zeroCtrlMipsJumpTarget(owner[i], replacement[i]) !=
+                (i == 0 ? s2_leaf : b->activation_wide_leaf_addr[helper_index[i - 1]]))
+            return;
+    for (i = 0; i < 26; i++) {
+        scalar[i] = b->activation_wide_scalar_addr[i];
+        if ((scalar[i] & 3) || !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
+            return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper,
+                b->activation_wide_scalar_addr[53], 20)) return;
+    b->functional_exit_validation = 1;
+    for (i = 0; i < 26; i++) _sw(0, scalar[i]);
+    for (i = 0; i < 5; i++) _sw(0, b->activation_wide_scalar_addr[53] + i * 4);
+    _sw(a + 0x240, b->activation_wide_scalar_addr[53] + 12);
+    _sw(a + 0x268, b->activation_wide_scalar_addr[53] + 16);
+    _sw(a + 0x258, scalar[6]); _sw(a + 0x250, scalar[7]);
+    _sw(mod->text_addr + 0x9038, scalar[8]); _sw(a + 0x260, scalar[10]);
+    _sw(mod->text_addr + 0x89E4, scalar[17]); _sw(a + 0x270, scalar[19]);
+    for (i = 0; i < 26; i++)
+        sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)b->activation_wide_scalar_addr[53], 20);
+    for (i = 0; i < 4; i++) {
+        _sw(replacement[i], owner[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4);
+        sceKernelIcacheInvalidateRange((const void *)owner[i], 4);
+    }
+    b->functional_exit_install = 1;
+    b->functional_exit_cache_sync = 1;
+}
+
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     const unsigned int target_nid = 0x23E3A9B6;
     static const char paf_library[] = "scePaf";
@@ -10840,7 +10979,7 @@ int OnModuleStart(SceModule2 *mod) {
                 zeroCtrlInstallSonyStartTrace(mod);
                 if (slide_diag.functional_enabled) {
                     zeroCtrlInstallPsp1000FunctionalCompat(mod);
-                    zeroCtrlInstallPsp1000Post1F0Diagnostic(mod);
+                    zeroCtrlInstallPsp1000ExitDiagnostic(mod);
                 } else {
                     zeroCtrlInstallBSManClosedShim(mod);
                 }
