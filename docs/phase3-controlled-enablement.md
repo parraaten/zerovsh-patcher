@@ -2631,3 +2631,34 @@ This checkpoint does not enable activation-wide tracing, restore any T32-T39
 research owner, alter the four compatibility owners, or change either public
 registration ABI. Its next recovery-protected hardware run asks only whether
 the natural `A+0x1E8` target was entered and returned.
+
+To distinguish an old image from a fail-closed post-T39 installation, one
+kernel-private monotonic stage now records the last completed installer block:
+
+```text
+0  NOT_ATTEMPTED
+1  ENTERED
+2  PREREQUISITES_VALID
+3  ACTIVATION_OWNER_RANGE_VALID
+4  OWNER_FINGERPRINT_VALID
+5  NATURAL_TARGET_VALID
+6  HELPER_REACHABILITY_VALID
+7  SCALARS_VALID
+8  SCALARS_INITIALIZED
+9  CODE_COMMIT_COMPLETE
+10 SUCCESS
+```
+
+Stages advance only after their complete validation or commit block. In
+particular, stage 8 follows initialization and D-cache synchronization of all
+nine historical Wide662 scalars, stage 9 follows the sole `A+0x1E8` write and
+its four-byte D/I-cache synchronization, and stage 10 follows publication of
+the install/cache-sync flags. The changed-only record is emitted independently
+of installation success:
+
+```text
+[psp1000-functional-post-t39-install] rev=1 stage=<n> validation=<n> install=<n> cache_sync=<n>
+```
+
+The literal revision distinguishes this diagnostic image. The existing
+`entered/return/natural` record remains success-gated and unchanged.

@@ -1847,6 +1847,34 @@ def check_sources(root):
     post_t39_snapshot = minimal[minimal.find(
             "if (slide_diag.bsman.functional_post_t39_install"):
             minimal.find("if (slide_diag.functional_button_thread")]
+    post_t39_install_marker = minimal.find(
+            "[psp1000-functional-post-t39-install] rev=1 ")
+    post_t39_install_start = minimal.rfind(
+            "if (slide_diag.functional_enabled) {", 0,
+            post_t39_install_marker)
+    post_t39_install_end = minimal.find(
+            "if (slide_diag.bsman.functional_post_t39_install",
+            post_t39_install_marker)
+    post_t39_install_snapshot = minimal[
+            post_t39_install_start:post_t39_install_end]
+    for token in ("functional_post_t39_stage",
+            "functional_post_t39_validation",
+            "functional_post_t39_install",
+            "functional_post_t39_cache_sync",
+            "memcmp(post_t39_install,",
+            "observed_functional_post_t39_install",
+            "[psp1000-functional-post-t39-install] rev=1 ",
+            "stage=%u validation=%u install=%u cache_sync=%u"):
+        if token not in post_t39_install_snapshot:
+            fail("functional post-T39 install snapshot lacks " + token)
+    if "functional_post_t39_install &&" in post_t39_install_snapshot or \
+            "functional_post_t39_cache_sync)" in post_t39_install_snapshot:
+        fail("functional post-T39 install snapshot is gated by install success")
+    for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP",
+            "sceKernelDcache", "sceKernelIcache"):
+        if forbidden in post_t39_install_snapshot:
+            fail("functional post-T39 install snapshot modifies runtime state: " +
+                    forbidden)
     for token in ("functional_post_t39_cache_sync",
             "activation_wide_scalar_addr[9]",
             "activation_wide_scalar_addr[9]) != 0",
@@ -1963,6 +1991,37 @@ def check_sources(root):
                     forbidden)
     if "functional_post_t39" in bsman_header:
         fail("functional post-T39 checkpoint changes registration ABI")
+    if kernel.count("unsigned int functional_post_t39_stage;") != 1:
+        fail("functional post-T39 stage is not one kernel-private scalar")
+    post_t39_stages = []
+    for stage in range(1, 11):
+        token = "bsman->functional_post_t39_stage = %d;" % stage
+        if post_t39.count(token) != 1:
+            fail("functional post-T39 stage %d is missing or duplicated" % stage)
+        post_t39_stages.append(post_t39.find(token))
+    if post_t39_stages != sorted(post_t39_stages):
+        fail("functional post-T39 stages are not monotonic")
+    range_check = post_t39.find(
+            "!zeroCtrlVshModuleRangeValid(mod, activation + 0x1E8, 8)")
+    fingerprint = post_t39.find("(original >> 26) != 3")
+    target_check = post_t39.find("target != mod->text_addr + 0x2A168")
+    helper_check = post_t39.find(
+            "zeroCtrlMipsJumpTarget(owner, replacement) != call_leaf")
+    scalar_check = post_t39.find(
+            "!zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)")
+    scalar_sync = post_t39.find(
+            "sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4)")
+    install_flag = post_t39.find("bsman->functional_post_t39_install = 1")
+    cache_flag = post_t39.find(
+            "bsman->functional_post_t39_cache_sync = 1")
+    if not (post_t39_stages[0] < post_t39_stages[1] < range_check <
+            post_t39_stages[2] < fingerprint < post_t39_stages[3] <
+            target_check < post_t39_stages[4] < helper_check <
+            post_t39_stages[5] < scalar_check < post_t39_stages[6] <
+            scalar_sync < post_t39_stages[7] < post_t39_code_write <
+            post_t39_dcache < post_t39_icache < post_t39_stages[8] <
+            install_flag < cache_flag < post_t39_stages[9]):
+        fail("functional post-T39 stage publication ordering regressed")
     wide662_invocation = (
             "WIDE_CALL zeroCtrlWide662Call, zeroCtrlWide662Return, "
             "zeroCtrlWide662Target, zeroCtrlWide662RA, zeroCtrlWide662Resume, "

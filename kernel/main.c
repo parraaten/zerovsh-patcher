@@ -258,6 +258,7 @@ typedef struct {
     unsigned int functional_activation_stage;
     int functional_post_t39_validation, functional_post_t39_install;
     int functional_post_t39_cache_sync;
+    unsigned int functional_post_t39_stage;
     int paf_compat_enabled;
     int bsman_not_linked_compat_enabled;
     int activation_cache_sync;
@@ -6167,6 +6168,9 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_functional_compat_valid = 0;
     unsigned int observed_functional_post_t39[3] = { 0, 0, 0 };
     int observed_functional_post_t39_valid = 0;
+    unsigned int observed_functional_post_t39_install[4] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6283,6 +6287,29 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             compat2[0], compat2[1], compat2[2], compat2[3],
                             compat2[4], compat2[5], compat2[6], compat2[7],
                             compat2[8], compat2[9], compat2[10], compat2[11]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled) {
+                unsigned int post_t39_install[4];
+                post_t39_install[0] =
+                        slide_diag.bsman.functional_post_t39_stage;
+                post_t39_install[1] =
+                        slide_diag.bsman.functional_post_t39_validation;
+                post_t39_install[2] =
+                        slide_diag.bsman.functional_post_t39_install;
+                post_t39_install[3] =
+                        slide_diag.bsman.functional_post_t39_cache_sync;
+                if (memcmp(post_t39_install,
+                            observed_functional_post_t39_install,
+                            sizeof(post_t39_install)) != 0) {
+                    memcpy(observed_functional_post_t39_install,
+                            post_t39_install, sizeof(post_t39_install));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-post-t39-install] rev=1 "
+                            "stage=%u validation=%u install=%u cache_sync=%u\n",
+                            post_t39_install[0], post_t39_install[1],
+                            post_t39_install[2], post_t39_install[3]);
                     zeroCtrlDiagnosticsText(line);
                 }
             }
@@ -9303,24 +9330,29 @@ static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
     unsigned int call_leaf, return_leaf;
     unsigned int scalar[9], i;
 
+    bsman->functional_post_t39_stage = 1;
     if (!bsman->functional_validation || !bsman->functional_install ||
             !bsman->functional_cache_sync ||
             !zeroCtrlLoadedModuleMetadataValid(mod) ||
             !zeroCtrlLoadedModuleMetadataValid(helper) ||
             mod->text_addr > 0xFFFFFFFFU - 0x9304)
         return;
+    bsman->functional_post_t39_stage = 2;
     activation = mod->text_addr + 0x9304;
     if (bsman->activation_addr != activation ||
             !zeroCtrlVshModuleRangeValid(mod, activation + 0x1E8, 8))
         return;
+    bsman->functional_post_t39_stage = 3;
     owner = activation + 0x1E8;
     original = _lw(owner);
     if ((original >> 26) != 3 || _lw(owner + 4) != 0)
         return;
+    bsman->functional_post_t39_stage = 4;
     target = zeroCtrlMipsJumpTarget(owner, original);
     if (target != mod->text_addr + 0x2A168 ||
             !zeroCtrlVshModuleRangeValid(mod, target, 4))
         return;
+    bsman->functional_post_t39_stage = 5;
 
     call_leaf = bsman->activation_wide_leaf_addr[1];
     return_leaf = bsman->activation_wide_leaf_addr[2];
@@ -9333,6 +9365,7 @@ static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
     replacement = 0x08000000 | ((call_leaf >> 2) & 0x03FFFFFF);
     if (zeroCtrlMipsJumpTarget(owner, replacement) != call_leaf)
         return;
+    bsman->functional_post_t39_stage = 6;
 
     scalar[0] = bsman->activation_wide_scalar_addr[8];  /* target */
     scalar[1] = bsman->activation_wide_scalar_addr[9];  /* saved ra */
@@ -9349,6 +9382,7 @@ static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
             return;
 
     bsman->functional_post_t39_validation = 1;
+    bsman->functional_post_t39_stage = 7;
     _sw(target, scalar[0]);
     _sw(0, scalar[1]);
     _sw(activation + 0x1F0, scalar[2]);
@@ -9360,11 +9394,14 @@ static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
     _sw(0, scalar[8]);
     for (i = 0; i < 9; i++)
         sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
+    bsman->functional_post_t39_stage = 8;
     _sw(replacement, owner);
     sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
     sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    bsman->functional_post_t39_stage = 9;
     bsman->functional_post_t39_install = 1;
     bsman->functional_post_t39_cache_sync = 1;
+    bsman->functional_post_t39_stage = 10;
 }
 
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
