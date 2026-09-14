@@ -3110,6 +3110,10 @@ def check_sources(root):
             "ori     $t2, $t2, 0x000D", "bne     $t1, $t2, 66f",
             "ori     $t2, $t2, 0x0107", "bne     $v0, $t2, 66f",
             "addu    $v0, $zero, $zero", "zeroCtrlPostVshSubstitutionHits",
+            "sw      $zero, %lo(zeroCtrlSlidePrefixPafCompatMode)($t0)",
+            "sw      $zero, %lo(zeroCtrlPostBSManCompatMode)($t0)",
+            "sw      $zero, %lo(zeroCtrlStateZero15To14CompatMode)($t0)",
+            "sw      $zero, %lo(zeroCtrlPostVshCompatMode)($t0)",
             "\n66:", "sw      $v0, %lo(zeroCtrlPostVshEffectiveResult)",
             "lw      $ra, %lo(zeroCtrlPostVshSavedRA)"):
         if token not in post_vsh_return:
@@ -3119,9 +3123,22 @@ def check_sources(root):
             post_vsh_return.find("bne     $t1, $t2, 66f") <
             post_vsh_return.find("bne     $v0, $t2, 66f") <
             post_vsh_return.find("addu    $v0, $zero, $zero") <
+            post_vsh_return.find("sw      $t1, %lo(zeroCtrlPostVshSubstitutionHits)") <
+            post_vsh_return.find("sw      $zero, %lo(zeroCtrlSlidePrefixPafCompatMode)") <
+            post_vsh_return.find("sw      $zero, %lo(zeroCtrlPostBSManCompatMode)") <
+            post_vsh_return.find("sw      $zero, %lo(zeroCtrlStateZero15To14CompatMode)") <
+            post_vsh_return.find("sw      $zero, %lo(zeroCtrlPostVshCompatMode)") <
             post_vsh_return.find("\n66:") <
             post_vsh_return.find("zeroCtrlPostVshEffectiveResult")):
         fail("T31 natural/guard/substitution/effective ordering is invalid")
+    successful_vsh_block = post_vsh_return[
+        post_vsh_return.find("addu    $v0, $zero, $zero"):
+        post_vsh_return.find("\n66:")]
+    for mode in ("zeroCtrlSlidePrefixPafCompatMode",
+            "zeroCtrlPostBSManCompatMode", "zeroCtrlStateZero15To14CompatMode",
+            "zeroCtrlPostVshCompatMode"):
+        if successful_vsh_block.count("sw      $zero, %lo(" + mode + ")($t0)") != 1:
+            fail("T31 successful substitution does not exclusively clear " + mode)
     post_impose_call = assembly[assembly.find("zeroCtrlPostImposeVCallTrace:"):
         assembly.find("zeroCtrlPostImposeVCallTraceEnd:")]
     post_impose_return = assembly[assembly.find(
@@ -5114,6 +5131,8 @@ def check_t31_vsh_return_semantics(body):
         r"\bbne\s+t1,\s*t2,", r"\blui\s+t2,\s*0x8000",
         r"\bori\s+t2,.*0x107", r"\bbne\s+v0,\s*t2,", set_v0_zero,
         r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\blui\s+t0,", r"\bsw\s+zero,", r"\blui\s+t0,", r"\bsw\s+zero,",
+        r"\blui\s+t0,", r"\bsw\s+zero,", r"\blui\s+t0,", r"\bsw\s+zero,",
         r"\bsw\s+v0,", r"\blw\s+ra,", r"\bjr\s+ra\b", r"\bnop\b")
     cursor = 0
     for pattern in ordered:
@@ -5302,9 +5321,12 @@ def check_t311_linked(disassembly, symbol_addresses):
     body = function_body(disassembly, "zeroCtrlPostVshReturnTrace")
     use_specs = (
         ("zeroCtrlPostVshNaturalResult", [("sw", 2, 8)]),
-        ("zeroCtrlPostVshCompatMode", [("lw", 9, 8)]),
+        ("zeroCtrlPostVshCompatMode", [("lw", 9, 8), ("sw", 0, 8)]),
         ("zeroCtrlPostVshArgument", [("lw", 9, 8)]),
         ("zeroCtrlPostVshSubstitutionHits", [("lw", 9, 8), ("sw", 9, 8)]),
+        ("zeroCtrlSlidePrefixPafCompatMode", [("sw", 0, 8)]),
+        ("zeroCtrlPostBSManCompatMode", [("sw", 0, 8)]),
+        ("zeroCtrlStateZero15To14CompatMode", [("sw", 0, 8)]),
         ("zeroCtrlPostVshEffectiveResult", [("sw", 2, 8)]),
         ("zeroCtrlPostVshSavedRA", [("lw", 31, 8)]),
     )
@@ -5340,6 +5362,13 @@ def check_t311_linked(disassembly, symbol_addresses):
     effective_lui_pc = use_pcs["zeroCtrlPostVshEffectiveResult"][0] - 4
     if bypass != effective_lui_pc or not branches[-1][0] < zero_pc < bypass:
         fail("T31 linked bypass does not enter immediately before effective store")
+    disarm_pcs = [use_pcs[name][0] for name in (
+        "zeroCtrlSlidePrefixPafCompatMode", "zeroCtrlPostBSManCompatMode",
+        "zeroCtrlStateZero15To14CompatMode")]
+    disarm_pcs.append(use_pcs["zeroCtrlPostVshCompatMode"][1])
+    substitution_store = use_pcs["zeroCtrlPostVshSubstitutionHits"][1]
+    if not substitution_store < min(disarm_pcs) <= max(disarm_pcs) < bypass:
+        fail("T31 linked mode clears are not confined after successful substitution")
     if not (use_pcs["zeroCtrlPostVshNaturalResult"][0] < branches[0][0] and
             use_pcs["zeroCtrlPostVshSavedRA"][0] >
             use_pcs["zeroCtrlPostVshEffectiveResult"][0]):
@@ -6232,7 +6261,10 @@ def check_stub_object(stub_object):
             not re.search(r"\bjr\s+ra\b", post_vsh_return):
         fail("post-BSMan VshBridge return trace violates leaf/RA invariants")
     t31_relocations = (
-        ("zeroCtrlPostVshCompatMode", 1, 1, r"\blw\s+t1,"),
+        ("zeroCtrlPostVshCompatMode", 2, 2, None),
+        ("zeroCtrlSlidePrefixPafCompatMode", 1, 1, r"\bsw\s+zero,"),
+        ("zeroCtrlPostBSManCompatMode", 1, 1, r"\bsw\s+zero,"),
+        ("zeroCtrlStateZero15To14CompatMode", 1, 1, r"\bsw\s+zero,"),
         ("zeroCtrlPostVshEffectiveResult", 1, 1, r"\bsw\s+v0,"),
         ("zeroCtrlPostVshSubstitutionHits", 1, 2, None),
     )
@@ -6243,6 +6275,10 @@ def check_stub_object(stub_object):
         if instruction and not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
                 scalar + r"\b", post_vsh_return):
             fail("T31 return does not bind relocation for " + scalar)
+    for instruction in (r"\blw\s+t1,", r"\bsw\s+zero,"):
+        if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPostVshCompatMode\b", post_vsh_return):
+            fail("T31 return does not bind VSH mode load/clear")
     for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
         if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
                 r"zeroCtrlPostVshSubstitutionHits\b", post_vsh_return):

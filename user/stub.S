@@ -500,6 +500,14 @@ zeroCtrlPostVshReturnTrace:
     lw      $t1, %lo(zeroCtrlPostVshSubstitutionHits)($t0)
     addiu   $t1, $t1, 1
     sw      $t1, %lo(zeroCtrlPostVshSubstitutionHits)($t0)
+    lui     $t0, %hi(zeroCtrlSlidePrefixPafCompatMode)
+    sw      $zero, %lo(zeroCtrlSlidePrefixPafCompatMode)($t0)
+    lui     $t0, %hi(zeroCtrlPostBSManCompatMode)
+    sw      $zero, %lo(zeroCtrlPostBSManCompatMode)($t0)
+    lui     $t0, %hi(zeroCtrlStateZero15To14CompatMode)
+    sw      $zero, %lo(zeroCtrlStateZero15To14CompatMode)($t0)
+    lui     $t0, %hi(zeroCtrlPostVshCompatMode)
+    sw      $zero, %lo(zeroCtrlPostVshCompatMode)($t0)
 66:
     lui     $t0, %hi(zeroCtrlPostVshEffectiveResult)
     sw      $v0, %lo(zeroCtrlPostVshEffectiveResult)($t0)
