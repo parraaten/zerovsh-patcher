@@ -6253,9 +6253,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_functional_post_bs_install[3] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
-    unsigned int observed_functional_post_bs[8] = {
+    unsigned int observed_functional_post_bs[14] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
-        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF
     };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
@@ -6611,7 +6613,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             sizeof(state)) != 0) {
                     memcpy(observed_functional_post_bs_install, state, sizeof(state));
                     snprintf(line, sizeof(line),
-                            "[psp1000-functional-post-bs-route-install] rev=1 "
+                            "[psp1000-functional-state-route-install] rev=1 "
                             "validation=%u install=%u cache_sync=%u\n",
                             state[0], state[1], state[2]);
                     zeroCtrlDiagnosticsText(line);
@@ -6620,23 +6622,31 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             if (slide_diag.bsman.functional_post_bs_install &&
                     slide_diag.bsman.functional_post_bs_cache_sync) {
                 ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
-                unsigned int state[8];
+                unsigned int state[14];
                 state[0] = zeroCtrlReadHelperCounter(b->bsman_return_hits_addr);
                 state[1] = zeroCtrlReadHelperCounter(b->post_bs_counter_addr[0]);
                 state[2] = zeroCtrlReadHelperCounter(b->post_bs_counter_addr[1]);
                 state[3] = zeroCtrlReadHelperCounter(b->post_state_counter_addr[0]);
                 state[4] = zeroCtrlReadHelperCounter(b->post_state_counter_addr[1]);
-                state[5] = zeroCtrlReadHelperCounter(b->post_state_natural_value_addr);
-                state[6] = zeroCtrlReadHelperCounter(b->state_zero_counter_addr[2]);
-                state[7] = zeroCtrlReadHelperCounter(b->post_vsh_return_hits_addr);
+                state[5] = zeroCtrlReadHelperCounter(b->state_zero_counter_addr[0]);
+                state[6] = zeroCtrlReadHelperCounter(b->state_zero_path_mask_addr);
+                state[7] = zeroCtrlReadHelperCounter(b->state_zero_value_addr[0]);
+                state[8] = zeroCtrlReadHelperCounter(b->state_zero_value_addr[1]);
+                state[9] = zeroCtrlReadHelperCounter(b->state_zero_value_addr[2]);
+                state[10] = zeroCtrlReadHelperCounter(b->state_zero_value_addr[3]);
+                state[11] = zeroCtrlReadHelperCounter(b->state_zero_counter_addr[1]);
+                state[12] = zeroCtrlReadHelperCounter(b->state_zero_counter_addr[2]);
+                state[13] = zeroCtrlReadHelperCounter(b->post_vsh_return_hits_addr);
                 if (memcmp(state, observed_functional_post_bs, sizeof(state)) != 0) {
                     memcpy(observed_functional_post_bs, state, sizeof(state));
                     snprintf(line, sizeof(line),
-                            "[psp1000-functional-post-bs-route] bs_ret=%u "
-                            "gate=%u/%u state=%u/%u last=0x%08X "
-                            "state_ret=%u vsh_ret=%u\n",
+                            "[psp1000-functional-state-route] bs_ret=%u "
+                            "gate=%u/%u post=%u/%u entry=%u mask=0x%04X "
+                            "cmp=0x%08X/0x%08X word=0x%08X byte=0x%08X "
+                            "vcall=%u/%u vsh_ret=%u\n",
                             state[0], state[1], state[2], state[3], state[4],
-                            state[5], state[6], state[7]);
+                            state[5], state[6], state[7], state[8], state[9],
+                            state[10], state[11], state[12], state[13]);
                     zeroCtrlDiagnosticsText(line);
                 }
             }
@@ -9957,7 +9967,11 @@ static void zeroCtrlInstallPsp1000ActivationReturnDiagnostic(SceModule2 *mod) {
 static void zeroCtrlInstallPsp1000PostBSRouteDiagnostic(SceModule2 *mod) {
     ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-    unsigned int a, owner[2], leaf[2], replacement[2], scalar[11], i;
+    static const unsigned int owner_offset[5] = {
+        0x0B0, 0x0DC, 0x27C, 0x288, 0x298
+    };
+    unsigned int a, owner[5], leaf[5], leaf_size[5], replacement[5];
+    unsigned int scalar[23], i;
     if (!slide_diag.functional_enabled || model != 0 ||
             sceKernelDevkitVersion() != 0x06060110 ||
             !b->functional_validation || !b->functional_install ||
@@ -9966,8 +9980,8 @@ static void zeroCtrlInstallPsp1000PostBSRouteDiagnostic(SceModule2 *mod) {
     if (mod->text_addr > 0xFFFFFFFFU - 0x9304) return;
     a = mod->text_addr + 0x9304;
     if (b->activation_addr != a ||
-            !zeroCtrlVshModuleRangeValid(mod, a + 0xB0, 0x34)) return;
-    owner[0] = a + 0xB0; owner[1] = a + 0xDC;
+            !zeroCtrlVshModuleRangeValid(mod, a + 0xB0, 0x1F0)) return;
+    for (i = 0; i < 5; i++) owner[i] = a + owner_offset[i];
     if (_lw(owner[0]) != 0x1040000A ||
             zeroCtrlMipsBranchTarget(owner[0], _lw(owner[0])) != a + 0xDC ||
             (_lw(a + 0xB4) >> 26) != 36 ||
@@ -9976,11 +9990,25 @@ static void zeroCtrlInstallPsp1000PostBSRouteDiagnostic(SceModule2 *mod) {
             _lw(owner[1]) != 0x10400066 ||
             zeroCtrlMipsBranchTarget(owner[1], _lw(owner[1])) != a + 0x278 ||
             (_lw(a + 0xE0) >> 26) != 15 ||
-            ((_lw(a + 0xE0) >> 16) & 31) != 2) return;
-    leaf[0] = b->post_bs_leaf_addr; leaf[1] = b->post_state_leaf_addr;
-    for (i = 0; i < 2; i++) {
-        unsigned int size = i ? b->post_state_leaf_size : b->post_bs_leaf_size;
-        if (!zeroCtrlVshModuleRangeValid(helper, leaf[i], size)) return;
+            ((_lw(a + 0xE0) >> 16) & 31) != 2 ||
+            _lw(owner[2]) != 0x1243FF73 ||
+            zeroCtrlMipsBranchTarget(owner[2], _lw(owner[2])) != a + 0x4C ||
+            (_lw(a + 0x280) >> 26) != 15 ||
+            ((_lw(a + 0x280) >> 16) & 31) != 2 ||
+            _lw(owner[3]) != 0x1460FF71 ||
+            zeroCtrlMipsBranchTarget(owner[3], _lw(owner[3])) != a + 0x50 ||
+            _lw(a + 0x28C) != 0x8FBF001C ||
+            _lw(owner[4]) != 0x1460FF6E ||
+            zeroCtrlMipsBranchTarget(owner[4], _lw(owner[4])) != a + 0x54 ||
+            _lw(a + 0x29C) != 0x8FB60018) return;
+    leaf[0] = b->post_bs_leaf_addr; leaf_size[0] = b->post_bs_leaf_size;
+    leaf[1] = b->post_state_leaf_addr; leaf_size[1] = b->post_state_leaf_size;
+    for (i = 0; i < 3; i++) {
+        leaf[i + 2] = b->state_zero_leaf_addr[i];
+        leaf_size[i + 2] = b->state_zero_leaf_size[i];
+    }
+    for (i = 0; i < 5; i++) {
+        if (!zeroCtrlVshModuleRangeValid(helper, leaf[i], leaf_size[i])) return;
         replacement[i] = 0x08000000 | ((leaf[i] >> 2) & 0x03FFFFFF);
         if (((owner[i] + 4) & 0xF0000000) != (leaf[i] & 0xF0000000) ||
                 zeroCtrlMipsJumpTarget(owner[i], replacement[i]) != leaf[i]) return;
@@ -9991,7 +10019,11 @@ static void zeroCtrlInstallPsp1000PostBSRouteDiagnostic(SceModule2 *mod) {
     scalar[6] = b->post_state_counter_addr[0]; scalar[7] = b->post_state_counter_addr[1];
     scalar[8] = b->post_state_natural_value_addr;
     scalar[9] = b->post_path_mask_addr; scalar[10] = b->bsman_effective_result_addr;
-    for (i = 0; i < 11; i++)
+    for (i = 0; i < 6; i++) scalar[11 + i] = b->state_zero_target_addr[i];
+    for (i = 0; i < 4; i++) scalar[17 + i] = b->state_zero_value_addr[i];
+    scalar[21] = b->state_zero_counter_addr[0];
+    scalar[22] = b->state_zero_path_mask_addr;
+    for (i = 0; i < 23; i++)
         if ((scalar[i] & 3) || !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
             return;
     b->functional_post_bs_validation = 1;
@@ -10000,9 +10032,14 @@ static void zeroCtrlInstallPsp1000PostBSRouteDiagnostic(SceModule2 *mod) {
     _sw(a + 0x278, scalar[4]); _sw(a + 0xE4, scalar[5]);
     _sw(0, scalar[6]); _sw(0, scalar[7]);
     _sw(0xFFFFFFFF, scalar[8]); _sw(0, scalar[9]);
-    for (i = 0; i < 10; i++)
+    _sw(a + 0x4C, scalar[11]); _sw(a + 0x284, scalar[12]);
+    _sw(a + 0x290, scalar[13]); _sw(a + 0x50, scalar[14]);
+    _sw(a + 0x2A0, scalar[15]); _sw(a + 0x54, scalar[16]);
+    for (i = 17; i < 21; i++) _sw(0xFFFFFFFF, scalar[i]);
+    _sw(0, scalar[21]); _sw(0, scalar[22]);
+    for (i = 0; i < 23; i++)
         sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
-    for (i = 0; i < 2; i++) {
+    for (i = 0; i < 5; i++) {
         _sw(replacement[i], owner[i]);
         sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4);
         sceKernelIcacheInvalidateRange((const void *)owner[i], 4);
