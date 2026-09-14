@@ -1754,6 +1754,52 @@ def check_sources(root):
     if "candidates" in functional or \
             "for (pc = 0; pc + 20 <= mod->text_size" in functional:
         fail("functional activation installer globally scans for the prologue")
+    if kernel.count("unsigned int functional_activation_stage;") != 1:
+        fail("functional activation stage is not one kernel-only scalar")
+    if "functional_activation_stage" in bsman_header:
+        fail("functional activation stage leaks into the registration ABI")
+    stage_positions = []
+    for stage in range(1, 14):
+        token = "bsman->functional_activation_stage = %d;" % stage
+        if functional.count(token) != 1:
+            fail("functional activation stage %d is missing or duplicated" % stage)
+        stage_positions.append(functional.find(token))
+    if stage_positions != sorted(stage_positions):
+        fail("functional activation stages are not monotonic")
+    traversal_end = functional.find("bsman->functional_activation_stage = 4;")
+    import_unique = functional.find("paf_matches != 1", traversal_end)
+    if not 0 <= traversal_end < import_unique < stage_positions[4]:
+        fail("functional import traversal/uniqueness stages are conflated")
+    owner_commit = functional.find("_sw(replacement[i], owner[i])")
+    owner_dcache = functional.find(
+            "sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4)",
+            owner_commit)
+    owner_icache = functional.find(
+            "sceKernelIcacheInvalidateRange((const void *)owner[i], 4)",
+            owner_dcache)
+    if not 0 <= owner_commit < owner_dcache < owner_icache < stage_positions[11]:
+        fail("functional stage 12 precedes four-owner cache synchronization")
+    validation_flag = functional.find("bsman->functional_validation = 1",
+            stage_positions[11])
+    install_flag = functional.find("bsman->functional_install = 1",
+            validation_flag)
+    cache_flag = functional.find("bsman->functional_cache_sync = 1",
+            install_flag)
+    if not 0 <= stage_positions[11] < validation_flag < install_flag < \
+            cache_flag < stage_positions[12]:
+        fail("functional stage 13 precedes completion flags")
+    if "if (bsman->functional_activation_stage" in functional or \
+            "switch (bsman->functional_activation_stage" in functional:
+        fail("functional compatibility behavior depends on diagnostic stage")
+    for forbidden_io in ("zeroCtrlDiagnostics", "sceIo", "snprintf("):
+        if forbidden_io in functional:
+            fail("functional activation installer performs stage file/output I/O")
+    stage_writer = minimal.find(
+            "slide_diag.bsman.functional_activation_stage !=")
+    stage_format = minimal.find(
+            "[psp1000-functional] activation_compat_stage=%u", stage_writer)
+    if not 0 <= stage_writer < stage_format:
+        fail("deferred functional activation stage output is missing")
     for invented in ("bsman->state_zero_vcall_target_addr",
             "bsman->state_zero_vcall_ra_addr",
             "bsman->state_zero_vcall_result_addr"):

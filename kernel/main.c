@@ -255,6 +255,7 @@ typedef struct {
     int closed_value;
     int activation_enabled, activation_validation, activation_install;
     int functional_validation, functional_install, functional_cache_sync;
+    unsigned int functional_activation_stage;
     int paf_compat_enabled;
     int bsman_not_linked_compat_enabled;
     int activation_cache_sync;
@@ -6158,6 +6159,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int vsh3f568_scan_written = 0;
     unsigned int observed_runtime_request_called = 0;
     unsigned int observed_runtime_request_result = 0xFFFFFFFF;
+    unsigned int observed_functional_activation_stage = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6181,6 +6183,15 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     !(minimal_memory_written & 0x0080)) {
                 zeroCtrlDiagnosticsText("[psp1000-functional] enabled=1\n");
                 minimal_memory_written |= 0x0080;
+            }
+            if (slide_diag.bsman.functional_activation_stage !=
+                    observed_functional_activation_stage) {
+                observed_functional_activation_stage =
+                        slide_diag.bsman.functional_activation_stage;
+                snprintf(line, sizeof(line),
+                        "[psp1000-functional] activation_compat_stage=%u\n",
+                        observed_functional_activation_stage);
+                zeroCtrlDiagnosticsText(line);
             }
             if (slide_diag.bsman.functional_validation &&
                     !(minimal_memory_written & 0x2000)) {
@@ -8963,6 +8974,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     unsigned int owner[4], original[4], replacement[4], leaf[4], leaf_size[4];
     unsigned int scalar[40], scalar_count = 0, i;
 
+    bsman->functional_activation_stage = 1;
     if (!slide_diag.functional_enabled || model != 0 ||
             sceKernelDevkitVersion() != 0x06060110 || !bsman->registered ||
             !zeroCtrlLoadedModuleMetadataValid(mod) ||
@@ -8970,6 +8982,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
             !zeroCtrlLoadedModuleMetadataValid(helper) ||
             !zeroCtrlVshModuleRangeValid(mod, mod->text_addr, mod->text_size))
         return;
+    bsman->functional_activation_stage = 2;
     if (mod->text_addr > 0xFFFFFFFFU - 0x9304) return;
     activation = mod->text_addr + 0x9304;
     if (!zeroCtrlVshModuleRangeValid(mod, activation, 0x2BC + 8) ||
@@ -8979,6 +8992,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
             _lw(activation + 12) != 0xAFB00000 ||
             _lw(activation + 16) != 0xAFBF001C)
         return;
+    bsman->functional_activation_stage = 3;
 
     cursor = (unsigned int)mod->stub_top;
     end = cursor + mod->stub_size;
@@ -9021,8 +9035,10 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
         }
         cursor += bytes;
     }
+    bsman->functional_activation_stage = 4;
     if (paf_matches != 1 || bsman_matches != 1 || vshbridge_matches != 1)
         return;
+    bsman->functional_activation_stage = 5;
     for (pc = 0; pc + 4 <= mod->text_size; pc += 4) {
         unsigned int address = mod->text_addr + pc;
         unsigned int instruction = _lw(address);
@@ -9033,6 +9049,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
         }
     }
     if (bsman_callers != 1 || bsman_caller != activation + 0xA8) return;
+    bsman->functional_activation_stage = 6;
 
     leaf[0] = bsman->prefix_paf_call_leaf_addr;
     leaf_size[0] = bsman->prefix_paf_call_leaf_size;
@@ -9051,6 +9068,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
         replacement[i] = 0x0C000000 | ((leaf[i] >> 2) & 0x03FFFFFF);
         if (zeroCtrlMipsJumpTarget(owner[i], replacement[i]) != leaf[i]) return;
     }
+    bsman->functional_activation_stage = 7;
     if ((original[0] >> 26) != 3 ||
             zeroCtrlMipsJumpTarget(owner[0], original[0]) != paf_stub ||
             _lw(owner[0] + 4) != 0x00408021 ||
@@ -9066,6 +9084,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
             _lw(owner[2] + 8) != 0x1440FFCE ||
             original[3] != 0x0040F809 || _lw(owner[3] + 4) != 0)
         return;
+    bsman->functional_activation_stage = 8;
 
     if (!zeroCtrlVshModuleRangeValid(helper,
                 bsman->prefix_paf_return_leaf_addr,
@@ -9078,6 +9097,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
             !zeroCtrlVshModuleRangeValid(helper,
                 bsman->state_zero_leaf_addr[4],
                 bsman->state_zero_leaf_size[4])) return;
+    bsman->functional_activation_stage = 9;
 
 #define ADD_FUNCTIONAL_SCALAR(address) do { scalar[scalar_count++] = (address); } while (0)
     ADD_FUNCTIONAL_SCALAR(bsman->prefix_path_mask_addr);
@@ -9119,6 +9139,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     for (i = 0; i < scalar_count; i++)
         if ((scalar[i] & 3) != 0 ||
                 !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)) return;
+    bsman->functional_activation_stage = 10;
 
     bsman->activation_addr = activation;
     bsman->caller_addr = owner[1];
@@ -9159,15 +9180,18 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0, bsman->state_zero_15to14_substitution_hits_addr);
     for (i = 0; i < scalar_count; i++)
         sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
+    bsman->functional_activation_stage = 11;
 
     for (i = 0; i < 4; i++) {
         _sw(replacement[i], owner[i]);
         sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4);
         sceKernelIcacheInvalidateRange((const void *)owner[i], 4);
     }
+    bsman->functional_activation_stage = 12;
     bsman->functional_validation = 1;
     bsman->functional_install = 1;
     bsman->functional_cache_sync = 1;
+    bsman->functional_activation_stage = 13;
 }
 
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {

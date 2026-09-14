@@ -2543,4 +2543,38 @@ activation prologue. That scan is removed. On PSP-1000 6.61 functional mode it
 now computes `text+0x9304` directly, after overflow checks, validates the full
 owned range, and requires the already hardware-proven five-word prologue
 fingerprint there. Import, owner, helper, scalar, and transactional commit
-validation remain unchanged. No additional guard scalar was added.
+validation remain unchanged. That revision added no guard scalar.
+
+The subsequent hardware run again reached SlidePlugin start and the RCO request
+without either activation-compat completion marker. Because the installer runs
+before `slide_start_callback_returning`, this proves only that its transaction
+returned early. One kernel-only, monotonic diagnostic field now records the
+last completely passed validation block; it does not enter either registration
+ABI and never controls compatibility behavior:
+
+```text
+0  NOT_ATTEMPTED
+1  ENTERED
+2  BASE_GUARDS_PASSED
+3  ACTIVATION_FINGERPRINT_PASSED
+4  IMPORT_TABLE_TRAVERSAL_COMPLETED
+5  REQUIRED_IMPORTS_UNIQUE
+6  BSMAN_CALLER_VALID
+7  OWNER_HELPER_REACHABILITY_VALID
+8  OWNER_FINGERPRINTS_VALID
+9  RETURN_LEAVES_VALID
+10 SCALAR_RANGES_VALID
+11 SCALARS_INITIALIZED
+12 CODE_COMMIT_COMPLETE
+13 SUCCESS
+```
+
+Each value is assigned only after the named block completes. In particular,
+unsafe import traversal leaves stage 3, non-unique imports leave stage 4,
+owner-fingerprint failure leaves stage 7, scalar-range failure leaves stage 9,
+and stage 12 follows all four owner writes and their individual D/I-cache
+synchronization. Stage 13 follows all three functional completion flags. The
+deferred writer emits only changed values as
+`[psp1000-functional] activation_compat_stage=<n>`. The installer performs no
+I/O for this observation, and the field causes no Sony, helper-module, or
+SlidePlugin write. The next hardware run asks only for the last reported stage.
