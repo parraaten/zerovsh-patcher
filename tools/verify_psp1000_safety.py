@@ -1647,16 +1647,19 @@ def check_sources(root):
     sony_install = kernel_module_start.find("zeroCtrlInstallSonyStartTrace(mod)")
     functional_compat = kernel_module_start.find(
             "zeroCtrlInstallPsp1000FunctionalCompat(mod)")
+    activation_return = kernel_module_start.find(
+            "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)")
     diagnostic_compat = kernel_module_start.find(
             "zeroCtrlInstallBSManClosedShim(mod)", functional_compat)
     functional_return = kernel_module_start.find("return previous_result",
             diagnostic_compat)
     if not 0 <= experiment_start < sony_install < functional_compat < \
-            diagnostic_compat < functional_return:
+            activation_return < diagnostic_compat < functional_return:
         fail("functional SlidePlugin installer split is incorrectly ordered")
     install_gate = kernel_module_start[sony_install:functional_return]
     for token in ("if (slide_diag.functional_enabled)",
-            "zeroCtrlInstallPsp1000FunctionalCompat(mod)", "else",
+            "zeroCtrlInstallPsp1000FunctionalCompat(mod)",
+            "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)", "else",
             "zeroCtrlInstallBSManClosedShim(mod)"):
         if token not in install_gate:
             fail("functional/diagnostic activation installer split lacks " + token)
@@ -2157,17 +2160,19 @@ def check_sources(root):
     module_start_functional = kernel_module_start[module_start_functional_start:
             kernel_module_start.find("zeroCtrlInstallBSManClosedShim(mod)",
                 module_start_functional_start)]
-    if "zeroCtrlInstallPsp1000PostBSRouteDiagnostic(mod)" not in \
-            module_start_functional or \
-            "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)" in \
-            module_start_functional or \
-            "zeroCtrlInstallPsp1000PostT39Diagnostic(mod)" in \
-            module_start_functional or \
-            "zeroCtrlInstallPsp1000Post1F0Diagnostic(mod)" in \
-            module_start_functional or \
-            "zeroCtrlInstallPsp1000ExitDiagnostic(mod)" in \
+    functional_diagnostics = re.findall(
+            r"zeroCtrlInstallPsp1000\w+Diagnostic\(mod\)",
+            module_start_functional)
+    functional_installers = re.findall(
+            r"zeroCtrlInstallPsp1000\w+\(mod\)", module_start_functional)
+    if functional_diagnostics != [
+            "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)"] or \
+            functional_installers != [
+                "zeroCtrlInstallPsp1000FunctionalCompat(mod)",
+                "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)"] or \
+            "zeroCtrlInstallPsp1000PostBSRouteDiagnostic(mod)" in \
             module_start_functional:
-        fail("functional path does not exclusively install the post-BS route diagnostic")
+        fail("functional path does not exclusively install activation-return diagnostic")
 
     post1f0_install_marker = minimal.find(
             "[psp1000-functional-post1f0-install] rev=1 ")

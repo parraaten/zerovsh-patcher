@@ -11247,7 +11247,7 @@ int OnModuleStart(SceModule2 *mod) {
                 zeroCtrlInstallSonyStartTrace(mod);
                 if (slide_diag.functional_enabled) {
                     zeroCtrlInstallPsp1000FunctionalCompat(mod);
-                    zeroCtrlInstallPsp1000PostBSRouteDiagnostic(mod);
+                    zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod);
                 } else {
                     zeroCtrlInstallBSManClosedShim(mod);
                 }
