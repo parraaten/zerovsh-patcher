@@ -2405,6 +2405,56 @@ def check_sources(root):
             assembly.find("zeroCtrlStateZeroWordTraceEnd:")]
     byte_call = assembly[assembly.find("zeroCtrlStateZeroByteTrace:"):
             assembly.find("zeroCtrlStateZeroByteTraceEnd:")]
+    transparent_helpers = (
+        ("zeroCtrlPostBSManBranchTrace", post_bs_call, 16,
+         (("t0", 0), ("t1", 4), ("t2", 8), ("t9", 12))),
+        ("zeroCtrlPostStateBranchTrace", post_state_call, 16,
+         (("t0", 0), ("t1", 4), ("t2", 8), ("t9", 12))),
+        ("zeroCtrlStateZeroCompareTrace", compare_call, 16,
+         (("t0", 0), ("t1", 4), ("t2", 8), ("t9", 12))),
+        ("zeroCtrlStateZeroWordTrace", word_call, 12,
+         (("t0", 0), ("t1", 4), ("t9", 8))),
+        ("zeroCtrlStateZeroByteTrace", byte_call, 12,
+         (("t0", 0), ("t1", 4), ("t9", 8))),
+    )
+    destination_ops = re.compile(
+        r"^\s*(?:addiu|addu|or|ori|lui|lw)\s+\$(\w+),")
+    for name, helper, frame, saved in transparent_helpers:
+        instructions = [line.split("#", 1)[0].strip()
+                        for line in helper.splitlines()]
+        instructions = [line for line in instructions if line and
+                        not line.startswith((".", name + ":")) and
+                        not re.match(r"^\d+:$", line)]
+        written = {match.group(1) for line in instructions
+                   if (match := destination_ops.match(line))}
+        if "RECORD_PREFIX_COUNTER" in helper:
+            written.update(("t0", "t2"))
+        expected_written = {reg for reg, _ in saved} | {"sp"}
+        if written != expected_written:
+            fail(name + " writes unexpected GPRs or omits preservation coverage: " +
+                 repr(sorted(written)))
+        prologue = ["addiu   $sp, $sp, -%d" % frame] + [
+            "sw      $%s, %d($sp)" % (reg, offset) for reg, offset in saved]
+        positions = [helper.find(token) for token in prologue]
+        first_write = min(helper.find("lui     $" + reg) for reg, _ in saved
+                          if helper.find("lui     $" + reg) >= 0)
+        if any(position < 0 for position in positions) or positions != sorted(positions) or \
+                positions[-1] > first_write:
+            fail(name + " does not save every modified temporary before use")
+        restored = [(reg, offset) for reg, offset in reversed(saved[:-1])]
+        tail = "".join("    lw      $%s, %d($sp)\n" % item
+                       for item in restored)
+        tail += ("    addiu   $sp, $sp, %d\n" % frame +
+                 "    jr      $t9\n" +
+                 "    lw      $t9, -%d($sp)\n" % (frame - saved[-1][1]))
+        if tail not in helper:
+            fail(name + " lacks the proven balanced-frame/JR-delay t9 restore")
+        if re.search(r"\b(?:jal|jalr|syscall)\b|sceIo|sceKernel|Alloc|malloc", helper):
+            fail(name + " calls code, performs I/O, or allocates")
+        for forbidden in ("CompatMode", "SubstitutionHits", "15To14",
+                          "InvalidMode"):
+            if forbidden in helper:
+                fail(name + " performs a compatibility transformation")
     if "sw      $v0, %lo(zeroCtrlPostStateNaturalValue)($t0)" not in post_bs_call or \
             "zeroCtrlPostBSManEffectiveResult" not in post_bs_call:
         fail("historical post-BS helper no longer saves natural v0 before routing")
@@ -5495,8 +5545,8 @@ def check_t39_linked(disassembly, symbol_addresses):
 
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
-    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
-        fail("post-BSMan branch trace uses gp, sp, a call, I/O, or allocation")
+    if re.search(r"\bgp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
+        fail("post-BSMan branch trace uses gp, a call, I/O, or allocation")
     if re.search(r"\blbu\b", body):
         fail("post-BSMan branch trace reconstructs the relocated state load")
 
