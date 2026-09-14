@@ -2412,45 +2412,94 @@ def check_sources(root):
          (("t0", 0), ("t1", 4), ("t2", 8), ("t9", 12))),
         ("zeroCtrlStateZeroCompareTrace", compare_call, 16,
          (("t0", 0), ("t1", 4), ("t2", 8), ("t9", 12))),
-        ("zeroCtrlStateZeroWordTrace", word_call, 12,
+        ("zeroCtrlStateZeroWordTrace", word_call, 16,
          (("t0", 0), ("t1", 4), ("t9", 8))),
-        ("zeroCtrlStateZeroByteTrace", byte_call, 12,
+        ("zeroCtrlStateZeroByteTrace", byte_call, 16,
          (("t0", 0), ("t1", 4), ("t9", 8))),
     )
-    destination_ops = re.compile(
-        r"^\s*(?:addiu|addu|or|ori|lui|lw)\s+\$(\w+),")
+    counter_macro = re.search(
+        r"\.macro RECORD_PREFIX_COUNTER counter\n(.*?)\.endm", assembly, re.S)
+    expected_counter_macro = (
+        "lui     $t0, %hi(\\counter)",
+        "lw      $t2, %lo(\\counter)($t0)",
+        "addiu   $t2, $t2, 1",
+        "sw      $t2, %lo(\\counter)($t0)",
+    )
+    if not counter_macro or tuple(line.strip() for line in
+            counter_macro.group(1).splitlines() if line.strip()) != \
+            expected_counter_macro:
+        fail("RECORD_PREFIX_COUNTER body no longer has its exact modeled writes")
+
+    # This is intentionally a closed grammar.  Adding any instruction form to
+    # these helpers requires teaching the verifier whether that form writes a GPR.
+    helper_forms = (
+        (re.compile(r"addiu\s+\$(\w+),\s*\$\w+,\s*-?(?:0x[0-9A-Fa-f]+|\d+)$"), 1),
+        (re.compile(r"lui\s+\$(\w+),\s*%hi\([^)]+\)$"), 1),
+        (re.compile(r"lw\s+\$(\w+),\s*[^,]+\(\$\w+\)$"), 1),
+        (re.compile(r"sw\s+\$\w+,\s*[^,]+\(\$\w+\)$"), 0),
+        (re.compile(r"ori\s+\$(\w+),\s*\$\w+,\s*(?:0x[0-9A-Fa-f]+|\d+)$"), 1),
+        (re.compile(r"beq\s+\$\w+,\s*\$\w+,\s*\w+$"), 0),
+        (re.compile(r"(?:beqz|bnez)\s+\$\w+,\s*\w+$"), 0),
+        (re.compile(r"b\s+\w+$"), 0),
+        (re.compile(r"jr\s+\$\w+$"), 0),
+        (re.compile(r"nop$"), 0),
+    )
+    macro_form = re.compile(r"RECORD_PREFIX_COUNTER\s+\w+$")
     for name, helper, frame, saved in transparent_helpers:
+        helper_start = assembly.find(name + ":")
+        if assembly.rfind(".set noreorder", 0, helper_start) < \
+                assembly.rfind(".set reorder", 0, helper_start):
+            fail(name + " is not protected by .set noreorder")
+        if frame % 8:
+            fail(name + " frame violates the MIPS EABI 8-byte alignment")
         instructions = [line.split("#", 1)[0].strip()
                         for line in helper.splitlines()]
         instructions = [line for line in instructions if line and
                         not line.startswith((".", name + ":")) and
-                        not re.match(r"^\d+:$", line)]
-        written = {match.group(1) for line in instructions
-                   if (match := destination_ops.match(line))}
-        if "RECORD_PREFIX_COUNTER" in helper:
-            written.update(("t0", "t2"))
+                        not re.fullmatch(r"\d+:", line)]
+        classified = []
+        for line in instructions:
+            if macro_form.fullmatch(line):
+                classified.append((line, {"t0", "t2"}))
+                continue
+            matches = [(pattern.fullmatch(line), writes)
+                       for pattern, writes in helper_forms]
+            matches = [(match, writes) for match, writes in matches if match]
+            if len(matches) != 1:
+                fail(name + " contains an unknown or ambiguous instruction form: " + line)
+            match, writes = matches[0]
+            classified.append((line, {match.group(1)} if writes else set()))
+
+        expected_prologue = ["addiu   $sp, $sp, -%d" % frame] + [
+            "sw      $%s, %d($sp)" % (reg, offset) for reg, offset in saved]
+        if instructions[:len(expected_prologue)] != expected_prologue:
+            fail(name + " does not have its exact required save layout")
+        written = set().union(*(writes for _line, writes in classified))
         expected_written = {reg for reg, _ in saved} | {"sp"}
         if written != expected_written:
             fail(name + " writes unexpected GPRs or omits preservation coverage: " +
                  repr(sorted(written)))
-        prologue = ["addiu   $sp, $sp, -%d" % frame] + [
-            "sw      $%s, %d($sp)" % (reg, offset) for reg, offset in saved]
-        positions = [helper.find(token) for token in prologue]
-        first_write = min(helper.find("lui     $" + reg) for reg, _ in saved
-                          if helper.find("lui     $" + reg) >= 0)
-        if any(position < 0 for position in positions) or positions != sorted(positions) or \
-                positions[-1] > first_write:
-            fail(name + " does not save every modified temporary before use")
+        for reg, offset in saved:
+            save_line = "sw      $%s, %d($sp)" % (reg, offset)
+            save_index = instructions.index(save_line)
+            first_write = next(i for i, (_line, writes) in enumerate(classified)
+                               if reg in writes)
+            if save_index >= first_write:
+                fail(name + " modifies " + reg + " before saving its entry value")
+
         restored = [(reg, offset) for reg, offset in reversed(saved[:-1])]
-        tail = "".join("    lw      $%s, %d($sp)\n" % item
-                       for item in restored)
-        tail += ("    addiu   $sp, $sp, %d\n" % frame +
-                 "    jr      $t9\n" +
-                 "    lw      $t9, -%d($sp)\n" % (frame - saved[-1][1]))
-        if tail not in helper:
+        tail = ["lw      $%s, %d($sp)" % item for item in restored]
+        tail += ("addiu   $sp, $sp, %d" % frame, "jr      $t9",
+                 "lw      $t9, -%d($sp)" % (frame - saved[-1][1]))
+        if instructions[-len(tail):] != tail:
             fail(name + " lacks the proven balanced-frame/JR-delay t9 restore")
-        if re.search(r"\b(?:jal|jalr|syscall)\b|sceIo|sceKernel|Alloc|malloc", helper):
-            fail(name + " calls code, performs I/O, or allocates")
+        sp_writes = [(i, line) for i, (line, writes) in enumerate(classified)
+                     if "sp" in writes]
+        if sp_writes != [(0, expected_prologue[0]),
+                         (len(instructions) - 3, tail[-3])]:
+            fail(name + " does not restore its temporary frame exactly once")
+        if re.search(r"sceIo|sceKernel|Alloc|malloc", helper):
+            fail(name + " performs I/O, a kernel operation, or allocation")
         for forbidden in ("CompatMode", "SubstitutionHits", "15To14",
                           "InvalidMode"):
             if forbidden in helper:

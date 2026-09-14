@@ -851,7 +851,7 @@ zeroCtrlStateZeroCompareTraceEnd:
 .type zeroCtrlStateZeroWordTrace @function
 .ent zeroCtrlStateZeroWordTrace, 0
 zeroCtrlStateZeroWordTrace:
-    addiu   $sp, $sp, -12
+    addiu   $sp, $sp, -16
     sw      $t0, 0($sp)
     sw      $t1, 4($sp)
     sw      $t9, 8($sp)
@@ -874,9 +874,9 @@ zeroCtrlStateZeroWordTrace:
 33:
     lw      $t1, 4($sp)
     lw      $t0, 0($sp)
-    addiu   $sp, $sp, 12
+    addiu   $sp, $sp, 16
     jr      $t9
-    lw      $t9, -4($sp)
+    lw      $t9, -8($sp)
 .globl zeroCtrlStateZeroWordTraceEnd
 zeroCtrlStateZeroWordTraceEnd:
 .end zeroCtrlStateZeroWordTrace
@@ -885,7 +885,7 @@ zeroCtrlStateZeroWordTraceEnd:
 .type zeroCtrlStateZeroByteTrace @function
 .ent zeroCtrlStateZeroByteTrace, 0
 zeroCtrlStateZeroByteTrace:
-    addiu   $sp, $sp, -12
+    addiu   $sp, $sp, -16
     sw      $t0, 0($sp)
     sw      $t1, 4($sp)
     sw      $t9, 8($sp)
@@ -908,9 +908,9 @@ zeroCtrlStateZeroByteTrace:
 35:
     lw      $t1, 4($sp)
     lw      $t0, 0($sp)
-    addiu   $sp, $sp, 12
+    addiu   $sp, $sp, 16
     jr      $t9
-    lw      $t9, -4($sp)
+    lw      $t9, -8($sp)
 .globl zeroCtrlStateZeroByteTraceEnd
 zeroCtrlStateZeroByteTraceEnd:
 .end zeroCtrlStateZeroByteTrace
