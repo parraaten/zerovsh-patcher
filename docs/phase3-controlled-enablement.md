@@ -2697,3 +2697,28 @@ The existing transaction remains unchanged after its gate: the registration
 structure must be within the helper module, every leaf start/end pair and every
 scalar is validated, and leaf sizes are derived only as validated `end-start`
 differences. No Wide662-specific pointer path or registration ABI was added.
+
+Hardware subsequently completed the post-T39 transaction and observed 13
+natural returns from the `A+0x1E8` target, with last result `0x0000000C`. That
+temporary owner is now retired: functional mode performs no write at
+`A+0x1E8/A+0x1EC`. A new all-or-none post-1F0 diagnostic owns only `A+0x1F8`,
+`+0x200`, `+0x20C`, `+0x214`, `+0x21C`, and `+0x22C`, using the unchanged
+WideCompare, Wide662, Wide440, WideFCF, WideLoop, and Wide090 helpers.
+
+The transaction validates the exact two branch words and decoded targets, all
+four JAL targets, all six delay slots, ten helper leaves, and historical scalar
+indices 0 through 51 before initializing any scalar. It then synchronizes all
+scalars before committing and synchronizing exactly six Sony words. Routing is
+`+1F8` zero/nonzero to `+22C/+200`; Wide call resumes are `+208`, `+214`,
+`+21C`, and `+234`; and the loop back/exit routes are `+1E8/+224`.
+
+Changed-only functional output is:
+
+```text
+[psp1000-functional-post1f0-install] rev=1 validation=<n> install=<n> cache_sync=<n>
+[psp1000-functional-post1f0] cmp=<hits>/<zero>/<nonzero> c200=<entered>/<returns>/<last> c20c=<entered>/<returns>/<last> c214=<entered>/<returns>/<last> loop=<hits>/<back>/<exit> c22c=<entered>/<returns>/<last>
+```
+
+The install record is failure-visible. The runtime record is emitted only after
+successful install/cache synchronization and reads existing historical scalar
+meanings without changing natural `v0`.

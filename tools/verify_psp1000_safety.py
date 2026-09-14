@@ -1964,7 +1964,8 @@ def check_sources(root):
         fail("functional activation code commit is not one four-owner loop")
 
     post_t39_start = functional_end
-    post_t39_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
+    post_t39_end = kernel.find(
+            "static void zeroCtrlInstallPsp1000Post1F0Diagnostic(",
             post_t39_start)
     post_t39 = kernel[post_t39_start:post_t39_end]
     for token in (
@@ -2095,6 +2096,104 @@ def check_sources(root):
     if re.search(r"\b(?:move|addu|addiu|lw|li|ori)\s+\$?v0\b",
             wide_call_macro):
         fail("historical WIDE_CALL helper modifies natural v0")
+
+    post1f0_start = post_t39_end
+    post1f0_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
+            post1f0_start)
+    post1f0 = kernel[post1f0_start:post1f0_end]
+    for token in (
+            "0x1F8, 0x200, 0x20C, 0x214, 0x21C, 0x22C",
+            "0x26100001, 0, 0x00002821, 0x00402021, 0x8FBF001C, 0x00002021",
+            "0x2A380, 0x2A290, 0x2A698, 0x2A6F8",
+            "0, 1, 3, 5, 7, 8",
+            "!zeroCtrlVshModuleRangeValid(mod, activation + 0x1E8, 0x50)",
+            "(_lw(activation + 0x1E8) >> 26) != 3",
+            "mod->text_addr + 0x2A168",
+            "_lw(activation + 0x1EC) != 0",
+            "original[0] != 0x1040000C",
+            "activation + 0x22C",
+            "original[4] != 0x1040FFF2",
+            "activation + 0x1E8",
+            "for (i = 0; i < 52; i++)",
+            "!zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)",
+            "_sw(activation + 0x200, scalar[7])",
+            "_sw(activation + 0x208, scalar[10])",
+            "_sw(activation + 0x214, scalar[19])",
+            "_sw(activation + 0x21C, scalar[28])",
+            "_sw(activation + 0x1E8, scalar[41])",
+            "_sw(activation + 0x224, scalar[42])",
+            "_sw(activation + 0x234, scalar[45])",
+            "_sw(replacement[i], owner[i])"):
+        if token not in post1f0:
+            fail("functional post-1F0 transaction lacks " + token)
+    first_post1f0_scalar_write = post1f0.find("_sw(0, scalar[i])")
+    last_post1f0_validation = post1f0.find(
+            "!zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)")
+    post1f0_scalar_sync = post1f0.find(
+            "sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4)")
+    post1f0_code_write = post1f0.find("_sw(replacement[i], owner[i])")
+    post1f0_dcache = post1f0.find(
+            "sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4)",
+            post1f0_code_write)
+    post1f0_icache = post1f0.find(
+            "sceKernelIcacheInvalidateRange((const void *)owner[i], 4)",
+            post1f0_dcache)
+    post1f0_install = post1f0.find("bsman->functional_post1f0_install = 1")
+    post1f0_cache = post1f0.find("bsman->functional_post1f0_cache_sync = 1")
+    if not 0 <= last_post1f0_validation < first_post1f0_scalar_write < \
+            post1f0_scalar_sync < post1f0_code_write < post1f0_dcache < \
+            post1f0_icache < post1f0_install < post1f0_cache:
+        fail("functional post-1F0 validation/commit ordering regressed")
+    if post1f0.count("_sw(replacement[i], owner[i])") != 1 or \
+            "for (i = 0; i < 6; i++)" not in \
+                post1f0[post1f0_code_write - 80:post1f0_code_write]:
+        fail("functional post-1F0 transaction is not one six-owner commit")
+    if "_sw(" in post1f0[post1f0.find("activation + 0x1E8"):
+            first_post1f0_scalar_write] or \
+            "_sw(replacement, owner)" in post1f0:
+        fail("functional post-1F0 transaction still owns A+0x1E8")
+    module_start_functional_start = kernel_module_start.find(
+            "zeroCtrlInstallPsp1000FunctionalCompat(mod)")
+    module_start_functional = kernel_module_start[module_start_functional_start:
+            kernel_module_start.find("zeroCtrlInstallBSManClosedShim(mod)",
+                module_start_functional_start)]
+    if "zeroCtrlInstallPsp1000Post1F0Diagnostic(mod)" not in \
+            module_start_functional or \
+            "zeroCtrlInstallPsp1000PostT39Diagnostic(mod)" in \
+            module_start_functional:
+        fail("functional path does not retire the A+0x1E8 installer")
+
+    post1f0_install_marker = minimal.find(
+            "[psp1000-functional-post1f0-install] rev=1 ")
+    post1f0_install_start = minimal.rfind("if (slide_diag.functional_enabled) {",
+            0, post1f0_install_marker)
+    post1f0_runtime_marker = minimal.find(
+            "[psp1000-functional-post1f0] cmp=%u/%u/%u ")
+    runtime_start = minimal.rfind(
+            "if (slide_diag.bsman.functional_post1f0_install &&", 0,
+            post1f0_runtime_marker)
+    post1f0_install_snapshot = minimal[
+            post1f0_install_start:runtime_start]
+    for token in ("validation=%u install=%u cache_sync=%u",
+            "memcmp(post1f0_install,",
+            "observed_functional_post1f0_install"):
+        if token not in post1f0_install_snapshot:
+            fail("functional post-1F0 install output lacks " + token)
+    if "functional_post1f0_install &&" in post1f0_install_snapshot:
+        fail("functional post-1F0 install output is not failure-visible")
+    runtime_end = minimal.find("if (slide_diag.functional_enabled &&",
+            post1f0_runtime_marker)
+    post1f0_runtime = minimal[runtime_start:runtime_end]
+    for token in ("functional_post1f0_cache_sync",
+            "memcmp(post1f0, observed_functional_post1f0",
+            "c200=%u/%u/0x%08X", "c20c=%u/%u/0x%08X",
+            "c214=%u/%u/0x%08X", "loop=%u/%u/%u",
+            "c22c=%u/%u/0x%08X"):
+        if token not in post1f0_runtime:
+            fail("functional post-1F0 runtime output lacks " + token)
+    for forbidden in ("_sw(", "sceKernelDcache", "sceKernelIcache"):
+        if forbidden in post1f0_install_snapshot or forbidden in post1f0_runtime:
+            fail("functional post-1F0 output modifies runtime state")
     research_state_owner = kernel[kernel.find(
             "static void zeroCtrlInstallBSManClosedShim("):
             kernel.find("int OnModuleStart(SceModule2 *mod)")]

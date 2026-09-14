@@ -269,6 +269,8 @@ typedef struct {
     unsigned int functional_post_t39_helper_size;
     unsigned int functional_post_t39_helper_replacement;
     unsigned int functional_post_t39_helper_decoded;
+    int functional_post1f0_validation, functional_post1f0_install;
+    int functional_post1f0_cache_sync;
     int paf_compat_enabled;
     int bsman_not_linked_compat_enabled;
     int activation_cache_sync;
@@ -6188,6 +6190,15 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_functional_post1f0_install[3] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_post1f0[18] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6327,6 +6338,60 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             "stage=%u validation=%u install=%u cache_sync=%u\n",
                             post_t39_install[0], post_t39_install[1],
                             post_t39_install[2], post_t39_install[3]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled) {
+                unsigned int post1f0_install[3];
+                post1f0_install[0] =
+                        slide_diag.bsman.functional_post1f0_validation;
+                post1f0_install[1] =
+                        slide_diag.bsman.functional_post1f0_install;
+                post1f0_install[2] =
+                        slide_diag.bsman.functional_post1f0_cache_sync;
+                if (memcmp(post1f0_install,
+                            observed_functional_post1f0_install,
+                            sizeof(post1f0_install)) != 0) {
+                    memcpy(observed_functional_post1f0_install,
+                            post1f0_install, sizeof(post1f0_install));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-post1f0-install] rev=1 "
+                            "validation=%u install=%u cache_sync=%u\n",
+                            post1f0_install[0], post1f0_install[1],
+                            post1f0_install[2]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.bsman.functional_post1f0_install &&
+                    slide_diag.bsman.functional_post1f0_cache_sync) {
+                static const unsigned int scalar_index[18] = {
+                    0, 1, 2, 9, 11, 13, 18, 20, 22,
+                    27, 29, 31, 35, 36, 37, 44, 46, 48
+                };
+                unsigned int post1f0[18];
+                for (i = 0; i < 18; i++)
+                    post1f0[i] = zeroCtrlReadHelperCounter(
+                            slide_diag.bsman.activation_wide_scalar_addr[
+                                scalar_index[i]]);
+                post1f0[3] = post1f0[3] != 0;
+                post1f0[6] = post1f0[6] != 0;
+                post1f0[9] = post1f0[9] != 0;
+                post1f0[15] = post1f0[15] != 0;
+                if (memcmp(post1f0, observed_functional_post1f0,
+                            sizeof(post1f0)) != 0) {
+                    memcpy(observed_functional_post1f0, post1f0,
+                            sizeof(post1f0));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-post1f0] cmp=%u/%u/%u "
+                            "c200=%u/%u/0x%08X c20c=%u/%u/0x%08X "
+                            "c214=%u/%u/0x%08X loop=%u/%u/%u "
+                            "c22c=%u/%u/0x%08X\n",
+                            post1f0[0], post1f0[1], post1f0[2],
+                            post1f0[3], post1f0[4], post1f0[5],
+                            post1f0[6], post1f0[7], post1f0[8],
+                            post1f0[9], post1f0[10], post1f0[11],
+                            post1f0[12], post1f0[13], post1f0[14],
+                            post1f0[15], post1f0[16], post1f0[17]);
                     zeroCtrlDiagnosticsText(line);
                 }
             }
@@ -9478,6 +9543,104 @@ static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
     bsman->functional_post_t39_stage = 10;
 }
 
+static void zeroCtrlInstallPsp1000Post1F0Diagnostic(SceModule2 *mod) {
+    static const unsigned int owner_offset[6] = {
+        0x1F8, 0x200, 0x20C, 0x214, 0x21C, 0x22C
+    };
+    static const unsigned int delay_word[6] = {
+        0x26100001, 0, 0x00002821, 0x00402021, 0x8FBF001C, 0x00002021
+    };
+    static const unsigned int helper_index[6] = { 0, 1, 3, 5, 7, 8 };
+    static const unsigned int target_offset[4] = {
+        0x2A380, 0x2A290, 0x2A698, 0x2A6F8
+    };
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int activation, owner[6], original[6], replacement[6];
+    unsigned int scalar[52], i;
+
+    if (!bsman->functional_validation || !bsman->functional_install ||
+            !bsman->functional_cache_sync ||
+            !zeroCtrlLoadedModuleMetadataValid(mod) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            mod->text_addr > 0xFFFFFFFFU - 0x9304)
+        return;
+    activation = mod->text_addr + 0x9304;
+    if (bsman->activation_addr != activation ||
+            !zeroCtrlVshModuleRangeValid(mod, activation + 0x1E8, 0x50) ||
+            (_lw(activation + 0x1E8) >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(activation + 0x1E8,
+                _lw(activation + 0x1E8)) != mod->text_addr + 0x2A168 ||
+            _lw(activation + 0x1EC) != 0)
+        return;
+
+    for (i = 0; i < 10; i++)
+        if (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->activation_wide_leaf_addr[i],
+                    bsman->activation_wide_leaf_size[i]))
+            return;
+    for (i = 0; i < 6; i++) {
+        owner[i] = activation + owner_offset[i];
+        original[i] = _lw(owner[i]);
+        replacement[i] = 0x08000000 |
+                ((bsman->activation_wide_leaf_addr[helper_index[i]] >> 2) &
+                    0x03FFFFFF);
+        if (_lw(owner[i] + 4) != delay_word[i] ||
+                ((owner[i] + 4) & 0xF0000000) !=
+                    (bsman->activation_wide_leaf_addr[helper_index[i]] &
+                        0xF0000000) ||
+                zeroCtrlMipsJumpTarget(owner[i], replacement[i]) !=
+                    bsman->activation_wide_leaf_addr[helper_index[i]])
+            return;
+    }
+    if (original[0] != 0x1040000C ||
+            zeroCtrlMipsBranchTarget(owner[0], original[0]) !=
+                activation + 0x22C ||
+            original[4] != 0x1040FFF2 ||
+            zeroCtrlMipsBranchTarget(owner[4], original[4]) !=
+                activation + 0x1E8)
+        return;
+    for (i = 0; i < 4; i++) {
+        unsigned int owner_index = i + 1 + (i == 3 ? 1 : 0);
+        if ((original[owner_index] >> 26) != 3 ||
+                zeroCtrlMipsJumpTarget(owner[owner_index],
+                    original[owner_index]) != mod->text_addr + target_offset[i] ||
+                !zeroCtrlVshModuleRangeValid(mod,
+                    mod->text_addr + target_offset[i], 4))
+            return;
+    }
+    for (i = 0; i < 52; i++) {
+        scalar[i] = bsman->activation_wide_scalar_addr[i];
+        if ((scalar[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
+            return;
+    }
+
+    bsman->functional_post1f0_validation = 1;
+    for (i = 0; i < 52; i++) _sw(0, scalar[i]);
+    _sw(activation + 0x22C, scalar[6]);
+    _sw(activation + 0x200, scalar[7]);
+    _sw(mod->text_addr + 0x2A380, scalar[8]);
+    _sw(activation + 0x208, scalar[10]);
+    _sw(mod->text_addr + 0x2A290, scalar[17]);
+    _sw(activation + 0x214, scalar[19]);
+    _sw(mod->text_addr + 0x2A698, scalar[26]);
+    _sw(activation + 0x21C, scalar[28]);
+    _sw(activation + 0x1E8, scalar[41]);
+    _sw(activation + 0x224, scalar[42]);
+    _sw(mod->text_addr + 0x2A6F8, scalar[43]);
+    _sw(activation + 0x234, scalar[45]);
+    for (i = 0; i < 52; i++)
+        sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
+    for (i = 0; i < 6; i++) {
+        _sw(replacement[i], owner[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4);
+        sceKernelIcacheInvalidateRange((const void *)owner[i], 4);
+    }
+    bsman->functional_post1f0_install = 1;
+    bsman->functional_post1f0_cache_sync = 1;
+}
+
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     const unsigned int target_nid = 0x23E3A9B6;
     static const char paf_library[] = "scePaf";
@@ -10677,7 +10840,7 @@ int OnModuleStart(SceModule2 *mod) {
                 zeroCtrlInstallSonyStartTrace(mod);
                 if (slide_diag.functional_enabled) {
                     zeroCtrlInstallPsp1000FunctionalCompat(mod);
-                    zeroCtrlInstallPsp1000PostT39Diagnostic(mod);
+                    zeroCtrlInstallPsp1000Post1F0Diagnostic(mod);
                 } else {
                     zeroCtrlInstallBSManClosedShim(mod);
                 }
