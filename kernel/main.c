@@ -254,6 +254,31 @@ typedef struct {
     unsigned int stub_form, syscall_code;
     int closed_value;
     int activation_enabled, activation_validation, activation_install;
+    int functional_validation, functional_install, functional_cache_sync;
+    unsigned int functional_activation_stage;
+    int functional_post_t39_validation, functional_post_t39_install;
+    int functional_post_t39_cache_sync;
+    unsigned int functional_post_t39_stage;
+    unsigned int functional_post_t39_helper_fail;
+    unsigned int functional_post_t39_helper_owner;
+    unsigned int functional_post_t39_helper_call;
+    unsigned int functional_post_t39_helper_call_size;
+    unsigned int functional_post_t39_helper_return;
+    unsigned int functional_post_t39_helper_return_size;
+    unsigned int functional_post_t39_helper_text;
+    unsigned int functional_post_t39_helper_size;
+    unsigned int functional_post_t39_helper_replacement;
+    unsigned int functional_post_t39_helper_decoded;
+    int functional_post1f0_validation, functional_post1f0_install;
+    int functional_post1f0_cache_sync;
+    int functional_exit_validation, functional_exit_install;
+    int functional_exit_cache_sync;
+    int functional_return_registered, functional_return_validation;
+    int functional_return_install, functional_return_cache_sync;
+    unsigned int functional_return_leaf, functional_return_leaf_size;
+    unsigned int functional_return_scalar[7];
+    int functional_post_bs_validation, functional_post_bs_install;
+    int functional_post_bs_cache_sync;
     int paf_compat_enabled;
     int bsman_not_linked_compat_enabled;
     int activation_cache_sync;
@@ -2075,11 +2100,14 @@ int zeroCtrlRegisterActivationWide(
     ZeroCtrlActivationWideRegistration copied;
     SceModule2 *helper;
     unsigned int wide_index;
+    int allow_registration;
     int k1;
 
+    allow_registration = bsman->activation_wide_enabled ||
+            slide_diag.functional_enabled;
     /* A NULL call is the user helper's cheap, pre-population gate query. */
-    if (!registration) return bsman->activation_wide_enabled;
-    if (!bsman->activation_wide_enabled || !bsman->registered) return 0;
+    if (!registration) return allow_registration;
+    if (!allow_registration || !bsman->registered) return 0;
     helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     if (!helper || !zeroCtrlVshModuleRangeValid(helper,
                 (unsigned int)registration, sizeof(copied))) return 0;
@@ -2104,6 +2132,33 @@ int zeroCtrlRegisterActivationWide(
         bsman->activation_wide_scalar_addr[wide_index] =
                 copied.scalar_addr[wide_index];
     return 1;
+}
+
+void zeroCtrlRegisterActivationReturn(
+        const ZeroCtrlActivationReturnRegistration *registration) {
+    ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
+    ZeroCtrlActivationReturnRegistration copied;
+    SceModule2 *helper;
+    unsigned int i;
+    int k1;
+    if (!slide_diag.functional_enabled || !b->registered || !registration) return;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!helper || !zeroCtrlVshModuleRangeValid(helper,
+                (unsigned int)registration, sizeof(copied))) return;
+    k1 = pspSdkSetK1(0);
+    memcpy(&copied, registration, sizeof(copied));
+    pspSdkSetK1(k1);
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.leaf_addr,
+                copied.leaf_end_addr)) return;
+    for (i = 0; i < 7; i++)
+        if ((copied.scalar_addr[i] & 3) ||
+                !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[i], 4))
+            return;
+    b->functional_return_leaf = copied.leaf_addr;
+    b->functional_return_leaf_size = copied.leaf_end_addr - copied.leaf_addr;
+    for (i = 0; i < 7; i++)
+        b->functional_return_scalar[i] = copied.scalar_addr[i];
+    b->functional_return_registered = 1;
 }
 
 void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
@@ -2268,7 +2323,8 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                             i == 0 ? stub_58d4_end - stub_58d4 : 24) &&
                         zeroCtrlVshModuleRangeValid(helper, counters[i], 4) &&
                         (i != 0 ||
-                            (zeroCtrlVshModuleRangeValid(helper,
+                            (((evidence->request_addr & 3) == 0) &&
+                            zeroCtrlVshModuleRangeValid(helper,
                                 evidence->request_addr, 4) &&
                             zeroCtrlVshModuleRangeValid(helper,
                                 evidence->original_target_addr, 4) &&
@@ -2291,17 +2347,20 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                 ZeroCtrlVshTriggerEvidence *request_evidence =
                         &slide_diag.triggers[0];
                 if (slide_diag.trigger_mode & ZERO_TRIGGER_58D4) {
-                    _sw(0, request_evidence->request_addr);
                     _sw(request_evidence->original_target,
                             request_evidence->original_target_addr);
                     _sw(slide_diag.functional_enabled ? 1 : 0,
                             request_evidence->functional_mode_addr);
                     sceKernelDcacheWritebackInvalidateRange(
-                            (const void *)request_evidence->request_addr, 4);
-                    sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->original_target_addr, 4);
                     sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->functional_mode_addr, 4);
+                    if (slide_diag.functional_enabled)
+                        _sw(1, request_evidence->request_addr);
+                    else
+                        _sw(0, request_evidence->request_addr);
+                    sceKernelDcacheWritebackInvalidateRange(
+                            (const void *)request_evidence->request_addr, 4);
                 }
                 for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
                     ZeroCtrlVshTriggerEvidence *evidence =
@@ -2317,6 +2376,11 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                             sizeof(unsigned int));
                     evidence->cache_sync = 1;
                 }
+                if (slide_diag.functional_enabled &&
+                        (slide_diag.trigger_mode & ZERO_TRIGGER_58D4) &&
+                        request_evidence->patch_applied == 1 &&
+                        request_evidence->cache_sync == 1)
+                    slide_diag.functional_request_armed = 1;
             }
 
             /* Dangerous global predicate block: never edits direct callers. */
@@ -3931,6 +3995,1787 @@ static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod) {
             mod->text_size != 0 && mod->nsegment != 0 && mod->nsegment <= 4;
 }
 
+static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
+        unsigned int source) {
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+
+    return (word >> 26) == 0 && ((word & 0x3F) == 0x21 ||
+            (word & 0x3F) == 0x25) && ((word >> 11) & 0x1F) == destination &&
+            ((rs == source && rt == 0) || (rs == 0 && rt == source));
+}
+
+enum ZeroCtrlPafA989NearbyOrigin {
+    ZERO_PAF_NEARBY_UNKNOWN = 0,
+    ZERO_PAF_NEARBY_ENTRY_ARG,
+    ZERO_PAF_NEARBY_COPY_ENTRY_ARG,
+    ZERO_PAF_NEARBY_LW_ENTRY_ARG,
+    ZERO_PAF_NEARBY_LW_SAVED_ARG
+};
+
+typedef struct ZeroCtrlPafA989NearbySource {
+    unsigned char origin;
+    unsigned char entry_reg;
+    signed short disp;
+} ZeroCtrlPafA989NearbySource;
+
+enum ZeroCtrlPafA989CallArgKind {
+    ZERO_PAF_CALL_ARG_UNKNOWN = 0,
+    ZERO_PAF_CALL_ARG_COPY,
+    ZERO_PAF_CALL_ARG_LW,
+    ZERO_PAF_CALL_ARG_ADDIU,
+    ZERO_PAF_CALL_ARG_CONSTANT
+};
+
+typedef struct ZeroCtrlPafA989CallArgSource {
+    unsigned char kind;
+    unsigned char parent_reg;
+    signed short disp;
+    unsigned int value;
+} ZeroCtrlPafA989CallArgSource;
+
+static void zeroCtrlPafA989ClearCallArgSource(
+        ZeroCtrlPafA989CallArgSource *source) {
+    source->kind = ZERO_PAF_CALL_ARG_UNKNOWN;
+    source->parent_reg = 0;
+    source->disp = 0;
+    source->value = 0;
+}
+
+static int zeroCtrlPafA989ApplyNearbyInstruction(unsigned int word,
+        ZeroCtrlPafA989NearbySource source[32]) {
+    unsigned int opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int rd = (word >> 11) & 0x1F;
+    int destination = zeroCtrlMipsGprWriteDestination(word);
+
+    if (destination < 0) return 0;
+    if ((zeroCtrlMipsMove(word, rd, rs) ||
+                zeroCtrlMipsMove(word, rd, rt)) && rd != 0) {
+        unsigned int copy_reg = rs == 0 ? rt : rs;
+        source[rd] = source[copy_reg];
+        if (source[rd].origin == ZERO_PAF_NEARBY_ENTRY_ARG)
+            source[rd].origin = ZERO_PAF_NEARBY_COPY_ENTRY_ARG;
+    } else if (opcode == 9 && (short)(word & 0xFFFF) == 0 && rt != 0) {
+        source[rt] = source[rs];
+        if (source[rt].origin == ZERO_PAF_NEARBY_ENTRY_ARG)
+            source[rt].origin = ZERO_PAF_NEARBY_COPY_ENTRY_ARG;
+    } else if (opcode == 0x23 && rt != 0) {
+        ZeroCtrlPafA989NearbySource next = {
+            ZERO_PAF_NEARBY_UNKNOWN, 0, 0
+        };
+        if (source[rs].origin == ZERO_PAF_NEARBY_ENTRY_ARG) {
+            next.origin = ZERO_PAF_NEARBY_LW_ENTRY_ARG;
+            next.entry_reg = source[rs].entry_reg;
+            next.disp = (short)(word & 0xFFFF);
+        } else if (rs >= 16 && rs <= 23 &&
+                source[rs].origin == ZERO_PAF_NEARBY_COPY_ENTRY_ARG) {
+            next.origin = ZERO_PAF_NEARBY_LW_SAVED_ARG;
+            next.entry_reg = source[rs].entry_reg;
+            next.disp = (short)(word & 0xFFFF);
+        }
+        source[rt] = next;
+    } else if (destination != 0) {
+        source[destination].origin = ZERO_PAF_NEARBY_UNKNOWN;
+        source[destination].entry_reg = 0;
+        source[destination].disp = 0;
+    }
+    return 1;
+}
+
+static int zeroCtrlPafA989ApplyCallArgInstruction(unsigned int word,
+        ZeroCtrlPafA989CallArgSource source[32]) {
+    unsigned int opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int rd = (word >> 11) & 0x1F;
+    int destination = zeroCtrlMipsGprWriteDestination(word);
+
+    if (destination < 0) return 0;
+    if ((zeroCtrlMipsMove(word, rd, rs) ||
+                zeroCtrlMipsMove(word, rd, rt)) && rd != 0) {
+        unsigned int copy_reg = rs == 0 ? rt : rs;
+        source[rd] = source[copy_reg];
+        if (source[rd].kind == ZERO_PAF_CALL_ARG_UNKNOWN) {
+            source[rd].kind = ZERO_PAF_CALL_ARG_COPY;
+            source[rd].parent_reg = copy_reg;
+        }
+    } else if (opcode == 9 && rt != 0) {
+        int immediate = (int)(short)(word & 0xFFFF);
+        if (rs == 0) {
+            source[rt].kind = ZERO_PAF_CALL_ARG_CONSTANT;
+            source[rt].parent_reg = 0;
+            source[rt].disp = 0;
+            source[rt].value = (unsigned int)immediate;
+        } else if (source[rs].kind == ZERO_PAF_CALL_ARG_CONSTANT) {
+            source[rt] = source[rs];
+            source[rt].value += immediate;
+        } else {
+            source[rt].kind = ZERO_PAF_CALL_ARG_ADDIU;
+            source[rt].parent_reg = rs;
+            source[rt].disp = (short)immediate;
+            source[rt].value = 0;
+        }
+    } else if (opcode == 0x0F && rs == 0 && rt != 0) {
+        source[rt].kind = ZERO_PAF_CALL_ARG_CONSTANT;
+        source[rt].parent_reg = 0;
+        source[rt].disp = 0;
+        source[rt].value = (word & 0xFFFF) << 16;
+    } else if (opcode == 0x0D && rt != 0 &&
+            source[rs].kind == ZERO_PAF_CALL_ARG_CONSTANT) {
+        source[rt] = source[rs];
+        source[rt].value |= word & 0xFFFF;
+    } else if (opcode == 0x23 && rt != 0) {
+        source[rt].kind = ZERO_PAF_CALL_ARG_LW;
+        source[rt].parent_reg = rs;
+        source[rt].disp = (short)(word & 0xFFFF);
+        source[rt].value = 0;
+    } else if (destination != 0) {
+        zeroCtrlPafA989ClearCallArgSource(&source[destination]);
+    }
+    return 1;
+}
+
+static int zeroCtrlModuleContainingSegment(SceModule2 *mod,
+        unsigned int address, unsigned int *segment, unsigned int *remaining) {
+    unsigned int i;
+
+    if (!zeroCtrlLoadedModuleMetadataValid(mod)) return 0;
+    for (i = 0; i < mod->nsegment; i++) {
+        unsigned int start = mod->segmentaddr[i];
+        unsigned int size = mod->segmentsize[i];
+        if (size != 0 && address >= start && address - start < size) {
+            *segment = i;
+            *remaining = size - (address - start);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void zeroCtrlWritePafA989Inner(SceModule2 *paf,
+        unsigned int target, unsigned int map_size, char *flow,
+        unsigned int flow_size) {
+    unsigned int offset, row, i;
+    unsigned int tracked_callback = 6;
+    unsigned char input_source[32] = { 0 };
+    char line[256];
+
+    /* 1 means input a0, 2 means input a1.  No pointed-to memory is read. */
+    input_source[4] = 1;
+    input_source[5] = 2;
+    snprintf(flow, flow_size, "AMBIGUOUS");
+    if (map_size > 0x200 ||
+            !zeroCtrlVshModuleRangeValid(paf, target, map_size)) return;
+
+    for (row = 0; row < map_size; row += 0x20) {
+        unsigned int words[8] = { 0 };
+        unsigned int count = (map_size - row) / 4;
+        if (count > 8) count = 8;
+        for (i = 0; i < count; i++) words[i] = _lw(target + row + i * 4);
+        snprintf(line, sizeof(line),
+                "[paf-a989-inner-map] off=0x%X w0=%08X w1=%08X "
+                "w2=%08X w3=%08X w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                row, words[0], words[1], words[2], words[3], words[4],
+                words[5], words[6], words[7]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (offset = 0; offset < map_size; offset += 4) {
+        unsigned int pc = target + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int function = word & 0x3F;
+        unsigned int rs = (word >> 21) & 0x1F;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int rd = (word >> 11) & 0x1F;
+        unsigned int branch_target = 0, likely = 0;
+        const char *kind = NULL;
+        if (opcode == 2 || opcode == 3) {
+            kind = opcode == 2 ? "J" : "JAL";
+            branch_target = zeroCtrlMipsJumpTarget(pc, word);
+        } else if (opcode == 0 && (function == 8 || function == 9)) {
+            kind = function == 8 ? "JR" : "JALR";
+        } else if (opcode == 1) {
+            kind = "REGIMM";
+            branch_target = zeroCtrlMipsBranchTarget(pc, word);
+            likely = rt == 2 || rt == 3 || rt == 0x12 || rt == 0x13;
+        } else if ((opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
+            static const char *branches[4] = { "BEQ", "BNE", "BLEZ", "BGTZ" };
+            kind = opcode >= 0x14 ? "BRANCH_LIKELY" : branches[opcode - 4];
+            branch_target = zeroCtrlMipsBranchTarget(pc, word);
+            likely = opcode >= 0x14;
+        }
+        if (kind) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-inner-cf] off=0x%X class=%s target=0x%08X "
+                    "rs=%u rt=%u likely=%u\n", offset, kind, branch_target,
+                    rs, rt, likely);
+            zeroCtrlDiagnosticsText(line);
+        }
+        if (opcode == 9 && rs == 29 && rt == 29) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-inner-frame] off=0x%X class=%s amount=%d\n",
+                    offset, (short)(word & 0xFFFF) < 0 ?
+                    "STACK_ALLOC" : "STACK_FREE", (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+        } else if ((opcode == 0x2B || opcode == 0x23) && rs == 29 && rt == 31) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-inner-frame] off=0x%X class=%s disp=%d\n",
+                    offset, opcode == 0x2B ? "SAVE_RA" : "RESTORE_RA",
+                    (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+        } else if (opcode == 0 && function == 8 && rs == 31) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-inner-frame] off=0x%X class=RETURN\n", offset);
+            zeroCtrlDiagnosticsText(line);
+        }
+
+        if (opcode == 0x2B && rt == tracked_callback) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-callback] status=STORED off=0x%X base_reg=%u disp=%d\n",
+                    offset, rs, (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-callback-store] off=0x%X base_reg=%u disp=%d\n",
+                    offset, rs, (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-storage-base] status=%s source_input=%s\n",
+                    input_source[rs] ? "TRACED" : "UNKNOWN",
+                    input_source[rs] == 1 ? "a0" :
+                    input_source[rs] == 2 ? "a1" : "UNKNOWN");
+            zeroCtrlDiagnosticsText(line);
+            snprintf(flow, flow_size, "STORED");
+            return;
+        }
+        if ((zeroCtrlMipsMove(word, rd, tracked_callback) && rd != 0) ||
+                (opcode == 9 && rs == tracked_callback && rt != 0)) {
+            unsigned int callback_copy = opcode == 9 ? rt : rd;
+            input_source[callback_copy] = 0;
+            tracked_callback = callback_copy;
+            snprintf(line, sizeof(line),
+                    "[paf-a989-callback] status=COPIED off=0x%X dst=%u\n",
+                    offset, tracked_callback);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        if (opcode == 3 || (opcode == 0 && function == 9)) {
+            unsigned int delay, next_segment, next_remaining;
+            unsigned int callback_argument =
+                    tracked_callback >= 4 && tracked_callback <= 7 ?
+                    tracked_callback : 0;
+            int delay_destination;
+            if (map_size < 8 || offset > map_size - 8 ||
+                    !zeroCtrlVshModuleRangeValid(paf, target + offset + 4, 4)) {
+                zeroCtrlDiagnosticsText(
+                        "[paf-a989-callback] status=AMBIGUOUS missing_delay_slot=1\n");
+                return;
+            }
+            delay = _lw(target + offset + 4);
+            delay_destination = zeroCtrlMipsGprWriteDestination(delay);
+            if (delay_destination < 0) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=AMBIGUOUS call_off=0x%X delay_off=0x%X\n",
+                        offset, offset + 4);
+                zeroCtrlDiagnosticsText(line);
+                return;
+            }
+            if ((unsigned int)delay_destination == tracked_callback) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=OVERWRITTEN_IN_DELAY_SLOT "
+                        "call_off=0x%X delay_off=0x%X\n", offset, offset + 4);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(flow, flow_size, "OVERWRITTEN");
+                return;
+            }
+            if ((zeroCtrlMipsMove(delay,
+                        (delay >> 11) & 0x1F, tracked_callback) &&
+                        ((delay >> 11) & 0x1F) != 0) ||
+                    ((delay >> 26) == 9 &&
+                     ((delay >> 21) & 0x1F) == tracked_callback &&
+                     ((delay >> 16) & 0x1F) != 0)) {
+                unsigned int delay_copy = (delay >> 26) == 9 ?
+                        (delay >> 16) & 0x1F : (delay >> 11) & 0x1F;
+                input_source[delay_copy] = 0;
+                if (delay_copy >= 4 && delay_copy <= 7)
+                    callback_argument = delay_copy;
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=COPIED delay_off=0x%X dst=%u\n",
+                        offset + 4, delay_copy);
+                zeroCtrlDiagnosticsText(line);
+            }
+            if (opcode == 0 && function == 9 && rs == tracked_callback) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=USED_IMMEDIATELY off=0x%X reg=%u\n",
+                        offset, tracked_callback);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(flow, flow_size, "USED_IMMEDIATELY");
+                return;
+            }
+            if (callback_argument == 0) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=AMBIGUOUS call_off=0x%X tracked_reg=%u\n",
+                        offset, tracked_callback);
+                zeroCtrlDiagnosticsText(line);
+                return;
+            }
+            snprintf(line, sizeof(line),
+                    "[paf-a989-callback] status=PASSED_TO_CALL off=0x%X reg=%u\n",
+                    offset, callback_argument);
+            zeroCtrlDiagnosticsText(line);
+            snprintf(flow, flow_size, "PASSED_TO_CALL");
+            if (opcode == 3) {
+                unsigned int next = zeroCtrlMipsJumpTarget(pc, word);
+                if (zeroCtrlModuleContainingSegment(paf, next, &next_segment,
+                            &next_remaining)) {
+                    unsigned int next_size = next_remaining > 0x100 ?
+                            0x100 : next_remaining;
+                    unsigned int next_in_text = next >= paf->text_addr &&
+                            next - paf->text_addr < paf->text_size;
+                    if (next_in_text)
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-next] target=0x%08X target_in_text=1 "
+                                "target_off=0x%X callback_arg_reg=%u segment=%u\n",
+                                next, next - paf->text_addr, callback_argument,
+                                next_segment);
+                    else
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-next] target=0x%08X target_in_text=0 "
+                                "target_off=OUTSIDE_TEXT callback_arg_reg=%u segment=%u\n",
+                                next, callback_argument, next_segment);
+                    zeroCtrlDiagnosticsText(line);
+                    if (zeroCtrlVshModuleRangeValid(paf, next, next_size))
+                        for (row = 0; row < next_size; row += 0x20) {
+                            unsigned int words[8] = { 0 };
+                            unsigned int count = (next_size - row) / 4;
+                            if (count > 8) count = 8;
+                            for (i = 0; i < count; i++)
+                                words[i] = _lw(next + row + i * 4);
+                            snprintf(line, sizeof(line),
+                                    "[paf-a989-next-map] off=0x%X w0=%08X w1=%08X w2=%08X w3=%08X w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                                    row, words[0], words[1], words[2], words[3],
+                                    words[4], words[5], words[6], words[7]);
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                }
+            }
+            return;
+        }
+        if (opcode == 1 || opcode == 2 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && function == 8)) break;
+
+        if (zeroCtrlMipsMove(word, rd, rs) && rd != 0) {
+            input_source[rd] = input_source[rs];
+            if (input_source[rs]) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-%s] off=0x%X class=MOVE dst=%u source=%u\n",
+                        input_source[rs] == 2 ? "descriptor" : "context",
+                        offset, rd, rs);
+                zeroCtrlDiagnosticsText(line);
+            }
+        } else if (zeroCtrlMipsMove(word, rd, rt) && rd != 0) {
+            input_source[rd] = input_source[rt];
+            if (input_source[rt]) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-%s] off=0x%X class=MOVE dst=%u source=%u\n",
+                        input_source[rt] == 2 ? "descriptor" : "context",
+                        offset, rd, rt);
+                zeroCtrlDiagnosticsText(line);
+            }
+        } else if ((opcode == 9 || opcode == 0x23) && rt != 0)
+            input_source[rt] = input_source[rs];
+        else {
+            int destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0) {
+                zeroCtrlDiagnosticsText("[paf-a989-callback] status=AMBIGUOUS unknown_destination=1\n");
+                return;
+            }
+            if (destination != 0) input_source[destination] = 0;
+        }
+        if ((opcode == 0x23 || opcode == 0x2B || opcode == 9) &&
+                input_source[rs]) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-%s] off=0x%X class=%s reg=%u base=%u disp=%d\n",
+                    input_source[rs] == 2 ? "descriptor" : "context",
+                    offset, opcode == 0x23 ? "LW" :
+                    opcode == 0x2B ? "SW" : "ADDIU", rt, rs,
+                    (int)(short)(word & 0xFFFF));
+            zeroCtrlDiagnosticsText(line);
+        }
+        {
+            int destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0 || (unsigned int)destination == tracked_callback) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-callback] status=%s off=0x%X\n",
+                        destination < 0 ? "AMBIGUOUS" : "OVERWRITTEN", offset);
+                zeroCtrlDiagnosticsText(line);
+                snprintf(flow, flow_size, "%s", destination < 0 ?
+                        "AMBIGUOUS" : "OVERWRITTEN");
+                return;
+            }
+        }
+    }
+    zeroCtrlDiagnosticsText("[paf-a989-callback] status=AMBIGUOUS bounded_map_exhausted=1\n");
+}
+
+static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
+        unsigned int first_target, unsigned int header_target,
+        unsigned int global_target);
+
+static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
+        const unsigned int constructed[2]);
+
+static void zeroCtrlWritePafA989NearbyFlows(SceModule2 *paf);
+static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf);
+
+static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
+        unsigned int consumer, const unsigned int constructed[2]);
+
+static void zeroCtrlWritePafA989ContainerStructure(SceModule2 *paf,
+        unsigned int inner, unsigned int inner_size) {
+    unsigned int words[0x98 / 4];
+    unsigned int first_target, second_target, middle_target, consumer_target;
+    unsigned int constructed[2];
+    unsigned int consumer_segment, consumer_remaining, consumer_size;
+    unsigned int consumer_in_text;
+    unsigned int i, row;
+    char line[256];
+
+    if (inner_size < sizeof(words) ||
+            !zeroCtrlVshModuleRangeValid(paf, inner, sizeof(words))) {
+        zeroCtrlDiagnosticsText("[paf-a989-container] validation=0\n");
+        return;
+    }
+    for (i = 0; i < sizeof(words) / sizeof(words[0]); i++)
+        words[i] = _lw(inner + i * 4);
+
+    /* Validate the first return and its delay-slot initialization first. */
+    if (!zeroCtrlMipsMove(words[0x14 / 4], 17, 4) ||
+            (words[0x20 / 4] >> 26) != 0x2B ||
+            ((words[0x20 / 4] >> 21) & 0x1F) != 29 ||
+            ((words[0x20 / 4] >> 16) & 0x1F) != 20 ||
+            !zeroCtrlMipsMove(words[0x24 / 4], 20, 6) ||
+            !zeroCtrlMipsMove(words[0x2C / 4], 19, 5) ||
+            (words[0x40 / 4] >> 26) != 3 ||
+            words[0x44 / 4] != 0x24040010 ||
+            (words[0x48 / 4] >> 26) != 0x2B ||
+            ((words[0x48 / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0x48 / 4] >> 16) & 0x1F) != 17 ||
+            (short)(words[0x48 / 4] & 0xFFFF) != 0 ||
+            !zeroCtrlMipsMove(words[0x50 / 4], 16, 2) ||
+            (words[0x54 / 4] >> 26) != 3 ||
+            (words[0x58 / 4] >> 26) != 0x2B ||
+            ((words[0x58 / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0x58 / 4] >> 16) & 0x1F) != 0 ||
+            (short)(words[0x58 / 4] & 0xFFFF) != 4) {
+        zeroCtrlDiagnosticsText("[paf-a989-container] validation=0\n");
+        return;
+    }
+    /* Only after +58 is fixed as the second JAL delay slot is v0 a new return. */
+    if (!zeroCtrlMipsMove(words[0x5C / 4], 17, 2) ||
+            !zeroCtrlMipsMove(words[0x60 / 4], 4, 2) ||
+            (words[0x64 / 4] >> 26) != 3 ||
+            !zeroCtrlMipsMove(words[0x68 / 4], 5, 19) ||
+            (words[0x6C / 4] >> 26) != 0x2B ||
+            ((words[0x6C / 4] >> 21) & 0x1F) != 16 ||
+            ((words[0x6C / 4] >> 16) & 0x1F) != 17 ||
+            (short)(words[0x6C / 4] & 0xFFFF) != 8 ||
+            (words[0x70 / 4] >> 26) != 0x0F ||
+            ((words[0x70 / 4] >> 16) & 0x1F) != 5 ||
+            (words[0x74 / 4] >> 26) != 0x0F ||
+            ((words[0x74 / 4] >> 16) & 0x1F) != 9 ||
+            (words[0x78 / 4] >> 26) != 0x2B ||
+            ((words[0x78 / 4] >> 21) & 0x1F) != 16 ||
+            ((words[0x78 / 4] >> 16) & 0x1F) != 20 ||
+            (short)(words[0x78 / 4] & 0xFFFF) != 12 ||
+            !zeroCtrlMipsMove(words[0x7C / 4], 6, 16) ||
+            (words[0x80 / 4] >> 26) != 9 ||
+            ((words[0x80 / 4] >> 21) & 0x1F) != 5 ||
+            ((words[0x80 / 4] >> 16) & 0x1F) != 5 ||
+            (words[0x84 / 4] >> 26) != 9 ||
+            ((words[0x84 / 4] >> 21) & 0x1F) != 9 ||
+            ((words[0x84 / 4] >> 16) & 0x1F) != 9 ||
+            words[0x88 / 4] != 0x2407FFFF ||
+            words[0x8C / 4] != 0x2408FFFF ||
+            (words[0x90 / 4] >> 26) != 3 ||
+            !zeroCtrlMipsMove(words[0x94 / 4], 4, 0)) {
+        zeroCtrlDiagnosticsText("[paf-a989-container] validation=0\n");
+        return;
+    }
+
+    first_target = zeroCtrlMipsJumpTarget(inner + 0x40, words[0x40 / 4]);
+    second_target = zeroCtrlMipsJumpTarget(inner + 0x54, words[0x54 / 4]);
+    middle_target = zeroCtrlMipsJumpTarget(inner + 0x64, words[0x64 / 4]);
+    consumer_target = zeroCtrlMipsJumpTarget(inner + 0x90, words[0x90 / 4]);
+    constructed[0] = ((words[0x70 / 4] & 0xFFFF) << 16) +
+            (int)(short)(words[0x80 / 4] & 0xFFFF);
+    constructed[1] = ((words[0x74 / 4] & 0xFFFF) << 16) +
+            (int)(short)(words[0x84 / 4] & 0xFFFF);
+
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-container] validation=1 base_reg=16 "
+            "base_origin=CALL_RETURN base_call_off=0x40 base_call_arg0=0x10\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-container-write] off=0x48 field_off=0x0 source=context\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-container-write] off=0x58 field_off=0x4 source=zero "
+            "delay_slot_of=0x54\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-container-write] off=0x6C field_off=0x8 "
+            "source=second_call_return\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-container-write] off=0x78 field_off=0xC source=callback\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-callback-structural] status=STORED_ON_NORMAL_FALLTHROUGH "
+            "store_off=0x78 base_reg=16 disp=12 callback_reg=20\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-container-forward] off=0x7C container_reg=16 arg_reg=6\n");
+    snprintf(line, sizeof(line),
+            "[paf-a989-container-calls] first=0x%08X second=0x%08X "
+            "same=%u middle=0x%08X\n", first_target, second_target,
+            first_target == second_target, middle_target);
+    zeroCtrlDiagnosticsText(line);
+
+    for (i = 0; i < 2; i++) {
+        unsigned int segment, remaining;
+        unsigned int in_text = constructed[i] >= paf->text_addr &&
+                constructed[i] - paf->text_addr < paf->text_size;
+        if ((constructed[i] & 3) != 0 ||
+                !zeroCtrlModuleContainingSegment(paf, constructed[i],
+                    &segment, &remaining)) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-constructed-address] reg=%u address=0x%08X "
+                    "segment_valid=0\n", i == 0 ? 5 : 9, constructed[i]);
+        } else if (in_text) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-constructed-address] reg=%u address=0x%08X "
+                    "segment_valid=1 in_text=1 offset=0x%X segment=%u\n",
+                    i == 0 ? 5 : 9, constructed[i],
+                    constructed[i] - paf->text_addr, segment);
+        } else {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-constructed-address] reg=%u address=0x%08X "
+                    "segment_valid=1 in_text=0 offset=OUTSIDE_TEXT segment=%u\n",
+                    i == 0 ? 5 : 9, constructed[i], segment);
+        }
+        zeroCtrlDiagnosticsText(line);
+    }
+
+    if (!zeroCtrlModuleContainingSegment(paf, consumer_target,
+                &consumer_segment, &consumer_remaining)) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-container-consumer] validation=0\n");
+        return;
+    }
+    consumer_size = consumer_remaining > 0x100 ? 0x100 : consumer_remaining;
+    consumer_size &= ~3U;
+    if (consumer_size == 0 ||
+            !zeroCtrlVshModuleRangeValid(paf, consumer_target, consumer_size)) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-container-consumer] validation=0\n");
+        return;
+    }
+    consumer_in_text = consumer_target >= paf->text_addr &&
+            consumer_target - paf->text_addr < paf->text_size;
+    if (consumer_in_text)
+        snprintf(line, sizeof(line),
+                "[paf-a989-container-consumer] call_off=0x90 target=0x%08X "
+                "container_arg_reg=6 target_in_text=1 target_off=0x%X segment=%u\n",
+                consumer_target, consumer_target - paf->text_addr,
+                consumer_segment);
+    else
+        snprintf(line, sizeof(line),
+                "[paf-a989-container-consumer] call_off=0x90 target=0x%08X "
+                "container_arg_reg=6 target_in_text=0 "
+                "target_off=OUTSIDE_TEXT segment=%u\n", consumer_target,
+                consumer_segment);
+    zeroCtrlDiagnosticsText(line);
+    for (row = 0; row < consumer_size; row += 0x20) {
+        unsigned int mapped[8] = { 0 };
+        unsigned int count = (consumer_size - row) / 4;
+        if (count > 8) count = 8;
+        for (i = 0; i < count; i++)
+            mapped[i] = _lw(consumer_target + row + i * 4);
+        snprintf(line, sizeof(line),
+                "[paf-a989-container-consumer-map] off=0x%X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", row,
+                mapped[0], mapped[1], mapped[2], mapped[3], mapped[4],
+                mapped[5], mapped[6], mapped[7]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    zeroCtrlWritePafA989ConsumerStructure(paf, consumer_target, constructed);
+}
+
+static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
+        unsigned int consumer, const unsigned int constructed[2]) {
+    static const unsigned int call_offsets[5] = {
+        0x3C, 0x6C, 0xA0, 0xB8, 0xC0
+    };
+    unsigned int words[0x100 / 4];
+    unsigned int call_targets[5];
+    unsigned int slot, slot_segment, slot_remaining;
+    unsigned int i, row;
+    char line[256];
+
+    if (!zeroCtrlVshModuleRangeValid(paf, consumer, sizeof(words))) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-consumer-structure] validation=0\n");
+        return;
+    }
+    for (i = 0; i < sizeof(words) / sizeof(words[0]); i++)
+        words[i] = _lw(consumer + i * 4);
+    if (!zeroCtrlMipsMove(words[0x08 / 4], 23, 4) ||
+            !zeroCtrlMipsMove(words[0x10 / 4], 22, 8) ||
+            !zeroCtrlMipsMove(words[0x18 / 4], 21, 6) ||
+            !zeroCtrlMipsMove(words[0x20 / 4], 20, 9) ||
+            !zeroCtrlMipsMove(words[0x28 / 4], 19, 7) ||
+            !zeroCtrlMipsMove(words[0x30 / 4], 18, 5) ||
+            (words[0x3C / 4] >> 26) != 3 ||
+            (zeroCtrlMipsGprWriteDestination(words[0x40 / 4]) < 0) ||
+            (zeroCtrlMipsGprWriteDestination(words[0x40 / 4]) >= 4 &&
+             zeroCtrlMipsGprWriteDestination(words[0x40 / 4]) <= 7) ||
+            (words[0x44 / 4] >> 26) != 0x0A ||
+            ((words[0x44 / 4] >> 21) & 0x1F) != 19 ||
+            ((words[0x44 / 4] >> 16) & 0x1F) != 3 ||
+            (short)(words[0x44 / 4] & 0xFFFF) != 20 ||
+            (words[0x48 / 4] >> 26) != 0x0E ||
+            ((words[0x48 / 4] >> 21) & 0x1F) != 3 ||
+            ((words[0x48 / 4] >> 16) & 0x1F) != 3 ||
+            (words[0x48 / 4] & 0xFFFF) != 1 ||
+            (words[0x4C / 4] >> 26) != 0x0B ||
+            ((words[0x4C / 4] >> 21) & 0x1F) != 18 ||
+            ((words[0x4C / 4] >> 16) & 0x1F) != 4 ||
+            (words[0x4C / 4] & 0xFFFF) != 1 ||
+            (words[0x50 / 4] >> 26) != 0 ||
+            (words[0x50 / 4] & 0x3F) != 0x25 ||
+            ((words[0x50 / 4] >> 11) & 0x1F) != 4 ||
+            !(((((words[0x50 / 4] >> 21) & 0x1F) == 4) &&
+               (((words[0x50 / 4] >> 16) & 0x1F) == 3)) ||
+              ((((words[0x50 / 4] >> 21) & 0x1F) == 3) &&
+               (((words[0x50 / 4] >> 16) & 0x1F) == 4))) ||
+            (words[0x54 / 4] >> 26) != 4 ||
+            ((words[0x54 / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0x54 / 4] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(consumer + 0x54, words[0x54 / 4]) !=
+                consumer + 0xD0 ||
+            !zeroCtrlMipsMove(words[0x58 / 4], 3, 0) ||
+            (words[0x5C / 4] >> 26) != 5 ||
+            ((words[0x5C / 4] >> 21) & 0x1F) != 4 ||
+            ((words[0x5C / 4] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(consumer + 0x5C, words[0x5C / 4]) !=
+                consumer + 0xD4 ||
+            words[0x60 / 4] != 0x8FBF0020 ||
+            (words[0x64 / 4] >> 26) != 4 ||
+            ((words[0x64 / 4] >> 21) & 0x1F) != 20 ||
+            ((words[0x64 / 4] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(consumer + 0x64, words[0x64 / 4]) !=
+                consumer + 0xD4 ||
+            words[0x68 / 4] != 0x24040028 ||
+            (words[0x6C / 4] >> 26) != 3 ||
+            words[0x70 / 4] != 0 ||
+            !zeroCtrlMipsMove(words[0x74 / 4], 17, 2) ||
+            (words[0x78 / 4] >> 26) != 9 ||
+            ((words[0x78 / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0x78 / 4] >> 16) & 0x1F) != 16 ||
+            (short)(words[0x78 / 4] & 0xFFFF) != 8 ||
+            !zeroCtrlMipsMove(words[0x7C / 4], 4, 2) ||
+            (words[0x80 / 4] >> 26) != 4 ||
+            ((words[0x80 / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0x80 / 4] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(consumer + 0x80, words[0x80 / 4]) !=
+                consumer + 0xD0 ||
+            !zeroCtrlMipsMove(words[0x84 / 4], 3, 0) ||
+            words[0x88 / 4] != 0xAC520008 ||
+            !zeroCtrlMipsMove(words[0x8C / 4], 5, 16) ||
+            words[0x90 / 4] != 0xAE150004 ||
+            words[0x94 / 4] != 0xAE130008 ||
+            words[0x98 / 4] != 0xAE16000C ||
+            words[0x9C / 4] != 0xAE140014 ||
+            (words[0xA0 / 4] >> 26) != 3 ||
+            words[0xA4 / 4] != 0xAE000018 ||
+            (words[0xA8 / 4] >> 26) != 0x0F ||
+            ((words[0xA8 / 4] >> 21) & 0x1F) != 0 ||
+            ((words[0xA8 / 4] >> 16) & 0x1F) != 2 ||
+            (words[0xAC / 4] >> 26) != 0x23 ||
+            ((words[0xAC / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0xAC / 4] >> 16) & 0x1F) != 4 ||
+            (words[0xB0 / 4] >> 26) != 0 ||
+            (words[0xB0 / 4] & 0x3F) != 0 ||
+            ((words[0xB0 / 4] >> 21) & 0x1F) != 0 ||
+            ((words[0xB0 / 4] >> 16) & 0x1F) != 23 ||
+            ((words[0xB0 / 4] >> 11) & 0x1F) != 3 ||
+            ((words[0xB0 / 4] >> 6) & 0x1F) != 3 ||
+            !zeroCtrlMipsMove(words[0xB4 / 4], 5, 17) ||
+            (words[0xB8 / 4] >> 26) != 3 ||
+            (words[0xBC / 4] >> 26) != 0 ||
+            (words[0xBC / 4] & 0x3F) != 0x21 ||
+            ((words[0xBC / 4] >> 21) & 0x1F) != 4 ||
+            ((words[0xBC / 4] >> 16) & 0x1F) != 3 ||
+            ((words[0xBC / 4] >> 11) & 0x1F) != 4 ||
+            (words[0xC0 / 4] >> 26) != 3 ||
+            !zeroCtrlMipsMove(words[0xC4 / 4], 4, 23) ||
+            !zeroCtrlMipsMove(words[0xC8 / 4], 3, 0) ||
+            (words[0xCC / 4] >> 26) != 0 ||
+            (words[0xCC / 4] & 0x3F) != 0x0B ||
+            ((words[0xCC / 4] >> 21) & 0x1F) != 16 ||
+            ((words[0xCC / 4] >> 16) & 0x1F) != 2 ||
+            ((words[0xCC / 4] >> 11) & 0x1F) != 3 ||
+            !zeroCtrlMipsMove(words[0xF4 / 4], 2, 3) ||
+            words[0xF8 / 4] != 0x03E00008 ||
+            words[0xFC / 4] != 0x27BD0030) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-consumer-structure] validation=0\n");
+        return;
+    }
+    for (i = 0; i < 0x3C / 4; i++) {
+        int destination = zeroCtrlMipsGprWriteDestination(words[i]);
+        if (destination < 0 || (destination >= 4 && destination <= 7)) {
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-consumer-structure] validation=0\n");
+            return;
+        }
+    }
+    if (constructed[0] == 0 || constructed[1] == 0) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-consumer-structure] validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-consumer-structure] validation=1 "
+            "container_saved_reg=21 first_call_off=0x3C "
+            "first_call_container_arg_reg=6\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-consumer-entry] a0_source=caller_zero "
+            "a1_source=constructed_0 a2_source=inner_container "
+            "a3_source=caller_minus_one t0_source=caller_minus_one "
+            "t1_source=constructed_1\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x00 store_off=0x88 source=constructed_0\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x04 store_off=0x90 source=inner_container\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x08 store_off=0x94 source=minus_one\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x0C store_off=0x98 source=minus_one\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x14 store_off=0x9C source=constructed_1\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-outer-write] field_off=0x18 store_off=0xA4 source=zero "
+            "delay_slot_of=0xA0\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-consumer-known-branch] off=0x5C outcome=NOT_TAKEN "
+            "source=caller_known_values\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-consumer-known-branch] off=0x64 outcome=NOT_TAKEN "
+            "source=caller_known_values\n");
+
+    for (i = 0; i < 5; i++) {
+        unsigned int segment, remaining, map_size, in_text;
+        call_targets[i] = zeroCtrlMipsJumpTarget(
+                consumer + call_offsets[i], words[call_offsets[i] / 4]);
+        if (!zeroCtrlModuleContainingSegment(paf, call_targets[i],
+                    &segment, &remaining)) continue;
+        map_size = remaining > 0x100 ? 0x100 : remaining;
+        map_size &= ~3U;
+        if (map_size == 0 || !zeroCtrlVshModuleRangeValid(paf,
+                    call_targets[i], map_size)) continue;
+        in_text = call_targets[i] >= paf->text_addr &&
+                call_targets[i] - paf->text_addr < paf->text_size;
+        if (in_text)
+            snprintf(line, sizeof(line),
+                    "[paf-a989-consumer-call] call_off=0x%X target=0x%08X "
+                    "target_in_text=1 target_off=0x%X segment=%u "
+                    "container_direct_arg=%u\n", call_offsets[i],
+                    call_targets[i], call_targets[i] - paf->text_addr,
+                    segment, call_offsets[i] == 0x3C);
+        else
+            snprintf(line, sizeof(line),
+                    "[paf-a989-consumer-call] call_off=0x%X target=0x%08X "
+                    "target_in_text=0 target_off=OUTSIDE_TEXT segment=%u "
+                    "container_direct_arg=%u\n", call_offsets[i],
+                    call_targets[i], segment, call_offsets[i] == 0x3C);
+        zeroCtrlDiagnosticsText(line);
+        for (row = 0; row < map_size; row += 0x20) {
+            unsigned int mapped[8] = { 0 };
+            unsigned int count = (map_size - row) / 4;
+            unsigned int j;
+            if (count > 8) count = 8;
+            for (j = 0; j < count; j++)
+                mapped[j] = _lw(call_targets[i] + row + j * 4);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-consumer-call-map] call_off=0x%X off=0x%X "
+                    "w0=%08X w1=%08X w2=%08X w3=%08X "
+                    "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                    call_offsets[i], row, mapped[0], mapped[1], mapped[2],
+                    mapped[3], mapped[4], mapped[5], mapped[6], mapped[7]);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+
+    for (i = 0; i < 2; i++) {
+        unsigned int segment, remaining, map_size;
+        if ((constructed[i] & 3) != 0 ||
+                !zeroCtrlModuleContainingSegment(paf, constructed[i],
+                    &segment, &remaining)) continue;
+        map_size = remaining > (i == 0 ? 0x80 : 0x100) ?
+                (i == 0 ? 0x80 : 0x100) : remaining;
+        map_size &= ~3U;
+        if (map_size == 0 || !zeroCtrlVshModuleRangeValid(paf,
+                    constructed[i], map_size)) continue;
+        for (row = 0; row < map_size; row += 0x20) {
+            unsigned int mapped[8] = { 0 };
+            unsigned int count = (map_size - row) / 4;
+            unsigned int j;
+            if (count > 8) count = 8;
+            for (j = 0; j < count; j++)
+                mapped[j] = _lw(constructed[i] + row + j * 4);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-constructed-map] reg=%u off=0x%X "
+                    "w0=%08X w1=%08X w2=%08X w3=%08X "
+                    "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                    i == 0 ? 5 : 9, row, mapped[0], mapped[1], mapped[2],
+                    mapped[3], mapped[4], mapped[5], mapped[6], mapped[7]);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+
+    slot = ((words[0xA8 / 4] & 0xFFFF) << 16) +
+            (int)(short)(words[0xAC / 4] & 0xFFFF);
+    if ((slot & 3) == 0 && zeroCtrlModuleContainingSegment(paf, slot,
+                &slot_segment, &slot_remaining) &&
+            zeroCtrlVshModuleRangeValid(paf, slot, 4)) {
+        snprintf(line, sizeof(line),
+                "[paf-a989-consumer-slot] address=0x%08X segment_valid=1 "
+                "value=0x%08X segment=%u\n", slot, _lw(slot), slot_segment);
+        zeroCtrlDiagnosticsText(line);
+    } else {
+        snprintf(line, sizeof(line),
+                "[paf-a989-consumer-slot] address=0x%08X segment_valid=0\n",
+                slot);
+        zeroCtrlDiagnosticsText(line);
+    }
+    zeroCtrlWritePafA989ConstructedFlows(paf, constructed);
+    zeroCtrlWritePafA989Downstream(paf, call_targets[0], call_targets[2],
+            call_targets[3]);
+}
+
+static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
+        const unsigned int constructed[2]) {
+    unsigned int segment, remaining, offset, look;
+    unsigned int constructed0_size;
+    unsigned int candidates = 0, reported = 0, closure = 0;
+    char line[256];
+
+    if (!zeroCtrlModuleContainingSegment(paf, constructed[1], &segment,
+                &remaining) || remaining < 0xBC ||
+            !zeroCtrlVshModuleRangeValid(paf, constructed[1], 0xBC)) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-constructed1-indirect] validation=0\n");
+    } else {
+        unsigned int load = _lw(constructed[1] + 0x40);
+        unsigned int branch = _lw(constructed[1] + 0x44);
+        unsigned int delay = _lw(constructed[1] + 0x48);
+        unsigned int jalr = _lw(constructed[1] + 0xB4);
+        unsigned int jalr_delay = _lw(constructed[1] + 0xB8);
+        if (_lw(constructed[1]) == 0x27BDFFF0 &&
+                _lw(constructed[1] + 4) == 0xAFBF0008 &&
+                _lw(constructed[1] + 8) == 0xAFB00000 &&
+                zeroCtrlMipsMove(_lw(constructed[1] + 0x0C), 16, 5) &&
+                (load >> 26) == 0x23 &&
+                ((load >> 21) & 0x1F) == 16 &&
+                ((load >> 16) & 0x1F) == 2 &&
+                (short)(load & 0xFFFF) == 12 &&
+                (branch >> 26) == 5 && ((branch >> 21) & 0x1F) == 2 &&
+                ((branch >> 16) & 0x1F) == 0 &&
+                zeroCtrlMipsBranchTarget(constructed[1] + 0x44, branch) ==
+                    constructed[1] + 0xB4 && delay == 0 &&
+                (jalr >> 26) == 0 && (jalr & 0x3F) == 9 &&
+                ((jalr >> 21) & 0x1F) == 2 &&
+                ((jalr >> 11) & 0x1F) == 31 &&
+                (jalr_delay >> 26) == 0x23 &&
+                ((jalr_delay >> 21) & 0x1F) == 16 &&
+                ((jalr_delay >> 16) & 0x1F) == 4 &&
+                (short)(jalr_delay & 0xFFFF) == 4)
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-constructed1-indirect] validation=1 "
+                    "base_arg_reg=5 target_field_off=0x0C "
+                    "arg0_field_off=0x04 jalr_off=0xB4\n");
+        else
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-constructed1-indirect] validation=0\n");
+    }
+
+    if (!zeroCtrlModuleContainingSegment(paf, constructed[0], &segment,
+                &remaining)) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-constructed0-write] validation=0\n");
+    } else {
+        constructed0_size = remaining > 0x30 ? 0x30 : remaining;
+        constructed0_size &= ~3U;
+        if (constructed0_size == 0x30 && zeroCtrlVshModuleRangeValid(paf,
+                    constructed[0], constructed0_size)) {
+            unsigned int first_call_word = _lw(constructed[0] + 0x14);
+            unsigned int second_call_word = _lw(constructed[0] + 0x24);
+            unsigned int first_call_target = zeroCtrlMipsJumpTarget(
+                    constructed[0] + 0x14, first_call_word);
+            unsigned int second_call_target = zeroCtrlMipsJumpTarget(
+                    constructed[0] + 0x24, second_call_word);
+            unsigned int call_segment, call_remaining;
+            if (_lw(constructed[0]) == 0x27BDFFF0 &&
+                    _lw(constructed[0] + 0x04) == 0xAFB10004 &&
+                    zeroCtrlMipsMove(_lw(constructed[0] + 0x08), 17, 4) &&
+                    _lw(constructed[0] + 0x0C) == 0x240401D8 &&
+                    _lw(constructed[0] + 0x10) == 0xAFBF0008 &&
+                    (first_call_word >> 26) == 3 &&
+                    zeroCtrlModuleContainingSegment(paf, first_call_target,
+                        &call_segment, &call_remaining) &&
+                    _lw(constructed[0] + 0x18) == 0xAFB00000 &&
+                    zeroCtrlMipsMove(_lw(constructed[0] + 0x1C), 16, 2) &&
+                    _lw(constructed[0] + 0x20) == 0x8E250008 &&
+                    (second_call_word >> 26) == 3 &&
+                    zeroCtrlModuleContainingSegment(paf, second_call_target,
+                        &call_segment, &call_remaining) &&
+                    zeroCtrlMipsMove(_lw(constructed[0] + 0x28), 4, 2) &&
+                    _lw(constructed[0] + 0x2C) == 0xAE300004) {
+                zeroCtrlDiagnosticsText(
+                        "[paf-a989-constructed0-write] validation=1 "
+                        "base_arg_reg=4 base_saved_reg=17 field_off=0x04 "
+                        "source=first_call_return_saved_reg source_reg=16 "
+                        "store_off=0x2C\n");
+            } else {
+                zeroCtrlDiagnosticsText(
+                        "[paf-a989-constructed0-write] validation=0\n");
+            }
+        } else {
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-constructed0-write] validation=0\n");
+        }
+    }
+
+    if (!zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size))
+        return;
+    for (offset = 0; offset + 8 <= paf->text_size; offset += 4) {
+        unsigned int load = _lw(paf->text_addr + offset);
+        unsigned int base = (load >> 21) & 0x1F;
+        unsigned int target = (load >> 16) & 0x1F;
+        unsigned char source[32] = { 0 };
+        if ((load >> 26) != 0x23 || target == 0 || base == target ||
+                (short)(load & 0xFFFF) != 0x14) continue;
+        for (look = offset + 4; look <= offset + 0x40 &&
+                look + 4 <= paf->text_size; look += 4) {
+            unsigned int word = _lw(paf->text_addr + look);
+            unsigned int opcode = word >> 26;
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int rd = (word >> 11) & 0x1F;
+            unsigned int function = word & 0x3F;
+            int destination;
+            if (!(opcode == 0 && function == 9)) {
+                destination = zeroCtrlMipsGprWriteDestination(word);
+                if (destination < 0 || (unsigned int)destination == target ||
+                        (unsigned int)destination == base) break;
+            }
+            if (opcode == 0 && function == 9) {
+                unsigned int delay;
+                int delay_destination;
+                unsigned int delay_writes_base;
+                if (rs != target || rd != 31) break;
+                delay = _lw(paf->text_addr + look + 4);
+                delay_destination = zeroCtrlMipsGprWriteDestination(delay);
+                if (delay_destination < 0 ||
+                        (unsigned int)delay_destination == target) break;
+                delay_writes_base =
+                        (unsigned int)delay_destination == base;
+                if ((delay >> 26) == 0x23 &&
+                        ((delay >> 21) & 0x1F) == base &&
+                        (short)(delay & 0xFFFF) == 4 &&
+                        ((delay >> 16) & 0x1F) != 0) {
+                    source[(delay >> 16) & 0x1F] = 1;
+                } else if ((zeroCtrlMipsMove(delay,
+                            (delay >> 11) & 0x1F,
+                            (delay >> 21) & 0x1F) ||
+                            zeroCtrlMipsMove(delay,
+                            (delay >> 11) & 0x1F,
+                            (delay >> 16) & 0x1F)) &&
+                        ((delay >> 11) & 0x1F) != 0) {
+                    unsigned int copy_source =
+                            ((delay >> 21) & 0x1F) == 0 ?
+                            (delay >> 16) & 0x1F : (delay >> 21) & 0x1F;
+                    source[(delay >> 11) & 0x1F] = source[copy_source];
+                } else if ((delay >> 26) == 9 &&
+                        (short)(delay & 0xFFFF) == 0 &&
+                        ((delay >> 16) & 0x1F) != 0) {
+                    source[(delay >> 16) & 0x1F] =
+                            source[(delay >> 21) & 0x1F];
+                } else if (delay_destination != 0) {
+                    source[delay_destination] = 0;
+                }
+                /* A delay-slot load uses the original base before any write. */
+                if (delay_writes_base && !((delay >> 26) == 0x23 &&
+                        ((delay >> 21) & 0x1F) == base &&
+                        (short)(delay & 0xFFFF) == 4))
+                    source[base] = 0;
+                candidates++;
+                if (reported < 16) {
+                    unsigned int back = offset;
+                    unsigned int back_start = offset > 0x40 ?
+                            offset - 0x40 : 0;
+                    unsigned int definition_found = 0;
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-outer14-call-candidate] load_off=0x%X "
+                            "jalr_off=0x%X base_reg=%u target_reg=%u\n",
+                            offset, look, base, target);
+                    zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-outer14-call-provenance] jalr_off=0x%X "
+                            "a1_source=%s\n", look,
+                            source[5] ? "base_plus_0x04" : "UNKNOWN");
+                    zeroCtrlDiagnosticsText(line);
+                    while (back > back_start) {
+                        unsigned int definition_off = back - 4;
+                        unsigned int definition =
+                                _lw(paf->text_addr + definition_off);
+                        unsigned int definition_opcode = definition >> 26;
+                        unsigned int definition_rs =
+                                (definition >> 21) & 0x1F;
+                        unsigned int definition_rt =
+                                (definition >> 16) & 0x1F;
+                        unsigned int definition_function = definition & 0x3F;
+                        int definition_destination;
+                        if (definition_off >= 4) {
+                            unsigned int prior = _lw(paf->text_addr +
+                                    definition_off - 4);
+                            unsigned int prior_opcode = prior >> 26;
+                            unsigned int prior_function = prior & 0x3F;
+                            if (prior_opcode == 1 || prior_opcode == 2 ||
+                                    prior_opcode == 3 ||
+                                    (prior_opcode >= 4 && prior_opcode <= 7) ||
+                                    (prior_opcode >= 0x14 &&
+                                        prior_opcode <= 0x17) ||
+                                    (prior_opcode == 0 &&
+                                        (prior_function == 8 ||
+                                         prior_function == 9)))
+                                break;
+                        }
+                        if (definition_opcode == 1 ||
+                                definition_opcode == 2 ||
+                                definition_opcode == 3 ||
+                                (definition_opcode >= 4 &&
+                                    definition_opcode <= 7) ||
+                                (definition_opcode >= 0x14 &&
+                                    definition_opcode <= 0x17) ||
+                                (definition_opcode == 0 &&
+                                    (definition_function == 8 ||
+                                     definition_function == 9)))
+                            break;
+                        definition_destination =
+                                zeroCtrlMipsGprWriteDestination(definition);
+                        if (definition_destination < 0) break;
+                        if ((unsigned int)definition_destination == base) {
+                            const char *kind = 0;
+                            unsigned int source_reg = definition_rs;
+                            int displacement = 0;
+                            if (zeroCtrlMipsMove(definition, base,
+                                        definition_rs) ||
+                                    zeroCtrlMipsMove(definition, base,
+                                        definition_rt)) {
+                                kind = "MOVE";
+                                source_reg = definition_rs == 0 ?
+                                        definition_rt : definition_rs;
+                            } else if (definition_opcode == 9 &&
+                                    definition_rt == base) {
+                                kind = "ADDIU";
+                                displacement =
+                                        (int)(short)(definition & 0xFFFF);
+                            } else if (definition_opcode == 0x23 &&
+                                    definition_rt == base) {
+                                kind = "LW";
+                                displacement =
+                                        (int)(short)(definition & 0xFFFF);
+                            }
+                            if (kind != 0) {
+                                snprintf(line, sizeof(line),
+                                        "[paf-a989-outer14-base-origin] "
+                                        "load_off=0x%X "
+                                        "status=LOCAL_DEFINITION "
+                                        "definition_off=0x%X kind=%s "
+                                        "source_reg=%u disp=%d "
+                                        "path=BRANCH_FREE_SUFFIX\n",
+                                        offset, definition_off, kind,
+                                        source_reg, displacement);
+                                zeroCtrlDiagnosticsText(line);
+                                definition_found = 1;
+                            }
+                            break;
+                        }
+                        back = definition_off;
+                    }
+                    if (!definition_found) {
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-outer14-base-origin] "
+                                "load_off=0x%X status=UNKNOWN "
+                                "path=BRANCH_FREE_SUFFIX\n", offset);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                    reported++;
+                }
+                if (source[5]) closure = 1;
+                break;
+            }
+            if (opcode == 0x23 && rs == base &&
+                    (short)(word & 0xFFFF) == 4 && rt != 0) {
+                source[rt] = 1;
+            } else if (zeroCtrlMipsMove(word, rd, rs) && rd != 0) {
+                source[rd] = source[rs];
+            } else if (zeroCtrlMipsMove(word, rd, rt) && rd != 0) {
+                source[rd] = source[rt];
+            } else if (opcode == 9 && (short)(word & 0xFFFF) == 0 && rt != 0) {
+                source[rt] = source[rs];
+            } else if (destination != 0) {
+                source[destination] = 0;
+            }
+            if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                    (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17) ||
+                    (opcode == 0 && function == 8)) break;
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[paf-a989-outer14-scan] candidates=%u reported=%u\n",
+            candidates, reported);
+    zeroCtrlDiagnosticsText(line);
+    if (closure) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-outer14-dispatch-shape] validation=1 "
+                "target_field_off=0x14 arg1_field_off=0x04\n");
+        snprintf(line, sizeof(line),
+                "[paf-a989-constructed1-provenance] "
+                "evidence=LOADED_CODE_STRUCTURE if_base_is_a989_outer=1 "
+                "target=0x%08X a1=inner_container execution=NOT_OBSERVED\n",
+                constructed[1]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    zeroCtrlWritePafA989NearbyFlows(paf);
+}
+
+static void zeroCtrlWritePafA989NearbyFlows(SceModule2 *paf) {
+    static const unsigned int candidate_offsets[3] = {
+        0xCFA38, 0xCFB30, 0xCFBF4
+    };
+    unsigned int index;
+    char line[256];
+
+    if (!zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size))
+        return;
+    for (index = 0; index < 3; index++) {
+        unsigned int candidate_off = candidate_offsets[index];
+        unsigned int candidate, candidate_word, base;
+        unsigned int search_start, entry_off = 0, structural_entry = 0;
+        unsigned int strong_entry = 0, previous_jr_ra = 0;
+        unsigned int direct_j_refs = 0, direct_jal_callers = 0;
+        unsigned int cursor, ra_saved = 0;
+        unsigned int caller_reported = 0;
+        unsigned int saved_mask = 0;
+        ZeroCtrlPafA989NearbySource source[32] = { { 0, 0, 0 } };
+        const char *origin = "UNKNOWN";
+
+        if (paf->text_size < 4 || candidate_off > paf->text_size - 4)
+            continue;
+        candidate = paf->text_addr + candidate_off;
+        if (candidate < paf->text_addr ||
+                !zeroCtrlVshModuleRangeValid(paf, candidate, 4)) continue;
+        candidate_word = _lw(candidate);
+        base = (candidate_word >> 21) & 0x1F;
+        if ((candidate_word >> 26) != 0x23 ||
+                (short)(candidate_word & 0xFFFF) != 0x14) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-nearby-function] candidate_off=0x%X "
+                    "entry_off=UNKNOWN status=UNKNOWN "
+                    "entry_evidence=INVALID_CANDIDATE\n", candidate_off);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        search_start = candidate_off > 0x100 ? candidate_off - 0x100 : 0;
+        for (cursor = candidate_off; cursor >= search_start + 4; cursor -= 4) {
+            unsigned int prologue = _lw(paf->text_addr + cursor - 4);
+            unsigned int save;
+            if ((prologue >> 26) != 9 ||
+                    ((prologue >> 21) & 0x1F) != 29 ||
+                    ((prologue >> 16) & 0x1F) != 29 ||
+                    (short)(prologue & 0xFFFF) >= 0)
+                continue;
+            entry_off = cursor - 4;
+            for (save = entry_off + 4;
+                    save <= entry_off + 0x20 && save < candidate_off;
+                    save += 4) {
+                unsigned int save_word = _lw(paf->text_addr + save);
+                if ((save_word >> 26) == 0x2B &&
+                        ((save_word >> 21) & 0x1F) == 29 &&
+                        ((save_word >> 16) & 0x1F) == 31) {
+                    ra_saved = 1;
+                    break;
+                }
+            }
+            break;
+        }
+        if (ra_saved && zeroCtrlVshModuleRangeValid(paf,
+                    paf->text_addr + entry_off, candidate_off - entry_off + 4)) {
+            structural_entry = 1;
+            if (entry_off >= 8 &&
+                    _lw(paf->text_addr + entry_off - 8) == 0x03E00008 &&
+                    zeroCtrlMipsGprWriteDestination(
+                        _lw(paf->text_addr + entry_off - 4)) >= 0)
+                previous_jr_ra = 1;
+            for (cursor = 0; cursor + 4 <= paf->text_size; cursor += 4) {
+                unsigned int caller_word = _lw(paf->text_addr + cursor);
+                unsigned int caller_opcode = caller_word >> 26;
+                if ((caller_opcode == 2 || caller_opcode == 3) &&
+                        zeroCtrlMipsJumpTarget(paf->text_addr + cursor,
+                            caller_word) == paf->text_addr + entry_off) {
+                    if (caller_opcode == 3)
+                        direct_jal_callers++;
+                    else
+                        direct_j_refs++;
+                    if (caller_reported < 16) {
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-nearby-caller] "
+                                "candidate_off=0x%X function_entry=0x%X "
+                                "caller_off=0x%X kind=%s\n",
+                                candidate_off, entry_off, cursor,
+                                caller_opcode == 3 ? "JAL" : "J");
+                        zeroCtrlDiagnosticsText(line);
+                        caller_reported++;
+                    }
+                }
+            }
+        }
+        strong_entry = structural_entry &&
+                (previous_jr_ra || direct_jal_callers != 0);
+        if (!strong_entry) {
+            if (structural_entry)
+                snprintf(line, sizeof(line),
+                        "[paf-a989-nearby-function] candidate_off=0x%X "
+                        "entry_off=0x%X status=UNKNOWN entry_evidence=%s\n",
+                        candidate_off, entry_off, direct_j_refs != 0 ?
+                            "DIRECT_J_ONLY" : "PROLOGUE_ONLY");
+            else
+                snprintf(line, sizeof(line),
+                        "[paf-a989-nearby-function] candidate_off=0x%X "
+                        "entry_off=UNKNOWN status=UNKNOWN "
+                        "entry_evidence=NO_BOUNDARY\n", candidate_off);
+            zeroCtrlDiagnosticsText(line);
+            continue;
+        }
+        snprintf(line, sizeof(line),
+                "[paf-a989-nearby-function] candidate_off=0x%X "
+                "entry_off=0x%X status=VALID entry_evidence=%s\n",
+                candidate_off, entry_off,
+                previous_jr_ra && direct_jal_callers != 0 ?
+                    "PREVIOUS_JR_RA_AND_DIRECT_JAL" :
+                previous_jr_ra ? "PREVIOUS_JR_RA" : "DIRECT_JAL");
+        zeroCtrlDiagnosticsText(line);
+        for (cursor = 4; cursor <= 7; cursor++) {
+            source[cursor].origin = ZERO_PAF_NEARBY_ENTRY_ARG;
+            source[cursor].entry_reg = cursor;
+        }
+        for (cursor = entry_off; cursor < candidate_off; cursor += 4) {
+            unsigned int word = _lw(paf->text_addr + cursor);
+            unsigned int opcode = word >> 26;
+            unsigned int function = word & 0x3F;
+            if (opcode == 0x2B && ((word >> 21) & 0x1F) == 29 &&
+                    ((word >> 16) & 0x1F) >= 16 &&
+                    ((word >> 16) & 0x1F) <= 23)
+                saved_mask |= 1U << (((word >> 16) & 0x1F) - 16);
+            if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17) || opcode == 2 ||
+                    (opcode == 0 && function == 8))
+                break;
+            if (opcode == 0 && function == 9 &&
+                    ((word >> 11) & 0x1F) != 31)
+                break;
+            if (opcode == 3 || (opcode == 0 && function == 9 &&
+                        ((word >> 11) & 0x1F) == 31)) {
+                unsigned int delay;
+                unsigned int reg;
+                if (cursor + 4 >= candidate_off) break;
+                delay = _lw(paf->text_addr + cursor + 4);
+                if ((delay >> 26) == 0x2B &&
+                        ((delay >> 21) & 0x1F) == 29 &&
+                        ((delay >> 16) & 0x1F) >= 16 &&
+                        ((delay >> 16) & 0x1F) <= 23)
+                    saved_mask |= 1U <<
+                            (((delay >> 16) & 0x1F) - 16);
+                if (!zeroCtrlPafA989ApplyNearbyInstruction(delay, source))
+                    break;
+                for (reg = 2; reg <= 15; reg++)
+                    source[reg].origin = ZERO_PAF_NEARBY_UNKNOWN;
+                source[24].origin = ZERO_PAF_NEARBY_UNKNOWN;
+                source[25].origin = ZERO_PAF_NEARBY_UNKNOWN;
+                source[31].origin = ZERO_PAF_NEARBY_UNKNOWN;
+                for (reg = 16; reg <= 23; reg++)
+                    if ((saved_mask & (1U << (reg - 16))) == 0)
+                        source[reg].origin = ZERO_PAF_NEARBY_UNKNOWN;
+                cursor += 4;
+                continue;
+            }
+            if (!zeroCtrlPafA989ApplyNearbyInstruction(word, source)) break;
+        }
+        if (cursor == candidate_off) {
+            if (source[base].origin == ZERO_PAF_NEARBY_ENTRY_ARG)
+                origin = source[base].entry_reg == 4 ? "ENTRY_A0" :
+                        source[base].entry_reg == 5 ? "ENTRY_A1" :
+                        source[base].entry_reg == 6 ? "ENTRY_A2" : "ENTRY_A3";
+            else if (source[base].origin == ZERO_PAF_NEARBY_COPY_ENTRY_ARG)
+                origin = "COPY_OF_ENTRY_ARG";
+            else if (source[base].origin == ZERO_PAF_NEARBY_LW_ENTRY_ARG)
+                origin = "LW_FROM_ENTRY_ARG";
+            else if (source[base].origin == ZERO_PAF_NEARBY_LW_SAVED_ARG)
+                origin = "LW_FROM_SAVED_ARG";
+        }
+        if (cursor != candidate_off ||
+                source[base].origin == ZERO_PAF_NEARBY_UNKNOWN) {
+            source[base].entry_reg = 0;
+            source[base].disp = 0;
+        }
+        snprintf(line, sizeof(line),
+                "[paf-a989-nearby-base-flow] candidate_off=0x%X "
+                "base_reg=%u origin=%s source_reg=%u disp=%d\n",
+                candidate_off, base, origin, source[base].entry_reg,
+                source[base].disp);
+        zeroCtrlDiagnosticsText(line);
+    }
+    zeroCtrlWritePafA989NearbyCallArgs(paf);
+}
+
+static void zeroCtrlWritePafA989UnknownCallArgs(unsigned int call_off,
+        unsigned int target_off) {
+    char line[320];
+    snprintf(line, sizeof(line),
+            "[paf-a989-nearby-call-args] call_validation=0 "
+            "flow_status=UNKNOWN caller_off=0x%X target_off=0x%X "
+            "a0_kind=UNKNOWN a0_parent_reg=0 a0_disp=0 a0_value=0x00000000 "
+            "a1_kind=UNKNOWN a1_parent_reg=0 a1_disp=0 a1_value=0x00000000 "
+            "a2_kind=UNKNOWN a2_parent_reg=0 a2_disp=0 a2_value=0x00000000 "
+            "a3_kind=UNKNOWN a3_parent_reg=0 a3_disp=0 a3_value=0x00000000 "
+            "execution=NOT_OBSERVED\n", call_off, target_off);
+    zeroCtrlDiagnosticsText(line);
+}
+
+static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf) {
+    static const unsigned int call_offsets[4] = {
+        0xCFC64, 0x345B8, 0x34884, 0x344A4
+    };
+    static const unsigned int target_offsets[4] = {
+        0xCFADC, 0xCF9A8, 0xCFB70, 0xCFB70
+    };
+    unsigned int index;
+    char line[320];
+
+    if (!zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size))
+        return;
+    for (index = 0; index < 4; index++) {
+        unsigned int call_off = call_offsets[index];
+        unsigned int target_off = target_offsets[index];
+        unsigned int call, target, word, start_off, end_off, map_size;
+        unsigned int cursor, row, flow_valid = 1;
+        ZeroCtrlPafA989CallArgSource source[32] = { { 0, 0, 0, 0 } };
+        const char *kind[4];
+        unsigned int arg;
+
+        if (paf->text_size < 8 || call_off > paf->text_size - 8 ||
+                target_off > paf->text_size - 4) {
+            zeroCtrlWritePafA989UnknownCallArgs(call_off, target_off);
+            continue;
+        }
+        call = paf->text_addr + call_off;
+        target = paf->text_addr + target_off;
+        if (call < paf->text_addr || target < paf->text_addr ||
+                !zeroCtrlVshModuleRangeValid(paf, call, 8) ||
+                !zeroCtrlVshModuleRangeValid(paf, target, 4)) {
+            zeroCtrlWritePafA989UnknownCallArgs(call_off, target_off);
+            continue;
+        }
+        word = _lw(call);
+        if ((word >> 26) != 3 ||
+                zeroCtrlMipsJumpTarget(call, word) != target) {
+            zeroCtrlWritePafA989UnknownCallArgs(call_off, target_off);
+            continue;
+        }
+        start_off = call_off > 0x40 ? call_off - 0x40 : 0;
+        end_off = call_off + 0x24;
+        if (end_off > paf->text_size) end_off = paf->text_size;
+        map_size = (end_off - start_off) & ~3U;
+        if (map_size == 0 || !zeroCtrlVshModuleRangeValid(paf,
+                    paf->text_addr + start_off, map_size)) continue;
+        for (row = 0; row < map_size; row += 0x20) {
+            unsigned int mapped[8] = { 0 };
+            unsigned int count = (map_size - row) / 4;
+            unsigned int column;
+            if (count > 8) count = 8;
+            for (column = 0; column < count; column++)
+                mapped[column] = _lw(paf->text_addr + start_off + row +
+                        column * 4);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-nearby-caller-map] caller_off=0x%X "
+                    "off=0x%X w0=%08X w1=%08X w2=%08X w3=%08X "
+                    "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                    call_off, start_off + row, mapped[0], mapped[1],
+                    mapped[2], mapped[3], mapped[4], mapped[5], mapped[6],
+                    mapped[7]);
+            zeroCtrlDiagnosticsText(line);
+        }
+        for (cursor = start_off; cursor < call_off; cursor += 4) {
+            unsigned int current = _lw(paf->text_addr + cursor);
+            unsigned int opcode = current >> 26;
+            unsigned int function = current & 0x3F;
+            if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17) || opcode == 2 ||
+                    (opcode == 0 && function == 8)) {
+                flow_valid = 0;
+                break;
+            }
+            if (opcode == 0 && function == 9 &&
+                    ((current >> 11) & 0x1F) != 31) {
+                flow_valid = 0;
+                break;
+            }
+            if (opcode == 3 || (opcode == 0 && function == 9)) {
+                unsigned int delay;
+                unsigned int reg;
+                if (cursor + 4 >= call_off) {
+                    flow_valid = 0;
+                    break;
+                }
+                delay = _lw(paf->text_addr + cursor + 4);
+                if (!zeroCtrlPafA989ApplyCallArgInstruction(delay, source)) {
+                    flow_valid = 0;
+                    break;
+                }
+                for (reg = 2; reg <= 15; reg++)
+                    zeroCtrlPafA989ClearCallArgSource(&source[reg]);
+                zeroCtrlPafA989ClearCallArgSource(&source[24]);
+                zeroCtrlPafA989ClearCallArgSource(&source[25]);
+                zeroCtrlPafA989ClearCallArgSource(&source[31]);
+                cursor += 4;
+                continue;
+            }
+            if (!zeroCtrlPafA989ApplyCallArgInstruction(current, source)) {
+                flow_valid = 0;
+                break;
+            }
+        }
+        if (flow_valid) {
+            unsigned int delay = _lw(call + 4);
+            if (!zeroCtrlPafA989ApplyCallArgInstruction(delay, source))
+                flow_valid = 0;
+        }
+        for (arg = 0; arg < 4; arg++) {
+            unsigned int reg = arg + 4;
+            if (!flow_valid ||
+                    source[reg].kind == ZERO_PAF_CALL_ARG_UNKNOWN)
+                zeroCtrlPafA989ClearCallArgSource(&source[reg]);
+            kind[arg] = source[reg].kind == ZERO_PAF_CALL_ARG_COPY ?
+                    (source[reg].parent_reg >= 16 &&
+                     source[reg].parent_reg <= 23 ?
+                        "COPY_OF_SAVED_REG" : "COPY_OF_REG") :
+                source[reg].kind == ZERO_PAF_CALL_ARG_LW ? "LW" :
+                source[reg].kind == ZERO_PAF_CALL_ARG_ADDIU ? "ADDIU" :
+                source[reg].kind == ZERO_PAF_CALL_ARG_CONSTANT ? "CONSTANT" :
+                "UNKNOWN";
+        }
+        snprintf(line, sizeof(line),
+                "[paf-a989-nearby-call-args] call_validation=1 "
+                "flow_status=%s "
+                "caller_off=0x%X target_off=0x%X "
+                "a0_kind=%s a0_parent_reg=%u a0_disp=%d a0_value=0x%08X "
+                "a1_kind=%s a1_parent_reg=%u a1_disp=%d a1_value=0x%08X "
+                "a2_kind=%s a2_parent_reg=%u a2_disp=%d a2_value=0x%08X "
+                "a3_kind=%s a3_parent_reg=%u a3_disp=%d a3_value=0x%08X "
+                "execution=NOT_OBSERVED\n",
+                flow_valid ? "VALID" : "UNKNOWN", call_off, target_off,
+                kind[0], source[4].parent_reg, source[4].disp, source[4].value,
+                kind[1], source[5].parent_reg, source[5].disp, source[5].value,
+                kind[2], source[6].parent_reg, source[6].disp, source[6].value,
+                kind[3], source[7].parent_reg, source[7].disp, source[7].value);
+        zeroCtrlDiagnosticsText(line);
+    }
+    if (0xCFC44 < paf->text_size && paf->text_size - 0xCFC44 >= 0x50 &&
+            zeroCtrlVshModuleRangeValid(paf, paf->text_addr + 0xCFC44,
+                0x50)) {
+        unsigned int row;
+        for (row = 0; row < 0x50; row += 0x20) {
+            unsigned int mapped[8] = { 0 };
+            unsigned int count = (0x50 - row) / 4;
+            unsigned int column;
+            if (count > 8) count = 8;
+            for (column = 0; column < count; column++)
+                mapped[column] = _lw(paf->text_addr + 0xCFC44 + row +
+                        column * 4);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-cfc64-context] off=0x%X "
+                    "w0=%08X w1=%08X w2=%08X w3=%08X "
+                    "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                    0xCFC44 + row, mapped[0], mapped[1], mapped[2], mapped[3],
+                    mapped[4], mapped[5], mapped[6], mapped[7]);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+}
+
+static int zeroCtrlPafA989ValidateCodeRange(SceModule2 *paf,
+        unsigned int address, unsigned int wanted, unsigned int *size,
+        unsigned int *segment) {
+    unsigned int remaining;
+    if (!zeroCtrlModuleContainingSegment(paf, address, segment, &remaining))
+        return 0;
+    *size = remaining > wanted ? wanted : remaining;
+    *size &= ~3U;
+    return *size != 0 && zeroCtrlVshModuleRangeValid(paf, address, *size);
+}
+
+static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
+        unsigned int first_target, unsigned int header_target,
+        unsigned int global_target) {
+    unsigned int first[10], link[6];
+    unsigned int first_segment, first_size;
+    unsigned int bound_slot, bound_segment, bound_remaining, bound_value;
+    unsigned int adjacent, adjacent_segment, adjacent_size;
+    unsigned int indirect_off = 0xFFFFFFFFU, adjacent_ra_saved = 0;
+    unsigned int caller_total = 0, caller_reported = 0, reference_total = 0;
+    unsigned int data_total = 0, data_reported = 0;
+    unsigned int header_segment, header_size, global_segment, global_size;
+    unsigned int offset, i, row;
+    char line[256];
+
+    if (!zeroCtrlPafA989ValidateCodeRange(paf, first_target,
+                sizeof(first), &first_size, &first_segment) ||
+            first_size != sizeof(first)) {
+        zeroCtrlDiagnosticsText("[paf-a989-first-call-body] validation=0\n");
+        return;
+    }
+    for (i = 0; i < 10; i++) first[i] = _lw(first_target + i * 4);
+    if ((first[0] >> 26) != 1 || ((first[0] >> 21) & 0x1F) != 4 ||
+            ((first[0] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(first_target, first[0]) !=
+                first_target + 0x1C || first[1] != 0x24050001 ||
+            (first[2] >> 26) != 0x0F || ((first[2] >> 21) & 0x1F) != 0 ||
+            ((first[2] >> 16) & 0x1F) != 3 ||
+            (first[3] >> 26) != 0x23 || ((first[3] >> 21) & 0x1F) != 3 ||
+            ((first[3] >> 16) & 0x1F) != 2 ||
+            (first[4] >> 26) != 0 || (first[4] & 0x3F) != 0x2A ||
+            ((first[4] >> 21) & 0x1F) != 4 ||
+            ((first[4] >> 16) & 0x1F) != 2 ||
+            ((first[4] >> 11) & 0x1F) != 2 ||
+            (first[5] >> 26) != 5 || ((first[5] >> 21) & 0x1F) != 2 ||
+            ((first[5] >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(first_target + 0x14, first[5]) !=
+                first_target + 0x20 || first[6] != 0 ||
+            !zeroCtrlMipsMove(first[7], 5, 0) || first[8] != 0x03E00008 ||
+            !zeroCtrlMipsMove(first[9], 2, 5)) {
+        zeroCtrlDiagnosticsText("[paf-a989-first-call-body] validation=0\n");
+        return;
+    }
+    bound_slot = ((first[2] & 0xFFFF) << 16) +
+            (int)(short)(first[3] & 0xFFFF);
+    if ((bound_slot & 3) != 0 ||
+            !zeroCtrlModuleContainingSegment(paf, bound_slot, &bound_segment,
+                &bound_remaining) ||
+            !zeroCtrlVshModuleRangeValid(paf, bound_slot, 4)) {
+        zeroCtrlDiagnosticsText("[paf-a989-first-call-bound] segment_valid=0\n");
+        return;
+    }
+    bound_value = _lw(bound_slot);
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-first-call-body] validation=1 body_size=0x28 "
+            "a2_read=0 a3_read=0 container_arg_used=0\n");
+    snprintf(line, sizeof(line),
+            "[paf-a989-first-call-bound] address=0x%08X segment_valid=1 "
+            "value=0x%08X segment=%u\n", bound_slot, bound_value,
+            bound_segment);
+    zeroCtrlDiagnosticsText(line);
+    snprintf(line, sizeof(line),
+            "[paf-a989-first-call-static-result] caller_a0=0 would_return=%u "
+            "source=loaded_code_and_current_bound execution=NOT_OBSERVED\n",
+            (int)bound_value > 0);
+    zeroCtrlDiagnosticsText(line);
+
+    adjacent = first_target + 0x28;
+    if (adjacent < first_target || !zeroCtrlPafA989ValidateCodeRange(paf,
+                adjacent, 0x100, &adjacent_size, &adjacent_segment) ||
+            adjacent_size < 0x20 || (short)(_lw(adjacent) & 0xFFFF) >= 0 ||
+            (_lw(adjacent) >> 26) != 9 ||
+            ((_lw(adjacent) >> 21) & 0x1F) != 29 ||
+            ((_lw(adjacent) >> 16) & 0x1F) != 29) {
+        zeroCtrlDiagnosticsText("[paf-a989-adjacent-indirect] validation=0\n");
+        return;
+    }
+    for (offset = 4; offset + 20 <= adjacent_size; offset += 4) {
+        unsigned int frame_word = _lw(adjacent + offset);
+        unsigned int *w = (unsigned int *)(adjacent + offset);
+        if ((frame_word >> 26) == 0x2B &&
+                ((frame_word >> 21) & 0x1F) == 29 &&
+                ((frame_word >> 16) & 0x1F) == 31) adjacent_ra_saved = 1;
+        unsigned int w0 = _lw((unsigned int)&w[0]);
+        unsigned int w1 = _lw((unsigned int)&w[1]);
+        unsigned int w2 = _lw((unsigned int)&w[2]);
+        unsigned int w3 = _lw((unsigned int)&w[3]);
+        unsigned int w4 = _lw((unsigned int)&w[4]);
+        if ((w0 >> 26) == 0x23 && ((w0 >> 21) & 0x1F) == 5 &&
+                ((w0 >> 16) & 0x1F) == 16 && (short)(w0 & 0xFFFF) == 0 &&
+                (w1 >> 26) == 0x23 && ((w1 >> 21) & 0x1F) == 16 &&
+                ((w1 >> 16) & 0x1F) == 4 && (short)(w1 & 0xFFFF) == 4 &&
+                (w2 >> 26) == 0x23 && ((w2 >> 21) & 0x1F) == 16 &&
+                ((w2 >> 16) & 0x1F) == 2 && (short)(w2 & 0xFFFF) == 0 &&
+                (w3 >> 26) == 0 && (w3 & 0x3F) == 9 &&
+                ((w3 >> 21) & 0x1F) == 2 && ((w3 >> 11) & 0x1F) == 31 &&
+                zeroCtrlMipsMove(w4, 5, 16)) {
+            indirect_off = offset;
+            break;
+        }
+    }
+    if (indirect_off == 0xFFFFFFFFU || !adjacent_ra_saved) {
+        zeroCtrlDiagnosticsText("[paf-a989-adjacent-indirect] validation=0\n");
+        return;
+    }
+    snprintf(line, sizeof(line),
+            "[paf-a989-adjacent-indirect] validation=1 off=0x%X "
+            "base_source=mem_a1_plus_0 target_source=base_plus_0 "
+            "arg0_source=base_plus_4 arg1_source=base\n", indirect_off);
+    zeroCtrlDiagnosticsText(line);
+
+    if (zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)) {
+        for (offset = 0; offset + 8 <= paf->text_size; offset += 4) {
+            unsigned int pc = paf->text_addr + offset;
+            unsigned int word = _lw(pc);
+            unsigned int opcode = word >> 26;
+            if ((opcode == 2 || opcode == 3) &&
+                    zeroCtrlMipsJumpTarget(pc, word) == adjacent) {
+                caller_total++;
+                if (caller_reported < 16) {
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-adjacent-caller] kind=%s call_off=0x%X "
+                            "target_off=0x%X\n", opcode == 3 ? "JAL" : "J",
+                            offset, adjacent - paf->text_addr);
+                    zeroCtrlDiagnosticsText(line);
+                    if (offset >= 0x40 && offset + 0x40 <= paf->text_size &&
+                            zeroCtrlVshModuleRangeValid(paf,
+                                paf->text_addr + offset - 0x40, 0x80)) {
+                        for (row = 0; row < 0x80; row += 0x20) {
+                            unsigned int address = paf->text_addr + offset -
+                                    0x40 + row;
+                            snprintf(line, sizeof(line),
+                                    "[paf-a989-adjacent-caller-map] caller=%u "
+                                    "off=0x%X w0=%08X w1=%08X w2=%08X w3=%08X "
+                                    "w4=%08X w5=%08X w6=%08X w7=%08X\n",
+                                    caller_reported, offset - 0x40 + row,
+                                    _lw(address), _lw(address + 4),
+                                    _lw(address + 8), _lw(address + 12),
+                                    _lw(address + 16), _lw(address + 20),
+                                    _lw(address + 24), _lw(address + 28));
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                    }
+                    caller_reported++;
+                }
+            }
+            if (offset + 8 <= paf->text_size && opcode == 0x0F &&
+                    ((word >> 21) & 0x1F) == 0) {
+                unsigned int reg = (word >> 16) & 0x1F;
+                unsigned int low = _lw(pc + 4);
+                unsigned int low_opcode = low >> 26;
+                if (reg != 0 && (low_opcode == 9 || low_opcode == 0x0D) &&
+                        ((low >> 21) & 0x1F) == reg &&
+                        ((low >> 16) & 0x1F) == reg) {
+                    unsigned int address = (word & 0xFFFF) << 16;
+                    address = low_opcode == 9 ?
+                            address + (int)(short)(low & 0xFFFF) :
+                            address | (low & 0xFFFF);
+                    if (address == adjacent) {
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-adjacent-address-ref] off=0x%X "
+                                "reg=%u form=%s\n", offset, reg,
+                                low_opcode == 9 ? "LUI_ADDIU" : "LUI_ORI");
+                        zeroCtrlDiagnosticsText(line);
+                        reference_total++;
+                    }
+                }
+            }
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[paf-a989-adjacent-scan] direct_callers=%u reported=%u "
+            "address_refs=%u\n", caller_total, caller_reported,
+            reference_total);
+    zeroCtrlDiagnosticsText(line);
+    for (i = 0; i < paf->nsegment; i++) {
+        unsigned int start = paf->segmentaddr[i];
+        unsigned int size = paf->segmentsize[i];
+        unsigned int scan_size = size > 0x40000 ? 0x40000 : size;
+        scan_size &= ~3U;
+        if ((start & 3) != 0 || scan_size == 0 ||
+                !zeroCtrlVshModuleRangeValid(paf, start, scan_size)) continue;
+        for (offset = 0; offset < scan_size; offset += 4) {
+            unsigned int address = start + offset;
+            if (address >= paf->text_addr &&
+                    address - paf->text_addr < paf->text_size) continue;
+            if (_lw(address) != adjacent) continue;
+            data_total++;
+            if (data_reported < 16) {
+                snprintf(line, sizeof(line),
+                        "[paf-a989-adjacent-data-ref] segment=%u offset=0x%X\n",
+                        i, offset);
+                zeroCtrlDiagnosticsText(line);
+                data_reported++;
+            }
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[paf-a989-adjacent-data-scan] matches=%u reported=%u\n",
+            data_total, data_reported);
+    zeroCtrlDiagnosticsText(line);
+
+    if (!zeroCtrlPafA989ValidateCodeRange(paf, header_target, 8,
+                &header_size, &header_segment) || header_size != 8 ||
+            _lw(header_target) != 0x03E00008 ||
+            _lw(header_target + 4) != 0xAC850004) {
+        zeroCtrlDiagnosticsText("[paf-a989-header-link] validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-header-link] validation=1 write_base_arg=4 "
+            "write_value_arg=5 field_off=4 header_base=allocation_return "
+            "header_plus_4=outer_block execution=NOT_OBSERVED\n");
+
+    if (!zeroCtrlPafA989ValidateCodeRange(paf, global_target, sizeof(link),
+                &global_size, &global_segment) || global_size != sizeof(link)) {
+        zeroCtrlDiagnosticsText("[paf-a989-global-link] validation=0\n");
+        return;
+    }
+    for (i = 0; i < 6; i++) link[i] = _lw(global_target + i * 4);
+    if (link[0] != 0x8C830004 || link[1] != 0xAC850004 ||
+            link[2] != 0x8C620000 || link[3] != 0xACA20000 ||
+            link[4] != 0x03E00008 || link[5] != 0xAC650000) {
+        zeroCtrlDiagnosticsText("[paf-a989-global-link] validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-global-link] validation=1 base_plus_4=arg1 "
+            "arg1_plus_0=old_base_plus_4_plus_0 "
+            "old_base_plus_4_plus_0=arg1 caller_a0=slot_value "
+            "caller_a1=allocation_return execution=NOT_OBSERVED\n");
+    zeroCtrlDiagnosticsText(
+            "[paf-a989-static-chain] evidence=LOADED_CODE_NORMAL_FALLTHROUGH "
+            "global_slot_to_header=STRUCTURALLY_LINKED "
+            "header_plus_4_to_outer=STRUCTURALLY_LINKED "
+            "outer_plus_4_to_inner=STRUCTURALLY_LINKED "
+            "inner_plus_C_to_vsh589c=STRUCTURALLY_STORED "
+            "execution=NOT_OBSERVED\n");
+}
+
 static void zeroCtrlWriteVsh3f568ImplFlow(SceModule2 *owner,
         unsigned int target, unsigned int size, char *status,
         unsigned int status_size) {
@@ -4064,9 +5909,7 @@ static int zeroCtrlVsh3f568A1PairReaches(SceModule2 *vsh,
 }
 
 static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
-    unsigned int callers[16];
-    unsigned int caller_count = 0;
-    unsigned int offset, row, i, matches = 0;
+    unsigned int i, matches = 0;
     unsigned int text, stub, thunk_word, resolved;
     unsigned int word_56fc, word_5700, word_5704, word_5708, decoded_a1;
     unsigned int table_addr, table_size, table_offset = 0;
@@ -4077,11 +5920,10 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     unsigned int owner_segment = 0xFFFFFFFFU;
     unsigned int impl_size = 0;
     unsigned int target_in_text = 0;
-    char a1_status[32];
     char line[256];
 
     if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
-            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
             !slide_diag.vsh_module_seen)
         return;
     vsh = sceKernelFindModuleByName("vsh_module");
@@ -4174,7 +6016,9 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
             table_offset += entry_size;
         }
     }
-    if (matches != 1 || import_library[0] == '\0') {
+    if (matches != 1 || import_library[0] == '\0' ||
+            strcmp(import_library, "scePaf") != 0 ||
+            import_nid != 0xA989A2C4) {
         snprintf(line, sizeof(line),
                 "[vsh3f568-import] validation=0 matches=%u\n", matches);
         zeroCtrlDiagnosticsText(line);
@@ -4189,6 +6033,11 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     zeroCtrlDiagnosticsText(line);
 
     owner = sceKernelFindModuleByAddress(resolved);
+    if (!zeroCtrlLoadedModuleMetadataValid(owner) ||
+            strcmp(owner->modname, "scePaf_Module") != 0) {
+        zeroCtrlDiagnosticsText("[vsh3f568-owner] validation=0\n");
+        return;
+    }
     if (zeroCtrlLoadedModuleMetadataValid(owner)) {
         for (i = 0; i < owner->nsegment; i++) {
             unsigned int start = owner->segmentaddr[i];
@@ -4208,138 +6057,103 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
                 "[vsh3f568-summary] stub=1 import_match=1 owner_match=0 a1_flow=AMBIGUOUS\n");
         return;
     }
-    target_in_text = resolved >= owner->text_addr &&
-            resolved - owner->text_addr < owner->text_size;
-    if (target_in_text)
-        snprintf(line, sizeof(line),
-                "[vsh3f568-owner] validation=1 module=%s modid=0x%08X "
-                "text=0x%08X text_size=0x%08X target=0x%08X "
-                "target_in_text=1 target_off=0x%X segment=%u\n",
-                owner->modname, owner->modid, owner->text_addr,
-                owner->text_size, resolved, resolved - owner->text_addr,
-                owner_segment);
-    else
-        snprintf(line, sizeof(line),
-                "[vsh3f568-owner] validation=1 module=%s modid=0x%08X "
-                "text=0x%08X text_size=0x%08X target=0x%08X "
-                "target_in_text=0 target_off=OUTSIDE_TEXT segment=%u\n",
-                owner->modname, owner->modid, owner->text_addr,
-                owner->text_size, resolved, owner_segment);
-    zeroCtrlDiagnosticsText(line);
+    {
+        unsigned int wrapper[11];
+        unsigned int inner, inner_segment, inner_remaining, inner_size;
+        unsigned int context_slot, context_segment, context_remaining;
+        unsigned int wrapper_off = resolved >= owner->text_addr &&
+                resolved - owner->text_addr < owner->text_size ?
+                resolved - owner->text_addr : 0;
+        unsigned int wrapper_valid;
+        unsigned int inner_in_text;
+        unsigned int context_valid;
+        char callback_flow[32];
 
-    for (row = 0; row + 4 <= impl_size; row += 0x20) {
-        unsigned int words[8] = { 0 };
-        unsigned int count = (impl_size - row) / 4;
-        if (count > 8) count = 8;
-        for (i = 0; i < count; i++) words[i] = _lw(resolved + row + i * 4);
+        if (!zeroCtrlVshModuleRangeValid(owner, resolved, sizeof(wrapper))) {
+            zeroCtrlDiagnosticsText("[paf-a989-wrapper] validation=0\n");
+            return;
+        }
+        for (i = 0; i < 11; i++) wrapper[i] = _lw(resolved + i * 4);
+        wrapper_valid = (wrapper[0] >> 26) == 0x0F &&
+                ((wrapper[0] >> 21) & 0x1F) == 0 &&
+                ((wrapper[0] >> 16) & 0x1F) == 3 &&
+                zeroCtrlMipsMove(wrapper[1], 2, 4) &&
+                (wrapper[2] >> 26) == 0x23 &&
+                ((wrapper[2] >> 21) & 0x1F) == 3 &&
+                ((wrapper[2] >> 16) & 0x1F) == 4 &&
+                wrapper[3] == 0x27BDFFF0 &&
+                zeroCtrlMipsMove(wrapper[4], 6, 5) &&
+                wrapper[5] == 0xAFBF0000 &&
+                (wrapper[6] >> 26) == 3 &&
+                zeroCtrlMipsMove(wrapper[7], 5, 2) &&
+                wrapper[8] == 0x8FBF0000 && wrapper[9] == 0x03E00008 &&
+                wrapper[10] == 0x27BD0010;
+        if (!wrapper_valid) {
+            zeroCtrlDiagnosticsText("[paf-a989-wrapper] validation=0\n");
+            return;
+        }
+        inner = zeroCtrlMipsJumpTarget(resolved + 0x18, wrapper[6]);
+        inner_in_text = inner >= owner->text_addr &&
+                inner - owner->text_addr < owner->text_size;
+        context_slot = ((wrapper[0] & 0xFFFF) << 16) +
+                (int)(short)(wrapper[2] & 0xFFFF);
+        context_valid = (context_slot & 3) == 0 &&
+                zeroCtrlModuleContainingSegment(owner, context_slot,
+                    &context_segment, &context_remaining) &&
+                zeroCtrlVshModuleRangeValid(owner, context_slot, 4);
+        if (inner_in_text)
+            snprintf(line, sizeof(line),
+                    "[paf-a989-wrapper] validation=1 wrapper_off=0x%X "
+                    "inner=0x%08X inner_in_text=1 inner_off=0x%X "
+                    "callback_reg=6 descriptor_reg=5 context_reg=4\n",
+                    wrapper_off, inner, inner - owner->text_addr);
+        else
+            snprintf(line, sizeof(line),
+                    "[paf-a989-wrapper] validation=1 wrapper_off=0x%X "
+                    "inner=0x%08X inner_in_text=0 inner_off=OUTSIDE_TEXT "
+                    "callback_reg=6 descriptor_reg=5 context_reg=4\n",
+                    wrapper_off, inner);
+        zeroCtrlDiagnosticsText(line);
         snprintf(line, sizeof(line),
-                "[vsh3f568-impl-map] module=%s target_in_text=%u "
-                "target_off=0x%X row=0x%X "
-                "w0=%08X w1=%08X w2=%08X w3=%08X "
-                "w4=%08X w5=%08X w6=%08X w7=%08X\n", owner->modname,
-                target_in_text,
-                target_in_text ? resolved - owner->text_addr : 0,
-                row, words[0], words[1], words[2], words[3], words[4],
-                words[5], words[6], words[7]);
+                "[paf-a989-context-slot] address=0x%08X segment_valid=%u\n",
+                context_slot, context_valid);
+        zeroCtrlDiagnosticsText(line);
+        if (context_valid) {
+            snprintf(line, sizeof(line),
+                    "[paf-a989-context-slot] value=0x%08X\n",
+                    _lw(context_slot));
+            zeroCtrlDiagnosticsText(line);
+        }
+        if (!zeroCtrlModuleContainingSegment(owner, inner, &inner_segment,
+                    &inner_remaining) ||
+                !zeroCtrlVshModuleRangeValid(owner, inner, 4)) {
+            zeroCtrlDiagnosticsText("[paf-a989-inner] validation=0\n");
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-summary] wrapper_valid=1 inner_valid=0 callback_flow=AMBIGUOUS\n");
+            return;
+        }
+        target_in_text = inner >= owner->text_addr &&
+                inner - owner->text_addr < owner->text_size;
+        snprintf(line, sizeof(line),
+                "[paf-a989-inner] validation=1 target=0x%08X "
+                "target_in_text=%u target_off=0x%X segment=%u\n", inner,
+                target_in_text, target_in_text ? inner - owner->text_addr : 0,
+                inner_segment);
+        zeroCtrlDiagnosticsText(line);
+        inner_size = inner_remaining > 0x200 ? 0x200 : inner_remaining;
+        inner_size &= ~3U;
+        zeroCtrlWritePafA989Inner(owner, inner, inner_size, callback_flow,
+                sizeof(callback_flow));
+        zeroCtrlWritePafA989ContainerStructure(owner, inner, inner_size);
+        snprintf(line, sizeof(line),
+                "[paf-a989-summary] wrapper_valid=1 inner_valid=1 "
+                "callback_flow=%s\n", callback_flow);
         zeroCtrlDiagnosticsText(line);
     }
-    for (offset = 0; offset < impl_size; offset += 4) {
-        unsigned int pc = resolved + offset;
-        unsigned int word = _lw(pc);
-        unsigned int opcode = word >> 26;
-        unsigned int function = word & 0x3F;
-        unsigned int rs = (word >> 21) & 0x1F;
-        unsigned int rt = (word >> 16) & 0x1F;
-        unsigned int target = 0, likely = 0;
-        const char *kind = NULL;
-        if (opcode == 2 || opcode == 3) {
-            kind = opcode == 2 ? "J" : "JAL";
-            target = zeroCtrlMipsJumpTarget(pc, word);
-        } else if (opcode == 0 && (function == 8 || function == 9)) {
-            kind = function == 8 ? "JR" : "JALR";
-        } else if (opcode == 1) {
-            kind = "REGIMM";
-            target = zeroCtrlMipsBranchTarget(pc, word);
-            likely = rt == 2 || rt == 3 || rt == 0x12 || rt == 0x13;
-        } else if ((opcode >= 4 && opcode <= 7) ||
-                (opcode >= 0x14 && opcode <= 0x17)) {
-            kind = opcode >= 0x14 ? "BRANCH_LIKELY" : "BRANCH";
-            target = zeroCtrlMipsBranchTarget(pc, word);
-            likely = opcode >= 0x14;
-        }
-        if (kind) {
-            snprintf(line, sizeof(line),
-                    "[vsh3f568-impl-cf] off=0x%X class=%s target=0x%08X "
-                    "rs=%u rt=%u likely=%u\n", offset, kind, target,
-                    rs, rt, likely);
-            zeroCtrlDiagnosticsText(line);
-        }
-        if (opcode == 9 && rs == 29 && rt == 29) {
-            snprintf(line, sizeof(line),
-                    "[vsh3f568-impl-frame] off=0x%X class=%s amount=%d\n",
-                    offset, (short)(word & 0xFFFF) < 0 ?
-                    "STACK_ALLOC" : "STACK_FREE",
-                    (short)(word & 0xFFFF));
-            zeroCtrlDiagnosticsText(line);
-        } else if ((opcode == 0x2B || opcode == 0x23) &&
-                rs == 29 && rt == 31) {
-            snprintf(line, sizeof(line),
-                    "[vsh3f568-impl-frame] off=0x%X class=%s disp=%d\n",
-                    offset, opcode == 0x2B ? "SAVE_RA" : "RESTORE_RA",
-                    (int)(short)(word & 0xFFFF));
-            zeroCtrlDiagnosticsText(line);
-        } else if (opcode == 0 && function == 8 && rs == 31) {
-            snprintf(line, sizeof(line),
-                    "[vsh3f568-impl-frame] off=0x%X class=RETURN\n", offset);
-            zeroCtrlDiagnosticsText(line);
-        }
-    }
-    zeroCtrlWriteVsh3f568ImplFlow(owner, resolved, impl_size,
-            a1_status, sizeof(a1_status));
 
-    for (offset = 0; offset + 8 <= vsh->text_size; offset += 4) {
-        unsigned int pc = text + offset;
-        unsigned int word = _lw(pc);
-        if ((word >> 26) == 3 && zeroCtrlMipsJumpTarget(pc, word) == stub &&
-                caller_count < 16)
-            callers[caller_count++] = offset;
-    }
-    for (i = 0; i < caller_count; i++) {
-        unsigned int call = callers[i];
-        unsigned int delay = _lw(text + call + 4);
-        unsigned int pointer = 0, known = 0, back;
-        for (back = call; back >= 8 && back + 0x20 >= call; back -= 4) {
-            unsigned int lui = _lw(text + back - 8);
-            unsigned int low = _lw(text + back - 4);
-            unsigned int reg = (lui >> 16) & 0x1F;
-            unsigned int low_opcode = low >> 26;
-            if ((lui >> 26) == 0x0F && ((lui >> 21) & 0x1F) == 0 && reg == 5 &&
-                    (low_opcode == 9 || low_opcode == 0x0D) &&
-                    ((low >> 21) & 0x1F) == 5 && ((low >> 16) & 0x1F) == 5) {
-                unsigned int upper = (lui & 0xFFFF) << 16;
-                pointer = low_opcode == 9 ? upper + (int)(short)(low & 0xFFFF) :
-                        upper | (low & 0xFFFF);
-                if (zeroCtrlVsh3f568A1PairReaches(vsh, back - 4, call)) {
-                    known = 1;
-                    break;
-                }
-            }
-        }
-        snprintf(line, sizeof(line),
-                "[vsh3f568-use] index=%u caller_off=0x%05X "
-                "delay_word=0x%08X a0_delay_source=%s a1_status=%s "
-                "a1_pointer=0x%08X a1_relative_to_vsh=%s0x%X\n", i, call,
-                delay, ((delay >> 26) == 0 && ((delay >> 11) & 0x1F) == 4) ?
-                "decoded_gpr" : "UNKNOWN", known ? "PROVEN" : "UNKNOWN",
-                known ? pointer : 0, known && pointer >= text ? "" : "UNKNOWN_",
-                known && pointer >= text ? pointer - text : 0);
-        zeroCtrlDiagnosticsText(line);
-    }
-    snprintf(line, sizeof(line),
-            "[vsh3f568-summary] stub=1 import_match=1 owner_match=1 a1_flow=%s\n",
-            a1_status);
-    zeroCtrlDiagnosticsText(line);
 }
+static unsigned int zeroCtrlReadTriggerHits(unsigned int index);
+
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
     unsigned int elapsed = 0;
     unsigned int written = 0;
@@ -4398,6 +6212,53 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int vsh3f568_scan_written = 0;
     unsigned int observed_runtime_request_called = 0;
     unsigned int observed_runtime_request_result = 0xFFFFFFFF;
+    unsigned int observed_functional_activation_stage = 0;
+    unsigned int observed_functional_compat[9] = { 0 };
+    unsigned int observed_functional_compat2[12] = { 0 };
+    int observed_functional_compat_valid = 0;
+    unsigned int observed_functional_post_t39[3] = { 0, 0, 0 };
+    int observed_functional_post_t39_valid = 0;
+    unsigned int observed_functional_post_t39_install[4] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_post_t39_helper[10] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_post1f0_install[3] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_post1f0[18] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_exit_install[3] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_exit[12] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_return_install[3] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_return[11] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF
+    };
+    unsigned int observed_functional_post_bs_install[3] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_post_bs[14] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF
+    };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -4412,8 +6273,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     slide_diag.bsman.activation_hits_addr);
             unsigned int state;
             zeroCtrlRefreshSonyStartTrace();
-            if (!vsh3f568_scan_written && slide_diag.functional_enabled &&
-                    slide_diag.vsh_module_seen) {
+            if (!vsh3f568_scan_written && !slide_diag.functional_enabled &&
+                    slide_diag.minimal_memory_test && slide_diag.vsh_module_seen) {
                 vsh3f568_scan_written = 1;
                 zeroCtrlWriteFunctionalVsh3f568Analysis();
             }
@@ -4421,6 +6282,373 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     !(minimal_memory_written & 0x0080)) {
                 zeroCtrlDiagnosticsText("[psp1000-functional] enabled=1\n");
                 minimal_memory_written |= 0x0080;
+            }
+            if (slide_diag.bsman.functional_activation_stage !=
+                    observed_functional_activation_stage) {
+                observed_functional_activation_stage =
+                        slide_diag.bsman.functional_activation_stage;
+                snprintf(line, sizeof(line),
+                        "[psp1000-functional] activation_compat_stage=%u\n",
+                        observed_functional_activation_stage);
+                zeroCtrlDiagnosticsText(line);
+            }
+            if (slide_diag.bsman.functional_validation &&
+                    !(minimal_memory_written & 0x2000)) {
+                zeroCtrlDiagnosticsText(
+                        "[psp1000-functional] activation_compat_validation=1\n");
+                minimal_memory_written |= 0x2000;
+            }
+            if (slide_diag.bsman.functional_install &&
+                    slide_diag.bsman.functional_cache_sync &&
+                    !(minimal_memory_written & 0x4000)) {
+                zeroCtrlDiagnosticsText(
+                        "[psp1000-functional] activation_compat_install=1\n");
+                minimal_memory_written |= 0x4000;
+            }
+            if (slide_diag.bsman.functional_install &&
+                    slide_diag.bsman.functional_cache_sync) {
+                ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+                unsigned int compat[9];
+                unsigned int compat2[12];
+                compat[0] = zeroCtrlReadHelperCounter(
+                        bsman->prefix_path_mask_addr);
+                compat[1] = zeroCtrlReadHelperCounter(
+                        bsman->prefix_paf_return_hits_addr);
+                compat[2] = zeroCtrlReadHelperCounter(
+                        bsman->prefix_paf_natural_result_addr);
+                compat[3] = zeroCtrlReadHelperCounter(
+                        bsman->prefix_paf_substitution_hits_addr);
+                compat[4] = zeroCtrlReadHelperCounter(bsman->call_hits_addr);
+                compat[5] = zeroCtrlReadHelperCounter(
+                        bsman->bsman_return_hits_addr);
+                compat[6] = zeroCtrlReadHelperCounter(
+                        bsman->bsman_natural_result_addr);
+                compat[7] = zeroCtrlReadHelperCounter(
+                        bsman->bsman_effective_result_addr);
+                compat[8] = zeroCtrlReadHelperCounter(
+                        bsman->bsman_substitution_hits_addr);
+                compat2[0] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_path_mask_addr);
+                compat2[1] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_counter_addr[1]);
+                compat2[2] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_counter_addr[2]);
+                compat2[3] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_value_addr[6]);
+                compat2[4] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_15to14_effective_result_addr);
+                compat2[5] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_15to14_substitution_hits_addr);
+                compat2[6] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_entry_hits_addr);
+                compat2[7] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_return_hits_addr);
+                compat2[8] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_argument_addr);
+                compat2[9] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_natural_result_addr);
+                compat2[10] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_effective_result_addr);
+                compat2[11] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_substitution_hits_addr);
+                if (!observed_functional_compat_valid ||
+                        memcmp(compat, observed_functional_compat,
+                            sizeof(compat)) != 0 ||
+                        memcmp(compat2, observed_functional_compat2,
+                            sizeof(compat2)) != 0) {
+                    memcpy(observed_functional_compat, compat, sizeof(compat));
+                    memcpy(observed_functional_compat2, compat2,
+                            sizeof(compat2));
+                    observed_functional_compat_valid = 1;
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-compat] paf_mask=0x%03X "
+                            "paf_ret=%u paf_nat=0x%08X paf_sub=%u bs_call=%u "
+                            "bs_ret=%u bs_nat=0x%08X bs_eff=0x%08X bs_sub=%u\n",
+                            compat[0], compat[1], compat[2], compat[3],
+                            compat[4], compat[5], compat[6], compat[7], compat[8]);
+                    zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-compat2] state_mask=0x%03X "
+                            "state_call=%u state_ret=%u state_nat=0x%08X "
+                            "state_eff=0x%08X state_sub=%u vsh_call=%u "
+                            "vsh_ret=%u arg=0x%08X nat=0x%08X eff=0x%08X sub=%u\n",
+                            compat2[0], compat2[1], compat2[2], compat2[3],
+                            compat2[4], compat2[5], compat2[6], compat2[7],
+                            compat2[8], compat2[9], compat2[10], compat2[11]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled) {
+                unsigned int post_t39_install[4];
+                post_t39_install[0] =
+                        slide_diag.bsman.functional_post_t39_stage;
+                post_t39_install[1] =
+                        slide_diag.bsman.functional_post_t39_validation;
+                post_t39_install[2] =
+                        slide_diag.bsman.functional_post_t39_install;
+                post_t39_install[3] =
+                        slide_diag.bsman.functional_post_t39_cache_sync;
+                if (memcmp(post_t39_install,
+                            observed_functional_post_t39_install,
+                            sizeof(post_t39_install)) != 0) {
+                    memcpy(observed_functional_post_t39_install,
+                            post_t39_install, sizeof(post_t39_install));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-post-t39-install] rev=1 "
+                            "stage=%u validation=%u install=%u cache_sync=%u\n",
+                            post_t39_install[0], post_t39_install[1],
+                            post_t39_install[2], post_t39_install[3]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled) {
+                unsigned int post1f0_install[3];
+                post1f0_install[0] =
+                        slide_diag.bsman.functional_post1f0_validation;
+                post1f0_install[1] =
+                        slide_diag.bsman.functional_post1f0_install;
+                post1f0_install[2] =
+                        slide_diag.bsman.functional_post1f0_cache_sync;
+                if (memcmp(post1f0_install,
+                            observed_functional_post1f0_install,
+                            sizeof(post1f0_install)) != 0) {
+                    memcpy(observed_functional_post1f0_install,
+                            post1f0_install, sizeof(post1f0_install));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-post1f0-install] rev=1 "
+                            "validation=%u install=%u cache_sync=%u\n",
+                            post1f0_install[0], post1f0_install[1],
+                            post1f0_install[2]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.bsman.functional_post1f0_install &&
+                    slide_diag.bsman.functional_post1f0_cache_sync) {
+                static const unsigned int scalar_index[18] = {
+                    0, 1, 2, 9, 11, 13, 18, 20, 22,
+                    27, 29, 31, 35, 36, 37, 44, 46, 48
+                };
+                unsigned int post1f0[18];
+                for (i = 0; i < 18; i++)
+                    post1f0[i] = zeroCtrlReadHelperCounter(
+                            slide_diag.bsman.activation_wide_scalar_addr[
+                                scalar_index[i]]);
+                post1f0[3] = post1f0[3] != 0;
+                post1f0[6] = post1f0[6] != 0;
+                post1f0[9] = post1f0[9] != 0;
+                post1f0[15] = post1f0[15] != 0;
+                if (memcmp(post1f0, observed_functional_post1f0,
+                            sizeof(post1f0)) != 0) {
+                    memcpy(observed_functional_post1f0, post1f0,
+                            sizeof(post1f0));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-post1f0] cmp=%u/%u/%u "
+                            "c200=%u/%u/0x%08X c20c=%u/%u/0x%08X "
+                            "c214=%u/%u/0x%08X loop=%u/%u/%u "
+                            "c22c=%u/%u/0x%08X\n",
+                            post1f0[0], post1f0[1], post1f0[2],
+                            post1f0[3], post1f0[4], post1f0[5],
+                            post1f0[6], post1f0[7], post1f0[8],
+                            post1f0[9], post1f0[10], post1f0[11],
+                            post1f0[12], post1f0[13], post1f0[14],
+                            post1f0[15], post1f0[16], post1f0[17]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled &&
+                    slide_diag.bsman.functional_post_t39_stage >= 5) {
+                unsigned int post_t39_helper[10];
+                post_t39_helper[0] =
+                        slide_diag.bsman.functional_post_t39_helper_fail;
+                post_t39_helper[1] =
+                        slide_diag.bsman.functional_post_t39_helper_owner;
+                post_t39_helper[2] =
+                        slide_diag.bsman.functional_post_t39_helper_call;
+                post_t39_helper[3] =
+                        slide_diag.bsman.functional_post_t39_helper_call_size;
+                post_t39_helper[4] =
+                        slide_diag.bsman.functional_post_t39_helper_return;
+                post_t39_helper[5] =
+                        slide_diag.bsman.functional_post_t39_helper_return_size;
+                post_t39_helper[6] =
+                        slide_diag.bsman.functional_post_t39_helper_text;
+                post_t39_helper[7] =
+                        slide_diag.bsman.functional_post_t39_helper_size;
+                post_t39_helper[8] =
+                        slide_diag.bsman.functional_post_t39_helper_replacement;
+                post_t39_helper[9] =
+                        slide_diag.bsman.functional_post_t39_helper_decoded;
+                if (memcmp(post_t39_helper,
+                            observed_functional_post_t39_helper,
+                            sizeof(post_t39_helper)) != 0) {
+                    memcpy(observed_functional_post_t39_helper,
+                            post_t39_helper, sizeof(post_t39_helper));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-post-t39-helper] fail=0x%X "
+                            "owner=0x%08X call=0x%08X call_size=%u "
+                            "return=0x%08X return_size=%u helper_text=0x%08X "
+                            "helper_size=%u replacement=0x%08X decoded=0x%08X\n",
+                            post_t39_helper[0], post_t39_helper[1],
+                            post_t39_helper[2], post_t39_helper[3],
+                            post_t39_helper[4], post_t39_helper[5],
+                            post_t39_helper[6], post_t39_helper[7],
+                            post_t39_helper[8], post_t39_helper[9]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.bsman.functional_post_t39_install &&
+                    slide_diag.bsman.functional_post_t39_cache_sync) {
+                unsigned int post_t39[3];
+                post_t39[0] = zeroCtrlReadHelperCounter(
+                        slide_diag.bsman.activation_wide_scalar_addr[9]) != 0;
+                post_t39[1] = zeroCtrlReadHelperCounter(
+                        slide_diag.bsman.activation_wide_scalar_addr[11]);
+                post_t39[2] = zeroCtrlReadHelperCounter(
+                        slide_diag.bsman.activation_wide_scalar_addr[13]);
+                if (!observed_functional_post_t39_valid ||
+                        memcmp(post_t39, observed_functional_post_t39,
+                            sizeof(post_t39)) != 0) {
+                    memcpy(observed_functional_post_t39, post_t39,
+                            sizeof(post_t39));
+                    observed_functional_post_t39_valid = 1;
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-post-t39] entered=%u return=%u "
+                            "natural=0x%08X\n",
+                            post_t39[0], post_t39[1], post_t39[2]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled) {
+                unsigned int state[3] = {
+                    slide_diag.bsman.functional_exit_validation,
+                    slide_diag.bsman.functional_exit_install,
+                    slide_diag.bsman.functional_exit_cache_sync
+                };
+                if (memcmp(state, observed_functional_exit_install,
+                            sizeof(state)) != 0) {
+                    memcpy(observed_functional_exit_install, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-exit-install] rev=1 "
+                            "validation=%u install=%u cache_sync=%u\n",
+                            state[0], state[1], state[2]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.bsman.functional_exit_install &&
+                    slide_diag.bsman.functional_exit_cache_sync) {
+                static const unsigned int index[9] = {
+                    0, 1, 2, 9, 11, 13, 18, 20, 22
+                };
+                unsigned int s2_base =
+                        slide_diag.bsman.activation_wide_scalar_addr[53];
+                unsigned int state[12];
+                state[0] = zeroCtrlReadHelperCounter(s2_base);
+                state[1] = zeroCtrlReadHelperCounter(s2_base + 4);
+                state[2] = zeroCtrlReadHelperCounter(s2_base + 8);
+                for (i = 0; i < 9; i++)
+                    state[i + 3] = zeroCtrlReadHelperCounter(
+                            slide_diag.bsman.activation_wide_scalar_addr[index[i]]);
+                state[6] = state[6] != 0;
+                state[9] = state[9] != 0;
+                if (memcmp(state, observed_functional_exit, sizeof(state)) != 0) {
+                    memcpy(observed_functional_exit, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-exit] s2=%u/%u/%u "
+                            "flag=%u/%u/%u c9038=%u/%u/0x%08X "
+                            "c89e4=%u/%u/0x%08X\n",
+                            state[0], state[1], state[2], state[3], state[4],
+                            state[5], state[6], state[7], state[8], state[9],
+                            state[10], state[11]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled) {
+                unsigned int state[3] = {
+                    slide_diag.bsman.functional_return_validation,
+                    slide_diag.bsman.functional_return_install,
+                    slide_diag.bsman.functional_return_cache_sync
+                };
+                if (memcmp(state, observed_functional_return_install,
+                            sizeof(state)) != 0) {
+                    memcpy(observed_functional_return_install, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-activation-return-install] "
+                            "rev=1 validation=%u install=%u cache_sync=%u\n",
+                            state[0], state[1], state[2]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.bsman.functional_return_install &&
+                    slide_diag.bsman.functional_return_cache_sync) {
+                ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
+                unsigned int state[11];
+                for (i = 0; i < 7; i++)
+                    state[i + 4] = zeroCtrlReadHelperCounter(
+                            b->functional_return_scalar[i]);
+                state[0] = state[4];
+                state[1] = zeroCtrlReadHelperCounter(b->prefix_paf_return_hits_addr);
+                state[2] = zeroCtrlReadHelperCounter(b->bsman_return_hits_addr);
+                state[3] = zeroCtrlReadHelperCounter(b->state_zero_counter_addr[2]);
+                state[4] = zeroCtrlReadHelperCounter(b->post_vsh_return_hits_addr);
+                if (memcmp(state, observed_functional_return, sizeof(state)) != 0) {
+                    memcpy(observed_functional_return, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-activation-return] returns=%u "
+                            "paf_ret=%u bs_ret=%u state_ret=%u vsh_ret=%u "
+                            "first_ra=0x%08X last_ra=0x%08X ra_changes=%u "
+                            "first_v0=0x%08X last_v0=0x%08X v0_changes=%u\n",
+                            state[0], state[1], state[2], state[3], state[4],
+                            state[5], state[6], state[7], state[8], state[9],
+                            state[10]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled) {
+                unsigned int state[3] = {
+                    slide_diag.bsman.functional_post_bs_validation,
+                    slide_diag.bsman.functional_post_bs_install,
+                    slide_diag.bsman.functional_post_bs_cache_sync
+                };
+                if (memcmp(state, observed_functional_post_bs_install,
+                            sizeof(state)) != 0) {
+                    memcpy(observed_functional_post_bs_install, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-state-route-install] rev=1 "
+                            "validation=%u install=%u cache_sync=%u\n",
+                            state[0], state[1], state[2]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.bsman.functional_post_bs_install &&
+                    slide_diag.bsman.functional_post_bs_cache_sync) {
+                ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
+                unsigned int state[14];
+                state[0] = zeroCtrlReadHelperCounter(b->bsman_return_hits_addr);
+                state[1] = zeroCtrlReadHelperCounter(b->post_bs_counter_addr[0]);
+                state[2] = zeroCtrlReadHelperCounter(b->post_bs_counter_addr[1]);
+                state[3] = zeroCtrlReadHelperCounter(b->post_state_counter_addr[0]);
+                state[4] = zeroCtrlReadHelperCounter(b->post_state_counter_addr[1]);
+                state[5] = zeroCtrlReadHelperCounter(b->state_zero_counter_addr[0]);
+                state[6] = zeroCtrlReadHelperCounter(b->state_zero_path_mask_addr);
+                state[7] = zeroCtrlReadHelperCounter(b->state_zero_value_addr[0]);
+                state[8] = zeroCtrlReadHelperCounter(b->state_zero_value_addr[1]);
+                state[9] = zeroCtrlReadHelperCounter(b->state_zero_value_addr[2]);
+                state[10] = zeroCtrlReadHelperCounter(b->state_zero_value_addr[3]);
+                state[11] = zeroCtrlReadHelperCounter(b->state_zero_counter_addr[1]);
+                state[12] = zeroCtrlReadHelperCounter(b->state_zero_counter_addr[2]);
+                state[13] = zeroCtrlReadHelperCounter(b->post_vsh_return_hits_addr);
+                if (memcmp(state, observed_functional_post_bs, sizeof(state)) != 0) {
+                    memcpy(observed_functional_post_bs, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-state-route] bs_ret=%u "
+                            "gate=%u/%u post=%u/%u entry=%u mask=0x%04X "
+                            "cmp=0x%08X/0x%08X word=0x%08X byte=0x%08X "
+                            "vcall=%u/%u vsh_ret=%u\n",
+                            state[0], state[1], state[2], state[3], state[4],
+                            state[5], state[6], state[7], state[8], state[9],
+                            state[10], state[11], state[12], state[13]);
+                    zeroCtrlDiagnosticsText(line);
+                }
             }
             if (slide_diag.functional_button_thread &&
                     !(minimal_memory_written & 0x0100)) {
@@ -4431,8 +6659,27 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             if (slide_diag.functional_request_armed &&
                     !(minimal_memory_written & 0x0200)) {
                 zeroCtrlDiagnosticsText(
-                        "[psp1000-functional] request_armed=1\n");
+                        "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
+            }
+            if (slide_diag.functional_request_armed &&
+                    !slide_diag.functional_trigger_consumed) {
+                ZeroCtrlVshTriggerEvidence *trigger =
+                        &slide_diag.triggers[0];
+                SceModule2 *helper =
+                        sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+                if (trigger->validation == 1 &&
+                        trigger->patch_applied == 1 &&
+                        trigger->cache_sync == 1 &&
+                        (trigger->request_addr & 3) == 0 &&
+                        zeroCtrlVshModuleRangeValid(helper,
+                            trigger->request_addr, 4) &&
+                        zeroCtrlReadTriggerHits(0) != 0 &&
+                        *(volatile unsigned int *)trigger->request_addr == 0) {
+                    slide_diag.functional_trigger_consumed = 1;
+                    zeroCtrlDiagnosticsText(
+                            "[psp1000-functional] startup_58d4_consumed=1\n");
+                }
             }
             if (slide_diag.functional_runtime_request_blocked &&
                     !(minimal_memory_written & 0x1000)) {
@@ -7156,6 +9403,651 @@ static void zeroCtrlInstall6F84ConsumerTraces(void) {
 #undef CONSUMER_GUARD_FAIL
 }
 
+static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
+    static const char paf_library[] = "scePaf";
+    static const char vshbridge_library[] = "sceVshBridge";
+    static const unsigned int owner_offset[4] = {
+        0x02C, 0x0A8, 0x10C, 0x2A4
+    };
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int activation, cursor, end, pc;
+    unsigned int paf_stub = 0, bsman_stub = 0, vshbridge_stub = 0;
+    unsigned int paf_matches = 0, bsman_matches = 0, vshbridge_matches = 0;
+    unsigned int bsman_callers = 0, bsman_caller = 0;
+    unsigned int owner[4], original[4], replacement[4], leaf[4], leaf_size[4];
+    unsigned int scalar[40], scalar_count = 0, i;
+
+    bsman->functional_activation_stage = 1;
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 || !bsman->registered ||
+            !zeroCtrlLoadedModuleMetadataValid(mod) ||
+            strcmp(mod->modname, "slide_plugin_module") != 0 ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            !zeroCtrlVshModuleRangeValid(mod, mod->text_addr, mod->text_size))
+        return;
+    bsman->functional_activation_stage = 2;
+    if (mod->text_addr > 0xFFFFFFFFU - 0x9304) return;
+    activation = mod->text_addr + 0x9304;
+    if (!zeroCtrlVshModuleRangeValid(mod, activation, 0x2BC + 8) ||
+            _lw(activation) != 0x27BDFFE0 ||
+            _lw(activation + 4) != 0xAFB10004 ||
+            _lw(activation + 8) != 0x00808821 ||
+            _lw(activation + 12) != 0xAFB00000 ||
+            _lw(activation + 16) != 0xAFBF001C)
+        return;
+    bsman->functional_activation_stage = 3;
+
+    cursor = (unsigned int)mod->stub_top;
+    end = cursor + mod->stub_size;
+    if (end < cursor || !zeroCtrlVshModuleRangeValid(mod, cursor,
+                mod->stub_size)) return;
+    while (cursor < end) {
+        SceLibraryStubTable *table = (SceLibraryStubTable *)cursor;
+        unsigned int bytes, index;
+        if ((cursor & 3) != 0 || end - cursor < 12) return;
+        bytes = (unsigned int)table->len * 4;
+        if (bytes < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                bytes > end - cursor ||
+                !zeroCtrlVshModuleRangeValid(mod, cursor, bytes) ||
+                !zeroCtrlVshModuleRangeValid(mod,
+                    (unsigned int)table->nidtable,
+                    (unsigned int)table->stubcount * 4) ||
+                !zeroCtrlVshModuleRangeValid(mod,
+                    (unsigned int)table->stubtable,
+                    (unsigned int)table->stubcount * 8)) return;
+        for (index = 0; index < table->stubcount; index++) {
+            unsigned int nid = table->nidtable[index];
+            unsigned int stub = (unsigned int)table->stubtable + index * 8;
+            if (zeroCtrlLibraryNameEquals(mod, table->libname,
+                        paf_library, sizeof(paf_library)) &&
+                    nid == 0xED83BBCF) {
+                paf_stub = stub;
+                paf_matches++;
+            }
+            if (zeroCtrlBSManLibraryNameValid(mod, table->libname) &&
+                    nid == 0x23E3A9B6) {
+                bsman_stub = stub;
+                bsman_matches++;
+            }
+            if (zeroCtrlLibraryNameEquals(mod, table->libname,
+                        vshbridge_library, sizeof(vshbridge_library)) &&
+                    nid == 0x639C3CB3) {
+                vshbridge_stub = stub;
+                vshbridge_matches++;
+            }
+        }
+        cursor += bytes;
+    }
+    bsman->functional_activation_stage = 4;
+    if (paf_matches != 1 || bsman_matches != 1 || vshbridge_matches != 1)
+        return;
+    bsman->functional_activation_stage = 5;
+    for (pc = 0; pc + 4 <= mod->text_size; pc += 4) {
+        unsigned int address = mod->text_addr + pc;
+        unsigned int instruction = _lw(address);
+        if ((instruction >> 26) == 3 &&
+                zeroCtrlMipsJumpTarget(address, instruction) == bsman_stub) {
+            bsman_caller = address;
+            bsman_callers++;
+        }
+    }
+    if (bsman_callers != 1 || bsman_caller != activation + 0xA8) return;
+    bsman->functional_activation_stage = 6;
+
+    leaf[0] = bsman->prefix_paf_call_leaf_addr;
+    leaf_size[0] = bsman->prefix_paf_call_leaf_size;
+    leaf[1] = bsman->call_leaf_addr;
+    leaf_size[1] = bsman->call_leaf_size;
+    leaf[2] = bsman->post_vsh_call_leaf_addr;
+    leaf_size[2] = bsman->post_vsh_call_leaf_size;
+    leaf[3] = bsman->state_zero_leaf_addr[3];
+    leaf_size[3] = bsman->state_zero_leaf_size[3];
+    for (i = 0; i < 4; i++) {
+        owner[i] = activation + owner_offset[i];
+        original[i] = _lw(owner[i]);
+        if (!zeroCtrlVshModuleRangeValid(helper, leaf[i], leaf_size[i]) ||
+                ((owner[i] + 4) & 0xF0000000) !=
+                    (leaf[i] & 0xF0000000)) return;
+        replacement[i] = 0x0C000000 | ((leaf[i] >> 2) & 0x03FFFFFF);
+        if (zeroCtrlMipsJumpTarget(owner[i], replacement[i]) != leaf[i]) return;
+    }
+    bsman->functional_activation_stage = 7;
+    if ((original[0] >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner[0], original[0]) != paf_stub ||
+            _lw(owner[0] + 4) != 0x00408021 ||
+            (original[1] >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner[1], original[1]) != bsman_stub ||
+            owner[1] != bsman_caller ||
+            (_lw(owner[1] + 4) & 0xFFFF0000) != 0x3C130000 ||
+            _lw(owner[1] + 8) != 0x1040000A ||
+            _lw(activation + 0x108) != 0x3C048000 ||
+            (original[2] >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner[2], original[2]) != vshbridge_stub ||
+            _lw(owner[2] + 4) != 0x3484000D ||
+            _lw(owner[2] + 8) != 0x1440FFCE ||
+            original[3] != 0x0040F809 || _lw(owner[3] + 4) != 0)
+        return;
+    bsman->functional_activation_stage = 8;
+
+    if (!zeroCtrlVshModuleRangeValid(helper,
+                bsman->prefix_paf_return_leaf_addr,
+                bsman->prefix_paf_return_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper, bsman->return_leaf_addr,
+                bsman->return_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                bsman->post_vsh_return_leaf_addr,
+                bsman->post_vsh_return_leaf_size) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                bsman->state_zero_leaf_addr[4],
+                bsman->state_zero_leaf_size[4])) return;
+    bsman->functional_activation_stage = 9;
+
+#define ADD_FUNCTIONAL_SCALAR(address) do { scalar[scalar_count++] = (address); } while (0)
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_path_mask_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_target_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_ra_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_compat_mode_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_natural_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_substitution_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->prefix_paf_return_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->call_target_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->call_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->call_ra_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->trace_stage_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_path_mask_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->bsman_natural_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->bsman_compat_mode_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->bsman_substitution_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->bsman_effective_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->bsman_return_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_target_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_saved_ra_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_natural_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_return_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_entry_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_argument_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_compat_mode_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_effective_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->post_vsh_substitution_hits_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_path_mask_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[4]);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[5]);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[6]);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_counter_addr[1]);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_counter_addr[2]);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_15to14_compat_mode_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_15to14_effective_result_addr);
+    ADD_FUNCTIONAL_SCALAR(bsman->state_zero_15to14_substitution_hits_addr);
+#undef ADD_FUNCTIONAL_SCALAR
+    for (i = 0; i < scalar_count; i++)
+        if ((scalar[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)) return;
+    bsman->functional_activation_stage = 10;
+
+    bsman->activation_addr = activation;
+    bsman->caller_addr = owner[1];
+    _sw(0, bsman->prefix_path_mask_addr);
+    _sw(paf_stub, bsman->prefix_paf_target_addr);
+    _sw(0, bsman->prefix_paf_ra_addr);
+    _sw(1, bsman->prefix_paf_compat_mode_addr);
+    _sw(0, bsman->prefix_paf_natural_result_addr);
+    _sw(0, bsman->prefix_paf_substitution_hits_addr);
+    _sw(0, bsman->prefix_paf_return_hits_addr);
+    _sw(bsman_stub, bsman->call_target_addr);
+    _sw(0, bsman->call_hits_addr);
+    _sw(0, bsman->call_ra_addr);
+    _sw(0, bsman->trace_stage_addr);
+    _sw(0, bsman->post_path_mask_addr);
+    _sw(0, bsman->bsman_natural_result_addr);
+    _sw(1, bsman->bsman_compat_mode_addr);
+    _sw(0, bsman->bsman_substitution_hits_addr);
+    _sw(0, bsman->bsman_effective_result_addr);
+    _sw(0, bsman->bsman_return_hits_addr);
+    _sw(vshbridge_stub, bsman->post_vsh_target_addr);
+    _sw(0, bsman->post_vsh_saved_ra_addr);
+    _sw(0xFFFFFFFF, bsman->post_vsh_natural_result_addr);
+    _sw(0, bsman->post_vsh_return_hits_addr);
+    _sw(0, bsman->post_vsh_entry_hits_addr);
+    _sw(0xFFFFFFFF, bsman->post_vsh_argument_addr);
+    _sw(1, bsman->post_vsh_compat_mode_addr);
+    _sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr);
+    _sw(0, bsman->post_vsh_substitution_hits_addr);
+    _sw(0, bsman->state_zero_path_mask_addr);
+    _sw(0, bsman->state_zero_value_addr[4]);
+    _sw(0, bsman->state_zero_value_addr[5]);
+    _sw(0xFFFFFFFF, bsman->state_zero_value_addr[6]);
+    _sw(0, bsman->state_zero_counter_addr[1]);
+    _sw(0, bsman->state_zero_counter_addr[2]);
+    _sw(1, bsman->state_zero_15to14_compat_mode_addr);
+    _sw(0xFFFFFFFF, bsman->state_zero_15to14_effective_result_addr);
+    _sw(0, bsman->state_zero_15to14_substitution_hits_addr);
+    for (i = 0; i < scalar_count; i++)
+        sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
+    bsman->functional_activation_stage = 11;
+
+    for (i = 0; i < 4; i++) {
+        _sw(replacement[i], owner[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4);
+        sceKernelIcacheInvalidateRange((const void *)owner[i], 4);
+    }
+    bsman->functional_activation_stage = 12;
+    bsman->functional_validation = 1;
+    bsman->functional_install = 1;
+    bsman->functional_cache_sync = 1;
+    bsman->functional_activation_stage = 13;
+}
+
+static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int activation, owner, original, target, replacement;
+    unsigned int call_leaf, return_leaf;
+    unsigned int helper_fail;
+    unsigned int scalar[9], i;
+
+    bsman->functional_post_t39_stage = 1;
+    if (!bsman->functional_validation || !bsman->functional_install ||
+            !bsman->functional_cache_sync ||
+            !zeroCtrlLoadedModuleMetadataValid(mod) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            mod->text_addr > 0xFFFFFFFFU - 0x9304)
+        return;
+    bsman->functional_post_t39_stage = 2;
+    activation = mod->text_addr + 0x9304;
+    if (bsman->activation_addr != activation ||
+            !zeroCtrlVshModuleRangeValid(mod, activation + 0x1E8, 8))
+        return;
+    bsman->functional_post_t39_stage = 3;
+    owner = activation + 0x1E8;
+    original = _lw(owner);
+    if ((original >> 26) != 3 || _lw(owner + 4) != 0)
+        return;
+    bsman->functional_post_t39_stage = 4;
+    target = zeroCtrlMipsJumpTarget(owner, original);
+    if (target != mod->text_addr + 0x2A168 ||
+            !zeroCtrlVshModuleRangeValid(mod, target, 4))
+        return;
+    bsman->functional_post_t39_stage = 5;
+
+    call_leaf = bsman->activation_wide_leaf_addr[1];
+    return_leaf = bsman->activation_wide_leaf_addr[2];
+    replacement = 0x08000000 | ((call_leaf >> 2) & 0x03FFFFFF);
+    helper_fail = 0;
+    if (!zeroCtrlVshModuleRangeValid(helper, call_leaf,
+                bsman->activation_wide_leaf_size[1])) helper_fail |= 0x1;
+    if (!zeroCtrlVshModuleRangeValid(helper, return_leaf,
+                bsman->activation_wide_leaf_size[2])) helper_fail |= 0x2;
+    if (((owner + 4) & 0xF0000000) !=
+            (call_leaf & 0xF0000000)) helper_fail |= 0x4;
+    if (zeroCtrlMipsJumpTarget(owner, replacement) != call_leaf)
+        helper_fail |= 0x8;
+    bsman->functional_post_t39_helper_fail = helper_fail;
+    bsman->functional_post_t39_helper_owner = owner;
+    bsman->functional_post_t39_helper_call = call_leaf;
+    bsman->functional_post_t39_helper_call_size =
+            bsman->activation_wide_leaf_size[1];
+    bsman->functional_post_t39_helper_return = return_leaf;
+    bsman->functional_post_t39_helper_return_size =
+            bsman->activation_wide_leaf_size[2];
+    bsman->functional_post_t39_helper_text = helper->text_addr;
+    bsman->functional_post_t39_helper_size = helper->text_size;
+    bsman->functional_post_t39_helper_replacement = replacement;
+    bsman->functional_post_t39_helper_decoded =
+            zeroCtrlMipsJumpTarget(owner, replacement);
+    if (helper_fail != 0) return;
+    bsman->functional_post_t39_stage = 6;
+
+    scalar[0] = bsman->activation_wide_scalar_addr[8];  /* target */
+    scalar[1] = bsman->activation_wide_scalar_addr[9];  /* saved ra */
+    scalar[2] = bsman->activation_wide_scalar_addr[10]; /* resume */
+    scalar[3] = bsman->activation_wide_scalar_addr[11]; /* return hits */
+    scalar[4] = bsman->activation_wide_scalar_addr[12]; /* first result */
+    scalar[5] = bsman->activation_wide_scalar_addr[13]; /* last result */
+    scalar[6] = bsman->activation_wide_scalar_addr[14]; /* changes */
+    scalar[7] = bsman->activation_wide_scalar_addr[15]; /* zero results */
+    scalar[8] = bsman->activation_wide_scalar_addr[16]; /* nonzero results */
+    for (i = 0; i < 9; i++)
+        if ((scalar[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
+            return;
+
+    bsman->functional_post_t39_validation = 1;
+    bsman->functional_post_t39_stage = 7;
+    _sw(target, scalar[0]);
+    _sw(0, scalar[1]);
+    _sw(activation + 0x1F0, scalar[2]);
+    _sw(0, scalar[3]);
+    _sw(0xFFFFFFFF, scalar[4]);
+    _sw(0xFFFFFFFF, scalar[5]);
+    _sw(0, scalar[6]);
+    _sw(0, scalar[7]);
+    _sw(0, scalar[8]);
+    for (i = 0; i < 9; i++)
+        sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
+    bsman->functional_post_t39_stage = 8;
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    bsman->functional_post_t39_stage = 9;
+    bsman->functional_post_t39_install = 1;
+    bsman->functional_post_t39_cache_sync = 1;
+    bsman->functional_post_t39_stage = 10;
+}
+
+static void zeroCtrlInstallPsp1000Post1F0Diagnostic(SceModule2 *mod) {
+    static const unsigned int owner_offset[6] = {
+        0x1F8, 0x200, 0x20C, 0x214, 0x21C, 0x22C
+    };
+    static const unsigned int delay_word[6] = {
+        0x26100001, 0, 0x00002821, 0x00402021, 0x8FBF001C, 0x00002021
+    };
+    static const unsigned int helper_index[6] = { 0, 1, 3, 5, 7, 8 };
+    static const unsigned int target_offset[4] = {
+        0x2A380, 0x2A290, 0x2A698, 0x2A6F8
+    };
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int activation, owner[6], original[6], replacement[6];
+    unsigned int scalar[52], i;
+
+    if (!bsman->functional_validation || !bsman->functional_install ||
+            !bsman->functional_cache_sync ||
+            !zeroCtrlLoadedModuleMetadataValid(mod) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            mod->text_addr > 0xFFFFFFFFU - 0x9304)
+        return;
+    activation = mod->text_addr + 0x9304;
+    if (bsman->activation_addr != activation ||
+            !zeroCtrlVshModuleRangeValid(mod, activation + 0x1E8, 0x50) ||
+            (_lw(activation + 0x1E8) >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(activation + 0x1E8,
+                _lw(activation + 0x1E8)) != mod->text_addr + 0x2A168 ||
+            _lw(activation + 0x1EC) != 0)
+        return;
+
+    for (i = 0; i < 10; i++)
+        if (!zeroCtrlVshModuleRangeValid(helper,
+                    bsman->activation_wide_leaf_addr[i],
+                    bsman->activation_wide_leaf_size[i]))
+            return;
+    for (i = 0; i < 6; i++) {
+        owner[i] = activation + owner_offset[i];
+        original[i] = _lw(owner[i]);
+        replacement[i] = 0x08000000 |
+                ((bsman->activation_wide_leaf_addr[helper_index[i]] >> 2) &
+                    0x03FFFFFF);
+        if (_lw(owner[i] + 4) != delay_word[i] ||
+                ((owner[i] + 4) & 0xF0000000) !=
+                    (bsman->activation_wide_leaf_addr[helper_index[i]] &
+                        0xF0000000) ||
+                zeroCtrlMipsJumpTarget(owner[i], replacement[i]) !=
+                    bsman->activation_wide_leaf_addr[helper_index[i]])
+            return;
+    }
+    if (original[0] != 0x1040000C ||
+            zeroCtrlMipsBranchTarget(owner[0], original[0]) !=
+                activation + 0x22C ||
+            original[4] != 0x1040FFF2 ||
+            zeroCtrlMipsBranchTarget(owner[4], original[4]) !=
+                activation + 0x1E8)
+        return;
+    for (i = 0; i < 4; i++) {
+        unsigned int owner_index = i + 1 + (i == 3 ? 1 : 0);
+        if ((original[owner_index] >> 26) != 3 ||
+                zeroCtrlMipsJumpTarget(owner[owner_index],
+                    original[owner_index]) != mod->text_addr + target_offset[i] ||
+                !zeroCtrlVshModuleRangeValid(mod,
+                    mod->text_addr + target_offset[i], 4))
+            return;
+    }
+    for (i = 0; i < 52; i++) {
+        scalar[i] = bsman->activation_wide_scalar_addr[i];
+        if ((scalar[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
+            return;
+    }
+
+    bsman->functional_post1f0_validation = 1;
+    for (i = 0; i < 52; i++) _sw(0, scalar[i]);
+    _sw(activation + 0x22C, scalar[6]);
+    _sw(activation + 0x200, scalar[7]);
+    _sw(mod->text_addr + 0x2A380, scalar[8]);
+    _sw(activation + 0x208, scalar[10]);
+    _sw(mod->text_addr + 0x2A290, scalar[17]);
+    _sw(activation + 0x214, scalar[19]);
+    _sw(mod->text_addr + 0x2A698, scalar[26]);
+    _sw(activation + 0x21C, scalar[28]);
+    _sw(activation + 0x1E8, scalar[41]);
+    _sw(activation + 0x224, scalar[42]);
+    _sw(mod->text_addr + 0x2A6F8, scalar[43]);
+    _sw(activation + 0x234, scalar[45]);
+    for (i = 0; i < 52; i++)
+        sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
+    for (i = 0; i < 6; i++) {
+        _sw(replacement[i], owner[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4);
+        sceKernelIcacheInvalidateRange((const void *)owner[i], 4);
+    }
+    bsman->functional_post1f0_install = 1;
+    bsman->functional_post1f0_cache_sync = 1;
+}
+
+static void zeroCtrlInstallPsp1000ExitDiagnostic(SceModule2 *mod) {
+    static const unsigned int offset[4] = { 0x238, 0x248, 0x258, 0x268 };
+    static const unsigned int helper_index[3] = { 0, 1, 3 };
+    ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int a, owner[4], original[4], replacement[4], scalar[26];
+    unsigned int s2_leaf, i;
+    if (!b->functional_validation || !b->functional_install ||
+            !b->functional_cache_sync || b->functional_post1f0_install ||
+            !zeroCtrlLoadedModuleMetadataValid(mod) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
+    a = mod->text_addr + 0x9304;
+    if (b->activation_addr != a ||
+            !zeroCtrlVshModuleRangeValid(mod, a + 0x234, 0x44)) return;
+    s2_leaf = b->activation_wide_leaf_addr[10] +
+            b->activation_wide_leaf_size[10];
+    if (!zeroCtrlVshModuleRangeValid(helper, s2_leaf, 0x80) ||
+            !zeroCtrlVshModuleRangeValid(helper, b->activation_wide_leaf_addr[0],
+                b->activation_wide_leaf_size[0]) ||
+            !zeroCtrlVshModuleRangeValid(helper, b->activation_wide_leaf_addr[1],
+                b->activation_wide_leaf_size[1]) ||
+            !zeroCtrlVshModuleRangeValid(helper, b->activation_wide_leaf_addr[2],
+                b->activation_wide_leaf_size[2]) ||
+            !zeroCtrlVshModuleRangeValid(helper, b->activation_wide_leaf_addr[3],
+                b->activation_wide_leaf_size[3]) ||
+            !zeroCtrlVshModuleRangeValid(helper, b->activation_wide_leaf_addr[4],
+                b->activation_wide_leaf_size[4])) return;
+    for (i = 0; i < 4; i++) {
+        owner[i] = a + offset[i];
+        original[i] = _lw(owner[i]);
+    }
+    if ((original[0] >> 26) != 5 || ((original[0] >> 21) & 31) != 18 ||
+            ((original[0] >> 16) & 31) != 0 ||
+            zeroCtrlMipsBranchTarget(owner[0], original[0]) != a + 0x268 ||
+            (_lw(a + 0x23C) >> 26) != 43 ||
+            ((_lw(a + 0x23C) >> 21) & 31) != 3 ||
+            ((_lw(a + 0x23C) >> 16) & 31) != 18 ||
+            original[1] != 0x10400003 ||
+            zeroCtrlMipsBranchTarget(owner[1], original[1]) != a + 0x258 ||
+            _lw(a + 0x24C) != 0 || (original[2] >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner[2], original[2]) != mod->text_addr + 0x9038 ||
+            _lw(a + 0x25C) != 0x02202021 || (original[3] >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner[3], original[3]) != mod->text_addr + 0x89E4 ||
+            _lw(a + 0x26C) != 0x02202021 ||
+            !zeroCtrlVshModuleRangeValid(mod, mod->text_addr + 0x9038, 4) ||
+            !zeroCtrlVshModuleRangeValid(mod, mod->text_addr + 0x89E4, 4)) return;
+    replacement[0] = 0x08000000 | ((s2_leaf >> 2) & 0x03FFFFFF);
+    replacement[1] = 0x08000000 |
+            ((b->activation_wide_leaf_addr[helper_index[0]] >> 2) & 0x03FFFFFF);
+    replacement[2] = 0x08000000 |
+            ((b->activation_wide_leaf_addr[helper_index[1]] >> 2) & 0x03FFFFFF);
+    replacement[3] = 0x08000000 |
+            ((b->activation_wide_leaf_addr[helper_index[2]] >> 2) & 0x03FFFFFF);
+    for (i = 0; i < 4; i++)
+        if (zeroCtrlMipsJumpTarget(owner[i], replacement[i]) !=
+                (i == 0 ? s2_leaf : b->activation_wide_leaf_addr[helper_index[i - 1]]))
+            return;
+    for (i = 0; i < 26; i++) {
+        scalar[i] = b->activation_wide_scalar_addr[i];
+        if ((scalar[i] & 3) || !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
+            return;
+    }
+    if (!zeroCtrlVshModuleRangeValid(helper,
+                b->activation_wide_scalar_addr[53], 20)) return;
+    b->functional_exit_validation = 1;
+    for (i = 0; i < 26; i++) _sw(0, scalar[i]);
+    for (i = 0; i < 5; i++) _sw(0, b->activation_wide_scalar_addr[53] + i * 4);
+    _sw(a + 0x240, b->activation_wide_scalar_addr[53] + 12);
+    _sw(a + 0x268, b->activation_wide_scalar_addr[53] + 16);
+    _sw(a + 0x258, scalar[6]); _sw(a + 0x250, scalar[7]);
+    _sw(mod->text_addr + 0x9038, scalar[8]); _sw(a + 0x260, scalar[10]);
+    _sw(mod->text_addr + 0x89E4, scalar[17]); _sw(a + 0x270, scalar[19]);
+    for (i = 0; i < 26; i++)
+        sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)b->activation_wide_scalar_addr[53], 20);
+    for (i = 0; i < 4; i++) {
+        _sw(replacement[i], owner[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4);
+        sceKernelIcacheInvalidateRange((const void *)owner[i], 4);
+    }
+    b->functional_exit_install = 1;
+    b->functional_exit_cache_sync = 1;
+}
+
+static void zeroCtrlInstallPsp1000ActivationReturnDiagnostic(SceModule2 *mod) {
+    static const unsigned int epilogue[9] = {
+        0x8FB60018, 0x8FB50014, 0x8FB40010, 0x8FB3000C, 0x8FB20008,
+        0x8FB10004, 0x8FB00000, 0x03E00008, 0x27BD0020
+    };
+    ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int a, owner, replacement, i;
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !b->functional_validation || !b->functional_install ||
+            !b->functional_cache_sync || !b->functional_return_registered ||
+            !zeroCtrlLoadedModuleMetadataValid(mod) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
+    a = mod->text_addr + 0x9304;
+    if (b->activation_addr != a ||
+            !zeroCtrlVshModuleRangeValid(mod, a + 0x50, 0x24)) return;
+    for (i = 0; i < 9; i++)
+        if (_lw(a + 0x50 + i * 4) != epilogue[i]) return;
+    if (!zeroCtrlVshModuleRangeValid(helper, b->functional_return_leaf,
+                b->functional_return_leaf_size)) return;
+    for (i = 0; i < 7; i++)
+        if ((b->functional_return_scalar[i] & 3) ||
+                !zeroCtrlVshModuleRangeValid(helper,
+                    b->functional_return_scalar[i], 4)) return;
+    owner = a + 0x6C;
+    replacement = 0x08000000 |
+            ((b->functional_return_leaf >> 2) & 0x03FFFFFF);
+    if (((owner + 4) & 0xF0000000) !=
+                (b->functional_return_leaf & 0xF0000000) ||
+            zeroCtrlMipsJumpTarget(owner, replacement) !=
+                b->functional_return_leaf) return;
+    b->functional_return_validation = 1;
+    for (i = 0; i < 7; i++) {
+        _sw(i == 4 || i == 5 ? 0xFFFFFFFF : 0,
+                b->functional_return_scalar[i]);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)b->functional_return_scalar[i], 4);
+    }
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    b->functional_return_install = 1;
+    b->functional_return_cache_sync = 1;
+}
+
+static void zeroCtrlInstallPsp1000PostBSRouteDiagnostic(SceModule2 *mod) {
+    ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    static const unsigned int owner_offset[5] = {
+        0x0B0, 0x0DC, 0x27C, 0x288, 0x298
+    };
+    unsigned int a, owner[5], leaf[5], leaf_size[5], replacement[5];
+    unsigned int scalar[23], i;
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !b->functional_validation || !b->functional_install ||
+            !b->functional_cache_sync || !zeroCtrlLoadedModuleMetadataValid(mod) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
+    if (mod->text_addr > 0xFFFFFFFFU - 0x9304) return;
+    a = mod->text_addr + 0x9304;
+    if (b->activation_addr != a ||
+            !zeroCtrlVshModuleRangeValid(mod, a + 0xB0, 0x1F0)) return;
+    for (i = 0; i < 5; i++) owner[i] = a + owner_offset[i];
+    if (_lw(owner[0]) != 0x1040000A ||
+            zeroCtrlMipsBranchTarget(owner[0], _lw(owner[0])) != a + 0xDC ||
+            (_lw(a + 0xB4) >> 26) != 36 ||
+            ((_lw(a + 0xB4) >> 21) & 31) != 19 ||
+            ((_lw(a + 0xB4) >> 16) & 31) != 2 ||
+            _lw(owner[1]) != 0x10400066 ||
+            zeroCtrlMipsBranchTarget(owner[1], _lw(owner[1])) != a + 0x278 ||
+            (_lw(a + 0xE0) >> 26) != 15 ||
+            ((_lw(a + 0xE0) >> 16) & 31) != 2 ||
+            _lw(owner[2]) != 0x1243FF73 ||
+            zeroCtrlMipsBranchTarget(owner[2], _lw(owner[2])) != a + 0x4C ||
+            (_lw(a + 0x280) >> 26) != 15 ||
+            ((_lw(a + 0x280) >> 16) & 31) != 2 ||
+            _lw(owner[3]) != 0x1460FF71 ||
+            zeroCtrlMipsBranchTarget(owner[3], _lw(owner[3])) != a + 0x50 ||
+            _lw(a + 0x28C) != 0x8FBF001C ||
+            _lw(owner[4]) != 0x1460FF6E ||
+            zeroCtrlMipsBranchTarget(owner[4], _lw(owner[4])) != a + 0x54 ||
+            _lw(a + 0x29C) != 0x8FB60018) return;
+    leaf[0] = b->post_bs_leaf_addr; leaf_size[0] = b->post_bs_leaf_size;
+    leaf[1] = b->post_state_leaf_addr; leaf_size[1] = b->post_state_leaf_size;
+    for (i = 0; i < 3; i++) {
+        leaf[i + 2] = b->state_zero_leaf_addr[i];
+        leaf_size[i + 2] = b->state_zero_leaf_size[i];
+    }
+    for (i = 0; i < 5; i++) {
+        if (!zeroCtrlVshModuleRangeValid(helper, leaf[i], leaf_size[i])) return;
+        replacement[i] = 0x08000000 | ((leaf[i] >> 2) & 0x03FFFFFF);
+        if (((owner[i] + 4) & 0xF0000000) != (leaf[i] & 0xF0000000) ||
+                zeroCtrlMipsJumpTarget(owner[i], replacement[i]) != leaf[i]) return;
+    }
+    scalar[0] = b->post_bs_target_addr[0]; scalar[1] = b->post_bs_target_addr[1];
+    scalar[2] = b->post_bs_counter_addr[0]; scalar[3] = b->post_bs_counter_addr[1];
+    scalar[4] = b->post_state_target_addr[0]; scalar[5] = b->post_state_target_addr[1];
+    scalar[6] = b->post_state_counter_addr[0]; scalar[7] = b->post_state_counter_addr[1];
+    scalar[8] = b->post_state_natural_value_addr;
+    scalar[9] = b->post_path_mask_addr; scalar[10] = b->bsman_effective_result_addr;
+    for (i = 0; i < 6; i++) scalar[11 + i] = b->state_zero_target_addr[i];
+    for (i = 0; i < 4; i++) scalar[17 + i] = b->state_zero_value_addr[i];
+    scalar[21] = b->state_zero_counter_addr[0];
+    scalar[22] = b->state_zero_path_mask_addr;
+    for (i = 0; i < 23; i++)
+        if ((scalar[i] & 3) || !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
+            return;
+    b->functional_post_bs_validation = 1;
+    _sw(a + 0xDC, scalar[0]); _sw(a + 0xB8, scalar[1]);
+    _sw(0, scalar[2]); _sw(0, scalar[3]);
+    _sw(a + 0x278, scalar[4]); _sw(a + 0xE4, scalar[5]);
+    _sw(0, scalar[6]); _sw(0, scalar[7]);
+    _sw(0xFFFFFFFF, scalar[8]); _sw(0, scalar[9]);
+    _sw(a + 0x4C, scalar[11]); _sw(a + 0x284, scalar[12]);
+    _sw(a + 0x290, scalar[13]); _sw(a + 0x50, scalar[14]);
+    _sw(a + 0x2A0, scalar[15]); _sw(a + 0x54, scalar[16]);
+    for (i = 17; i < 21; i++) _sw(0xFFFFFFFF, scalar[i]);
+    _sw(0, scalar[21]); _sw(0, scalar[22]);
+    for (i = 0; i < 23; i++)
+        sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
+    for (i = 0; i < 5; i++) {
+        _sw(replacement[i], owner[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4);
+        sceKernelIcacheInvalidateRange((const void *)owner[i], 4);
+    }
+    b->functional_post_bs_install = 1;
+    b->functional_post_bs_cache_sync = 1;
+}
+
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     const unsigned int target_nid = 0x23E3A9B6;
     static const char paf_library[] = "scePaf";
@@ -8352,16 +11244,13 @@ int OnModuleStart(SceModule2 *mod) {
                 slide_diag.previous_handler_returned = 1;
                 slide_diag.module_start_addr = mod->module_start_func;
                 slide_diag.elf_entry_addr = mod->entry_addr;
-                if (slide_diag.functional_enabled) {
-                        hook_import_bynid(mod, "sceBSMan", 0x23E3A9B6,
-                                zeroCtrlDummyFunc, 1);
-                        hook_import_bynid(mod, "sceVshBridge", 0x639C3CB3,
-                                zeroCtrlGetParam, 1);
-                }
                 zeroCtrlInstallSonyStartTrace(mod);
-                zeroCtrlInstallBSManClosedShim(mod);
-                if (slide_diag.functional_enabled)
-                        ClearCaches();
+                if (slide_diag.functional_enabled) {
+                    zeroCtrlInstallPsp1000FunctionalCompat(mod);
+                    zeroCtrlInstallPsp1000PostBSRouteDiagnostic(mod);
+                } else {
+                    zeroCtrlInstallBSManClosedShim(mod);
+                }
                 slide_diag.start_callback_returning = 1;
                 slide_diag.saw_start = 1;
                 return previous_result;
@@ -8586,7 +11475,7 @@ void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 				int request_ready = !slide_diag.functional_enabled;
 				zeroCtrlWriteDebug("Starting slide\n\n");
 				if (slide_diag.functional_enabled) {
-					/* Diagnostic build: never execute an experimental VSH routine. */
+					/* Functional startup is pre-armed; HOME never executes Sony. */
 					slide_diag.functional_runtime_request_blocked = 1;
 					request_ready = 0;
 				}
@@ -8756,12 +11645,14 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			zeroCtrlParseTriggerMode(psp1000SlideTriggerMode) :
 			ZERO_TRIGGER_DISABLED);
 		slide_diag.sony_start_trace.enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000SonyStartTrace, "Enabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0;
 		slide_diag.bsman.enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000BSManClosedShim, "Enabled") == 0 &&
@@ -8783,21 +11674,24 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			 strcmp(psp1000PafPresentCompat, "Enabled") == 0);
 		slide_diag.bsman.bsman_not_linked_compat_enabled =
 			slide_diag.bsman.activation_enabled &&
-			!slide_diag.functional_enabled &&
-			strcmp(psp1000BSManNotLinkedCompat, "Enabled") == 0;
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000BSManNotLinkedCompat, "Enabled") == 0);
 		slide_diag.bsman.consumer_14020_compat_enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0 &&
 			strcmp(psp1000Consumer14020Compat, "Enabled") == 0;
 		slide_diag.bsman.consumer_13f6c_compat_enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
 					"DangerousCaller58D4") == 0 &&
 			strcmp(psp1000Consumer13F6CCompat, "Enabled") == 0;
 		slide_diag.bsman.paf_mask_compat_enabled =
+			!slide_diag.functional_enabled &&
 			devkit == 0x06060110 &&
 			strcmp(psp1000Diagnostics, "Enabled") == 0 &&
 			strcmp(psp1000SlideTriggerMode,
@@ -8814,9 +11708,10 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			 strcmp(psp1000StateZero15To14Compat, "Enabled") == 0);
 		slide_diag.bsman.post_vsh_compat_enabled =
 			slide_diag.bsman.activation_enabled &&
-			!slide_diag.functional_enabled &&
-			strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0;
+			(slide_diag.functional_enabled ||
+			 strcmp(psp1000ImposeParam8000000DCompat, "Enabled") == 0);
 		slide_diag.bsman.post_impose_vcall_enabled =
+			!slide_diag.functional_enabled &&
 			slide_diag.bsman.post_vsh_compat_enabled &&
 			strcmp(psp1000PostImposeVCallTrace, "Enabled") == 0;
 		slide_diag.bsman.post_minus_one_vcall64_enabled =
@@ -8854,6 +11749,9 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 				"[phase] psp1000_slide_functional\n"
 				"[experiment] psp1000_slide_optin=enabled\n"
 				"[experiment] clock_and_calendar=enabled\n"
+				"[checkpoint] compat=58d4,paf_zero_to_one,"
+				"bsman_not_linked_to_zero,state15_to14,"
+				"impose_invalid_mode_to_zero\n"
 				"[experiment] button_thread=request_gated\n" :
 				"[phase] psp1000_slide_phase3\n"
 				"[experiment] psp1000_slide_optin=enabled\n"

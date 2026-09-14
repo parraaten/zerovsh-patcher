@@ -2110,3 +2110,655 @@ Seven registration addresses increase the ABI to exactly 1012 bytes. Hardware
 must retain the successful T37.2/T38 prerequisites before T39 is interpreted.
 A zero decision advances investigation from the exact sequence at `+0x1E8`; a
 nonzero decision is only a future compatibility candidate.
+
+### Read-only scePaf A989A2C4 inner-routine analysis
+
+This phase replaces the automatic `0x100`-byte implementation-wrapper dump and
+13 already-established VSH caller summaries with a compact structural proof of
+the dynamically resolved `scePaf` NID `0xA989A2C4` wrapper. The proof requires
+the wrapper's register moves, context-slot load, stack frame, direct JAL, return,
+and delay slots. It decodes rather than assumes the inner target and proves that
+the original wrapper `a0` becomes inner `a1`, the original wrapper `a1` becomes
+inner `a2`, and the value loaded through the PAF global slot remains inner `a0`.
+The slot address is reconstructed with signed LW displacement semantics and is
+reported without a semantic name.
+
+The inner target must belong to a validated loaded `scePaf_Module` segment
+before any instruction is read. Its map is clamped to that segment and to
+`0x200` bytes. A conservative GPR analysis starts with the callback value in
+GPR 6, validates call delay-slot destination behavior first, distinguishes a
+tracked JALR target from argument forwarding, and stops at ambiguity, overwrite,
+control flow, or an arbitrary call. One directly called next routine may be
+mapped, at most `0x100` bytes and only after the same segment validation; it is
+not recursively analyzed. Descriptor input `a1` and context input `a0` are
+tracked only through mechanically recognized moves, loads, stores, and address
+increments. Storage-base provenance is reported only as `a0`, `a1`, or unknown.
+
+Files changed in this phase are `kernel/main.c`, the static safety verifier, and
+this engineering record. These changes add diagnostic reads and deferred text
+output only; they add no PAF/VSH invocation, hook, state substitution, code
+write, or cache operation. Runtime request execution remains compile-time
+disabled, functional HOME remains blocked, the `+0x6F84` forcing remains
+disabled, and the ABI remains exactly 1012 / 304 bytes. The implementation
+assumes only the hardware-established VSH call/import chain; names for the PAF
+slot and inner data structures remain deliberately unknown.
+
+Build status: not built, as required for this read-only diagnostic phase. Static
+Python compilation, the safety verifier, and whitespace validation pass.
+Hardware results are pending. The required hardware test is the existing
+opt-in PSP-1000 6.61 diagnostic boot with runtime execution still disabled,
+followed by return of the complete unedited log. Unresolved questions are
+whether the inner routine stores GPR 6, invokes it immediately, or forwards it
+once more, and whether any proven storage base derives structurally from input
+`a0` or `a1`. The recommended next phase is hardware review of these bounded
+records before adding any deeper read-only target analysis or behavior change.
+
+#### A989 conservative-flow correctness follow-up
+
+The bounded analyzer now clears descriptor/context provenance before a callback
+copy takes ownership of that destination register. At calls it range-validates
+and decodes the delay slot first, reports tracked-register replacement as the
+distinct `OVERWRITTEN_IN_DELAY_SLOT` condition, and recognizes a supported
+delay-slot callback copy into `a0`–`a3` without discarding an argument location
+that was already valid. Wrapper output now applies both text bounds before
+printing a text-relative inner offset; a valid target in another PAF segment is
+reported as outside text rather than given a misleading offset. These are
+analysis-correctness changes only and add no new hardware finding or runtime
+behavior.
+
+The one-level A989 next-target record now applies both declared-text bounds and
+reports `target_in_text` explicitly. A segment-valid target outside text remains
+eligible for the bounded read-only map, but its offset is reported as
+`OUTSIDE_TEXT`; the record labels the proven register as `callback_arg_reg`.
+
+#### A989 callback-container structural map
+
+**Proven by hardware:** the PSP-1000 loaded `scePaf` image contains the captured
+inner routine, and the wrapper/import resolution is valid.
+
+**Proven by loaded PSP-1000 6.61 code:** the bounded routine contains a normal
+fallthrough path that copies `a2` into `s4`, later stores `s4` at `+0x0C` of a
+container-like block, copies that block into `a2`, and then performs a direct
+JAL. The secondary diagnostic validates the complete local instruction pattern
+before reporting this fallthrough structure. It does not change the primary
+conservative callback-flow result and does not prove that the path executed.
+It also reconstructs the two interleaved LUI/signed-low addresses and maps only
+the dynamically decoded, segment-validated downstream target.
+
+**Not yet proven:** that the downstream routine registers, dispatches, invokes,
+or otherwise semantically consumes `VSH+589C` in any particular way.
+
+#### A989 immediate consumer capture
+
+**Proven by hardware:** the downstream consumer bytes were captured from the
+loaded PSP-1000 `scePaf` image.
+
+**Proven by loaded PSP-1000 6.61 code:** the consumer preserves the inner-
+container pointer in `s5`. Its first direct call occurs before `a0`–`a3` are
+modified and therefore receives the inner container in `a2`. On the normal
+fallthrough path, the inner-container pointer is later stored inside a second
+block. The observation maps the five immediate direct targets, both previously
+reconstructed addresses, and the validated four-byte slot without executing or
+semantically naming any target.
+
+**Not proven:** that either block was dynamically constructed during this
+diagnostic boot; that any downstream routine invokes `VSH+589C`; or the
+semantics of any mapped PAF call target or constructed address.
+
+#### A989 consumer validation correction
+
+The consumer validator now matches the hardware-captured `+0x80` BEQ and
+`+0x84` zero-move delay slot. The outer-block stores are validated at `+0x88`,
+`+0x90`, `+0x94`, `+0x98`, `+0x9C`, and the `+0xA4` delay slot; no value is
+assigned to field `+0x10`. The `+0x5C` and `+0x64` known outcomes are emitted
+only after exact SLTI/XORI/SLTIU/OR dataflow and branch operands/targets are
+validated. Outcomes at `+0x54` and `+0x80` remain unknown because they depend on
+a call return. This corrects loaded-code classification only and adds no
+hardware or runtime claim.
+
+The consumer-tail validator now additionally requires `LUI v0` followed by
+`LW a0,...(v0)`, `SLL v1,s7,3`, and the exact `ADDU a0,a0,v1` in the `+0xB8`
+call delay slot. This closes structural gaps without changing any output,
+mapping boundary, runtime behavior, or hardware interpretation.
+
+#### A989 first-call and adjacent-link observation
+
+**Proven by hardware:** the consumer `+0x3C` target and its downstream bytes
+were captured from the loaded PSP-1000 `scePaf` image.
+
+**Proven by loaded PSP-1000 6.61 code:** the first target has a complete
+`0x28`-byte body which does not read `a2` or `a3`; its bound slot is reconstructed
+and safely read as a scalar. The adjacent function is derived at first target
+plus `0x28` and contains the validated neutral indirect-call shape. Read-only
+text scans report bounded direct callers and LUI/ADDIU or LUI/ORI address
+references. The dynamically decoded consumer `+0xA0` and `+0xB8` targets
+validate the header and global pointer-link instruction shapes, permitting a
+normal-fallthrough structural chain record with explicit `execution=NOT_OBSERVED`.
+The second constructed-address map is extended to at most `0x100`; its
+`base+0x0C` load remains mechanically unnamed.
+
+**Not proven:** that any described path or write executed during this boot, that
+any indirect target invokes `VSH+589C`, or any semantic role for the adjacent
+function, linked objects, call targets, or constructed addresses.
+
+The first-call body proof now dynamically requires its BLTZ to target local
+`+0x1C` and its BNE to target local `+0x20`. Both internal-edge checks precede
+the `body_size=0x28` and no-`a2`/`a3`-read conclusion; this is a static
+validation correction and not new hardware evidence.
+
+#### A989 OUTER+0x14 structural search
+
+The second constructed address now has a dedicated read-only proof for its
+local `base+0x0C` load, branch to `+0xB4`, indirect JALR, and `base+0x04`
+argument load. The first constructed address is independently checked for a
+preserved call return written to its argument base at `+0x04`. A bounded scan of
+validated PAF text reports generic `base+0x14` indirect-call candidates and
+conservative `a1` provenance; any connection to the A989 OUTER layout is
+explicitly conditional on `if_base_is_a989_outer=1`. No exact runtime object
+identity is claimed. A separately capped non-text-segment scan reports aligned
+words equal to the dynamically derived adjacent address without inspecting
+surrounding objects. The prior first-call scalar result and primary ambiguous
+callback flow are unchanged.
+
+#### A989 provenance/liveness correction
+
+The OUTER `+0x14` scan now tracks `BASE_PLUS_04` independently for every GPR,
+invalidates provenance on other recognized writes, processes the JALR delay
+slot before classifying the live `a1`, and treats every unrelated JALR as a call
+barrier. The target register remains live only while no recognized or unknown
+instruction can overwrite it. Constructed_0 now uses the exact local
+`+0x08/+0x14/+0x1C/+0x24/+0x2C` shape, while constructed_1 requires its exact
+four-word entry frame through `s0=a1`. The adjacent data scan and all earlier
+first-call observations remain unchanged. These corrections add no hardware or
+runtime claim.
+
+The OUTER `+0x14` scan additionally rejects an initial load whose base and
+target registers alias, and treats any intervening write to the original base
+as a liveness barrier. A JALR delay-slot load may establish `a1` from
+`original_base+0x04` because it observes the pre-delay base value; other
+delay-slot base writes cannot substitute a newly defined base for the original
+object. Constructed_0 validation now covers every captured instruction from
+its `+0x00` stack allocation through the `+0x2C` field store, including both
+call delay slots and the intervening `a1` load. The per-register `a1`
+provenance model, constructed_1 proof, adjacent data scan, earlier downstream
+analyses, and conservative primary callback-flow result remain unchanged.
+
+#### A989 OUTER base-origin observation
+
+The next diagnostic does not widen the generic candidate search. For each of
+the existing, capped reported `base+0x14`/JALR candidates, it walks backward at
+most `0x40` bytes to identify the nearest mechanically decoded write to that
+candidate's base register. The walk stops at direct or indirect control flow,
+at a control-flow delay slot, or when GPR destination behavior is unknown. It
+reports only exact MOVE, zero/general ADDIU, or LW definitions; all other cases
+remain `UNKNOWN`. The record is explicitly a local, branch-free suffix fact,
+not proof of function-entry provenance or identity with the A989 OUTER object.
+
+New records are:
+
+```text
+[paf-a989-outer14-base-origin] load_off=... status=LOCAL_DEFINITION definition_off=... kind=MOVE|ADDIU|LW source_reg=... disp=... path=BRANCH_FREE_SUFFIX
+[paf-a989-outer14-base-origin] load_off=... status=UNKNOWN path=BRANCH_FREE_SUFFIX
+```
+
+This observation is intended to distinguish candidates whose local base
+definition offers a concrete next provenance edge from candidates that remain
+opaque. It adds no object dereference, runtime call, execution claim, semantic
+Sony name, or change to the primary `callback_flow=AMBIGUOUS` result. A new
+PSP-1000 run is required to collect these loaded-image records.
+
+#### A989 targeted nearby-function provenance
+
+The next read-only capture is restricted to the hardware-reported candidates
+at PAF text offsets `0xCFA38`, `0xCFB30`, and `0xCFBF4`; it does not widen the
+generic candidate scan or its reporting cap. For each offset, it searches back
+at most `0x100` bytes for the nearest conventional negative stack allocation
+with an RA save. That tentative entry is accepted only when it is immediately
+preceded by a validated `JR ra` plus delay-slot boundary or is the dynamically
+decoded target of a direct loaded-text JAL. A plain J is retained as a bounded
+structural reference but cannot establish callable-entry argument provenance;
+when it is the only reference evidence, entry status remains `UNKNOWN`.
+
+From an accepted entry, a bounded forward pass tracks only entry arguments,
+simple copies, and one load through an entry argument or its saved-register
+copy. Conditional branches and non-call transfers stop the proof rather than
+merge paths. Direct and indirect calls process their validated delay slot,
+invalidate caller-saved provenance, and retain saved-register provenance only
+for registers mechanically saved by the containing function. Unknown GPR
+destination behavior also stops the proof. Direct callers are reported only
+for the three accepted entries and are capped at 16 per entry.
+
+New records are:
+
+```text
+[paf-a989-nearby-function] candidate_off=... entry_off=... status=VALID entry_evidence=PREVIOUS_JR_RA|DIRECT_JAL|PREVIOUS_JR_RA_AND_DIRECT_JAL
+[paf-a989-nearby-function] candidate_off=... entry_off=... status=UNKNOWN entry_evidence=DIRECT_J_ONLY|PROLOGUE_ONLY|NO_BOUNDARY|INVALID_CANDIDATE
+[paf-a989-nearby-base-flow] candidate_off=... base_reg=... origin=ENTRY_A0|ENTRY_A1|ENTRY_A2|ENTRY_A3|COPY_OF_ENTRY_ARG|LW_FROM_ENTRY_ARG|LW_FROM_SAVED_ARG|UNKNOWN source_reg=... disp=...
+[paf-a989-nearby-caller] candidate_off=... function_entry=... caller_off=... kind=JAL|J
+```
+
+**PROVEN BY HARDWARE:** the three selected generic candidates exist in the
+loaded PSP-1000 PAF image and their earlier `0x40` suffix observations were
+unknown. **PROVEN BY SOURCE:** the new capture is limited, range-validated,
+read-only, and fail-closed as described above. The containing entries, forward
+base provenance, and direct caller relationships remain **HYPOTHESIS / UNKNOWN**
+until another PSP-1000 run supplies the new records. No proximity or field
+offset is promoted to A989 OUTER identity, and the primary callback flow stays
+`AMBIGUOUS`.
+
+Entry GPRs `a0-a3` are initialized only after the strong-entry test succeeds.
+Both J and JAL references continue to use `[paf-a989-nearby-caller]`, with
+`kind=J` or `kind=JAL`, but only JAL contributes `DIRECT_JAL` evidence. This is
+a provenance-strength correction only and adds no new loaded-code or runtime
+finding before the next hardware capture.
+
+#### A989 four-site caller argument capture
+
+The next observation is restricted to the hardware-proven direct JAL edges
+`0xCFC64 -> 0xCFADC`, `0x345B8 -> 0xCF9A8`, `0x34884 -> 0xCFB70`, and
+`0x344A4 -> 0xCFB70`, in that priority order. Each loaded JAL is dynamically
+decoded again and both its callsite and expected target must remain in validated
+PAF text. A caller map is clamped to at most `0x40` bytes before and `0x20`
+bytes after the JAL.
+
+A straight-line suffix pass tracks exact MOVE, ADDIU, LW, and immediate
+construction forms for `a0-a3`. Branches, J/JR, unsupported destination
+behavior, and unprovable call boundaries fail closed. Earlier calls process
+their delay slots and invalidate caller-saved values; the target JAL delay slot
+is applied before argument reporting. All results retain
+`execution=NOT_OBSERVED` and neutral register/offset descriptions. A separate
+validated `0x50`-byte raw context spans `0xCFC44` through the code following
+the known `0xCFC74` consumer entry without inferring a relationship from
+proximity.
+
+New records are:
+
+```text
+[paf-a989-nearby-caller-map] caller_off=... off=... w0=... ... w7=...
+[paf-a989-nearby-call-args] call_validation=... flow_status=VALID|UNKNOWN caller_off=... target_off=... a0_kind=... a0_parent_reg=... a0_disp=... a0_value=... ... a3_kind=... execution=NOT_OBSERVED
+[paf-a989-cfc64-context] off=... w0=... ... w7=...
+```
+
+**PROVEN BY HARDWARE:** the four direct caller/target pairs above exist in the
+loaded image. **PROVEN BY SOURCE:** this new capture is targeted, bounded,
+range-validated, read-only, and fail-closed. The exact four argument values,
+the local boundary relationship around `0xCFC64`, and any connection to known
+A989 objects remain **HYPOTHESIS / UNKNOWN** until the next hardware log. The
+three candidate base results and primary callback flow remain `UNKNOWN` and
+`AMBIGUOUS`, respectively.
+
+`call_validation` describes only the dynamically decoded JAL and its validated
+loaded-text target. `flow_status` separately describes whether the bounded
+argument-provenance suffix remained valid through the target delay slot. Every
+transition to `UNKNOWN` now clears the source kind, parent register,
+displacement, and value together; consequently an UNKNOWN `a0-a3` field always
+reports `parent_reg=0`, `disp=0`, and `value=0x00000000`. This is a fail-closed
+metadata correction and does not change the four callsites or add evidence.
+
+## PSP-1000 functional checkpoint
+
+This checkpoint ends expansion of the A989 investigation and exercises the
+furthest hardware-confirmed Sony activation path with only five demonstrated
+PSP-1000 differences:
+
+| Site | Natural PSP-1000 result/path | Checkpoint result/path | Hardware progress |
+| --- | --- | --- | --- |
+| VSH `+0x58D4` | natural PSP-1000 predicate is false | selective caller result is true | Sony requests, loads, starts, and enters SlidePlugin activation |
+| SlidePlugin `+0x9330`, `scePaf/0xED83BBCF` | zero | one, only at this return site | activation advances to the pre-BSMan boundary |
+| SlidePlugin `+0x93AC`, `sceBSMan/0x23E3A9B6` | `0x8002013A` | zero, only for that exact result at this return site | Sony reaches the state-zero path |
+| state-zero virtual return | 15 | 14, only for exact 15 | Sony reaches the rejoin and later PAF/VshBridge sequence |
+| `sceVshBridge/0x639C3CB3` with `a0=0x8000000D` | `0x80000107` | zero, only for that exact argument/result pair | Sony passes the retry branch and reaches the later natural interface/collection path |
+
+The PSP-1000 functional path no longer installs the original broad SlidePlugin
+BSMan and VshBridge import replacements. Sony's imports execute naturally and
+the existing validated callsite-return controls apply only the exact
+hardware-proven conversions above. Functional mode also ignores the isolated
+`+0x13F6C`, `+0x14020`, and `0x2 -> 0x1E9` mask experiments: hardware showed
+those substitutions were insufficient, while later collection and masked PAF
+decisions pass naturally. The broad BSMan stub replacement, Sony-start trace,
+post-impose traces, activation-wide trace, and A989 maps remain available only
+to nonfunctional diagnostic runs and are not checkpoint dependencies.
+
+The first unresolved functional condition is now Sony's natural continuation
+and return after the furthest confirmed activation decisions, followed by
+whether its unmodified RCO/UI path makes the Clock & Date UI visible. No
+additional compatibility value is justified at that boundary. The checkpoint
+therefore changes nothing else and treats UI visibility as the hardware result,
+not as a condition to spoof.
+
+Use this recovery-protected checkpoint configuration:
+
+```ini
+[SlidePlugin]
+ClockAndCalendar = Enabled
+
+[Experimental]
+PSP1000SlidePlugin = Enabled
+PSP1000Diagnostics = Enabled
+PSP1000BSManClosedShim = Disabled
+PSP1000Consumer14020Compat = Disabled
+PSP1000Consumer13F6CCompat = Disabled
+PSP1000PafCapabilityMaskCompat = Disabled
+PSP1000PostImposeVCallTrace = Disabled
+PSP1000PostMinusOneVCall64Trace = Disabled
+PSP1000PostVCall64CollectionTrace = Disabled
+PSP1000CollectionPafFCF265D8Trace = Disabled
+PSP1000CollectionPaf9A285882Trace = Disabled
+PSP1000PostCollectionPafFCF265D8Trace = Disabled
+PSP1000MaskedPafC59FC3D0Trace = Disabled
+PSP1000MaskedPafC59FC3D0SecondTrace = Disabled
+PSP1000ActivationWideTrace = Disabled
+```
+
+The first checkpoint wiring armed the selective scalar only after HOME. Real
+PSP-1000 hardware logged `request_armed=1` but no subsequent `+0x58D4` hit,
+SlidePlugin request, or activation during the observation window. This proves
+the HOME write worked mechanically but does not support an assumption that
+Sony revisits the startup caller after normal VSH startup. The checkpoint now
+pre-arms the same one-shot scalar during selective trigger installation.
+
+`PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED` remains zero. HOME never arms the
+selective request and never invokes a Sony routine directly. Instead, the
+validated selective `+0x58D4` installation transaction initializes the
+range/alignment-validated helper request scalar to one in functional mode,
+synchronizes it, and only then installs and cache-synchronizes the validated
+callsite patch. The transaction performs no writes if any selected validation
+fails. The existing `zeroCtrlTrigger58D4` leaf consumes the scalar by clearing
+it before returning the one-shot effective value `1`; with a zero scalar it
+tail-transfers to Sony's original predicate. The expected next log ordering is
+therefore `[psp1000-functional] startup_58d4_armed=1`, followed by existing
+`+0x58D4` hit evidence if Sony naturally reaches the startup caller, then the
+SlidePlugin request/observation, RCO request, activation, compatibility
+checkpoints, and Sony continuation.
+
+The broad `+0x6F84` mode remains prohibited, and A989 output is skipped when
+the functional checkpoint is active. The hardware action is one
+recovery-protected PSP-1000 6.61 boot with this configuration, observation of
+whether Sony naturally consumes the startup request and makes the Clock & Date
+UI visible, normal XMB stability testing, and return of the complete unedited
+diagnostic log. HOME is not part of this startup-gate checkpoint.
+
+The startup-prearm hardware run reached the SlidePlugin request, probe/start
+callbacks, RCO request, and activation entry, then crashed immediately after
+the boot animation and before XMB icons appeared. The PSP-1000 functional path
+therefore no longer carries two legacy ZeroVSH SlidePlugin integrations into
+that downstream path: the `+0xC990` RTC-call replacement and the `+0x9038`
+initialization redirection through `InjectionEntryFuncInit`. Sony's original
+words remain untouched at both sites on the PSP-1000 experiment path, so that
+path also makes no ZeroVSH LED, brightness, or CPU/bus-clock change. The legacy
+hooks remain available for the established non-PSP-1000 path.
+
+The five hardware-proven PSP-1000 compatibility differences remain unchanged:
+the one-shot selective `+0x58D4` result, the exact PAF zero-to-one return, the
+exact BSMan error-to-zero return, state 15-to-14 substitution, and the exact
+VshBridge invalid-mode-to-zero return. The next recovery-protected hardware
+boot should establish whether removing only the two unproven legacy hooks lets
+the PSP reach a stable XMB, continue beyond activation, and display Sony's
+Clock & Date UI. If the crash remains, these hooks are not sufficient to
+explain it and should not be restored as a diagnostic response.
+
+The legacy-hook exclusion run reproduced the same activation-entry crash, so
+the RTC and initialization hooks remain disabled on PSP-1000. The functional
+activation implementation is now separated from the research installer. The
+former functional route through `zeroCtrlInstallBSManClosedShim()` owned 22
+SlidePlugin activation words: the four compatibility call owners plus 18
+entry, branch, classification, and localization owners. Functional mode now
+uses `zeroCtrlInstallPsp1000FunctionalCompat()` and owns exactly four words,
+relative to the hardware-established, directly validated
+`SlidePlugin+0x9304` activation entry:
+
+```text
++0x02C  PAF ED83BBCF call wrapper
++0x0A8  BSMan 23E3A9B6 call wrapper
++0x10C  VshBridge 639C3CB3 call wrapper
++0x2A4  state-zero virtual-call wrapper
+```
+
+All four owners and their unique imported targets or exact virtual-call shape,
+all eight call/return leaves, pseudo-direct reachability, and every required
+helper scalar are validated before the first scalar write. Only the four
+compatibility modes and wrapper routing/result counters are initialized and
+D-cache synchronized. The four owner words are then written and individually
+D/I-cache synchronized; only afterward are
+`activation_compat_validation=1` and `activation_compat_install=1` eligible for
+the compact functional log. Their original delay slots remain untouched, as do
+Sony's result branches and the return-value classifications following the
+state-zero virtual call. The former functional `ClearCaches()` call is also
+removed; the dedicated transaction synchronizes only its scalar state and four
+owned code words.
+
+Nonfunctional diagnostic mode continues to use the unchanged research
+`zeroCtrlInstallBSManClosedShim()` path. The startup `+0x58D4` one-shot, HOME
+block, direct-runtime prohibition, legacy-hook exclusion, and the exact five
+hardware-proven compatibility conversions remain unchanged. The next
+recovery-protected PSP-1000 run should confirm both activation-compat markers,
+the existing four return/substitution counters, and whether Sony's otherwise
+untouched activation logic reaches a stable XMB and visible Clock & Date UI.
+
+The first four-owner hardware run reached SlidePlugin start and the RCO request
+but emitted neither activation-compat completion marker. This does not test the
+four wrappers: it shows that their installer failed closed. The functional
+installer had added an unproven whole-text uniqueness requirement for the
+activation prologue. That scan is removed. On PSP-1000 6.61 functional mode it
+now computes `text+0x9304` directly, after overflow checks, validates the full
+owned range, and requires the already hardware-proven five-word prologue
+fingerprint there. Import, owner, helper, scalar, and transactional commit
+validation remain unchanged. That revision added no guard scalar.
+
+The subsequent hardware run again reached SlidePlugin start and the RCO request
+without either activation-compat completion marker. Because the installer runs
+before `slide_start_callback_returning`, this proves only that its transaction
+returned early. One kernel-only, monotonic diagnostic field now records the
+last completely passed validation block; it does not enter either registration
+ABI and never controls compatibility behavior:
+
+```text
+0  NOT_ATTEMPTED
+1  ENTERED
+2  BASE_GUARDS_PASSED
+3  ACTIVATION_FINGERPRINT_PASSED
+4  IMPORT_TABLE_TRAVERSAL_COMPLETED
+5  REQUIRED_IMPORTS_UNIQUE
+6  BSMAN_CALLER_VALID
+7  OWNER_HELPER_REACHABILITY_VALID
+8  OWNER_FINGERPRINTS_VALID
+9  RETURN_LEAVES_VALID
+10 SCALAR_RANGES_VALID
+11 SCALARS_INITIALIZED
+12 CODE_COMMIT_COMPLETE
+13 SUCCESS
+```
+
+Each value is assigned only after the named block completes. In particular,
+unsafe import traversal leaves stage 3, non-unique imports leave stage 4,
+owner-fingerprint failure leaves stage 7, scalar-range failure leaves stage 9,
+and stage 12 follows all four owner writes and their individual D/I-cache
+synchronization. Stage 13 follows all three functional completion flags. The
+deferred writer emits only changed values as
+`[psp1000-functional] activation_compat_stage=<n>`. The installer performs no
+I/O for this observation, and the field causes no Sony, helper-module, or
+SlidePlugin write. The next hardware run asks only for the last reported stage.
+
+That run stopped at stage 7, proving helper reachability but failing an owner
+fingerprint. The functional table had incorrectly assigned the virtual-call
+wrapper to `A+0x2B4`. The canonical research `site_offset[]` mapping places the
+`0x0040F809/0x00000000` JALR pair at index 3, `A+0x2A4`; `A+0x2B4` is the next
+Sony classification owner. The minimal table now uses `A+0x2A4`, restoring the
+same owner used by the hardware-proven T30.1 15-to-14 substitution while
+leaving `A+0x2B4` and later classification code untouched.
+
+Real hardware then reached functional stage 13 and both install markers, proving
+the four-owner transaction completes before the observed RCO progression. The
+fast functional writer now exposes only the counters and values already owned
+by those wrappers. After functional install and cache synchronization, it reads
+the PAF mask/return/natural/substitution values; BSMan call/return/natural/
+effective/substitution values; state mask/call/return/natural/effective/
+substitution values; and VshBridge call/return/argument/natural/effective/
+substitution values through the existing range-validating helper-counter read.
+It emits two compact records only when either snapshot changes:
+
+```text
+[psp1000-functional-compat] paf_mask=... paf_ret=... paf_nat=... paf_sub=... bs_call=... bs_ret=... bs_nat=... bs_eff=... bs_sub=...
+[psp1000-functional-compat2] state_mask=... state_call=... state_ret=... state_nat=... state_eff=... state_sub=... vsh_call=... vsh_ret=... arg=... nat=... eff=... sub=...
+```
+
+This adds no helper leaf, registration field, Sony write, compatibility owner,
+or control-flow change. The next hardware run asks only which installed wrapper
+was last entered and returned.
+
+That run proved all four wrappers returned with the expected hardware-proven
+conversions, through the exact VshBridge return. The next checkpoint therefore
+adds one transparent diagnostic owner only at `A+0x1E8`. The original word must
+decode as a JAL to SlidePlugin text `+0x2A168`, and `A+0x1EC` must remain the
+original zero delay-slot word. Only after the stage-13 four-owner transaction
+has completed, the unchanged historical Wide662 `WIDE_CALL` helper and its
+already registered scalar slots transparently route the natural call. The
+saved-RA word proves entry, the historical return counter and last-result word
+record return and untouched `v0`, and the resume word returns control to
+`A+0x1F0`. The functional owner uses `J`, matching the helper's established
+resume-based routing, while its original target remains validated as a JAL.
+
+The installer validates both leaves, all reused scalar words, pseudo-direct
+reachability, the exact owner/target/delay fingerprint, and both module ranges
+before initializing the helper scalars or writing the single `A+0x1E8` word.
+The functional writer emits changed-only evidence as:
+
+```text
+[psp1000-functional-post-t39] entered=<n> return=<n> natural=0x........
+```
+
+This checkpoint does not enable activation-wide tracing, restore any T32-T39
+research owner, alter the four compatibility owners, or change either public
+registration ABI. Its next recovery-protected hardware run asks only whether
+the natural `A+0x1E8` target was entered and returned.
+
+To distinguish an old image from a fail-closed post-T39 installation, one
+kernel-private monotonic stage now records the last completed installer block:
+
+```text
+0  NOT_ATTEMPTED
+1  ENTERED
+2  PREREQUISITES_VALID
+3  ACTIVATION_OWNER_RANGE_VALID
+4  OWNER_FINGERPRINT_VALID
+5  NATURAL_TARGET_VALID
+6  HELPER_REACHABILITY_VALID
+7  SCALARS_VALID
+8  SCALARS_INITIALIZED
+9  CODE_COMMIT_COMPLETE
+10 SUCCESS
+```
+
+Stages advance only after their complete validation or commit block. In
+particular, stage 8 follows initialization and D-cache synchronization of all
+nine historical Wide662 scalars, stage 9 follows the sole `A+0x1E8` write and
+its four-byte D/I-cache synchronization, and stage 10 follows publication of
+the install/cache-sync flags. The changed-only record is emitted independently
+of installation success:
+
+```text
+[psp1000-functional-post-t39-install] rev=1 stage=<n> validation=<n> install=<n> cache_sync=<n>
+```
+
+The literal revision distinguishes this diagnostic image. The existing
+`entered/return/natural` record remains success-gated and unchanged.
+
+Hardware reached post-T39 stage 5, localizing the fail-closed exit to Wide662
+helper reachability. Static inspection confirms that user registration assigns
+Wide662 Call/CallEnd to leaf 1 and Return/ReturnEnd to leaf 2. The kernel first
+validates every supplied leaf pair, then derives each recorded size as
+`end-start`. However, the user populates and submits this separate activation-
+wide registration only when its NULL gate query succeeds; functional mode does
+not enable the research ActivationWide path. This is a concrete reason that
+the registered values require hardware observation, but it is deliberately not
+corrected in this diagnostic-only checkpoint.
+
+The stage-5 block now evaluates all four guards independently and records a
+fail mask: bit 0 is call-leaf range, bit 1 is return-leaf range, bit 2 is the
+pseudodirect 256 MiB region comparison, and bit 3 is replacement-J decode-back.
+A nonzero mask returns at stage 5 before scalar initialization or the Sony code
+write. The changed-only record is:
+
+```text
+[psp1000-functional-post-t39-helper] fail=0x<n> owner=0x........ call=0x........ call_size=<n> return=0x........ return_size=<n> helper_text=0x........ helper_size=<n> replacement=0x........ decoded=0x........
+```
+
+It reports only loaded structural values and changes no validation outcome.
+
+Hardware reported helper fail mask `0x3` with zero call/return leaf metadata,
+confirming the static registration-gate issue. The common ActivationWide
+metadata registration permission now accepts either research ActivationWide
+mode or PSP-1000 functional mode. Both the NULL pre-population query and the
+non-NULL validated transaction use that same permission. Functional mode still
+leaves `activation_wide_enabled` false, so this change registers the existing
+11 leaf pairs and 54 scalar addresses but installs no research owner.
+
+The existing transaction remains unchanged after its gate: the registration
+structure must be within the helper module, every leaf start/end pair and every
+scalar is validated, and leaf sizes are derived only as validated `end-start`
+differences. No Wide662-specific pointer path or registration ABI was added.
+
+Hardware subsequently completed the post-T39 transaction and observed 13
+natural returns from the `A+0x1E8` target, with last result `0x0000000C`. That
+temporary owner is now retired: functional mode performs no write at
+`A+0x1E8/A+0x1EC`. A new all-or-none post-1F0 diagnostic owns only `A+0x1F8`,
+`+0x200`, `+0x20C`, `+0x214`, `+0x21C`, and `+0x22C`, using the unchanged
+WideCompare, Wide662, Wide440, WideFCF, WideLoop, and Wide090 helpers.
+
+The transaction validates the exact two branch words and decoded targets, all
+four JAL targets, all six delay slots, ten helper leaves, and historical scalar
+indices 0 through 51 before initializing any scalar. It then synchronizes all
+scalars before committing and synchronizing exactly six Sony words. Routing is
+`+1F8` zero/nonzero to `+22C/+200`; Wide call resumes are `+208`, `+214`,
+`+21C`, and `+234`; and the loop back/exit routes are `+1E8/+224`.
+
+Changed-only functional output is:
+
+```text
+[psp1000-functional-post1f0-install] rev=1 validation=<n> install=<n> cache_sync=<n>
+[psp1000-functional-post1f0] cmp=<hits>/<zero>/<nonzero> c200=<entered>/<returns>/<last> c20c=<entered>/<returns>/<last> c214=<entered>/<returns>/<last> loop=<hits>/<back>/<exit> c22c=<entered>/<returns>/<last>
+```
+
+The install record is failure-visible. The runtime record is emitted only after
+successful install/cache synchronization and reads existing historical scalar
+meanings without changing natural `v0`.
+
+Hardware completed that region: compare ran 13 times, the three loop-body calls
+returned 12 times, all 12 loop decisions returned to `A+0x1E8`, and the final
+zero route called and returned from `+0x2A6F8`. Functional startup therefore no
+longer invokes either the post-T39 or post-1F0 installer. A new four-owner exit
+diagnostic observes only `A+0x238`, `+0x248`, `+0x258`, and `+0x268`; the six
+completed post-1F0 words remain Sony-original on a fresh boot.
+
+The `+0x238` helper tests `s2` without modifying it and routes zero/nonzero to
+`A+0x240/A+0x268`. The historical WideCompare observes the `v0` branch at
+`+0x248`, while Wide662 and Wide440 transparently wrap the natural `+0x9038`
+and `+0x89E4` calls with resumes at `A+0x260/A+0x270`. All four owner shapes,
+delay slots, targets, helpers, and scalars validate before scalar initialization;
+all scalar cache synchronization precedes the four-word commit.
+
+```text
+[psp1000-functional-exit-install] rev=1 validation=<n> install=<n> cache_sync=<n>
+[psp1000-functional-exit] s2=<hits>/<zero>/<nonzero> flag=<hits>/<zero>/<nonzero> c9038=<entered>/<returns>/<last> c89e4=<entered>/<returns>/<last>
+```
+
+The old PSP-1000 `+0x9038` initialization redirection remains disabled: this
+checkpoint only routes to Sony's unchanged natural target and records its
+untouched return value.
+
+Hardware proved route B completes naturally: both decisions selected zero,
+Sony's `+0x9038` returned `0x09E50000`, and a later activation began. The exit
+transaction is therefore retired from functional startup. A dedicated,
+validated registration now supplies one transparent activation-return leaf and
+seven private helper scalars without changing the 1012/304-byte registrations.
+
+The new transaction validates the exact nine-word `A+0x050..A+0x070` epilogue,
+then replaces only the `jr ra` at `A+0x06C` with a pseudodirect J. Sony's
+`addiu sp,sp,0x20` delay slot remains untouched, so the helper sees restored SP,
+natural RA, and natural `v0`. It records return count, first/last RA and `v0`,
+and their change counts while preserving RA, `v0`, SP, and its temporaries.
+
+```text
+[psp1000-functional-activation-return-install] rev=1 validation=<n> install=<n> cache_sync=<n>
+[psp1000-functional-activation-return] returns=<n> paf_ret=<n> bs_ret=<n> state_ret=<n> vsh_ret=<n> first_ra=0x........ last_ra=0x........ ra_changes=<n> first_v0=0x........ last_v0=0x........ v0_changes=<n>
+```

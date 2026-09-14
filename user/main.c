@@ -107,6 +107,8 @@ void zeroCtrlRegisterBSManClosedShim(
         const ZeroCtrlBSManClosedRegistration *registration);
 int zeroCtrlRegisterActivationWide(
         const ZeroCtrlActivationWideRegistration *registration);
+void zeroCtrlRegisterActivationReturn(
+        const ZeroCtrlActivationReturnRegistration *registration);
 void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
         unsigned int last_addr, unsigned int changes_addr);
 void zeroCtrlSetLEDState(void);
@@ -117,6 +119,7 @@ int model;
 static ZeroCtrlSonyStartTraceRegistration sonyStartTraceRegistration;
 static ZeroCtrlBSManClosedRegistration bsmanClosedRegistration;
 static ZeroCtrlActivationWideRegistration activationWideRegistration;
+static ZeroCtrlActivationReturnRegistration activationReturnRegistration;
 static volatile unsigned int psp1000RuntimeRequest;
 static volatile unsigned int psp1000RuntimeRequestValid;
 static volatile unsigned int psp1000RuntimeRequestCalled;
@@ -445,6 +448,7 @@ WIDE_HELPER_DECL(zeroCtrlWideFCFCall); WIDE_HELPER_DECL(zeroCtrlWideFCFReturn);
 WIDE_HELPER_DECL(zeroCtrlActivationWideLoopTrace);
 WIDE_HELPER_DECL(zeroCtrlWide090Call); WIDE_HELPER_DECL(zeroCtrlWide090Return);
 WIDE_HELPER_DECL(zeroCtrlWide02374143Entry);
+WIDE_HELPER_DECL(zeroCtrlFunctionalActivationReturnTrace);
 #undef WIDE_HELPER_DECL
 #define WIDE_SCALAR_DECL(name) extern volatile unsigned int name
 WIDE_SCALAR_DECL(zeroCtrlWideCompareHits); WIDE_SCALAR_DECL(zeroCtrlWideCompareZero);
@@ -463,6 +467,13 @@ WIDE_SCALAR_DECL(zeroCtrlWideLoopExit); WIDE_SCALAR_DECL(zeroCtrlWideLoopFirst);
 WIDE_SCALAR_DECL(zeroCtrlWideLoopLast); WIDE_SCALAR_DECL(zeroCtrlWideLoopChanges);
 WIDE_SCALAR_DECL(zeroCtrlWideLoopBackTarget); WIDE_SCALAR_DECL(zeroCtrlWideLoopExitTarget);
 WIDE_SCALAR_DECL(zeroCtrlWide02374143Target); WIDE_SCALAR_DECL(zeroCtrlWide02374143Hits);
+WIDE_SCALAR_DECL(zeroCtrlFunctionalActivationReturnHits);
+WIDE_SCALAR_DECL(zeroCtrlFunctionalActivationReturnFirstRA);
+WIDE_SCALAR_DECL(zeroCtrlFunctionalActivationReturnLastRA);
+WIDE_SCALAR_DECL(zeroCtrlFunctionalActivationReturnRAChanges);
+WIDE_SCALAR_DECL(zeroCtrlFunctionalActivationReturnFirstV0);
+WIDE_SCALAR_DECL(zeroCtrlFunctionalActivationReturnLastV0);
+WIDE_SCALAR_DECL(zeroCtrlFunctionalActivationReturnV0Changes);
 #undef WIDE_CALL_DECL
 #undef WIDE_SCALAR_DECL
 extern volatile unsigned int zeroCtrlPostPafEntry0Hits, zeroCtrlPostPafEntry1Hits;
@@ -610,19 +621,11 @@ int OnModuleStart(SceModule2 *mod) {
 		}  
 	}
 	
-	if((!psp1000_experiment || psp1000_functional) &&
+	if(!psp1000_experiment &&
 			strcmp(mod->modname, "slide_plugin_module") == 0) {
-		int functional_valid = !psp1000_functional ||
-			(devkit == 0x06060110 && mod->text_addr != 0 &&
-			mod->text_size >= 0xC994 &&
-			(_lw(mod->text_addr + 0xC990) >> 26) == 3 &&
-			_lw(mod->text_addr + 0x9038) == 0x27BDFFC0 &&
-			_lw(mod->text_addr + 0x903C) == 0xAFB40030);
-		if (functional_valid) {
-			MAKE_CALL(mod->text_addr+0xC990, zeroCtrlGetCurrentClockLocalTime);
-			origFuncInit = zeroCtrlRedir2Stub(mod->text_addr+0x9038,
-					slide_start_stub, InjectionEntryFuncInit);
-		}
+		MAKE_CALL(mod->text_addr+0xC990, zeroCtrlGetCurrentClockLocalTime);
+		origFuncInit = zeroCtrlRedir2Stub(mod->text_addr+0x9038,
+				slide_start_stub, InjectionEntryFuncInit);
 	}
 	
        return previous ? previous(mod) : 0;
@@ -1106,6 +1109,16 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 		activationWideRegistration.scalar_addr[53] = (u32)&zeroCtrlWide02374143Hits;
 		zeroCtrlRegisterActivationWide(&activationWideRegistration);
 	}
+	activationReturnRegistration.leaf_addr = (u32)zeroCtrlFunctionalActivationReturnTrace;
+	activationReturnRegistration.leaf_end_addr = (u32)zeroCtrlFunctionalActivationReturnTraceEnd;
+	activationReturnRegistration.scalar_addr[0] = (u32)&zeroCtrlFunctionalActivationReturnHits;
+	activationReturnRegistration.scalar_addr[1] = (u32)&zeroCtrlFunctionalActivationReturnFirstRA;
+	activationReturnRegistration.scalar_addr[2] = (u32)&zeroCtrlFunctionalActivationReturnLastRA;
+	activationReturnRegistration.scalar_addr[3] = (u32)&zeroCtrlFunctionalActivationReturnRAChanges;
+	activationReturnRegistration.scalar_addr[4] = (u32)&zeroCtrlFunctionalActivationReturnFirstV0;
+	activationReturnRegistration.scalar_addr[5] = (u32)&zeroCtrlFunctionalActivationReturnLastV0;
+	activationReturnRegistration.scalar_addr[6] = (u32)&zeroCtrlFunctionalActivationReturnV0Changes;
+	zeroCtrlRegisterActivationReturn(&activationReturnRegistration);
 	
 	previous = sctrlHENSetStartModuleHandler(OnModuleStart);        
 	return 0;

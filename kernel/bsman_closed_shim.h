@@ -262,4 +262,13 @@ typedef struct {
 typedef char ZeroCtrlActivationWideRegistration_size[
     sizeof(ZeroCtrlActivationWideRegistration) == 304 ? 1 : -1];
 
+typedef struct {
+    u32 leaf_addr;
+    u32 leaf_end_addr;
+    u32 scalar_addr[7];
+} ZeroCtrlActivationReturnRegistration;
+
+typedef char ZeroCtrlActivationReturnRegistration_size[
+    sizeof(ZeroCtrlActivationReturnRegistration) == 36 ? 1 : -1];
+
 #endif
