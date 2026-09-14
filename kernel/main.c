@@ -6290,7 +6290,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     slide_diag.bsman.functional_post_t39_cache_sync) {
                 unsigned int post_t39[3];
                 post_t39[0] = zeroCtrlReadHelperCounter(
-                        slide_diag.bsman.activation_wide_scalar_addr[15]);
+                        slide_diag.bsman.activation_wide_scalar_addr[9]) != 0;
                 post_t39[1] = zeroCtrlReadHelperCounter(
                         slide_diag.bsman.activation_wide_scalar_addr[11]);
                 post_t39[2] = zeroCtrlReadHelperCounter(
@@ -6302,7 +6302,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             sizeof(post_t39));
                     observed_functional_post_t39_valid = 1;
                     snprintf(line, sizeof(line),
-                            "[psp1000-functional-post-t39] call=%u return=%u "
+                            "[psp1000-functional-post-t39] entered=%u return=%u "
                             "natural=0x%08X\n",
                             post_t39[0], post_t39[1], post_t39[2]);
                     zeroCtrlDiagnosticsText(line);
@@ -9301,7 +9301,7 @@ static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     unsigned int activation, owner, original, target, replacement;
     unsigned int call_leaf, return_leaf;
-    unsigned int scalar[6], i;
+    unsigned int scalar[9], i;
 
     if (!bsman->functional_validation || !bsman->functional_install ||
             !bsman->functional_cache_sync ||
@@ -9330,17 +9330,20 @@ static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
                 bsman->activation_wide_leaf_size[2]) ||
             ((owner + 4) & 0xF0000000) != (call_leaf & 0xF0000000))
         return;
-    replacement = 0x0C000000 | ((call_leaf >> 2) & 0x03FFFFFF);
+    replacement = 0x08000000 | ((call_leaf >> 2) & 0x03FFFFFF);
     if (zeroCtrlMipsJumpTarget(owner, replacement) != call_leaf)
         return;
 
     scalar[0] = bsman->activation_wide_scalar_addr[8];  /* target */
     scalar[1] = bsman->activation_wide_scalar_addr[9];  /* saved ra */
-    scalar[2] = bsman->activation_wide_scalar_addr[11]; /* return hits */
-    scalar[3] = bsman->activation_wide_scalar_addr[13]; /* natural result */
-    scalar[4] = bsman->activation_wide_scalar_addr[15]; /* call hits */
-    scalar[5] = bsman->activation_wide_scalar_addr[10]; /* unused resume */
-    for (i = 0; i < 6; i++)
+    scalar[2] = bsman->activation_wide_scalar_addr[10]; /* resume */
+    scalar[3] = bsman->activation_wide_scalar_addr[11]; /* return hits */
+    scalar[4] = bsman->activation_wide_scalar_addr[12]; /* first result */
+    scalar[5] = bsman->activation_wide_scalar_addr[13]; /* last result */
+    scalar[6] = bsman->activation_wide_scalar_addr[14]; /* changes */
+    scalar[7] = bsman->activation_wide_scalar_addr[15]; /* zero results */
+    scalar[8] = bsman->activation_wide_scalar_addr[16]; /* nonzero results */
+    for (i = 0; i < 9; i++)
         if ((scalar[i] & 3) != 0 ||
                 !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
             return;
@@ -9348,11 +9351,14 @@ static void zeroCtrlInstallPsp1000PostT39Diagnostic(SceModule2 *mod) {
     bsman->functional_post_t39_validation = 1;
     _sw(target, scalar[0]);
     _sw(0, scalar[1]);
-    _sw(0, scalar[2]);
-    _sw(0xFFFFFFFF, scalar[3]);
-    _sw(0, scalar[4]);
-    _sw(0, scalar[5]);
-    for (i = 0; i < 6; i++)
+    _sw(activation + 0x1F0, scalar[2]);
+    _sw(0, scalar[3]);
+    _sw(0xFFFFFFFF, scalar[4]);
+    _sw(0xFFFFFFFF, scalar[5]);
+    _sw(0, scalar[6]);
+    _sw(0, scalar[7]);
+    _sw(0, scalar[8]);
+    for (i = 0; i < 9; i++)
         sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4);
     _sw(replacement, owner);
     sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);

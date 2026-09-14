@@ -1848,12 +1848,13 @@ def check_sources(root):
             "if (slide_diag.bsman.functional_post_t39_install"):
             minimal.find("if (slide_diag.functional_button_thread")]
     for token in ("functional_post_t39_cache_sync",
-            "activation_wide_scalar_addr[15]",
+            "activation_wide_scalar_addr[9]",
+            "activation_wide_scalar_addr[9]) != 0",
             "activation_wide_scalar_addr[11]",
             "activation_wide_scalar_addr[13]",
             "!observed_functional_post_t39_valid ||",
             "memcmp(post_t39, observed_functional_post_t39",
-            "[psp1000-functional-post-t39] call=%u return=%u ",
+            "[psp1000-functional-post-t39] entered=%u return=%u ",
             "natural=0x%08X"):
         if token not in post_t39_snapshot:
             fail("functional post-T39 changed-only snapshot lacks " + token)
@@ -1920,9 +1921,17 @@ def check_sources(root):
             "zeroCtrlMipsJumpTarget(owner, replacement) != call_leaf",
             "bsman->activation_wide_scalar_addr[8]",
             "bsman->activation_wide_scalar_addr[9]",
+            "bsman->activation_wide_scalar_addr[10]",
             "bsman->activation_wide_scalar_addr[11]",
+            "bsman->activation_wide_scalar_addr[12]",
             "bsman->activation_wide_scalar_addr[13]",
+            "bsman->activation_wide_scalar_addr[14]",
             "bsman->activation_wide_scalar_addr[15]",
+            "bsman->activation_wide_scalar_addr[16]",
+            "replacement = 0x08000000",
+            "_sw(activation + 0x1F0, scalar[2])",
+            "_sw(0xFFFFFFFF, scalar[4])",
+            "_sw(0xFFFFFFFF, scalar[5])",
             "!zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)",
             "_sw(replacement, owner)",
             "sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4)",
@@ -1954,23 +1963,28 @@ def check_sources(root):
                     forbidden)
     if "functional_post_t39" in bsman_header:
         fail("functional post-T39 checkpoint changes registration ABI")
-    post_t39_call = assembly[assembly.find("zeroCtrlWide662Call:"):
-            assembly.find("zeroCtrlWide662CallEnd:")]
-    post_t39_return = assembly[assembly.find("zeroCtrlWide662Return:"):
-            assembly.find("zeroCtrlWide662ReturnEnd:")]
-    for token in ("zeroCtrlWide662Zero", "zeroCtrlWide662RA",
-            "zeroCtrlWide662Target", "zeroCtrlWide662Return"):
-        if token not in post_t39_call:
-            fail("functional post-T39 call helper lacks " + token)
-    for token in ("zeroCtrlWide662Hits", "zeroCtrlWide662Last",
-            "zeroCtrlWide662RA", "sw $v0"):
-        if token not in post_t39_return:
-            fail("functional post-T39 return helper lacks " + token)
+    wide662_invocation = (
+            "WIDE_CALL zeroCtrlWide662Call, zeroCtrlWide662Return, "
+            "zeroCtrlWide662Target, zeroCtrlWide662RA, zeroCtrlWide662Resume, "
+            "zeroCtrlWide662Hits, zeroCtrlWide662First, zeroCtrlWide662Last, "
+            "zeroCtrlWide662Changes, zeroCtrlWide662Zero, "
+            "zeroCtrlWide662Nonzero")
+    if assembly.count(wide662_invocation) != 1:
+        fail("historical Wide662 WIDE_CALL implementation is not intact")
+    wide_call_macro = assembly[assembly.find(".macro WIDE_CALL "):
+            assembly.find(".endm", assembly.find(".macro WIDE_CALL "))]
+    for token in (r"lui $t0, %hi(\resume)",
+            r"lw $ra, %lo(\resume)($t0)", r"sw $v0, %lo(\first)($t0)",
+            r"sw $v0, %lo(\last)($t0)", r"%hi(\changes)",
+            r"%hi(\zero_hits)", r"%hi(\nonzero_hits)"):
+        if token not in wide_call_macro:
+            fail("historical WIDE_CALL semantics lack " + token)
+    call_half = wide_call_macro[:wide_call_macro.find(r"\retname:")]
+    if r"\zero_hits" in call_half:
+        fail("Wide662 zero-result scalar is repurposed as an entry counter")
     if re.search(r"\b(?:move|addu|addiu|lw|li|ori)\s+\$?v0\b",
-            post_t39_return):
-        fail("functional post-T39 return helper modifies natural v0")
-    if "jr $t0" not in post_t39_return:
-        fail("functional post-T39 return helper does not restore saved Sony ra")
+            wide_call_macro):
+        fail("historical WIDE_CALL helper modifies natural v0")
     research_state_owner = kernel[kernel.find(
             "static void zeroCtrlInstallBSManClosedShim("):
             kernel.find("int OnModuleStart(SceModule2 *mod)")]

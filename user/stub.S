@@ -1774,52 +1774,7 @@ zeroCtrlMaskedPafC59FC3D0SecondNonzeroTarget: .space 4
 .endm
 
 WIDE_DECISION zeroCtrlActivationWideCompareTrace, zeroCtrlWideCompareHits, zeroCtrlWideCompareZero, zeroCtrlWideCompareNonzero, zeroCtrlWideCompareFirst, zeroCtrlWideCompareLast, zeroCtrlWideCompareChanges, zeroCtrlWideCompareZeroTarget, zeroCtrlWideCompareNonzeroTarget
-/* Dedicated transparent A+0x1E8 checkpoint using the existing registered slots. */
-.globl zeroCtrlWide662Call
-.globl zeroCtrlWide662CallEnd
-.ent zeroCtrlWide662Call, 0
-zeroCtrlWide662Call:
-    addiu $sp, $sp, -8
-    sw $t0, 0($sp)
-    sw $t1, 4($sp)
-    lui $t0, %hi(zeroCtrlWide662RA)
-    sw $ra, %lo(zeroCtrlWide662RA)($t0)
-    lui $t0, %hi(zeroCtrlWide662Zero)
-    lw $t1, %lo(zeroCtrlWide662Zero)($t0)
-    addiu $t1, $t1, 1
-    sw $t1, %lo(zeroCtrlWide662Zero)($t0)
-    lui $ra, %hi(zeroCtrlWide662Return)
-    addiu $ra, $ra, %lo(zeroCtrlWide662Return)
-    lui $t0, %hi(zeroCtrlWide662Target)
-    lw $t9, %lo(zeroCtrlWide662Target)($t0)
-    lw $t1, 4($sp)
-    lw $t0, 0($sp)
-    jr $t9
-    addiu $sp, $sp, 8
-zeroCtrlWide662CallEnd:
-.end zeroCtrlWide662Call
-
-.globl zeroCtrlWide662Return
-.globl zeroCtrlWide662ReturnEnd
-.ent zeroCtrlWide662Return, 0
-zeroCtrlWide662Return:
-    addiu $sp, $sp, -8
-    sw $t0, 0($sp)
-    sw $t1, 4($sp)
-    lui $t0, %hi(zeroCtrlWide662Hits)
-    lw $t1, %lo(zeroCtrlWide662Hits)($t0)
-    addiu $t1, $t1, 1
-    sw $t1, %lo(zeroCtrlWide662Hits)($t0)
-    lui $t0, %hi(zeroCtrlWide662Last)
-    sw $v0, %lo(zeroCtrlWide662Last)($t0)
-    lui $t0, %hi(zeroCtrlWide662RA)
-    lw $t0, %lo(zeroCtrlWide662RA)($t0)
-    lw $t1, 4($sp)
-    addiu $sp, $sp, 8
-    jr $t0
-    lw $t0, -8($sp)
-zeroCtrlWide662ReturnEnd:
-.end zeroCtrlWide662Return
+WIDE_CALL zeroCtrlWide662Call, zeroCtrlWide662Return, zeroCtrlWide662Target, zeroCtrlWide662RA, zeroCtrlWide662Resume, zeroCtrlWide662Hits, zeroCtrlWide662First, zeroCtrlWide662Last, zeroCtrlWide662Changes, zeroCtrlWide662Zero, zeroCtrlWide662Nonzero
 WIDE_CALL zeroCtrlWide440Call, zeroCtrlWide440Return, zeroCtrlWide440Target, zeroCtrlWide440RA, zeroCtrlWide440Resume, zeroCtrlWide440Hits, zeroCtrlWide440First, zeroCtrlWide440Last, zeroCtrlWide440Changes, zeroCtrlWide440Zero, zeroCtrlWide440Nonzero
 WIDE_CALL zeroCtrlWideFCFCall, zeroCtrlWideFCFReturn, zeroCtrlWideFCFTarget, zeroCtrlWideFCFRA, zeroCtrlWideFCFResume, zeroCtrlWideFCFHits, zeroCtrlWideFCFFirst, zeroCtrlWideFCFLast, zeroCtrlWideFCFChanges, zeroCtrlWideFCFZero, zeroCtrlWideFCFNonzero
 WIDE_DECISION zeroCtrlActivationWideLoopTrace, zeroCtrlWideLoopHits, zeroCtrlWideLoopBack, zeroCtrlWideLoopExit, zeroCtrlWideLoopFirst, zeroCtrlWideLoopLast, zeroCtrlWideLoopChanges, zeroCtrlWideLoopBackTarget, zeroCtrlWideLoopExitTarget
