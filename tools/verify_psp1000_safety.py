@@ -1648,7 +1648,7 @@ def check_sources(root):
     functional_compat = kernel_module_start.find(
             "zeroCtrlInstallPsp1000FunctionalCompat(mod)")
     activation_return = kernel_module_start.find(
-            "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)")
+            "zeroCtrlInstallPsp1000PafDispatchReturnDiagnostic(mod)")
     diagnostic_compat = kernel_module_start.find(
             "zeroCtrlInstallBSManClosedShim(mod)", functional_compat)
     functional_return = kernel_module_start.find("return previous_result",
@@ -1659,7 +1659,7 @@ def check_sources(root):
     install_gate = kernel_module_start[sony_install:functional_return]
     for token in ("if (slide_diag.functional_enabled)",
             "zeroCtrlInstallPsp1000FunctionalCompat(mod)",
-            "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)", "else",
+            "zeroCtrlInstallPsp1000PafDispatchReturnDiagnostic(mod)", "else",
             "zeroCtrlInstallBSManClosedShim(mod)"):
         if token not in install_gate:
             fail("functional/diagnostic activation installer split lacks " + token)
@@ -2166,10 +2166,10 @@ def check_sources(root):
     functional_installers = re.findall(
             r"zeroCtrlInstallPsp1000\w+\(mod\)", module_start_functional)
     if functional_diagnostics != [
-            "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)"] or \
+            "zeroCtrlInstallPsp1000PafDispatchReturnDiagnostic(mod)"] or \
             functional_installers != [
                 "zeroCtrlInstallPsp1000FunctionalCompat(mod)",
-                "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)"] or \
+                "zeroCtrlInstallPsp1000PafDispatchReturnDiagnostic(mod)"] or \
             "zeroCtrlInstallPsp1000PostBSRouteDiagnostic(mod)" in \
             module_start_functional:
         fail("functional path does not exclusively install activation-return diagnostic")
@@ -2207,7 +2207,7 @@ def check_sources(root):
             fail("functional post-1F0 output modifies runtime state")
     exit_start = post1f0_end
     exit_end = kernel.find(
-            "static void zeroCtrlInstallPsp1000ActivationReturnDiagnostic(",
+            "static void zeroCtrlInstallPsp1000PafDispatchReturnDiagnostic(",
             exit_start)
     exit_diag = kernel[exit_start:exit_end]
     for token in ("0x238, 0x248, 0x258, 0x268",
@@ -2302,25 +2302,47 @@ def check_sources(root):
     return_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
             return_start)
     return_diag = kernel[return_start:return_end]
-    for token in ("0x8FB60018, 0x8FB50014, 0x8FB40010, 0x8FB3000C, 0x8FB20008",
-            "0x8FB10004, 0x8FB00000, 0x03E00008, 0x27BD0020",
-            "owner = a + 0x6C", "replacement = 0x08000000",
+    for token in (
+            "0xDEA1C, 0xDEA20, 0xDEA28, 0xDEA2C, 0xDEA30",
+            "0xDEABC, 0xDEAC0",
+            "0xDEAD8, 0xDEADC, 0xDEAE0, 0xDEAE4, 0xDEAE8, 0xDEAEC, 0xDEAF0",
+            "0x27BDFFD0, 0xAFB00020, 0xAFBF002C, 0xAFB20028, 0xAFB10024",
+            "0x0100F809, 0x8CE7002C",
+            "0x8FBF002C, 0x8FB20028, 0x8FB10024, 0x8FB00020, 0x00601021",
+            "0x03E00008, 0x27BD0030",
+            'sceKernelFindModuleByName("scePaf_Module")',
+            "paf->text_addr > 0xFFFFFFFFU - 0xDECE0",
+            "for (i = 0; i < 14; i++)",
+            "(jump >> 26) != 2", "paf->text_addr + 0xDEAC4, jump",
+            "paf->text_addr + 0xDEA64",
+            "_lw(paf->text_addr + 0xDEAC8) != 0x8E0901A0",
+            "(caller >> 26) != 3", "paf->text_addr + 0xDECD8, caller",
+            "paf->text_addr + 0xDEA1C",
+            "owner = paf->text_addr + 0xDEAEC",
+            "replacement = 0x08000000",
             "zeroCtrlMipsJumpTarget(owner, replacement)",
             "b->functional_return_leaf", "b->functional_return_scalar[i]",
             "_sw(replacement, owner)"):
         if token not in return_diag:
-            fail("functional activation-return diagnostic lacks " + token)
-    return_validation = return_diag.find("for (i = 0; i < 7; i++)\n        if")
+            fail("functional PAF-dispatch-return diagnostic lacks " + token)
+    return_fingerprint_validation = return_diag.find("for (i = 0; i < 14; i++)")
+    return_jump_validation = return_diag.find("(jump >> 26) != 2")
+    return_caller_validation = return_diag.find("(caller >> 26) != 3")
+    return_scalar_validation = return_diag.find("for (i = 0; i < 7; i++)\n        if")
     return_scalar_write = return_diag.find("_sw(i == 4 || i == 5")
     return_scalar_sync = return_diag.find("sceKernelDcacheWritebackInvalidateRange(",
             return_scalar_write)
     return_code_write = return_diag.find("_sw(replacement, owner)")
     return_code_sync = return_diag.find("sceKernelIcacheInvalidateRange(",
             return_code_write)
-    if not 0 <= return_validation < return_scalar_write < return_scalar_sync < \
-            return_code_write < return_code_sync or \
-            return_diag.count("_sw(replacement, owner)") != 1:
-        fail("functional activation-return transaction ordering/ownership regressed")
+    if not 0 <= return_fingerprint_validation < return_jump_validation < \
+            return_caller_validation < return_scalar_validation < \
+            return_scalar_write < return_scalar_sync < return_code_write < \
+            return_code_sync or return_diag.count("_sw(replacement, owner)") != 1:
+        fail("functional PAF-dispatch-return validation/transaction ordering regressed")
+    if "_sw(" in return_diag[:return_scalar_write] or \
+            "_sw(i == 4 || i == 5 ? 0xFFFFFFFF : 0," not in return_diag:
+        fail("functional PAF-dispatch-return writes before validation or changes scalars")
     return_register = kernel[kernel.find("void zeroCtrlRegisterActivationReturn("):
             kernel.find("void zeroCtrlRegisterActivationCallerRA(")]
     for token in ("zeroCtrlRegistrationLeafValid(helper, copied.leaf_addr,",
@@ -2545,10 +2567,32 @@ def check_sources(root):
         fail("functional state-route introduces snapshot locking")
     if "sizeof(ZeroCtrlActivationReturnRegistration) == 36" not in bsman_header:
         fail("activation-return registration size guard is missing")
-    for marker in ("[psp1000-functional-activation-return-install] ",
-            "[psp1000-functional-activation-return] returns=%u "):
+    for marker in ("[psp1000-functional-paf-dispatch-return-install] ",
+            "[psp1000-functional-paf-dispatch-return] returns=%u "):
         if marker not in minimal:
             fail("activation-return changed-only output lacks " + marker)
+    paf_return_install_marker = minimal.find(
+            "[psp1000-functional-paf-dispatch-return-install] ")
+    paf_return_runtime_marker = minimal.find(
+            "[psp1000-functional-paf-dispatch-return] returns=%u ")
+    paf_return_install_gate = minimal.rfind(
+            "if (slide_diag.functional_enabled) {", 0,
+            paf_return_install_marker)
+    paf_return_runtime_gate = minimal.rfind(
+            "if (slide_diag.bsman.functional_return_install &&", 0,
+            paf_return_runtime_marker)
+    if paf_return_install_gate < 0 or \
+            "memcmp(state, observed_functional_return_install" not in \
+            minimal[paf_return_install_gate:paf_return_install_marker] or \
+            "functional_return_install &&" in \
+            minimal[paf_return_install_gate:paf_return_install_marker]:
+        fail("PAF-dispatch-return install output is not failure-visible/changed-only")
+    if paf_return_runtime_gate < 0 or \
+            "functional_return_cache_sync" not in \
+            minimal[paf_return_runtime_gate:paf_return_runtime_marker] or \
+            "memcmp(state, observed_functional_return" not in \
+            minimal[paf_return_runtime_gate:paf_return_runtime_marker]:
+        fail("PAF-dispatch-return runtime output is not success-gated/changed-only")
     research_state_owner = kernel[kernel.find(
             "static void zeroCtrlInstallBSManClosedShim("):
             kernel.find("int OnModuleStart(SceModule2 *mod)")]

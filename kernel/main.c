@@ -6572,7 +6572,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             sizeof(state)) != 0) {
                     memcpy(observed_functional_return_install, state, sizeof(state));
                     snprintf(line, sizeof(line),
-                            "[psp1000-functional-activation-return-install] "
+                            "[psp1000-functional-paf-dispatch-return-install] "
                             "rev=1 validation=%u install=%u cache_sync=%u\n",
                             state[0], state[1], state[2]);
                     zeroCtrlDiagnosticsText(line);
@@ -6593,7 +6593,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 if (memcmp(state, observed_functional_return, sizeof(state)) != 0) {
                     memcpy(observed_functional_return, state, sizeof(state));
                     snprintf(line, sizeof(line),
-                            "[psp1000-functional-activation-return] returns=%u "
+                            "[psp1000-functional-paf-dispatch-return] returns=%u "
                             "paf_ret=%u bs_ret=%u state_ret=%u vsh_ret=%u "
                             "first_ra=0x%08X last_ra=0x%08X ra_changes=%u "
                             "first_v0=0x%08X last_v0=0x%08X v0_changes=%u\n",
@@ -9918,32 +9918,49 @@ static void zeroCtrlInstallPsp1000ExitDiagnostic(SceModule2 *mod) {
     b->functional_exit_cache_sync = 1;
 }
 
-static void zeroCtrlInstallPsp1000ActivationReturnDiagnostic(SceModule2 *mod) {
-    static const unsigned int epilogue[9] = {
-        0x8FB60018, 0x8FB50014, 0x8FB40010, 0x8FB3000C, 0x8FB20008,
-        0x8FB10004, 0x8FB00000, 0x03E00008, 0x27BD0020
+static void zeroCtrlInstallPsp1000PafDispatchReturnDiagnostic(SceModule2 *mod) {
+    static const unsigned int fingerprint_offset[14] = {
+        0xDEA1C, 0xDEA20, 0xDEA28, 0xDEA2C, 0xDEA30,
+        0xDEABC, 0xDEAC0,
+        0xDEAD8, 0xDEADC, 0xDEAE0, 0xDEAE4, 0xDEAE8, 0xDEAEC, 0xDEAF0
+    };
+    static const unsigned int fingerprint[14] = {
+        0x27BDFFD0, 0xAFB00020, 0xAFBF002C, 0xAFB20028, 0xAFB10024,
+        0x0100F809, 0x8CE7002C,
+        0x8FBF002C, 0x8FB20028, 0x8FB10024, 0x8FB00020, 0x00601021,
+        0x03E00008, 0x27BD0030
     };
     ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-    unsigned int a, owner, replacement, i;
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    unsigned int owner, replacement, jump, caller, i;
     if (!slide_diag.functional_enabled || model != 0 ||
             sceKernelDevkitVersion() != 0x06060110 ||
             !b->functional_validation || !b->functional_install ||
             !b->functional_cache_sync || !b->functional_return_registered ||
             !zeroCtrlLoadedModuleMetadataValid(mod) ||
-            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
-    a = mod->text_addr + 0x9304;
-    if (b->activation_addr != a ||
-            !zeroCtrlVshModuleRangeValid(mod, a + 0x50, 0x24)) return;
-    for (i = 0; i < 9; i++)
-        if (_lw(a + 0x50 + i * 4) != epilogue[i]) return;
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
+            paf->text_addr > 0xFFFFFFFFU - 0xDECE0 ||
+            !zeroCtrlVshModuleRangeValid(paf, paf->text_addr + 0xDEA1C,
+                0x2C8)) return;
+    for (i = 0; i < 14; i++)
+        if (_lw(paf->text_addr + fingerprint_offset[i]) != fingerprint[i]) return;
+    jump = _lw(paf->text_addr + 0xDEAC4);
+    if ((jump >> 26) != 2 || zeroCtrlMipsJumpTarget(
+                paf->text_addr + 0xDEAC4, jump) != paf->text_addr + 0xDEA64 ||
+            _lw(paf->text_addr + 0xDEAC8) != 0x8E0901A0) return;
+    caller = _lw(paf->text_addr + 0xDECD8);
+    if ((caller >> 26) != 3 || zeroCtrlMipsJumpTarget(
+                paf->text_addr + 0xDECD8, caller) != paf->text_addr + 0xDEA1C)
+        return;
     if (!zeroCtrlVshModuleRangeValid(helper, b->functional_return_leaf,
                 b->functional_return_leaf_size)) return;
     for (i = 0; i < 7; i++)
         if ((b->functional_return_scalar[i] & 3) ||
                 !zeroCtrlVshModuleRangeValid(helper,
                     b->functional_return_scalar[i], 4)) return;
-    owner = a + 0x6C;
+    owner = paf->text_addr + 0xDEAEC;
     replacement = 0x08000000 |
             ((b->functional_return_leaf >> 2) & 0x03FFFFFF);
     if (((owner + 4) & 0xF0000000) !=
@@ -11247,7 +11264,7 @@ int OnModuleStart(SceModule2 *mod) {
                 zeroCtrlInstallSonyStartTrace(mod);
                 if (slide_diag.functional_enabled) {
                     zeroCtrlInstallPsp1000FunctionalCompat(mod);
-                    zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod);
+                    zeroCtrlInstallPsp1000PafDispatchReturnDiagnostic(mod);
                 } else {
                     zeroCtrlInstallBSManClosedShim(mod);
                 }
