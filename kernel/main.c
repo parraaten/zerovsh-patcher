@@ -2090,11 +2090,14 @@ int zeroCtrlRegisterActivationWide(
     ZeroCtrlActivationWideRegistration copied;
     SceModule2 *helper;
     unsigned int wide_index;
+    int allow_registration;
     int k1;
 
+    allow_registration = bsman->activation_wide_enabled ||
+            slide_diag.functional_enabled;
     /* A NULL call is the user helper's cheap, pre-population gate query. */
-    if (!registration) return bsman->activation_wide_enabled;
-    if (!bsman->activation_wide_enabled || !bsman->registered) return 0;
+    if (!registration) return allow_registration;
+    if (!allow_registration || !bsman->registered) return 0;
     helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     if (!helper || !zeroCtrlVshModuleRangeValid(helper,
                 (unsigned int)registration, sizeof(copied))) return 0;

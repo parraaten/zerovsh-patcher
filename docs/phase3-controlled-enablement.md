@@ -2684,3 +2684,16 @@ write. The changed-only record is:
 ```
 
 It reports only loaded structural values and changes no validation outcome.
+
+Hardware reported helper fail mask `0x3` with zero call/return leaf metadata,
+confirming the static registration-gate issue. The common ActivationWide
+metadata registration permission now accepts either research ActivationWide
+mode or PSP-1000 functional mode. Both the NULL pre-population query and the
+non-NULL validated transaction use that same permission. Functional mode still
+leaves `activation_wide_enabled` false, so this change registers the existing
+11 leaf pairs and 54 scalar addresses but installs no research owner.
+
+The existing transaction remains unchanged after its gate: the registration
+structure must be within the helper module, every leaf start/end pair and every
+scalar is validated, and leaf sizes are derived only as validated `end-start`
+differences. No Wide662-specific pointer path or registration ABI was added.

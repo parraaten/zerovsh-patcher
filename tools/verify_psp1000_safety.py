@@ -3423,10 +3423,29 @@ def check_sources(root):
     if "ZeroCtrlBSManClosedRegistration copied;" not in legacy_register or \
             "activation_wide" in legacy_register:
         fail("disabled T40 still changes or can block legacy registration")
-    if "if (!registration) return bsman->activation_wide_enabled;" not in \
-            optional_register or \
+    for token in ("allow_registration = bsman->activation_wide_enabled ||\n"
+            "            slide_diag.functional_enabled;",
+            "if (!registration) return allow_registration;",
+            "if (!allow_registration || !bsman->registered) return 0;",
+            "for (wide_index = 0; wide_index < 11; wide_index++)",
+            "zeroCtrlRegistrationLeafValid(helper, copied.leaf_addr[wide_index],",
+            "for (wide_index = 0; wide_index < 54; wide_index++)",
+            "zeroCtrlVshModuleRangeValid(helper,\n"
+            "                    copied.scalar_addr[wide_index], 4)",
+            "copied.leaf_end_addr[wide_index] - copied.leaf_addr[wide_index]"):
+        if token not in optional_register:
+            fail("ActivationWide metadata registration lacks " + token)
+    if optional_register.count("return allow_registration;") != 1 or \
+            optional_register.count("!allow_registration") != 1 or \
             optional_register.find("if (!registration)") > optional_register.find("memcpy("):
-        fail("optional T40 registration does not gate before descriptor copying")
+        fail("ActivationWide NULL/non-NULL paths do not share one permission")
+    functional_wide_gate = kernel[kernel.find(
+            "slide_diag.bsman.activation_wide_enabled ="):
+            kernel.find(";", kernel.find(
+                "slide_diag.bsman.activation_wide_enabled ="))]
+    if "!slide_diag.functional_enabled" not in functional_wide_gate or \
+            "slide_diag.functional_enabled ||" in functional_wide_gate:
+        fail("functional metadata permission enables ActivationWide research mode")
     legacy_call = user.find("zeroCtrlRegisterBSManClosedShim(&bsmanClosedRegistration);")
     t40_query = user.find("if (zeroCtrlRegisterActivationWide(NULL))")
     t40_population = user.find("activationWideRegistration.leaf_addr[0]")
