@@ -2605,3 +2605,26 @@ It emits two compact records only when either snapshot changes:
 This adds no helper leaf, registration field, Sony write, compatibility owner,
 or control-flow change. The next hardware run asks only which installed wrapper
 was last entered and returned.
+
+That run proved all four wrappers returned with the expected hardware-proven
+conversions, through the exact VshBridge return. The next checkpoint therefore
+adds one transparent diagnostic owner only at `A+0x1E8`. The original word must
+decode as a JAL to SlidePlugin text `+0x2A168`, and `A+0x1EC` must remain the
+original zero delay-slot word. Only after the stage-13 four-owner transaction
+has completed, a dedicated paired helper reuses the already registered Wide662
+leaf/scalar slots to count calls and returns, retain the untouched natural
+`v0`, and restore Sony's saved `ra`. The return helper never writes `v0`.
+
+The installer validates both leaves, all reused scalar words, pseudo-direct
+reachability, the exact owner/target/delay fingerprint, and both module ranges
+before initializing the helper scalars or writing the single `A+0x1E8` word.
+The functional writer emits changed-only evidence as:
+
+```text
+[psp1000-functional-post-t39] call=<n> return=<n> natural=0x........
+```
+
+This checkpoint does not enable activation-wide tracing, restore any T32-T39
+research owner, alter the four compatibility owners, or change either public
+registration ABI. Its next recovery-protected hardware run asks only whether
+the natural `A+0x1E8` target was entered and returned.

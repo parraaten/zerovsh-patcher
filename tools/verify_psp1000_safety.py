@@ -1696,7 +1696,8 @@ def check_sources(root):
             fail("functional checkpoint marker lacks " + token)
     functional_start = kernel.find(
             "static void zeroCtrlInstallPsp1000FunctionalCompat(")
-    functional_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
+    functional_end = kernel.find(
+            "static void zeroCtrlInstallPsp1000PostT39Diagnostic(",
             functional_start)
     functional = kernel[functional_start:functional_end]
     for token in (
@@ -1843,6 +1844,24 @@ def check_sources(root):
         if forbidden in snapshot:
             fail("functional compatibility snapshot modifies runtime state: " +
                     forbidden)
+    post_t39_snapshot = minimal[minimal.find(
+            "if (slide_diag.bsman.functional_post_t39_install"):
+            minimal.find("if (slide_diag.functional_button_thread")]
+    for token in ("functional_post_t39_cache_sync",
+            "activation_wide_scalar_addr[15]",
+            "activation_wide_scalar_addr[11]",
+            "activation_wide_scalar_addr[13]",
+            "!observed_functional_post_t39_valid ||",
+            "memcmp(post_t39, observed_functional_post_t39",
+            "[psp1000-functional-post-t39] call=%u return=%u ",
+            "natural=0x%08X"):
+        if token not in post_t39_snapshot:
+            fail("functional post-T39 changed-only snapshot lacks " + token)
+    for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP",
+            "sceKernelDcache", "sceKernelIcache"):
+        if forbidden in post_t39_snapshot:
+            fail("functional post-T39 snapshot modifies runtime state: " +
+                    forbidden)
     if "functional_compat" in bsman_header:
         fail("functional compatibility snapshot changes registration ABI")
     for invented in ("bsman->state_zero_vcall_target_addr",
@@ -1883,6 +1902,75 @@ def check_sources(root):
                     forbidden)
     if functional.count("_sw(replacement[i], owner[i])") != 1:
         fail("functional activation code commit is not one four-owner loop")
+
+    post_t39_start = functional_end
+    post_t39_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
+            post_t39_start)
+    post_t39 = kernel[post_t39_start:post_t39_end]
+    for token in (
+            "bsman->functional_validation || !bsman->functional_install ||",
+            "activation = mod->text_addr + 0x9304",
+            "owner = activation + 0x1E8",
+            "!zeroCtrlVshModuleRangeValid(mod, activation + 0x1E8, 8)",
+            "(original >> 26) != 3", "_lw(owner + 4) != 0",
+            "target = zeroCtrlMipsJumpTarget(owner, original)",
+            "target != mod->text_addr + 0x2A168",
+            "bsman->activation_wide_leaf_addr[1]",
+            "bsman->activation_wide_leaf_addr[2]",
+            "zeroCtrlMipsJumpTarget(owner, replacement) != call_leaf",
+            "bsman->activation_wide_scalar_addr[8]",
+            "bsman->activation_wide_scalar_addr[9]",
+            "bsman->activation_wide_scalar_addr[11]",
+            "bsman->activation_wide_scalar_addr[13]",
+            "bsman->activation_wide_scalar_addr[15]",
+            "!zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)",
+            "_sw(replacement, owner)",
+            "sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4)",
+            "sceKernelIcacheInvalidateRange((const void *)owner, 4)"):
+        if token not in post_t39:
+            fail("functional post-T39 checkpoint lacks " + token)
+    post_t39_validate = post_t39.find(
+            "!zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)")
+    post_t39_scalar_write = post_t39.find("_sw(target, scalar[0])")
+    post_t39_code_write = post_t39.find("_sw(replacement, owner)")
+    post_t39_dcache = post_t39.find(
+            "sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4)",
+            post_t39_code_write)
+    post_t39_icache = post_t39.find(
+            "sceKernelIcacheInvalidateRange((const void *)owner, 4)",
+            post_t39_dcache)
+    if not 0 <= post_t39_validate < post_t39_scalar_write < \
+            post_t39_code_write < post_t39_dcache < post_t39_icache:
+        fail("functional post-T39 validation/commit ordering regressed")
+    if post_t39.count("_sw(replacement, owner)") != 1 or \
+            "owner + 4" not in post_t39 or "_sw(" in post_t39[post_t39_code_write +
+            len("_sw(replacement, owner)"):]:
+        fail("functional post-T39 checkpoint does not own exactly A+0x1E8")
+    for forbidden in ("activation + 0x120", "activation + 0x138",
+            "activation + 0x170", "activation + 0x180", "activation + 0x1A4",
+            "activation + 0x1C0", "activation + 0x1E0"):
+        if forbidden in post_t39:
+            fail("functional post-T39 checkpoint restores research owner " +
+                    forbidden)
+    if "functional_post_t39" in bsman_header:
+        fail("functional post-T39 checkpoint changes registration ABI")
+    post_t39_call = assembly[assembly.find("zeroCtrlWide662Call:"):
+            assembly.find("zeroCtrlWide662CallEnd:")]
+    post_t39_return = assembly[assembly.find("zeroCtrlWide662Return:"):
+            assembly.find("zeroCtrlWide662ReturnEnd:")]
+    for token in ("zeroCtrlWide662Zero", "zeroCtrlWide662RA",
+            "zeroCtrlWide662Target", "zeroCtrlWide662Return"):
+        if token not in post_t39_call:
+            fail("functional post-T39 call helper lacks " + token)
+    for token in ("zeroCtrlWide662Hits", "zeroCtrlWide662Last",
+            "zeroCtrlWide662RA", "sw $v0"):
+        if token not in post_t39_return:
+            fail("functional post-T39 return helper lacks " + token)
+    if re.search(r"\b(?:move|addu|addiu|lw|li|ori)\s+\$?v0\b",
+            post_t39_return):
+        fail("functional post-T39 return helper modifies natural v0")
+    if "jr $t0" not in post_t39_return:
+        fail("functional post-T39 return helper does not restore saved Sony ra")
     research_state_owner = kernel[kernel.find(
             "static void zeroCtrlInstallBSManClosedShim("):
             kernel.find("int OnModuleStart(SceModule2 *mod)")]
