@@ -6160,6 +6160,9 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_runtime_request_called = 0;
     unsigned int observed_runtime_request_result = 0xFFFFFFFF;
     unsigned int observed_functional_activation_stage = 0;
+    unsigned int observed_functional_compat[9] = { 0 };
+    unsigned int observed_functional_compat2[12] = { 0 };
+    int observed_functional_compat_valid = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6205,6 +6208,79 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 zeroCtrlDiagnosticsText(
                         "[psp1000-functional] activation_compat_install=1\n");
                 minimal_memory_written |= 0x4000;
+            }
+            if (slide_diag.bsman.functional_install &&
+                    slide_diag.bsman.functional_cache_sync) {
+                ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+                unsigned int compat[9];
+                unsigned int compat2[12];
+                compat[0] = zeroCtrlReadHelperCounter(
+                        bsman->prefix_path_mask_addr);
+                compat[1] = zeroCtrlReadHelperCounter(
+                        bsman->prefix_paf_return_hits_addr);
+                compat[2] = zeroCtrlReadHelperCounter(
+                        bsman->prefix_paf_natural_result_addr);
+                compat[3] = zeroCtrlReadHelperCounter(
+                        bsman->prefix_paf_substitution_hits_addr);
+                compat[4] = zeroCtrlReadHelperCounter(bsman->call_hits_addr);
+                compat[5] = zeroCtrlReadHelperCounter(
+                        bsman->bsman_return_hits_addr);
+                compat[6] = zeroCtrlReadHelperCounter(
+                        bsman->bsman_natural_result_addr);
+                compat[7] = zeroCtrlReadHelperCounter(
+                        bsman->bsman_effective_result_addr);
+                compat[8] = zeroCtrlReadHelperCounter(
+                        bsman->bsman_substitution_hits_addr);
+                compat2[0] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_path_mask_addr);
+                compat2[1] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_counter_addr[1]);
+                compat2[2] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_counter_addr[2]);
+                compat2[3] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_value_addr[6]);
+                compat2[4] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_15to14_effective_result_addr);
+                compat2[5] = zeroCtrlReadHelperCounter(
+                        bsman->state_zero_15to14_substitution_hits_addr);
+                compat2[6] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_entry_hits_addr);
+                compat2[7] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_return_hits_addr);
+                compat2[8] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_argument_addr);
+                compat2[9] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_natural_result_addr);
+                compat2[10] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_effective_result_addr);
+                compat2[11] = zeroCtrlReadHelperCounter(
+                        bsman->post_vsh_substitution_hits_addr);
+                if (!observed_functional_compat_valid ||
+                        memcmp(compat, observed_functional_compat,
+                            sizeof(compat)) != 0 ||
+                        memcmp(compat2, observed_functional_compat2,
+                            sizeof(compat2)) != 0) {
+                    memcpy(observed_functional_compat, compat, sizeof(compat));
+                    memcpy(observed_functional_compat2, compat2,
+                            sizeof(compat2));
+                    observed_functional_compat_valid = 1;
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-compat] paf_mask=0x%03X "
+                            "paf_ret=%u paf_nat=0x%08X paf_sub=%u bs_call=%u "
+                            "bs_ret=%u bs_nat=0x%08X bs_eff=0x%08X bs_sub=%u\n",
+                            compat[0], compat[1], compat[2], compat[3],
+                            compat[4], compat[5], compat[6], compat[7], compat[8]);
+                    zeroCtrlDiagnosticsText(line);
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-compat2] state_mask=0x%03X "
+                            "state_call=%u state_ret=%u state_nat=0x%08X "
+                            "state_eff=0x%08X state_sub=%u vsh_call=%u "
+                            "vsh_ret=%u arg=0x%08X nat=0x%08X eff=0x%08X sub=%u\n",
+                            compat2[0], compat2[1], compat2[2], compat2[3],
+                            compat2[4], compat2[5], compat2[6], compat2[7],
+                            compat2[8], compat2[9], compat2[10], compat2[11]);
+                    zeroCtrlDiagnosticsText(line);
+                }
             }
             if (slide_diag.functional_button_thread &&
                     !(minimal_memory_written & 0x0100)) {

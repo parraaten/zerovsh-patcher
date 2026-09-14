@@ -2586,3 +2586,22 @@ wrapper to `A+0x2B4`. The canonical research `site_offset[]` mapping places the
 Sony classification owner. The minimal table now uses `A+0x2A4`, restoring the
 same owner used by the hardware-proven T30.1 15-to-14 substitution while
 leaving `A+0x2B4` and later classification code untouched.
+
+Real hardware then reached functional stage 13 and both install markers, proving
+the four-owner transaction completes before the observed RCO progression. The
+fast functional writer now exposes only the counters and values already owned
+by those wrappers. After functional install and cache synchronization, it reads
+the PAF mask/return/natural/substitution values; BSMan call/return/natural/
+effective/substitution values; state mask/call/return/natural/effective/
+substitution values; and VshBridge call/return/argument/natural/effective/
+substitution values through the existing range-validating helper-counter read.
+It emits two compact records only when either snapshot changes:
+
+```text
+[psp1000-functional-compat] paf_mask=... paf_ret=... paf_nat=... paf_sub=... bs_call=... bs_ret=... bs_nat=... bs_eff=... bs_sub=...
+[psp1000-functional-compat2] state_mask=... state_call=... state_ret=... state_nat=... state_eff=... state_sub=... vsh_call=... vsh_ret=... arg=... nat=... eff=... sub=...
+```
+
+This adds no helper leaf, registration field, Sony write, compatibility owner,
+or control-flow change. The next hardware run asks only which installed wrapper
+was last entered and returned.

@@ -1800,6 +1800,51 @@ def check_sources(root):
             "[psp1000-functional] activation_compat_stage=%u", stage_writer)
     if not 0 <= stage_writer < stage_format:
         fail("deferred functional activation stage output is missing")
+    snapshot_start = minimal.find(
+            "if (slide_diag.bsman.functional_install &&\n"
+            "                    slide_diag.bsman.functional_cache_sync) {")
+    snapshot_end = minimal.find("if (slide_diag.functional_button_thread",
+            snapshot_start)
+    snapshot = minimal[snapshot_start:snapshot_end]
+    for token in ("unsigned int compat[9]", "unsigned int compat2[12]",
+            "bsman->prefix_path_mask_addr",
+            "bsman->prefix_paf_return_hits_addr",
+            "bsman->prefix_paf_natural_result_addr",
+            "bsman->prefix_paf_substitution_hits_addr",
+            "bsman->call_hits_addr", "bsman->bsman_return_hits_addr",
+            "bsman->bsman_natural_result_addr",
+            "bsman->bsman_effective_result_addr",
+            "bsman->bsman_substitution_hits_addr",
+            "bsman->state_zero_path_mask_addr",
+            "bsman->state_zero_counter_addr[1]",
+            "bsman->state_zero_counter_addr[2]",
+            "bsman->state_zero_value_addr[6]",
+            "bsman->state_zero_15to14_effective_result_addr",
+            "bsman->state_zero_15to14_substitution_hits_addr",
+            "bsman->post_vsh_entry_hits_addr",
+            "bsman->post_vsh_return_hits_addr",
+            "bsman->post_vsh_argument_addr",
+            "bsman->post_vsh_natural_result_addr",
+            "bsman->post_vsh_effective_result_addr",
+            "bsman->post_vsh_substitution_hits_addr",
+            "zeroCtrlReadHelperCounter(",
+            "!observed_functional_compat_valid ||", "memcmp(compat,",
+            "memcmp(compat2,", "observed_functional_compat_valid = 1",
+            "[psp1000-functional-compat]",
+            "[psp1000-functional-compat2]"):
+        if token not in snapshot:
+            fail("functional compatibility snapshot lacks " + token)
+    first_change_test = snapshot.find("!observed_functional_compat_valid ||")
+    first_output = snapshot.find("zeroCtrlDiagnosticsText(line)")
+    if not 0 <= first_change_test < first_output:
+        fail("functional compatibility snapshot is not changed-only")
+    for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP",
+            "REDIRECT_FUNCTION", "sceKernelDcache", "sceKernelIcache"):
+        if forbidden in snapshot:
+            fail("functional compatibility snapshot modifies runtime state: " +
+                    forbidden)
+    if "functional_compat" in bsman_header:
+        fail("functional compatibility snapshot changes registration ABI")
     for invented in ("bsman->state_zero_vcall_target_addr",
             "bsman->state_zero_vcall_ra_addr",
             "bsman->state_zero_vcall_result_addr"):
