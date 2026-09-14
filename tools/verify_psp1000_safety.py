@@ -2157,7 +2157,9 @@ def check_sources(root):
     module_start_functional = kernel_module_start[module_start_functional_start:
             kernel_module_start.find("zeroCtrlInstallBSManClosedShim(mod)",
                 module_start_functional_start)]
-    if "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)" not in \
+    if "zeroCtrlInstallPsp1000PostBSRouteDiagnostic(mod)" not in \
+            module_start_functional or \
+            "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)" in \
             module_start_functional or \
             "zeroCtrlInstallPsp1000PostT39Diagnostic(mod)" in \
             module_start_functional or \
@@ -2165,7 +2167,7 @@ def check_sources(root):
             module_start_functional or \
             "zeroCtrlInstallPsp1000ExitDiagnostic(mod)" in \
             module_start_functional:
-        fail("functional path does not retire completed post-T39/post-1F0 owners")
+        fail("functional path does not exclusively install the post-BS route diagnostic")
 
     post1f0_install_marker = minimal.find(
             "[psp1000-functional-post1f0-install] rev=1 ")
@@ -2328,6 +2330,80 @@ def check_sources(root):
             re.search(r"\b(?:move|addu|addiu|lw|li|ori)\s+\$?v0\b", return_asm) or \
             re.search(r"\b(?:jal|jalr|syscall)\b", return_asm):
         fail("activation-return helper does not transparently preserve ra/v0")
+    post_bs_start = kernel.find(
+            "static void zeroCtrlInstallPsp1000PostBSRouteDiagnostic(")
+    post_bs_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
+            post_bs_start)
+    post_bs = kernel[post_bs_start:post_bs_end]
+    for token in ("owner[0] = a + 0xB0; owner[1] = a + 0xDC",
+            "_lw(owner[0]) != 0x1040000A",
+            "zeroCtrlMipsBranchTarget(owner[0], _lw(owner[0])) != a + 0xDC",
+            "(_lw(a + 0xB4) >> 26) != 36",
+            "((_lw(a + 0xB4) >> 21) & 31) != 19",
+            "((_lw(a + 0xB4) >> 16) & 31) != 2",
+            "_lw(owner[1]) != 0x10400066",
+            "zeroCtrlMipsBranchTarget(owner[1], _lw(owner[1])) != a + 0x278",
+            "(_lw(a + 0xE0) >> 26) != 15",
+            "((_lw(a + 0xE0) >> 16) & 31) != 2",
+            "leaf[0] = b->post_bs_leaf_addr; leaf[1] = b->post_state_leaf_addr",
+            "_sw(a + 0xDC, scalar[0]); _sw(a + 0xB8, scalar[1])",
+            "_sw(a + 0x278, scalar[4]); _sw(a + 0xE4, scalar[5])",
+            "_sw(0xFFFFFFFF, scalar[8]); _sw(0, scalar[9])"):
+        if token not in post_bs:
+            fail("functional post-BS route diagnostic lacks " + token)
+    post_bs_scalar_validation = post_bs.find("for (i = 0; i < 11; i++)")
+    post_bs_scalar_write = post_bs.find("_sw(a + 0xDC, scalar[0])")
+    post_bs_scalar_sync = post_bs.find(
+            "sceKernelDcacheWritebackInvalidateRange((const void *)scalar[i], 4)")
+    post_bs_code_write = post_bs.find("_sw(replacement[i], owner[i])")
+    post_bs_code_sync = post_bs.find(
+            "sceKernelIcacheInvalidateRange((const void *)owner[i], 4)")
+    if not 0 <= post_bs_scalar_validation < post_bs_scalar_write < \
+            post_bs_scalar_sync < post_bs_code_write < post_bs_code_sync:
+        fail("functional post-BS route validation/commit ordering regressed")
+    if post_bs.count("_sw(replacement[i], owner[i])") != 1 or \
+            "for (i = 0; i < 2; i++)" not in \
+                post_bs[post_bs_code_write - 80:post_bs_code_write]:
+        fail("functional post-BS route transaction is not exactly two writes")
+    if "_sw(" in post_bs[:post_bs_scalar_write] or \
+            re.search(r"_sw\([^;]*scalar\[10\]", post_bs):
+        fail("functional post-BS route resets state before validation or compatibility")
+    for forbidden in ("0x6C", "0x1E8", "0x1F8", "0x200", "0x20C",
+            "0x214", "0x21C", "0x22C", "0x238", "0x248", "0x258",
+            "0x268", "0xE8", "0xF8", "0x9038"):
+        if forbidden in post_bs[post_bs_code_write:]:
+            fail("functional post-BS commit includes forbidden owner " + forbidden)
+    post_bs_call = assembly[assembly.find("zeroCtrlPostBSManBranchTrace:"):
+            assembly.find("zeroCtrlPostBSManBranchTraceEnd:")]
+    post_state_call = assembly[assembly.find("zeroCtrlPostStateBranchTrace:"):
+            assembly.find("zeroCtrlPostStateBranchTraceEnd:")]
+    if "sw      $v0, %lo(zeroCtrlPostStateNaturalValue)($t0)" not in post_bs_call or \
+            "zeroCtrlPostStateNaturalValue" not in post_bs_call or \
+            "zeroCtrlPostBSManEffectiveResult" not in post_bs_call:
+        fail("historical post-BS helper no longer saves natural v0 before routing")
+    if "zeroCtrlPostStateNaturalValue" not in post_state_call or \
+            "lw      $t2, %lo(zeroCtrlPostStateNaturalValue)($t0)" not in post_state_call or \
+            re.search(r"\bbeqz?\s+\$v0\b", post_state_call):
+        fail("historical post-state helper no longer routes only on saved value")
+    post_bs_install_marker = minimal.find(
+            "[psp1000-functional-post-bs-route-install] rev=1 ")
+    post_bs_runtime_marker = minimal.find(
+            "[psp1000-functional-post-bs-route] bs_ret=%u ")
+    if min(post_bs_install_marker, post_bs_runtime_marker) < 0 or \
+            "memcmp(state, observed_functional_post_bs_install" not in minimal or \
+            "memcmp(state, observed_functional_post_bs" not in minimal:
+        fail("functional post-BS changed-only records are missing")
+    post_bs_runtime_gate = minimal.rfind(
+            "if (slide_diag.bsman.functional_post_bs_install &&", 0,
+            post_bs_runtime_marker)
+    if post_bs_runtime_gate < 0 or "functional_post_bs_cache_sync" not in \
+            minimal[post_bs_runtime_gate:post_bs_runtime_marker]:
+        fail("functional post-BS runtime record is not success-gated")
+    post_bs_install_gate = minimal.rfind("if (slide_diag.functional_enabled) {",
+            0, post_bs_install_marker)
+    if "functional_post_bs_install &&" in \
+            minimal[post_bs_install_gate:post_bs_runtime_gate]:
+        fail("functional post-BS install record is not failure-visible")
     if "sizeof(ZeroCtrlActivationReturnRegistration) == 36" not in bsman_header:
         fail("activation-return registration size guard is missing")
     for marker in ("[psp1000-functional-activation-return-install] ",
