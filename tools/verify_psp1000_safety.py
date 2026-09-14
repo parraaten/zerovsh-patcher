@@ -2157,11 +2157,13 @@ def check_sources(root):
     module_start_functional = kernel_module_start[module_start_functional_start:
             kernel_module_start.find("zeroCtrlInstallBSManClosedShim(mod)",
                 module_start_functional_start)]
-    if "zeroCtrlInstallPsp1000ExitDiagnostic(mod)" not in \
+    if "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)" not in \
             module_start_functional or \
             "zeroCtrlInstallPsp1000PostT39Diagnostic(mod)" in \
             module_start_functional or \
             "zeroCtrlInstallPsp1000Post1F0Diagnostic(mod)" in \
+            module_start_functional or \
+            "zeroCtrlInstallPsp1000ExitDiagnostic(mod)" in \
             module_start_functional:
         fail("functional path does not retire completed post-T39/post-1F0 owners")
 
@@ -2197,7 +2199,9 @@ def check_sources(root):
         if forbidden in post1f0_install_snapshot or forbidden in post1f0_runtime:
             fail("functional post-1F0 output modifies runtime state")
     exit_start = post1f0_end
-    exit_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(", exit_start)
+    exit_end = kernel.find(
+            "static void zeroCtrlInstallPsp1000ActivationReturnDiagnostic(",
+            exit_start)
     exit_diag = kernel[exit_start:exit_end]
     for token in ("0x238, 0x248, 0x258, 0x268",
             "(original[0] >> 26) != 5", "((original[0] >> 21) & 31) != 18",
@@ -2287,6 +2291,49 @@ def check_sources(root):
         fail("functional exit s2 scalars are not immediately after scalar 53")
     if "b->activation_wide_scalar_addr[53], 20" not in exit_diag:
         fail("functional exit derived s2 scalar block lacks 20-byte validation")
+    return_start = exit_end
+    return_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
+            return_start)
+    return_diag = kernel[return_start:return_end]
+    for token in ("0x8FB60018, 0x8FB50014, 0x8FB40010, 0x8FB3000C, 0x8FB20008",
+            "0x8FB10004, 0x8FB00000, 0x03E00008, 0x27BD0020",
+            "owner = a + 0x6C", "replacement = 0x08000000",
+            "zeroCtrlMipsJumpTarget(owner, replacement)",
+            "b->functional_return_leaf", "b->functional_return_scalar[i]",
+            "_sw(replacement, owner)"):
+        if token not in return_diag:
+            fail("functional activation-return diagnostic lacks " + token)
+    return_validation = return_diag.find("for (i = 0; i < 7; i++)\n        if")
+    return_scalar_write = return_diag.find("_sw(i == 4 || i == 5")
+    return_scalar_sync = return_diag.find("sceKernelDcacheWritebackInvalidateRange(",
+            return_scalar_write)
+    return_code_write = return_diag.find("_sw(replacement, owner)")
+    return_code_sync = return_diag.find("sceKernelIcacheInvalidateRange(",
+            return_code_write)
+    if not 0 <= return_validation < return_scalar_write < return_scalar_sync < \
+            return_code_write < return_code_sync or \
+            return_diag.count("_sw(replacement, owner)") != 1:
+        fail("functional activation-return transaction ordering/ownership regressed")
+    return_register = kernel[kernel.find("void zeroCtrlRegisterActivationReturn("):
+            kernel.find("void zeroCtrlRegisterActivationCallerRA(")]
+    for token in ("zeroCtrlRegistrationLeafValid(helper, copied.leaf_addr,",
+            "for (i = 0; i < 7; i++)",
+            "zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[i], 4)",
+            "copied.leaf_end_addr - copied.leaf_addr"):
+        if token not in return_register:
+            fail("activation-return registration lacks " + token)
+    return_asm = assembly[assembly.find("zeroCtrlFunctionalActivationReturnTrace:"):
+            assembly.find("zeroCtrlFunctionalActivationReturnTraceEnd:")]
+    if not return_asm or "jr $ra" not in return_asm or \
+            re.search(r"\b(?:move|addu|addiu|lw|li|ori)\s+\$?v0\b", return_asm) or \
+            re.search(r"\b(?:jal|jalr|syscall)\b", return_asm):
+        fail("activation-return helper does not transparently preserve ra/v0")
+    if "sizeof(ZeroCtrlActivationReturnRegistration) == 36" not in bsman_header:
+        fail("activation-return registration size guard is missing")
+    for marker in ("[psp1000-functional-activation-return-install] ",
+            "[psp1000-functional-activation-return] returns=%u "):
+        if marker not in minimal:
+            fail("activation-return changed-only output lacks " + marker)
     research_state_owner = kernel[kernel.find(
             "static void zeroCtrlInstallBSManClosedShim("):
             kernel.find("int OnModuleStart(SceModule2 *mod)")]

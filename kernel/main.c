@@ -273,6 +273,10 @@ typedef struct {
     int functional_post1f0_cache_sync;
     int functional_exit_validation, functional_exit_install;
     int functional_exit_cache_sync;
+    int functional_return_registered, functional_return_validation;
+    int functional_return_install, functional_return_cache_sync;
+    unsigned int functional_return_leaf, functional_return_leaf_size;
+    unsigned int functional_return_scalar[7];
     int paf_compat_enabled;
     int bsman_not_linked_compat_enabled;
     int activation_cache_sync;
@@ -2126,6 +2130,33 @@ int zeroCtrlRegisterActivationWide(
         bsman->activation_wide_scalar_addr[wide_index] =
                 copied.scalar_addr[wide_index];
     return 1;
+}
+
+void zeroCtrlRegisterActivationReturn(
+        const ZeroCtrlActivationReturnRegistration *registration) {
+    ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
+    ZeroCtrlActivationReturnRegistration copied;
+    SceModule2 *helper;
+    unsigned int i;
+    int k1;
+    if (!slide_diag.functional_enabled || !b->registered || !registration) return;
+    helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    if (!helper || !zeroCtrlVshModuleRangeValid(helper,
+                (unsigned int)registration, sizeof(copied))) return;
+    k1 = pspSdkSetK1(0);
+    memcpy(&copied, registration, sizeof(copied));
+    pspSdkSetK1(k1);
+    if (!zeroCtrlRegistrationLeafValid(helper, copied.leaf_addr,
+                copied.leaf_end_addr)) return;
+    for (i = 0; i < 7; i++)
+        if ((copied.scalar_addr[i] & 3) ||
+                !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[i], 4))
+            return;
+    b->functional_return_leaf = copied.leaf_addr;
+    b->functional_return_leaf_size = copied.leaf_end_addr - copied.leaf_addr;
+    for (i = 0; i < 7; i++)
+        b->functional_return_scalar[i] = copied.scalar_addr[i];
+    b->functional_return_registered = 1;
 }
 
 void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
@@ -6209,6 +6240,14 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_functional_return_install[3] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_return[11] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF
+    };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6509,6 +6548,47 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             state[0], state[1], state[2], state[3], state[4],
                             state[5], state[6], state[7], state[8], state[9],
                             state[10], state[11]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled) {
+                unsigned int state[3] = {
+                    slide_diag.bsman.functional_return_validation,
+                    slide_diag.bsman.functional_return_install,
+                    slide_diag.bsman.functional_return_cache_sync
+                };
+                if (memcmp(state, observed_functional_return_install,
+                            sizeof(state)) != 0) {
+                    memcpy(observed_functional_return_install, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-activation-return-install] "
+                            "rev=1 validation=%u install=%u cache_sync=%u\n",
+                            state[0], state[1], state[2]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.bsman.functional_return_install &&
+                    slide_diag.bsman.functional_return_cache_sync) {
+                ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
+                unsigned int state[11];
+                for (i = 0; i < 7; i++)
+                    state[i + 4] = zeroCtrlReadHelperCounter(
+                            b->functional_return_scalar[i]);
+                state[0] = state[4];
+                state[1] = zeroCtrlReadHelperCounter(b->prefix_paf_return_hits_addr);
+                state[2] = zeroCtrlReadHelperCounter(b->bsman_return_hits_addr);
+                state[3] = zeroCtrlReadHelperCounter(b->state_zero_counter_addr[2]);
+                state[4] = zeroCtrlReadHelperCounter(b->post_vsh_return_hits_addr);
+                if (memcmp(state, observed_functional_return, sizeof(state)) != 0) {
+                    memcpy(observed_functional_return, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-activation-return] returns=%u "
+                            "paf_ret=%u bs_ret=%u state_ret=%u vsh_ret=%u "
+                            "first_ra=0x%08X last_ra=0x%08X ra_changes=%u "
+                            "first_v0=0x%08X last_v0=0x%08X v0_changes=%u\n",
+                            state[0], state[1], state[2], state[3], state[4],
+                            state[5], state[6], state[7], state[8], state[9],
+                            state[10]);
                     zeroCtrlDiagnosticsText(line);
                 }
             }
@@ -9780,6 +9860,52 @@ static void zeroCtrlInstallPsp1000ExitDiagnostic(SceModule2 *mod) {
     b->functional_exit_cache_sync = 1;
 }
 
+static void zeroCtrlInstallPsp1000ActivationReturnDiagnostic(SceModule2 *mod) {
+    static const unsigned int epilogue[9] = {
+        0x8FB60018, 0x8FB50014, 0x8FB40010, 0x8FB3000C, 0x8FB20008,
+        0x8FB10004, 0x8FB00000, 0x03E00008, 0x27BD0020
+    };
+    ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int a, owner, replacement, i;
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !b->functional_validation || !b->functional_install ||
+            !b->functional_cache_sync || !b->functional_return_registered ||
+            !zeroCtrlLoadedModuleMetadataValid(mod) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
+    a = mod->text_addr + 0x9304;
+    if (b->activation_addr != a ||
+            !zeroCtrlVshModuleRangeValid(mod, a + 0x50, 0x24)) return;
+    for (i = 0; i < 9; i++)
+        if (_lw(a + 0x50 + i * 4) != epilogue[i]) return;
+    if (!zeroCtrlVshModuleRangeValid(helper, b->functional_return_leaf,
+                b->functional_return_leaf_size)) return;
+    for (i = 0; i < 7; i++)
+        if ((b->functional_return_scalar[i] & 3) ||
+                !zeroCtrlVshModuleRangeValid(helper,
+                    b->functional_return_scalar[i], 4)) return;
+    owner = a + 0x6C;
+    replacement = 0x08000000 |
+            ((b->functional_return_leaf >> 2) & 0x03FFFFFF);
+    if (((owner + 4) & 0xF0000000) !=
+                (b->functional_return_leaf & 0xF0000000) ||
+            zeroCtrlMipsJumpTarget(owner, replacement) !=
+                b->functional_return_leaf) return;
+    b->functional_return_validation = 1;
+    for (i = 0; i < 7; i++) {
+        _sw(i == 4 || i == 5 ? 0xFFFFFFFF : 0,
+                b->functional_return_scalar[i]);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)b->functional_return_scalar[i], 4);
+    }
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    b->functional_return_install = 1;
+    b->functional_return_cache_sync = 1;
+}
+
 static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
     const unsigned int target_nid = 0x23E3A9B6;
     static const char paf_library[] = "scePaf";
@@ -10979,7 +11105,7 @@ int OnModuleStart(SceModule2 *mod) {
                 zeroCtrlInstallSonyStartTrace(mod);
                 if (slide_diag.functional_enabled) {
                     zeroCtrlInstallPsp1000FunctionalCompat(mod);
-                    zeroCtrlInstallPsp1000ExitDiagnostic(mod);
+                    zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod);
                 } else {
                     zeroCtrlInstallBSManClosedShim(mod);
                 }

@@ -2745,3 +2745,20 @@ all scalar cache synchronization precedes the four-word commit.
 The old PSP-1000 `+0x9038` initialization redirection remains disabled: this
 checkpoint only routes to Sony's unchanged natural target and records its
 untouched return value.
+
+Hardware proved route B completes naturally: both decisions selected zero,
+Sony's `+0x9038` returned `0x09E50000`, and a later activation began. The exit
+transaction is therefore retired from functional startup. A dedicated,
+validated registration now supplies one transparent activation-return leaf and
+seven private helper scalars without changing the 1012/304-byte registrations.
+
+The new transaction validates the exact nine-word `A+0x050..A+0x070` epilogue,
+then replaces only the `jr ra` at `A+0x06C` with a pseudodirect J. Sony's
+`addiu sp,sp,0x20` delay slot remains untouched, so the helper sees restored SP,
+natural RA, and natural `v0`. It records return count, first/last RA and `v0`,
+and their change counts while preserving RA, `v0`, SP, and its temporaries.
+
+```text
+[psp1000-functional-activation-return-install] rev=1 validation=<n> install=<n> cache_sync=<n>
+[psp1000-functional-activation-return] returns=<n> paf_ret=<n> bs_ret=<n> state_ret=<n> vsh_ret=<n> first_ra=0x........ last_ra=0x........ ra_changes=<n> first_v0=0x........ last_v0=0x........ v0_changes=<n>
+```

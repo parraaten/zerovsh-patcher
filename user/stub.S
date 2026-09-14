@@ -1835,6 +1835,55 @@ zeroCtrlFunctionalExitS2Trace:
 zeroCtrlFunctionalExitS2TraceEnd:
 .end zeroCtrlFunctionalExitS2Trace
 
+.globl zeroCtrlFunctionalActivationReturnTrace
+.globl zeroCtrlFunctionalActivationReturnTraceEnd
+.ent zeroCtrlFunctionalActivationReturnTrace, 0
+zeroCtrlFunctionalActivationReturnTrace:
+    addiu $sp, $sp, -8
+    sw $t0, 0($sp)
+    sw $t1, 4($sp)
+    lui $t0, %hi(zeroCtrlFunctionalActivationReturnHits)
+    lw $t1, %lo(zeroCtrlFunctionalActivationReturnHits)($t0)
+    bnez $t1, 1f
+    nop
+    lui $t0, %hi(zeroCtrlFunctionalActivationReturnFirstRA)
+    sw $ra, %lo(zeroCtrlFunctionalActivationReturnFirstRA)($t0)
+    lui $t0, %hi(zeroCtrlFunctionalActivationReturnFirstV0)
+    sw $v0, %lo(zeroCtrlFunctionalActivationReturnFirstV0)($t0)
+    b 3f
+    nop
+1:  lui $t0, %hi(zeroCtrlFunctionalActivationReturnLastRA)
+    lw $t0, %lo(zeroCtrlFunctionalActivationReturnLastRA)($t0)
+    beq $t0, $ra, 2f
+    nop
+    lui $t0, %hi(zeroCtrlFunctionalActivationReturnRAChanges)
+    lw $t1, %lo(zeroCtrlFunctionalActivationReturnRAChanges)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(zeroCtrlFunctionalActivationReturnRAChanges)($t0)
+2:  lui $t0, %hi(zeroCtrlFunctionalActivationReturnLastV0)
+    lw $t0, %lo(zeroCtrlFunctionalActivationReturnLastV0)($t0)
+    beq $t0, $v0, 3f
+    nop
+    lui $t0, %hi(zeroCtrlFunctionalActivationReturnV0Changes)
+    lw $t1, %lo(zeroCtrlFunctionalActivationReturnV0Changes)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(zeroCtrlFunctionalActivationReturnV0Changes)($t0)
+3:  lui $t0, %hi(zeroCtrlFunctionalActivationReturnHits)
+    lw $t1, %lo(zeroCtrlFunctionalActivationReturnHits)($t0)
+    addiu $t1, $t1, 1
+    sw $t1, %lo(zeroCtrlFunctionalActivationReturnHits)($t0)
+    lui $t0, %hi(zeroCtrlFunctionalActivationReturnLastRA)
+    sw $ra, %lo(zeroCtrlFunctionalActivationReturnLastRA)($t0)
+    lui $t0, %hi(zeroCtrlFunctionalActivationReturnLastV0)
+    sw $v0, %lo(zeroCtrlFunctionalActivationReturnLastV0)($t0)
+    lw $t1, 4($sp)
+    lw $t0, 0($sp)
+    addiu $sp, $sp, 8
+    jr $ra
+    nop
+zeroCtrlFunctionalActivationReturnTraceEnd:
+.end zeroCtrlFunctionalActivationReturnTrace
+
 .section .bss
 .align 2
 .macro WIDE_SCALAR name
@@ -1878,6 +1927,13 @@ WIDE_SCALAR zeroCtrlFunctionalExitS2Zero
 WIDE_SCALAR zeroCtrlFunctionalExitS2Nonzero
 WIDE_SCALAR zeroCtrlFunctionalExitS2ZeroTarget
 WIDE_SCALAR zeroCtrlFunctionalExitS2NonzeroTarget
+WIDE_SCALAR zeroCtrlFunctionalActivationReturnHits
+WIDE_SCALAR zeroCtrlFunctionalActivationReturnFirstRA
+WIDE_SCALAR zeroCtrlFunctionalActivationReturnLastRA
+WIDE_SCALAR zeroCtrlFunctionalActivationReturnRAChanges
+WIDE_SCALAR zeroCtrlFunctionalActivationReturnFirstV0
+WIDE_SCALAR zeroCtrlFunctionalActivationReturnLastV0
+WIDE_SCALAR zeroCtrlFunctionalActivationReturnV0Changes
 .globl zeroCtrlPostVshReturnHits
 zeroCtrlPostVshReturnHits: .space 4
 .globl zeroCtrlPostPafEntry0Hits
