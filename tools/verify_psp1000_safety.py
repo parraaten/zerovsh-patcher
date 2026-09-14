@@ -2253,6 +2253,40 @@ def check_sources(root):
     if exit_runtime_gate < 0 or "functional_exit_cache_sync" not in \
             minimal[exit_runtime_gate:exit_runtime_marker]:
         fail("functional exit runtime record is not success-gated")
+    exit_runtime_end = minimal.find("if (slide_diag.functional_button_thread",
+            exit_runtime_marker)
+    exit_runtime_source = minimal[exit_runtime_gate:exit_runtime_end]
+    for token in ("0, 1, 2, 9, 11, 13, 18, 20, 22",
+            "unsigned int s2_base =",
+            "activation_wide_scalar_addr[53]",
+            "zeroCtrlReadHelperCounter(s2_base)",
+            "zeroCtrlReadHelperCounter(s2_base + 4)",
+            "zeroCtrlReadHelperCounter(s2_base + 8)",
+            "activation_wide_scalar_addr[index[i]]"):
+        if token not in exit_runtime_source:
+            fail("functional exit writer lacks safe scalar read " + token)
+    if "index[i] - 53" in exit_runtime_source or re.search(
+            r"activation_wide_scalar_addr\[53\]\s*\+\s*\(index\[i\]",
+            exit_runtime_source):
+        fail("functional exit writer retains wrapped relative scalar reads")
+    helper_adjacency = (
+            "zeroCtrlWide02374143EntryEnd:\n"
+            ".end zeroCtrlWide02374143Entry\n\n"
+            "/* Functional exit-block observer; address is derived from "
+            "validated leaf-10 end. */\n"
+            ".globl zeroCtrlFunctionalExitS2Trace")
+    if assembly.count(helper_adjacency) != 1:
+        fail("functional exit s2 helper is not immediately after leaf-10 end")
+    scalar_adjacency = (
+            "WIDE_SCALAR zeroCtrlWide02374143Hits\n"
+            "WIDE_SCALAR zeroCtrlFunctionalExitS2Zero\n"
+            "WIDE_SCALAR zeroCtrlFunctionalExitS2Nonzero\n"
+            "WIDE_SCALAR zeroCtrlFunctionalExitS2ZeroTarget\n"
+            "WIDE_SCALAR zeroCtrlFunctionalExitS2NonzeroTarget")
+    if assembly.count(scalar_adjacency) != 1:
+        fail("functional exit s2 scalars are not immediately after scalar 53")
+    if "b->activation_wide_scalar_addr[53], 20" not in exit_diag:
+        fail("functional exit derived s2 scalar block lacks 20-byte validation")
     research_state_owner = kernel[kernel.find(
             "static void zeroCtrlInstallBSManClosedShim("):
             kernel.find("int OnModuleStart(SceModule2 *mod)")]

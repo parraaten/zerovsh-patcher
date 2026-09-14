@@ -6486,17 +6486,17 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             }
             if (slide_diag.bsman.functional_exit_install &&
                     slide_diag.bsman.functional_exit_cache_sync) {
-                static const unsigned int index[12] = {
-                    53, 54, 55, 0, 1, 2, 9, 11, 13, 18, 20, 22
+                static const unsigned int index[9] = {
+                    0, 1, 2, 9, 11, 13, 18, 20, 22
                 };
+                unsigned int s2_base =
+                        slide_diag.bsman.activation_wide_scalar_addr[53];
                 unsigned int state[12];
-                for (i = 0; i < 12; i++)
-                    state[i] = zeroCtrlReadHelperCounter(
-                            slide_diag.bsman.activation_wide_scalar_addr[53] +
-                            (index[i] - 53) * 4);
-                /* Registered indices use their original addresses. */
-                for (i = 3; i < 12; i++)
-                    state[i] = zeroCtrlReadHelperCounter(
+                state[0] = zeroCtrlReadHelperCounter(s2_base);
+                state[1] = zeroCtrlReadHelperCounter(s2_base + 4);
+                state[2] = zeroCtrlReadHelperCounter(s2_base + 8);
+                for (i = 0; i < 9; i++)
+                    state[i + 3] = zeroCtrlReadHelperCounter(
                             slide_diag.bsman.activation_wide_scalar_addr[index[i]]);
                 state[6] = state[6] != 0;
                 state[9] = state[9] != 0;
