@@ -2511,7 +2511,7 @@ relative to the hardware-established, directly validated
 +0x02C  PAF ED83BBCF call wrapper
 +0x0A8  BSMan 23E3A9B6 call wrapper
 +0x10C  VshBridge 639C3CB3 call wrapper
-+0x2B4  state-zero virtual-call wrapper
++0x2A4  state-zero virtual-call wrapper
 ```
 
 All four owners and their unique imported targets or exact virtual-call shape,
@@ -2578,3 +2578,11 @@ deferred writer emits only changed values as
 `[psp1000-functional] activation_compat_stage=<n>`. The installer performs no
 I/O for this observation, and the field causes no Sony, helper-module, or
 SlidePlugin write. The next hardware run asks only for the last reported stage.
+
+That run stopped at stage 7, proving helper reachability but failing an owner
+fingerprint. The functional table had incorrectly assigned the virtual-call
+wrapper to `A+0x2B4`. The canonical research `site_offset[]` mapping places the
+`0x0040F809/0x00000000` JALR pair at index 3, `A+0x2A4`; `A+0x2B4` is the next
+Sony classification owner. The minimal table now uses `A+0x2A4`, restoring the
+same owner used by the hardware-proven T30.1 15-to-14 substitution while
+leaving `A+0x2B4` and later classification code untouched.

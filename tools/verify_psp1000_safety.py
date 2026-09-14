@@ -1700,7 +1700,7 @@ def check_sources(root):
             functional_start)
     functional = kernel[functional_start:functional_end]
     for token in (
-            "0x02C, 0x0A8, 0x10C, 0x2B4",
+            "0x02C, 0x0A8, 0x10C, 0x2A4",
             "mod->text_addr > 0xFFFFFFFFU - 0x9304",
             "activation = mod->text_addr + 0x9304",
             "!zeroCtrlVshModuleRangeValid(mod, activation, 0x2BC + 8)",
@@ -1822,7 +1822,7 @@ def check_sources(root):
         fail("functional activation transaction can partially own code")
     for forbidden_offset in ("0x000", "0x004", "0x034", "0x038", "0x044",
             "0x094", "0x098", "0x0B0", "0x0DC", "0x0E8", "0x0F8",
-            "0x27C", "0x288", "0x298", "0x2A4", "0x2BC", "0x2C8"):
+            "0x27C", "0x288", "0x298", "0x2B4", "0x2BC", "0x2C8"):
         if "activation + " + forbidden_offset in functional or \
                 "activation_addr + " + forbidden_offset in functional:
             fail("functional activation installer owns forbidden " +
@@ -1838,6 +1838,15 @@ def check_sources(root):
                     forbidden)
     if functional.count("_sw(replacement[i], owner[i])") != 1:
         fail("functional activation code commit is not one four-owner loop")
+    research_state_owner = kernel[kernel.find(
+            "static void zeroCtrlInstallBSManClosedShim("):
+            kernel.find("int OnModuleStart(SceModule2 *mod)")]
+    for token in ("0x27C, 0x288, 0x298, 0x2A4, 0x2B4, 0x2BC, 0x2C8",
+            "pc == 3 ? 0x0C000000 : 0x08000000",
+            "bsman->state_zero_original[6] != 0x0040F809",
+            "bsman->state_zero_original[7] != 0"):
+        if token not in research_state_owner:
+            fail("research state owner mapping no longer proves functional +0x2A4")
     for marker in (
             "[psp1000-functional] activation_compat_validation=1",
             "[psp1000-functional] activation_compat_install=1"):

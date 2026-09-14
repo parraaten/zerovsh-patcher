@@ -8963,7 +8963,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     static const char paf_library[] = "scePaf";
     static const char vshbridge_library[] = "sceVshBridge";
     static const unsigned int owner_offset[4] = {
-        0x02C, 0x0A8, 0x10C, 0x2B4
+        0x02C, 0x0A8, 0x10C, 0x2A4
     };
     ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
