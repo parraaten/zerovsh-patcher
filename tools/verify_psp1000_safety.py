@@ -1926,29 +1926,56 @@ def check_sources(root):
             "[psp1000-vsh6f84-consumers]"):
         if marker in minimal:
             fail("retired compact VSH consumer output remains in minimal writer")
-    live_marker = minimal.find("[psp1000-vsh58d4] total=%u delegated=%u ")
-    minimal_continue = minimal.find("continue;", live_marker)
-    if not 0 <= live_marker < minimal_continue:
-        fail("compact VSH +58D4 evidence is not before minimal continue")
-    live_start = minimal.rfind("if (slide_diag.functional_enabled) {", 0,
-            live_marker)
-    live_end = minimal.find("if (slide_diag.functional_enabled) {", live_marker)
-    live_record = minimal[live_start:live_end]
-    for token in ('sceKernelFindModuleByName("ZeroVSH_Patcher_User")',
-            "model == 0", "sceKernelDevkitVersion() == 0x06060110",
-            "zeroCtrlLoadedModuleMetadataValid(helper)",
-            "slide_diag.triggers[1].counter_addr",
-            "slide_diag.triggers[2].counter_addr", "trigger->counter_addr",
-            "trigger->request_addr",
-            "scalar[i] == 0", "(scalar[i] & 3) != 0",
-            "zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)",
-            "functional_home_press_hits", "functional_home_open_pending",
-            "zeroCtrlReadTriggerHits(0)", "functional_trigger_consumed",
-            "memcmp(state, observed_vsh58d4"):
-        if token not in live_record:
-            fail("compact VSH +58D4 live reader lacks " + token)
-    if "_sw(" in live_record or "InstallVsh589C" in live_record:
-        fail("compact VSH consumer evidence performs a runtime write/install")
+    if "[psp1000-vsh58d4]" in minimal:
+        fail("retired compact VSH +58D4 output remains in minimal writer")
+    map_start = kernel.find("static int zeroCtrlWriteFunctionalVsh57b0Map(void)")
+    map_end = kernel.find("static void zeroCtrlWriteVsh589cWindow(", map_start)
+    vsh57b0_map = kernel[map_start:map_end]
+    for token in ('sceKernelFindModuleByName("vsh_module")', "model != 0",
+            "sceKernelDevkitVersion() != 0x06060110",
+            "!slide_diag.functional_enabled",
+            "!zeroCtrlLoadedModuleMetadataValid(vsh)",
+            'strcmp(vsh->modname, "vsh_module") != 0',
+            "vsh->modid != slide_diag.vsh_modid",
+            "vsh->text_addr != slide_diag.vsh_text_addr",
+            "vsh->text_size != slide_diag.vsh_text_size",
+            "vsh->text_size != 0x556C0", "vsh->text_addr + 0x57B0",
+            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,",
+            "zeroCtrlVshModuleRangeValid(vsh, target, 4)",
+            "opcode != 2 && opcode != 3",
+            "zeroCtrlMipsJumpTarget(pc, word) != target",
+            "offset == 0x58F0 && opcode == 3",
+            "[psp1000-vsh57b0-map] target=0x%08X total=%u jal=%u ",
+            "jump=%u stored=%u overflow=%u expected58f0=%u",
+            "[psp1000-vsh57b0-ref] index=%u source=0x%08X ",
+            "[psp1000-vsh57b0-window] index=%u start=0x%05X words=%u",
+            "[psp1000-vsh57b0-code] index=%u offset=0x%05X "):
+        if token not in vsh57b0_map:
+            fail("read-only VSH +57B0 caller map lacks " + token)
+    for token in ("#define VSH57B0_REFERENCE_LIMIT 16",
+            "#define VSH57B0_CONTEXT_INSTRUCTIONS 6"):
+        if token not in kernel:
+            fail("VSH +57B0 caller map has wrong bound: " + token)
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
+            "REDIRECT_FUNCTION", "hook_import", "zeroCtrlTrigger58D4(",
+            "zeroCtrlSetSlideState", "Alloc", "malloc"):
+        if forbidden in vsh57b0_map:
+            fail("VSH +57B0 caller map is not read-only: " + forbidden)
+    context_validation = vsh57b0_map.find(
+            "zeroCtrlVshModuleRangeValid(vsh,\n                    vsh->text_addr + start, end - start)")
+    context_read = vsh57b0_map.find("_lw(vsh->text_addr + code_offset)")
+    if not 0 <= context_validation < context_read:
+        fail("VSH +57B0 context is read before its clamped range is validated")
+    map_call = minimal.find("zeroCtrlWriteFunctionalVsh57b0Map()")
+    map_continue = minimal.find("continue;", map_call)
+    map_gate = minimal[minimal.rfind("if (!vsh57b0_map_written", 0,
+            map_call):map_call]
+    if kernel.count("zeroCtrlWriteFunctionalVsh57b0Map()") != 1 or \
+            not 0 <= map_call < map_continue or \
+            "slide_diag.functional_enabled" not in map_gate or \
+            "slide_diag.vsh_module_seen" not in map_gate or \
+            "slide_diag.functional_request_armed" not in map_gate:
+        fail("VSH +57B0 map is not a gated writer-only one-shot")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
