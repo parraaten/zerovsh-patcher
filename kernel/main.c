@@ -3517,6 +3517,51 @@ static void zeroCtrlWriteVsh589cWindow(SceModule2 *vsh,
     }
 }
 
+/* Writer-thread-only structural capture; this never installs a VSH owner. */
+static void zeroCtrlWriteFunctionalCallbackStructure(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int offset;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x58E0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x5894,
+                0x50)) {
+        zeroCtrlDiagnosticsText("[psp1000-vsh589c-structure] validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[psp1000-vsh589c-structure] validation=1 start=0x05894 words=20\n");
+    for (offset = 0x5894; offset <= 0x58E0; offset += 4) {
+        unsigned int pc = vsh->text_addr + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int target = 0;
+        const char *class_name = "IMMEDIATE";
+        if (opcode == 0) class_name = "SPECIAL";
+        else if (opcode == 2) class_name = "J";
+        else if (opcode == 3) class_name = "JAL";
+        else if (opcode == 1 || (opcode >= 4 && opcode <= 7))
+            class_name = "BRANCH";
+        if (opcode == 2 || opcode == 3)
+            target = zeroCtrlMipsJumpTarget(pc, word) - vsh->text_addr;
+        else if (opcode == 1 || (opcode >= 4 && opcode <= 7)) {
+            int displacement = (short)(word & 0xFFFF);
+            target = pc + 4 + displacement * 4 - vsh->text_addr;
+        }
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh589c-word] off=0x%05X word=0x%08X "
+                "class=%s op=%u rs=%u rt=%u rd=%u sa=%u fn=%u "
+                "target=0x%05X\n", offset, word, class_name, opcode,
+                (word >> 21) & 31, (word >> 16) & 31, (word >> 11) & 31,
+                (word >> 6) & 31, word & 63, target);
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
 static int zeroCtrlVsh589cA0Definition(unsigned int word,
         const char **class_name, unsigned int *base, int *immediate) {
     unsigned int opcode = word >> 26;
@@ -6686,6 +6731,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 zeroCtrlDiagnosticsText(
                         "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
+            }
+            if (slide_diag.functional_enabled &&
+                    !(minimal_memory_written & 0x8000)) {
+                zeroCtrlWriteFunctionalCallbackStructure();
+                minimal_memory_written |= 0x8000;
             }
             if (slide_diag.functional_enabled) {
                 ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];

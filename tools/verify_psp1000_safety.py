@@ -441,6 +441,38 @@ def check_sources(root):
             fail("bounded VSH +589C caller window lacks " + definition)
     if any(token in request_helpers for token in ("_sw(", "Dcache", "Icache")):
         fail("bounded VSH +589C caller/A0 analysis is not read-only")
+    structure_start = kernel.find(
+            "static void zeroCtrlWriteFunctionalCallbackStructure(void)")
+    structure_end = kernel.find("static int zeroCtrlVsh589cA0Definition(",
+            structure_start)
+    structure = kernel[structure_start:structure_end]
+    for token in ('sceKernelFindModuleByName("vsh_module")', "model != 0",
+            "sceKernelDevkitVersion() != 0x06060110",
+            "!slide_diag.functional_enabled",
+            "!zeroCtrlLoadedModuleMetadataValid(vsh)",
+            'strcmp(vsh->modname, "vsh_module") != 0',
+            "vsh->text_addr > 0xFFFFFFFFU - 0x58E0",
+            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x5894,",
+            "for (offset = 0x5894; offset <= 0x58E0; offset += 4)",
+            "word = _lw(pc)", "opcode = word >> 26",
+            'class_name = "SPECIAL"', 'class_name = "J"',
+            'class_name = "JAL"', 'class_name = "BRANCH"',
+            "zeroCtrlMipsJumpTarget(pc, word) - vsh->text_addr",
+            "pc + 4 + displacement * 4 - vsh->text_addr",
+            "[psp1000-vsh589c-structure] validation=1",
+            "[psp1000-vsh589c-word] off=0x%05X word=0x%08X",
+            "class=%s op=%u rs=%u rt=%u rd=%u sa=%u fn=%u ",
+            "target=0x%05X"):
+        if token not in structure:
+            fail("VSH +589C structural capture lacks " + token)
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
+            "hook_import", "zeroCtrlRedir", "zeroCtrlTrigger58D4(",
+            "zeroCtrlSetSlideState", "Alloc", "malloc"):
+        if forbidden in structure:
+            fail("VSH +589C structural capture is not read-only: " + forbidden)
+    if kernel.count("zeroCtrlWriteFunctionalCallbackStructure();") != 1 or \
+            "zeroCtrlWriteFunctionalCallbackStructure();" not in writer:
+        fail("VSH +589C structural capture is not writer-thread-only/once-called")
     if "zeroCtrlWriteFunctionalVshRequestCallers();" in kernel:
         fail("superseded VSH +589C/+57B0 scan is still emitted automatically")
     vsh3_start = kernel.find(
