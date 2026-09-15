@@ -451,13 +451,23 @@ def check_sources(root):
             "!slide_diag.functional_enabled",
             "!zeroCtrlLoadedModuleMetadataValid(vsh)",
             'strcmp(vsh->modname, "vsh_module") != 0',
-            "vsh->text_addr > 0xFFFFFFFFU - 0x58E0",
+            "vsh->modid != slide_diag.vsh_modid",
+            "vsh->text_addr != slide_diag.vsh_text_addr",
+            "vsh->text_size != slide_diag.vsh_text_size",
+            "vsh->text_addr > 0xFFFFFFFFU - 0x5894",
             "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x5894,",
-            "for (offset = 0x5894; offset <= 0x58E0; offset += 4)",
+            "0x5C", "words=23",
+            "for (offset = 0x5894; offset <= 0x58EC; offset += 4)",
             "word = _lw(pc)", "opcode = word >> 26",
             'class_name = "SPECIAL"', 'class_name = "J"',
-            'class_name = "JAL"', 'class_name = "BRANCH"',
+            'class_name = "JAL"', 'class_name = "JR"',
+            'class_name = "JALR"', 'class_name = "REGIMM"',
+            'class_name = "BEQ"', 'class_name = "BNE"',
+            'class_name = "BLEZ"', 'class_name = "BGTZ"',
+            'class_name = "BEQL"', 'class_name = "BNEL"',
+            'class_name = "BLEZL"', 'class_name = "BGTZL"',
             "zeroCtrlMipsJumpTarget(pc, word) - vsh->text_addr",
+            "opcode >= 0x14 && opcode <= 0x17",
             "pc + 4 + displacement * 4 - vsh->text_addr",
             "[psp1000-vsh589c-structure] validation=1",
             "[psp1000-vsh589c-word] off=0x%05X word=0x%08X",
@@ -470,9 +480,21 @@ def check_sources(root):
             "zeroCtrlSetSlideState", "Alloc", "malloc"):
         if forbidden in structure:
             fail("VSH +589C structural capture is not read-only: " + forbidden)
+    structure_range = structure.find(
+            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x5894,")
+    structure_read = structure.find("word = _lw(pc)")
+    if not 0 <= structure_range < structure_read:
+        fail("VSH +589C capture reads before validating its complete 0x5C-byte range")
+    structure_call = writer.find("zeroCtrlWriteFunctionalCallbackStructure();")
+    structure_gate = writer.rfind("if (slide_diag.functional_enabled &&", 0,
+            structure_call)
+    structure_mark = writer.find("minimal_memory_written |= 0x8000", structure_call)
+    structure_writer_gate = writer[structure_gate:structure_call]
     if kernel.count("zeroCtrlWriteFunctionalCallbackStructure();") != 1 or \
-            "zeroCtrlWriteFunctionalCallbackStructure();" not in writer:
-        fail("VSH +589C structural capture is not writer-thread-only/once-called")
+            structure_call < 0 or structure_gate < 0 or structure_mark < structure_call or \
+            "slide_diag.vsh_module_seen" not in structure_writer_gate or \
+            "slide_diag.functional_request_armed" not in structure_writer_gate:
+        fail("VSH +589C capture does not wait for VSH identity/request readiness")
     if "zeroCtrlWriteFunctionalVshRequestCallers();" in kernel:
         fail("superseded VSH +589C/+57B0 scan is still emitted automatically")
     vsh3_start = kernel.find(

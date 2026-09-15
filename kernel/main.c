@@ -3527,28 +3527,41 @@ static void zeroCtrlWriteFunctionalCallbackStructure(void) {
             !slide_diag.functional_enabled ||
             !zeroCtrlLoadedModuleMetadataValid(vsh) ||
             strcmp(vsh->modname, "vsh_module") != 0 ||
-            vsh->text_addr > 0xFFFFFFFFU - 0x58E0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x5894 ||
             !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x5894,
-                0x50)) {
+                0x5C)) {
         zeroCtrlDiagnosticsText("[psp1000-vsh589c-structure] validation=0\n");
         return;
     }
     zeroCtrlDiagnosticsText(
-            "[psp1000-vsh589c-structure] validation=1 start=0x05894 words=20\n");
-    for (offset = 0x5894; offset <= 0x58E0; offset += 4) {
+            "[psp1000-vsh589c-structure] validation=1 start=0x05894 words=23\n");
+    for (offset = 0x5894; offset <= 0x58EC; offset += 4) {
         unsigned int pc = vsh->text_addr + offset;
         unsigned int word = _lw(pc);
         unsigned int opcode = word >> 26;
         unsigned int target = 0;
         const char *class_name = "IMMEDIATE";
-        if (opcode == 0) class_name = "SPECIAL";
+        if (opcode == 0 && (word & 63) == 8) class_name = "JR";
+        else if (opcode == 0 && (word & 63) == 9) class_name = "JALR";
+        else if (opcode == 0) class_name = "SPECIAL";
+        else if (opcode == 1) class_name = "REGIMM";
         else if (opcode == 2) class_name = "J";
         else if (opcode == 3) class_name = "JAL";
-        else if (opcode == 1 || (opcode >= 4 && opcode <= 7))
-            class_name = "BRANCH";
+        else if (opcode == 4) class_name = "BEQ";
+        else if (opcode == 5) class_name = "BNE";
+        else if (opcode == 6) class_name = "BLEZ";
+        else if (opcode == 7) class_name = "BGTZ";
+        else if (opcode == 0x14) class_name = "BEQL";
+        else if (opcode == 0x15) class_name = "BNEL";
+        else if (opcode == 0x16) class_name = "BLEZL";
+        else if (opcode == 0x17) class_name = "BGTZL";
         if (opcode == 2 || opcode == 3)
             target = zeroCtrlMipsJumpTarget(pc, word) - vsh->text_addr;
-        else if (opcode == 1 || (opcode >= 4 && opcode <= 7)) {
+        else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
             int displacement = (short)(word & 0xFFFF);
             target = pc + 4 + displacement * 4 - vsh->text_addr;
         }
@@ -6732,7 +6745,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
             }
-            if (slide_diag.functional_enabled &&
+            if (slide_diag.functional_enabled && slide_diag.vsh_module_seen &&
+                    slide_diag.functional_request_armed &&
                     !(minimal_memory_written & 0x8000)) {
                 zeroCtrlWriteFunctionalCallbackStructure();
                 minimal_memory_written |= 0x8000;
