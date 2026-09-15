@@ -636,6 +636,17 @@ typedef struct {
     volatile unsigned int functional_home_first_load_attempts;
     volatile unsigned int functional_home_first_load_published;
     volatile unsigned int functional_home_first_load_reject_reason;
+    volatile int vsh589c_validation;
+    volatile int vsh589c_install;
+    volatile int vsh589c_cache_sync;
+    unsigned int vsh589c_owner;
+    unsigned int vsh589c_original;
+    unsigned int vsh589c_replacement;
+    unsigned int vsh589c_resume;
+    unsigned int vsh589c_helper;
+    unsigned int vsh589c_tail;
+    unsigned int vsh589c_tail_original;
+    unsigned int vsh589c_tail_replacement;
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -4075,6 +4086,82 @@ static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod) {
             mod->text_size != 0 && mod->nsegment != 0 && mod->nsegment <= 4;
 }
 
+static void zeroCtrlInstallVsh589CCallTrace(void) {
+    ZeroCtrlVshTriggerEvidence *storage_total = &slide_diag.triggers[1];
+    ZeroCtrlVshTriggerEvidence *storage_pending = &slide_diag.triggers[2];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int text, owner, original, original_target;
+    unsigned int trace_helper, trace_tail, tail_original;
+    unsigned int replacement, tail_replacement;
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            !slide_diag.vsh_module_seen || !slide_diag.functional_request_armed ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x58B0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x589C, 0x18))
+        return;
+    text = vsh->text_addr;
+    owner = text + 0x58AC;
+    if ((_lw(text + 0x589C) & 0xFFFF0000) != 0x3C020000 ||
+            _lw(text + 0x58A0) != 0x27BDFFF0 ||
+            (_lw(text + 0x58A4) & 0xFFFF0000) != 0xAC440000 ||
+            _lw(text + 0x58A8) != 0xAFBF0000 ||
+            _lw(text + 0x58B0) != 0) return;
+    original = _lw(owner);
+    if ((original >> 26) != 3) return;
+    original_target = zeroCtrlMipsJumpTarget(owner, original);
+    if (original_target != text + 0x5C98 ||
+            !zeroCtrlVshModuleRangeValid(vsh, original_target, 4) ||
+            storage_total->patch_applied || storage_total->cache_sync ||
+            storage_pending->patch_applied || storage_pending->cache_sync ||
+            storage_pending->stub_addr > 0xFFFFFFFFU - 24) return;
+    trace_helper = storage_pending->stub_addr + 24;
+    if ((storage_pending->stub_addr & 3) != 0 || (trace_helper & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_pending->stub_addr, 24) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace_helper, 80) ||
+            trace_helper > 0xFFFFFFFFU - 72 ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_total->counter_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_pending->counter_addr, 4))
+        return;
+    trace_tail = trace_helper + 72;
+    tail_original = _lw(trace_tail);
+    if ((tail_original >> 26) != 2 || _lw(trace_tail + 4) != 0) return;
+    replacement = 0x0C000000 | ((trace_helper >> 2) & 0x03FFFFFF);
+    tail_replacement = 0x08000000 | ((original_target >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(owner, replacement) != trace_helper ||
+            zeroCtrlMipsJumpTarget(trace_tail, tail_replacement) != original_target)
+        return;
+    slide_diag.vsh589c_owner = owner;
+    slide_diag.vsh589c_original = original;
+    slide_diag.vsh589c_replacement = replacement;
+    slide_diag.vsh589c_resume = owner + 8;
+    slide_diag.vsh589c_helper = trace_helper;
+    slide_diag.vsh589c_tail = trace_tail;
+    slide_diag.vsh589c_tail_original = tail_original;
+    slide_diag.vsh589c_tail_replacement = tail_replacement;
+    slide_diag.vsh589c_validation = 1;
+    _sw(0, storage_total->counter_addr);
+    _sw(0, storage_pending->counter_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)storage_total->counter_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)storage_pending->counter_addr, 4);
+    _sw(tail_replacement, trace_tail);
+    sceKernelDcacheWritebackInvalidateRange((const void *)trace_tail, 4);
+    sceKernelIcacheInvalidateRange((const void *)trace_tail, 4);
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    slide_diag.vsh589c_install = 1;
+    slide_diag.vsh589c_cache_sync = 1;
+}
+
 static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
         unsigned int source) {
     unsigned int rs = (word >> 21) & 0x1F;
@@ -6344,6 +6431,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_vsh589c[7] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6751,7 +6842,54 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     slide_diag.functional_request_armed &&
                     !(minimal_memory_written & 0x8000)) {
                 zeroCtrlWriteFunctionalCallbackStructure();
+                zeroCtrlInstallVsh589CCallTrace();
+                snprintf(line, sizeof(line),
+                        "[psp1000-vsh589c-install] validation=%u install=%u "
+                        "cache_sync=%u owner=0x%08X original=0x%08X "
+                        "replacement=0x%08X resume=0x%08X tail=0x%08X "
+                        "tail_original=0x%08X tail_replacement=0x%08X\n",
+                        slide_diag.vsh589c_validation,
+                        slide_diag.vsh589c_install,
+                        slide_diag.vsh589c_cache_sync,
+                        slide_diag.vsh589c_owner, slide_diag.vsh589c_original,
+                        slide_diag.vsh589c_replacement, slide_diag.vsh589c_resume,
+                        slide_diag.vsh589c_tail,
+                        slide_diag.vsh589c_tail_original,
+                        slide_diag.vsh589c_tail_replacement);
+                zeroCtrlDiagnosticsText(line);
                 minimal_memory_written |= 0x8000;
+            }
+            if (slide_diag.vsh589c_install && slide_diag.vsh589c_cache_sync) {
+                ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
+                SceModule2 *helper =
+                        sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+                unsigned int state[7];
+                if (zeroCtrlLoadedModuleMetadataValid(helper) &&
+                        zeroCtrlVshModuleRangeValid(helper,
+                            slide_diag.triggers[1].counter_addr, 4) &&
+                        zeroCtrlVshModuleRangeValid(helper,
+                            slide_diag.triggers[2].counter_addr, 4) &&
+                        trigger->request_addr != 0 &&
+                        (trigger->request_addr & 3) == 0 &&
+                        zeroCtrlVshModuleRangeValid(helper,
+                            trigger->request_addr, 4)) {
+                    state[0] = zeroCtrlReadTriggerHits(1);
+                    state[1] = zeroCtrlReadTriggerHits(2);
+                    state[2] = slide_diag.functional_home_press_hits;
+                    state[3] = slide_diag.functional_home_open_pending;
+                    state[4] = _lw(trigger->request_addr);
+                    state[5] = zeroCtrlReadTriggerHits(0);
+                    state[6] = slide_diag.functional_trigger_consumed;
+                    if (memcmp(state, observed_vsh589c, sizeof(state)) != 0) {
+                        memcpy(observed_vsh589c, state, sizeof(state));
+                        snprintf(line, sizeof(line),
+                                "[psp1000-vsh589c] total=%u pending=%u "
+                                "home_press=%u home_pending=%u request=%u "
+                                "hit58d4=%u consumed=%u\n", state[0], state[1],
+                                state[2], state[3], state[4], state[5], state[6]);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                }
             }
             if (slide_diag.functional_enabled) {
                 ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];

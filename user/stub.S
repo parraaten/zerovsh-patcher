@@ -72,6 +72,38 @@ zeroCtrlTrigger58D4End:
 .end zeroCtrlTrigger58D4
 CREATE_TRIGGER_STUB zeroCtrlTrigger13F6C, zeroCtrlTrigger13F6CHits
 CREATE_TRIGGER_STUB zeroCtrlTrigger14020, zeroCtrlTrigger14020Hits
+
+.globl zeroCtrlVsh589CCallTrace
+.type zeroCtrlVsh589CCallTrace @function
+.ent zeroCtrlVsh589CCallTrace, 0
+zeroCtrlVsh589CCallTrace:
+    addiu   $sp, $sp, -16
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlTrigger13F6CHits)
+    lw      $t1, %lo(zeroCtrlTrigger13F6CHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlTrigger13F6CHits)($t0)
+    lui     $t0, %hi(zeroCtrlTrigger58D4Request)
+    lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)
+    beqz    $t1, 3f
+    nop
+    lui     $t0, %hi(zeroCtrlTrigger14020Hits)
+    lw      $t1, %lo(zeroCtrlTrigger14020Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlTrigger14020Hits)($t0)
+3:
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 16
+.globl zeroCtrlVsh589CCallTraceTail
+zeroCtrlVsh589CCallTraceTail:
+    j       0
+    nop
+.globl zeroCtrlVsh589CCallTraceEnd
+zeroCtrlVsh589CCallTraceEnd:
+.end zeroCtrlVsh589CCallTrace
+
 CREATE_TRIGGER_STUB zeroCtrlGlobalPredicate6F84True, zeroCtrlGlobalPredicate6F84Hits
 
 .section .bss

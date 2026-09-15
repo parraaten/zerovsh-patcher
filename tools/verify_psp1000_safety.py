@@ -360,7 +360,7 @@ def check_sources(root):
     if minimal_start + minimal.find("continue;") > writer.find("[paf-parent-a0]"):
         fail("minimal memory test does not bypass parent/PAF diagnostics")
     vsh58_start = kernel.find("static void zeroCtrlWriteFunctionalVsh58Map(void)")
-    vsh58_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(",
+    vsh58_end = kernel.find("static void zeroCtrlWriteVsh589cWindow(",
             vsh58_start)
     if vsh58_start < 0 or vsh58_end < 0:
         fail("functional PSP-1000 VSH+58D4 map is missing")
@@ -402,7 +402,8 @@ def check_sources(root):
         fail("large VSH+58D4 map is still emitted automatically")
     scan_start = kernel.find(
             "static void zeroCtrlWriteFunctionalVshRequestCallers(void)")
-    scan_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(", scan_start)
+    scan_end = kernel.find("static void zeroCtrlInstallVsh589CCallTrace(void)",
+            scan_start)
     if scan_start < 0 or scan_end < 0:
         fail("read-only VSH +589C caller scan is missing")
     request_scan = kernel[scan_start:scan_end]
@@ -501,6 +502,37 @@ def check_sources(root):
             "slide_diag.vsh_module_seen" not in structure_writer_gate or \
             "slide_diag.functional_request_armed" not in structure_writer_gate:
         fail("VSH +589C capture does not wait for VSH identity/request readiness")
+    install_start = kernel.find("static void zeroCtrlInstallVsh589CCallTrace(void)")
+    install_end = kernel.find("static int zeroCtrlMipsMove(", install_start)
+    vsh589c_install = kernel[install_start:install_end]
+    for token in ("!slide_diag.minimal_memory_test",
+            "vsh->modid != slide_diag.vsh_modid",
+            "vsh->text_addr != slide_diag.vsh_text_addr",
+            "vsh->text_size != slide_diag.vsh_text_size",
+            "(_lw(text + 0x589C) & 0xFFFF0000) != 0x3C020000",
+            "_lw(text + 0x58A0) != 0x27BDFFF0",
+            "(_lw(text + 0x58A4) & 0xFFFF0000) != 0xAC440000",
+            "_lw(text + 0x58A8) != 0xAFBF0000",
+            "owner = text + 0x58AC", "_lw(text + 0x58B0) != 0",
+            "original_target != text + 0x5C98",
+            "trace_helper = storage_pending->stub_addr + 24",
+            "zeroCtrlVshModuleRangeValid(helper, trace_helper, 80)",
+            "trace_tail = trace_helper + 72", "owner + 8",
+            "_sw(0, storage_total->counter_addr)",
+            "_sw(0, storage_pending->counter_addr)",
+            "_sw(tail_replacement, trace_tail)", "_sw(replacement, owner)"):
+        if token not in vsh589c_install:
+            fail("VSH +58AC diagnostic transaction lacks " + token)
+    tail_write = vsh589c_install.find("_sw(tail_replacement, trace_tail)")
+    tail_icache = vsh589c_install.find("sceKernelIcacheInvalidateRange(", tail_write)
+    owner_write = vsh589c_install.find("_sw(replacement, owner)", tail_icache)
+    owner_icache = vsh589c_install.find("sceKernelIcacheInvalidateRange(", owner_write)
+    if not 0 <= tail_write < tail_icache < owner_write < owner_icache or \
+            vsh589c_install.count("_sw(") != 4:
+        fail("VSH +58AC diagnostic does not commit tail/counters before sole owner")
+    if kernel.count("zeroCtrlInstallVsh589CCallTrace();") != 1 or \
+            "zeroCtrlInstallVsh589CCallTrace();" not in writer:
+        fail("VSH +58AC diagnostic installer is not writer-thread-only")
     if "zeroCtrlWriteFunctionalVshRequestCallers();" in kernel:
         fail("superseded VSH +589C/+57B0 scan is still emitted automatically")
     vsh3_start = kernel.find(
@@ -1507,7 +1539,7 @@ def check_sources(root):
         if token not in minimal_gate:
             fail("minimal memory test gate lacks " + token)
     fast_memory_start = kernel.find("static void zeroCtrlWriteFastMemory(")
-    fast_memory_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(",
+    fast_memory_end = kernel.find("static void zeroCtrlInstallVsh589CCallTrace(void)",
             fast_memory_start)
     fast_memory = kernel[fast_memory_start:fast_memory_end]
     for token in ("[mem-fast] %s total_free=%u largest_block=%u",
@@ -1589,6 +1621,22 @@ def check_sources(root):
     if not 0 <= request_test < request_clear < effective_true < natural_label < \
             natural_target < natural_tail:
         fail("functional 58D4 helper does not consume once or preserve natural tail")
+    trace_start = assembly.find("zeroCtrlVsh589CCallTrace:")
+    trace_end = assembly.find("zeroCtrlVsh589CCallTraceEnd:", trace_start)
+    vsh589c_trace = assembly[trace_start:trace_end]
+    trace_tokens = ("addiu   $sp, $sp, -16", "sw      $t0, 0($sp)",
+            "sw      $t1, 4($sp)", "zeroCtrlTrigger13F6CHits",
+            "lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)",
+            "beqz    $t1, 3f", "zeroCtrlTrigger14020Hits",
+            "lw      $t1, 4($sp)", "lw      $t0, 0($sp)",
+            "addiu   $sp, $sp, 16", "zeroCtrlVsh589CCallTraceTail:",
+            "j       0", "nop")
+    if trace_start < 0 or any(token not in vsh589c_trace for token in trace_tokens):
+        fail("VSH +58AC trace helper lacks exact transparent grammar")
+    for forbidden in ("sw      $zero, %lo(zeroCtrlTrigger58D4Request)",
+            "CompatMode", "jal ", "jalr", "syscall", "sceIo", "Alloc", "malloc"):
+        if forbidden in vsh589c_trace:
+            fail("VSH +58AC trace helper mutates functional state or calls code")
     record_start = kernel.find("void zeroCtrlRecordVshSlideTarget(")
     record_end = kernel.find("int (*msIoOpen)", record_start)
     record = kernel[record_start:record_end]
@@ -1844,6 +1892,26 @@ def check_sources(root):
             "slide_diag.saw_request" in home_record or \
             kernel.count("[psp1000-functional-home]") != 1:
         fail("functional HOME writer validation/changed-only isolation regressed")
+    for marker in ("[psp1000-vsh589c-install] validation=%u install=%u ",
+            "[psp1000-vsh589c] total=%u pending=%u ",
+            "home_press=%u home_pending=%u request=%u ",
+            "hit58d4=%u consumed=%u"):
+        if marker not in minimal:
+            fail("VSH +58AC diagnostic writer lacks " + marker)
+    runtime_marker = minimal.find("[psp1000-vsh589c] total=%u pending=%u ")
+    runtime_gate = minimal.rfind("if (slide_diag.vsh589c_install &&", 0,
+            runtime_marker)
+    runtime_record = minimal[runtime_gate:minimal.find(
+            "if (slide_diag.functional_enabled)", runtime_marker)]
+    for token in ("zeroCtrlLoadedModuleMetadataValid(helper)",
+            "slide_diag.triggers[1].counter_addr, 4",
+            "slide_diag.triggers[2].counter_addr, 4",
+            "trigger->request_addr != 0", "(trigger->request_addr & 3) == 0",
+            "zeroCtrlReadTriggerHits(1)", "zeroCtrlReadTriggerHits(2)",
+            "zeroCtrlReadTriggerHits(0)",
+            "memcmp(state, observed_vsh589c, sizeof(state))"):
+        if token not in runtime_record:
+            fail("VSH +58AC runtime writer validation lacks " + token)
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
@@ -5993,6 +6061,8 @@ def check_elf(elf):
     for symbol in (SONY_ENTRY_STUB, SONY_ENTRY_STUB_END,
             SONY_EXIT_STUB, SONY_EXIT_STUB_END, BSMAN_STUB, BSMAN_STUB_END,
             BSMAN_RETURN_TRACE, BSMAN_RETURN_TRACE_END,
+            "zeroCtrlVsh589CCallTrace", "zeroCtrlVsh589CCallTraceTail",
+            "zeroCtrlVsh589CCallTraceEnd",
             *PREFIX_TRACE_STUBS, *POST_TRACE_STUBS, *STATE_ZERO_TRACE_STUBS,
             "zeroCtrlPostBSManNaturalResult", "zeroCtrlPostBSManCompatMode",
             "zeroCtrlPostBSManSubstitutionHits",
@@ -6011,6 +6081,13 @@ def check_elf(elf):
         match = re.match(r"^([0-9a-fA-F]+)\s+\w\s+(\S+)$", line)
         if match:
             symbol_addresses[match.group(2)] = int(match.group(1), 16)
+    if symbol_addresses["zeroCtrlVsh589CCallTrace"] != \
+            symbol_addresses["zeroCtrlTrigger14020"] + 24 or \
+            symbol_addresses["zeroCtrlVsh589CCallTraceTail"] != \
+            symbol_addresses["zeroCtrlVsh589CCallTrace"] + 72 or \
+            symbol_addresses["zeroCtrlVsh589CCallTraceEnd"] != \
+            symbol_addresses["zeroCtrlVsh589CCallTrace"] + 80:
+        fail("linked VSH +58AC helper adjacency/size/tail offset changed")
     for start, end, counter, result in T22_CONSUMER_WRAPPERS:
         for symbol in (start, end, counter, result):
             if symbol not in symbol_addresses:
@@ -6140,6 +6217,27 @@ def check_stub_object(stub_object):
     disassembly = subprocess.check_output(
         ["psp-objdump", "-dr", str(stub_object)], text=True
     )
+    nm = subprocess.check_output(["psp-nm", "-n", str(stub_object)], text=True)
+    addresses = {match.group(2): int(match.group(1), 16) for match in
+            re.finditer(r"^([0-9a-fA-F]+)\s+\w\s+(\S+)$", nm, re.M)}
+    for symbol in ("zeroCtrlTrigger14020", "zeroCtrlVsh589CCallTrace",
+            "zeroCtrlVsh589CCallTraceTail", "zeroCtrlVsh589CCallTraceEnd"):
+        if symbol not in addresses:
+            fail("VSH +58AC object lacks symbol " + symbol)
+    if addresses["zeroCtrlVsh589CCallTrace"] != \
+            addresses["zeroCtrlTrigger14020"] + 24 or \
+            addresses["zeroCtrlVsh589CCallTraceTail"] != \
+            addresses["zeroCtrlVsh589CCallTrace"] + 72 or \
+            addresses["zeroCtrlVsh589CCallTraceEnd"] != \
+            addresses["zeroCtrlVsh589CCallTrace"] + 80:
+        fail("VSH +58AC object helper adjacency/size/tail offset changed")
+    vsh589c_body = function_body(disassembly, "zeroCtrlVsh589CCallTrace")
+    for scalar, hi, lo in (("zeroCtrlTrigger13F6CHits", 1, 2),
+            ("zeroCtrlTrigger58D4Request", 1, 1),
+            ("zeroCtrlTrigger14020Hits", 1, 2)):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", vsh589c_body)) != hi or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", vsh589c_body)) != lo:
+            fail("VSH +58AC helper relocation grammar changed for " + scalar)
     for symbol in ("zeroCtrlStateZeroClass15Trace",
             "zeroCtrlStateZeroClass17Trace"):
         check_t301_class_input(function_body(disassembly, symbol), symbol,
