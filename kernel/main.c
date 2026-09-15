@@ -613,6 +613,7 @@ typedef struct {
     int functional_enabled;
     volatile int functional_request_armed;
     volatile int functional_trigger_consumed;
+    volatile int functional_home_open_pending;
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -2355,10 +2356,7 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                             (const void *)request_evidence->original_target_addr, 4);
                     sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->functional_mode_addr, 4);
-                    if (slide_diag.functional_enabled)
-                        _sw(1, request_evidence->request_addr);
-                    else
-                        _sw(0, request_evidence->request_addr);
+                    _sw(0, request_evidence->request_addr);
                     sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->request_addr, 4);
                 }
@@ -9416,7 +9414,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     unsigned int paf_matches = 0, bsman_matches = 0, vshbridge_matches = 0;
     unsigned int bsman_callers = 0, bsman_caller = 0;
     unsigned int owner[4], original[4], replacement[4], leaf[4], leaf_size[4];
-    unsigned int scalar[40], scalar_count = 0, i;
+    unsigned int scalar[40], scalar_count = 0, initial_mode, i;
 
     bsman->functional_activation_stage = 1;
     if (!slide_diag.functional_enabled || model != 0 ||
@@ -9587,10 +9585,11 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
 
     bsman->activation_addr = activation;
     bsman->caller_addr = owner[1];
+    initial_mode = slide_diag.functional_home_open_pending ? 1 : 0;
     _sw(0, bsman->prefix_path_mask_addr);
     _sw(paf_stub, bsman->prefix_paf_target_addr);
     _sw(0, bsman->prefix_paf_ra_addr);
-    _sw(0, bsman->prefix_paf_compat_mode_addr);
+    _sw(initial_mode, bsman->prefix_paf_compat_mode_addr);
     _sw(0, bsman->prefix_paf_natural_result_addr);
     _sw(0, bsman->prefix_paf_substitution_hits_addr);
     _sw(0, bsman->prefix_paf_return_hits_addr);
@@ -9600,7 +9599,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0, bsman->trace_stage_addr);
     _sw(0, bsman->post_path_mask_addr);
     _sw(0, bsman->bsman_natural_result_addr);
-    _sw(0, bsman->bsman_compat_mode_addr);
+    _sw(initial_mode, bsman->bsman_compat_mode_addr);
     _sw(0, bsman->bsman_substitution_hits_addr);
     _sw(0, bsman->bsman_effective_result_addr);
     _sw(0, bsman->bsman_return_hits_addr);
@@ -9610,7 +9609,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0, bsman->post_vsh_return_hits_addr);
     _sw(0, bsman->post_vsh_entry_hits_addr);
     _sw(0xFFFFFFFF, bsman->post_vsh_argument_addr);
-    _sw(0, bsman->post_vsh_compat_mode_addr);
+    _sw(initial_mode, bsman->post_vsh_compat_mode_addr);
     _sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr);
     _sw(0, bsman->post_vsh_substitution_hits_addr);
     _sw(0, bsman->state_zero_path_mask_addr);
@@ -9619,7 +9618,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0xFFFFFFFF, bsman->state_zero_value_addr[6]);
     _sw(0, bsman->state_zero_counter_addr[1]);
     _sw(0, bsman->state_zero_counter_addr[2]);
-    _sw(0, bsman->state_zero_15to14_compat_mode_addr);
+    _sw(initial_mode, bsman->state_zero_15to14_compat_mode_addr);
     _sw(0xFFFFFFFF, bsman->state_zero_15to14_effective_result_addr);
     _sw(0, bsman->state_zero_15to14_substitution_hits_addr);
     for (i = 0; i < scalar_count; i++)
@@ -9635,6 +9634,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     bsman->functional_validation = 1;
     bsman->functional_install = 1;
     bsman->functional_cache_sync = 1;
+    slide_diag.functional_home_open_pending = 0;
     bsman->functional_activation_stage = 13;
 }
 
@@ -11505,6 +11505,37 @@ static void zeroCtrlArmPsp1000FunctionalCompatFromHome(void) {
     }
 }
 
+static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            bsman->functional_install ||
+            !(slide_diag.trigger_mode & ZERO_TRIGGER_58D4) ||
+            !trigger->validation || !trigger->patch_applied ||
+            !trigger->cache_sync || !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            trigger->request_addr == 0 || (trigger->request_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, trigger->request_addr, 4) ||
+            trigger->functional_mode_addr == 0 ||
+            (trigger->functional_mode_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                trigger->functional_mode_addr, 4) ||
+            trigger->original_target_addr == 0 ||
+            (trigger->original_target_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                trigger->original_target_addr, 4) ||
+            _lw(trigger->functional_mode_addr) != 1 ||
+            _lw(trigger->request_addr) != 0 ||
+            slide_diag.functional_trigger_consumed ||
+            slide_diag.functional_home_open_pending) return;
+    slide_diag.functional_home_open_pending = 1;
+    _sw(1, trigger->request_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trigger->request_addr, 4);
+}
+
 //OK
 void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 	SceCtrlLatch data;	
@@ -11519,7 +11550,12 @@ void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 				if (slide_diag.functional_enabled) {
 					/* HOME arms data-only compatibility; it never executes Sony. */
 					slide_diag.functional_runtime_request_blocked = 1;
-					zeroCtrlArmPsp1000FunctionalCompatFromHome();
+					if (slide_diag.bsman.functional_validation &&
+							slide_diag.bsman.functional_install &&
+							slide_diag.bsman.functional_cache_sync)
+						zeroCtrlArmPsp1000FunctionalCompatFromHome();
+					else
+						zeroCtrlRequestPsp1000FunctionalOpenFromHome();
 					request_ready = 0;
 				}
 				if (request_ready)

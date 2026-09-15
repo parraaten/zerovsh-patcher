@@ -1538,7 +1538,6 @@ def check_sources(root):
             "(evidence->request_addr & 3) == 0",
             "zeroCtrlVshModuleRangeValid(helper,\n                                evidence->request_addr, 4)",
             "_sw(0, request_evidence->request_addr)",
-            "_sw(1, request_evidence->request_addr)",
             "_sw(request_evidence->original_target",
             "_sw(slide_diag.functional_enabled ? 1 : 0",
             "sceKernelDcacheWritebackInvalidateRange("):
@@ -1553,13 +1552,11 @@ def check_sources(root):
             commit_guard)
     mode_init = record.find("_sw(slide_diag.functional_enabled ? 1 : 0",
             original_init)
-    functional_request_guard = record.find(
-            "if (slide_diag.functional_enabled)", mode_init)
-    startup_prearm = record.find("_sw(1, request_evidence->request_addr)",
-            functional_request_guard)
+    startup_request_zero = record.find("_sw(0, request_evidence->request_addr)",
+            mode_init)
     request_sync = record.find("sceKernelDcacheWritebackInvalidateRange(\n"
             "                            (const void *)request_evidence->request_addr, 4)",
-            startup_prearm)
+            startup_request_zero)
     trigger_commit = record.find("_sw(evidence->replacement_word",
             request_sync)
     patch_dcache = record.find("sceKernelDcacheWritebackInvalidateRange(",
@@ -1568,12 +1565,13 @@ def check_sources(root):
     patch_synced = record.find("evidence->cache_sync = 1", patch_icache)
     armed_record = record.find("functional_request_armed = 1", patch_synced)
     if not 0 <= commit_guard < original_init < mode_init < \
-            functional_request_guard < startup_prearm < request_sync < \
+            startup_request_zero < request_sync < \
             trigger_commit < patch_dcache < patch_icache < patch_synced < \
             armed_record:
-        fail("functional 58D4 pre-arm/install transaction is out of order")
-    if record.count("_sw(1, request_evidence->request_addr)") != 1:
-        fail("functional 58D4 request is not pre-armed exactly once")
+        fail("functional 58D4 closed-request/install transaction is out of order")
+    if record.count("_sw(0, request_evidence->request_addr)") != 1 or \
+            "_sw(1, request_evidence->request_addr)" in record:
+        fail("functional 58D4 startup request is not initialized only to zero")
     if "&slide_diag.triggers[0]" not in record:
         fail("functional 58D4 pre-arm does not use trigger zero")
     request_alignment = record.find("(evidence->request_addr & 3) == 0")
@@ -1591,11 +1589,19 @@ def check_sources(root):
             "slide_diag.functional_enabled",
             "functional_runtime_request_blocked = 1", "request_ready",
             "zeroCtrlArmPsp1000FunctionalCompatFromHome()",
+            "zeroCtrlRequestPsp1000FunctionalOpenFromHome()",
             "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
         if token not in button:
             fail("functional StartBtn request gating lacks " + token)
     functional_block = button[button.find("if (slide_diag.functional_enabled)"):
             button.find("if (request_ready)")]
+    for token in ("slide_diag.bsman.functional_validation &&",
+            "slide_diag.bsman.functional_install &&",
+            "slide_diag.bsman.functional_cache_sync)",
+            "zeroCtrlArmPsp1000FunctionalCompatFromHome();", "else",
+            "zeroCtrlRequestPsp1000FunctionalOpenFromHome();"):
+        if token not in functional_block:
+            fail("functional HOME two-case lifecycle lacks " + token)
     for forbidden in ("psp1000RuntimeRequestTarget",
             "zeroCtrlTrigger58D4(",
             "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)",
@@ -1608,7 +1614,9 @@ def check_sources(root):
         fail("functional HOME publishes the forbidden direct runtime request")
     home_arm_start = kernel.find(
             "static void zeroCtrlArmPsp1000FunctionalCompatFromHome(void)")
-    home_arm_end = kernel.find("void zeroCtrlReadButtons(", home_arm_start)
+    home_arm_end = kernel.find(
+            "static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void)",
+            home_arm_start)
     home_arm = kernel[home_arm_start:home_arm_end]
     for token in ("slide_diag.functional_enabled", "model != 0",
             "sceKernelDevkitVersion() != 0x06060110",
@@ -1642,6 +1650,45 @@ def check_sources(root):
             "MAKE_JUMP", "_sw(replacement", "sceIo", "malloc", "Alloc"):
         if forbidden in home_arm:
             fail("functional HOME arm performs forbidden operation " + forbidden)
+    home_request_start = home_arm_end
+    home_request_end = kernel.find("void zeroCtrlReadButtons(", home_request_start)
+    home_request = kernel[home_request_start:home_request_end]
+    for token in ("slide_diag.functional_enabled", "model != 0",
+            "sceKernelDevkitVersion() != 0x06060110",
+            "bsman->functional_install", "ZERO_TRIGGER_58D4",
+            "!trigger->validation", "!trigger->patch_applied",
+            "!trigger->cache_sync", "!zeroCtrlLoadedModuleMetadataValid(helper)",
+            "trigger->request_addr == 0", "(trigger->request_addr & 3) != 0",
+            "zeroCtrlVshModuleRangeValid(helper, trigger->request_addr, 4)",
+            "trigger->functional_mode_addr == 0",
+            "(trigger->functional_mode_addr & 3) != 0",
+            "zeroCtrlVshModuleRangeValid(helper,\n                trigger->functional_mode_addr, 4)",
+            "trigger->original_target_addr == 0",
+            "(trigger->original_target_addr & 3) != 0",
+            "zeroCtrlVshModuleRangeValid(helper,\n                trigger->original_target_addr, 4)",
+            "_lw(trigger->functional_mode_addr) != 1",
+            "_lw(trigger->request_addr) != 0",
+            "slide_diag.functional_trigger_consumed",
+            "slide_diag.functional_home_open_pending"):
+        if token not in home_request:
+            fail("functional HOME first-load validation lacks " + token)
+    pending_write = home_request.find("functional_home_open_pending = 1")
+    request_write = home_request.find("_sw(1, trigger->request_addr)")
+    request_dcache = home_request.find(
+            "sceKernelDcacheWritebackInvalidateRange(", request_write)
+    last_validation = home_request.find(
+            "slide_diag.functional_home_open_pending) return")
+    if not 0 <= last_validation < pending_write < request_write < request_dcache or \
+            home_request.count("_sw(") != 1:
+        fail("functional HOME first-load publication ordering regressed")
+    for forbidden in ("sceKernelIcache", "zeroCtrlSetSlideState",
+            "psp1000RuntimeRequestTarget", "zeroCtrlTrigger58D4(", "MAKE_CALL",
+            "MAKE_JUMP", "_sw(replacement", "sceIo", "malloc", "Alloc"):
+        if forbidden in home_request:
+            fail("functional HOME first-load path performs forbidden operation " + forbidden)
+    if kernel.count("volatile int functional_home_open_pending;") != 1 or \
+            "functional_home_open_pending" in bsman_header:
+        fail("functional HOME pending state is not exactly one kernel-local field")
     consumed_start = minimal.find(
             "if (slide_diag.functional_request_armed &&\n"
             "                    !slide_diag.functional_trigger_consumed)")
@@ -1769,10 +1816,11 @@ def check_sources(root):
             "original[3] != 0x0040F809", "_lw(owner[3] + 4) != 0",
             "zeroCtrlMipsJumpTarget(owner[i], replacement[i]) != leaf[i]",
             "bsman->functional_validation = 1",
-            "_sw(0, bsman->prefix_paf_compat_mode_addr)",
-            "_sw(0, bsman->bsman_compat_mode_addr)",
-            "_sw(0, bsman->post_vsh_compat_mode_addr)",
-            "_sw(0, bsman->state_zero_15to14_compat_mode_addr)",
+            "initial_mode = slide_diag.functional_home_open_pending ? 1 : 0",
+            "_sw(initial_mode, bsman->prefix_paf_compat_mode_addr)",
+            "_sw(initial_mode, bsman->bsman_compat_mode_addr)",
+            "_sw(initial_mode, bsman->post_vsh_compat_mode_addr)",
+            "_sw(initial_mode, bsman->state_zero_15to14_compat_mode_addr)",
             "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[4])",
             "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[5])",
             "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[6])",
@@ -1786,13 +1834,24 @@ def check_sources(root):
             "sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4)",
             "sceKernelIcacheInvalidateRange((const void *)owner[i], 4)",
             "bsman->functional_install = 1",
-            "bsman->functional_cache_sync = 1"):
+            "bsman->functional_cache_sync = 1",
+            "slide_diag.functional_home_open_pending = 0"):
         if token not in functional:
             fail("narrow functional activation installer lacks " + token)
     for mode in ("prefix_paf", "bsman", "post_vsh", "state_zero_15to14"):
-        if functional.count("_sw(0, bsman->" + mode + "_compat_mode_addr)") != 1 or \
-                "_sw(1, bsman->" + mode + "_compat_mode_addr)" in functional:
-            fail("functional installer does not initialize only " + mode + " mode to zero")
+        if functional.count("_sw(initial_mode, bsman->" +
+                mode + "_compat_mode_addr)") != 1:
+            fail("functional installer does not use shared pending mode for " + mode)
+    initial_mode_set = functional.find(
+            "initial_mode = slide_diag.functional_home_open_pending ? 1 : 0")
+    first_mode_write = functional.find("_sw(initial_mode,")
+    validation_set = functional.find("bsman->functional_validation = 1")
+    install_set = functional.find("bsman->functional_install = 1")
+    cache_set = functional.find("bsman->functional_cache_sync = 1")
+    pending_clear = functional.find("functional_home_open_pending = 0")
+    if not 0 <= initial_mode_set < first_mode_write < validation_set < \
+            install_set < cache_set < pending_clear:
+        fail("functional pending-mode handoff/clear ordering regressed")
     if "candidates" in functional or \
             "for (pc = 0; pc + 20 <= mod->text_size" in functional:
         fail("functional activation installer globally scans for the prologue")
