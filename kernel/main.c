@@ -3517,6 +3517,202 @@ typedef struct {
 #define VSH589C_WINDOW_AFTER  0x30
 
 static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod);
+static int zeroCtrlMipsGprWriteDestination(unsigned int word);
+
+#define VSH57B0_INDIRECT_LIMIT 16
+#define VSH57B0_SEARCH_INSTRUCTIONS 8
+
+typedef struct {
+    unsigned int lui_offset, low_offset, reg, form;
+} ZeroCtrlVsh57b0Materialization;
+
+typedef struct {
+    unsigned int segment, address;
+} ZeroCtrlVsh57b0Pointer;
+
+/* Writer-thread-only reconnaissance; all target/module memory is read-only. */
+static int zeroCtrlWriteFunctionalVsh57b0IndirectMap(void) {
+    ZeroCtrlVsh57b0Materialization materialized[VSH57B0_INDIRECT_LIMIT];
+    ZeroCtrlVsh57b0Pointer pointers[VSH57B0_INDIRECT_LIMIT];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int target, offset, material_total = 0, material_stored = 0;
+    unsigned int pointer_total = 0, pointer_stored = 0, segment;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x57B0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
+                vsh->text_size))
+        return 0;
+    target = vsh->text_addr + 0x57B0;
+    if (!zeroCtrlVshModuleRangeValid(vsh, target, 4)) return 0;
+
+    for (offset = 0; offset <= vsh->text_size - 4; offset += 4) {
+        unsigned int lui = _lw(vsh->text_addr + offset);
+        unsigned int reg = (lui >> 16) & 0x1F;
+        unsigned int look;
+        if ((lui >> 26) != 0x0F || ((lui >> 21) & 0x1F) != 0 || reg == 0)
+            continue;
+        for (look = 1; look <= VSH57B0_SEARCH_INSTRUCTIONS &&
+                offset <= vsh->text_size - (look + 1) * 4; look++) {
+            unsigned int low_offset = offset + look * 4;
+            unsigned int word = _lw(vsh->text_addr + low_offset);
+            unsigned int opcode = word >> 26;
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int function = word & 0x3F;
+            unsigned int resolved = 0;
+            unsigned int form = 0;
+            int destination;
+            if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                    (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17) ||
+                    (opcode == 0 && (function == 8 || function == 9)))
+                break;
+            if (rs == reg && rt == reg && opcode == 9) {
+                resolved = ((lui & 0xFFFF) << 16) +
+                        (unsigned int)(int)(short)(word & 0xFFFF);
+                form = 9;
+            } else if (rs == reg && rt == reg && opcode == 0x0D) {
+                resolved = ((lui & 0xFFFF) << 16) | (word & 0xFFFF);
+                form = 0x0D;
+            }
+            if (form) {
+                if (resolved == target) {
+                    material_total++;
+                    if (material_stored < VSH57B0_INDIRECT_LIMIT) {
+                        ZeroCtrlVsh57b0Materialization *entry =
+                                &materialized[material_stored++];
+                        entry->lui_offset = offset;
+                        entry->low_offset = low_offset;
+                        entry->reg = reg;
+                        entry->form = form;
+                    }
+                }
+                break;
+            }
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0 || (unsigned int)destination == reg) break;
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-vsh57b0-materialize-map] total=%u stored=%u overflow=%u\n",
+            material_total, material_stored, material_total - material_stored);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset < material_stored; offset++) {
+        ZeroCtrlVsh57b0Materialization *entry = &materialized[offset];
+        unsigned int provenance = 1U << entry->reg;
+        unsigned int look;
+        const char *use = "NONE_IN_BOUNDED_FLOW";
+        unsigned int use_offset = entry->low_offset;
+        unsigned int use_reg = entry->reg;
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-materialize] index=%u lui_off=0x%05X "
+                "low_off=0x%05X reg=%u form=%s resolved=0x%08X\n",
+                offset, entry->lui_offset, entry->low_offset, entry->reg,
+                entry->form == 9 ? "ADDIU" : "ORI", target);
+        zeroCtrlDiagnosticsText(line);
+        for (look = 1; look <= VSH57B0_SEARCH_INSTRUCTIONS &&
+                entry->low_offset <= vsh->text_size - (look + 1) * 4; look++) {
+            unsigned int current = entry->low_offset + look * 4;
+            unsigned int word = _lw(vsh->text_addr + current);
+            unsigned int opcode = word >> 26;
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int rd = (word >> 11) & 0x1F;
+            unsigned int function = word & 0x3F;
+            unsigned int copy_source = 0, copy_destination = 0;
+            int copy_source_live = 0;
+            int destination;
+            if (opcode == 0 && (function == 8 || function == 9)) {
+                if (provenance & (1U << rs)) {
+                    use = function == 9 ? "JALR" : "JR";
+                    use_offset = current;
+                    use_reg = rs;
+                }
+                break;
+            }
+            if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                    (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17))
+                break;
+            if (opcode == 0x2B && (provenance & (1U << rt))) {
+                use = "SW_POINTER";
+                use_offset = current;
+                use_reg = rt;
+                break;
+            }
+            if (opcode == 0 && (function == 0x21 || function == 0x25)) {
+                if (rt == 0) { copy_source = rs; copy_destination = rd; }
+                else if (rs == 0) { copy_source = rt; copy_destination = rd; }
+            } else if (opcode == 9 && (word & 0xFFFF) == 0) {
+                copy_source = rs;
+                copy_destination = rt;
+            }
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0) break;
+            copy_source_live = copy_destination != 0 &&
+                    (provenance & (1U << copy_source));
+            if (destination > 0) provenance &= ~(1U << destination);
+            if (copy_source_live)
+                provenance |= 1U << copy_destination;
+            if (provenance == 0) break;
+        }
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-use] materialize=%u off=0x%05X "
+                "class=%s reg=%u\n", offset, use_offset, use, use_reg);
+        zeroCtrlDiagnosticsText(line);
+    }
+
+    for (segment = 0; segment < vsh->nsegment && segment < 4; segment++) {
+        unsigned int start = vsh->segmentaddr[segment];
+        unsigned int size = vsh->segmentsize[segment];
+        unsigned int address;
+        if (start == 0 || size < 4 || start > 0xFFFFFFFFU - size ||
+                !zeroCtrlVshModuleRangeValid(vsh, start, size))
+            continue;
+        address = (start + 3) & ~3U;
+        if (address < start) continue;
+        for (; address <= start + size - 4; address += 4) {
+            if (_lw(address) != target) continue;
+            pointer_total++;
+            if (pointer_stored < VSH57B0_INDIRECT_LIMIT) {
+                pointers[pointer_stored].segment = segment;
+                pointers[pointer_stored].address = address;
+                pointer_stored++;
+            }
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-vsh57b0-pointer-map] total=%u stored=%u overflow=%u\n",
+            pointer_total, pointer_stored, pointer_total - pointer_stored);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset < pointer_stored; offset++) {
+        unsigned int address = pointers[offset].address;
+        char text_offset[16];
+        if (address >= vsh->text_addr &&
+                address - vsh->text_addr < vsh->text_size)
+            snprintf(text_offset, sizeof(text_offset), "0x%05X",
+                    address - vsh->text_addr);
+        else
+            strcpy(text_offset, "NON_TEXT");
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-pointer] index=%u segment=%u "
+                "addr=0x%08X segment_off=0x%08X text_off=%s\n",
+                offset, pointers[offset].segment, address,
+                address - vsh->segmentaddr[pointers[offset].segment],
+                text_offset);
+        zeroCtrlDiagnosticsText(line);
+    }
+    return 1;
+}
 
 #define VSH57B0_REFERENCE_LIMIT 16
 #define VSH57B0_CONTEXT_INSTRUCTIONS 6
@@ -6529,7 +6725,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
-    int vsh57b0_map_written = 0;
+    int vsh57b0_indirect_map_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6933,11 +7129,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
             }
-            if (!vsh57b0_map_written && slide_diag.functional_enabled &&
+            if (!vsh57b0_indirect_map_written && slide_diag.functional_enabled &&
                     slide_diag.vsh_module_seen &&
                     slide_diag.functional_request_armed &&
-                    zeroCtrlWriteFunctionalVsh57b0Map())
-                vsh57b0_map_written = 1;
+                    zeroCtrlWriteFunctionalVsh57b0IndirectMap())
+                vsh57b0_indirect_map_written = 1;
             if (slide_diag.functional_enabled) {
                 ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
                 SceModule2 *helper =

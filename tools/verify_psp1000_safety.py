@@ -1928,8 +1928,13 @@ def check_sources(root):
             fail("retired compact VSH consumer output remains in minimal writer")
     if "[psp1000-vsh58d4]" in minimal:
         fail("retired compact VSH +58D4 output remains in minimal writer")
-    map_start = kernel.find("static int zeroCtrlWriteFunctionalVsh57b0Map(void)")
-    map_end = kernel.find("static void zeroCtrlWriteVsh589cWindow(", map_start)
+    for marker in ("[psp1000-vsh57b0-map]", "[psp1000-vsh57b0-ref]",
+            "[psp1000-vsh57b0-window]", "[psp1000-vsh57b0-code]"):
+        if marker in minimal:
+            fail("retired direct VSH +57B0 map remains in minimal writer")
+    map_start = kernel.find(
+            "static int zeroCtrlWriteFunctionalVsh57b0IndirectMap(void)")
+    map_end = kernel.find("#define VSH57B0_REFERENCE_LIMIT", map_start)
     vsh57b0_map = kernel[map_start:map_end]
     for token in ('sceKernelFindModuleByName("vsh_module")', "model != 0",
             "sceKernelDevkitVersion() != 0x06060110",
@@ -1942,40 +1947,53 @@ def check_sources(root):
             "vsh->text_size != 0x556C0", "vsh->text_addr + 0x57B0",
             "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,",
             "zeroCtrlVshModuleRangeValid(vsh, target, 4)",
-            "opcode != 2 && opcode != 3",
-            "zeroCtrlMipsJumpTarget(pc, word) != target",
-            "offset == 0x58F0 && opcode == 3",
-            "[psp1000-vsh57b0-map] target=0x%08X total=%u jal=%u ",
-            "jump=%u stored=%u overflow=%u expected58f0=%u",
-            "[psp1000-vsh57b0-ref] index=%u source=0x%08X ",
-            "[psp1000-vsh57b0-window] index=%u start=0x%05X words=%u",
-            "[psp1000-vsh57b0-code] index=%u offset=0x%05X "):
+            "(lui >> 26) != 0x0F", "((lui >> 21) & 0x1F) != 0",
+            "look <= VSH57B0_SEARCH_INSTRUCTIONS", "rs == reg && rt == reg",
+            "opcode == 9", "(unsigned int)(int)(short)(word & 0xFFFF)",
+            "opcode == 0x0D", "| (word & 0xFFFF)",
+            "destination = zeroCtrlMipsGprWriteDestination(word)",
+            "destination < 0 || (unsigned int)destination == reg",
+            'use = function == 9 ? "JALR" : "JR"',
+            'use = "SW_POINTER"', "function == 0x21 || function == 0x25",
+            "opcode == 9 && (word & 0xFFFF) == 0",
+            "provenance &= ~(1U << destination)",
+            "provenance |= 1U << copy_destination",
+            "[psp1000-vsh57b0-materialize-map] total=%u stored=%u overflow=%u",
+            "[psp1000-vsh57b0-materialize] index=%u lui_off=0x%05X ",
+            "[psp1000-vsh57b0-use] materialize=%u off=0x%05X ",
+            "segment < vsh->nsegment && segment < 4",
+            "start > 0xFFFFFFFFU - size",
+            "zeroCtrlVshModuleRangeValid(vsh, start, size)",
+            "_lw(address) != target",
+            "[psp1000-vsh57b0-pointer-map] total=%u stored=%u overflow=%u",
+            "[psp1000-vsh57b0-pointer] index=%u segment=%u ",
+            'strcpy(text_offset, "NON_TEXT")'):
         if token not in vsh57b0_map:
-            fail("read-only VSH +57B0 caller map lacks " + token)
-    for token in ("#define VSH57B0_REFERENCE_LIMIT 16",
-            "#define VSH57B0_CONTEXT_INSTRUCTIONS 6"):
+            fail("read-only indirect VSH +57B0 map lacks " + token)
+    for token in ("#define VSH57B0_INDIRECT_LIMIT 16",
+            "#define VSH57B0_SEARCH_INSTRUCTIONS 8"):
         if token not in kernel:
-            fail("VSH +57B0 caller map has wrong bound: " + token)
+            fail("indirect VSH +57B0 map has wrong bound: " + token)
     for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
             "REDIRECT_FUNCTION", "hook_import", "zeroCtrlTrigger58D4(",
             "zeroCtrlSetSlideState", "Alloc", "malloc"):
         if forbidden in vsh57b0_map:
-            fail("VSH +57B0 caller map is not read-only: " + forbidden)
-    context_validation = vsh57b0_map.find(
-            "zeroCtrlVshModuleRangeValid(vsh,\n                    vsh->text_addr + start, end - start)")
-    context_read = vsh57b0_map.find("_lw(vsh->text_addr + code_offset)")
-    if not 0 <= context_validation < context_read:
-        fail("VSH +57B0 context is read before its clamped range is validated")
-    map_call = minimal.find("zeroCtrlWriteFunctionalVsh57b0Map()")
+            fail("indirect VSH +57B0 map is not read-only: " + forbidden)
+    segment_validation = vsh57b0_map.find(
+            "zeroCtrlVshModuleRangeValid(vsh, start, size)")
+    pointer_read = vsh57b0_map.find("_lw(address) != target")
+    if not 0 <= segment_validation < pointer_read:
+        fail("VSH +57B0 literal scan reads before segment validation")
+    map_call = minimal.find("zeroCtrlWriteFunctionalVsh57b0IndirectMap()")
     map_continue = minimal.find("continue;", map_call)
-    map_gate = minimal[minimal.rfind("if (!vsh57b0_map_written", 0,
+    map_gate = minimal[minimal.rfind("if (!vsh57b0_indirect_map_written", 0,
             map_call):map_call]
-    if kernel.count("zeroCtrlWriteFunctionalVsh57b0Map()") != 1 or \
+    if kernel.count("zeroCtrlWriteFunctionalVsh57b0IndirectMap()") != 1 or \
             not 0 <= map_call < map_continue or \
             "slide_diag.functional_enabled" not in map_gate or \
             "slide_diag.vsh_module_seen" not in map_gate or \
             "slide_diag.functional_request_armed" not in map_gate:
-        fail("VSH +57B0 map is not a gated writer-only one-shot")
+        fail("indirect VSH +57B0 map is not a gated writer-only one-shot")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
