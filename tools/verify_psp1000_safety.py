@@ -1656,6 +1656,9 @@ def check_sources(root):
     commit_guard = record.find("if (all_selected_valid)")
     reused_counter_validation = record.find(
             "!zeroCtrlVshModuleRangeValid(helper, counters[1], 4)")
+    reused_validation_guard = record.rfind(
+            "if (slide_diag.functional_enabled &&", 0,
+            reused_counter_validation)
     original_init = record.find("_sw(request_evidence->original_target",
             commit_guard)
     mode_init = record.find("_sw(slide_diag.functional_enabled ? 1 : 0",
@@ -1665,7 +1668,9 @@ def check_sources(root):
     request_sync = record.find("sceKernelDcacheWritebackInvalidateRange(\n"
             "                            (const void *)request_evidence->request_addr, 4)",
             startup_request_zero)
-    total_zero = record.find("_sw(0, counters[1])", request_sync)
+    counter_init_guard = record.find("if (slide_diag.functional_enabled) {",
+            request_sync)
+    total_zero = record.find("_sw(0, counters[1])", counter_init_guard)
     delegated_zero = record.find("_sw(0, counters[2])", total_zero)
     total_sync = record.find("(const void *)counters[1], 4", delegated_zero)
     delegated_sync = record.find("(const void *)counters[2], 4", total_sync)
@@ -1676,12 +1681,29 @@ def check_sources(root):
     patch_icache = record.find("sceKernelIcacheInvalidateRange(", patch_dcache)
     patch_synced = record.find("evidence->cache_sync = 1", patch_icache)
     armed_record = record.find("functional_request_armed = 1", patch_synced)
-    if not 0 <= reused_counter_validation < commit_guard < original_init < mode_init < \
-            startup_request_zero < request_sync < total_zero < delegated_zero < \
+    if not 0 <= reused_validation_guard < reused_counter_validation < commit_guard < \
+            original_init < mode_init < \
+            startup_request_zero < request_sync < counter_init_guard < total_zero < delegated_zero < \
             total_sync < delegated_sync < \
             trigger_commit < patch_dcache < patch_icache < patch_synced < \
             armed_record:
         fail("functional 58D4 closed-request/install transaction is out of order")
+    counter_init_end = record.find("\n                    }", delegated_sync)
+    counter_init = record[counter_init_guard:counter_init_end]
+    for token in ("_sw(0, counters[1])", "_sw(0, counters[2])",
+            "(const void *)counters[1], 4",
+            "(const void *)counters[2], 4"):
+        if counter_init.count(token) != 1:
+            fail("reused 58D4 counter operation escaped its functional guard: " +
+                    token)
+    historical_init = record[record.rfind(
+            "if (slide_diag.trigger_mode & ZERO_TRIGGER_58D4)", 0,
+            original_init):counter_init_guard]
+    for token in ("_sw(request_evidence->original_target",
+            "_sw(slide_diag.functional_enabled ? 1 : 0",
+            "_sw(0, request_evidence->request_addr)"):
+        if token not in historical_init:
+            fail("historical 58D4 scalar initialization moved under functional guard")
     if record.count("_sw(0, request_evidence->request_addr)") != 1 or \
             "_sw(1, request_evidence->request_addr)" in record:
         fail("functional 58D4 startup request is not initialized only to zero")

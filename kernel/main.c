@@ -2397,12 +2397,14 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                     _sw(0, request_evidence->request_addr);
                     sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->request_addr, 4);
-                    _sw(0, counters[1]);
-                    _sw(0, counters[2]);
-                    sceKernelDcacheWritebackInvalidateRange(
-                            (const void *)counters[1], 4);
-                    sceKernelDcacheWritebackInvalidateRange(
-                            (const void *)counters[2], 4);
+                    if (slide_diag.functional_enabled) {
+                        _sw(0, counters[1]);
+                        _sw(0, counters[2]);
+                        sceKernelDcacheWritebackInvalidateRange(
+                                (const void *)counters[1], 4);
+                        sceKernelDcacheWritebackInvalidateRange(
+                                (const void *)counters[2], 4);
+                    }
                 }
                 for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
                     ZeroCtrlVshTriggerEvidence *evidence =
