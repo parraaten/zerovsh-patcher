@@ -443,6 +443,12 @@ def check_sources(root):
         fail("bounded VSH +589C caller/A0 analysis is not read-only")
     structure_start = kernel.find(
             "static void zeroCtrlWriteFunctionalCallbackStructure(void)")
+    metadata_declaration = kernel.find(
+            "static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod);")
+    metadata_definition = kernel.find(
+            "static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod) {")
+    if not 0 <= metadata_declaration < structure_start < metadata_definition:
+        fail("loaded-module metadata declaration does not precede VSH +589C capture")
     structure_end = kernel.find("static int zeroCtrlVsh589cA0Definition(",
             structure_start)
     structure = kernel[structure_start:structure_end]

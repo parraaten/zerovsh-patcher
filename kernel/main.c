@@ -3492,6 +3492,8 @@ typedef struct {
 #define VSH589C_WINDOW_BEFORE 0x50
 #define VSH589C_WINDOW_AFTER  0x30
 
+static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod);
+
 static void zeroCtrlWriteVsh589cWindow(SceModule2 *vsh,
         const char *kind, unsigned int index, unsigned int center) {
     unsigned int start;
