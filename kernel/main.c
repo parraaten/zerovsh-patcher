@@ -7584,6 +7584,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     observed_vshctrl314a4_home = 1;
                 }
                 if (!observed_vshctrl314a4_posthome && baseline_valid &&
+                        trace_state[2] == 1 &&
+                        !slide_diag.functional_trigger_consumed &&
                         trace_state[1] >
                         slide_diag.vshctrl314a4_pending_baseline) {
                     snprintf(line, sizeof(line),
@@ -9661,7 +9663,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         int trace_valid = zeroCtrlReadVshCtrl314A4Telemetry(trace_state);
         unsigned int baseline_valid = trace_valid &&
                 slide_diag.vshctrl314a4_home_baseline_valid;
-        unsigned int delta = baseline_valid && trace_state[1] >=
+        unsigned int delta = baseline_valid && trace_state[2] == 1 &&
+                !slide_diag.functional_trigger_consumed && trace_state[1] >=
                 slide_diag.vshctrl314a4_pending_baseline ? trace_state[1] -
                 slide_diag.vshctrl314a4_pending_baseline : 0;
         snprintf(line, sizeof(line),
@@ -12582,6 +12585,10 @@ static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void) {
                 ZERO_HOME_REJECT_PENDING;
         return;
     }
+    slide_diag.functional_home_open_pending = 1;
+    _sw(1, trigger->request_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trigger->request_addr, 4);
     slide_diag.vshctrl314a4_home_baseline_captured = 1;
     slide_diag.vshctrl314a4_home_baseline_valid = 0;
     if (slide_diag.vshctrl314a4_validation &&
@@ -12590,15 +12597,16 @@ static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void) {
             slide_diag.triggers[2].counter_addr != 0 &&
             (slide_diag.triggers[2].counter_addr & 3) == 0 &&
             zeroCtrlVshModuleRangeValid(helper,
-                slide_diag.triggers[2].counter_addr, 4)) {
+                slide_diag.triggers[2].counter_addr, 4) &&
+            trigger->request_addr != 0 &&
+            (trigger->request_addr & 3) == 0 &&
+            zeroCtrlVshModuleRangeValid(helper, trigger->request_addr, 4) &&
+            _lw(trigger->request_addr) == 1 &&
+            !slide_diag.functional_trigger_consumed) {
         slide_diag.vshctrl314a4_pending_baseline =
                 _lw(slide_diag.triggers[2].counter_addr);
         slide_diag.vshctrl314a4_home_baseline_valid = 1;
     }
-    slide_diag.functional_home_open_pending = 1;
-    _sw(1, trigger->request_addr);
-    sceKernelDcacheWritebackInvalidateRange(
-            (const void *)trigger->request_addr, 4);
     slide_diag.functional_home_first_load_published++;
     slide_diag.functional_home_first_load_reject_reason = ZERO_HOME_REJECT_NONE;
 }

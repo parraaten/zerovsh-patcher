@@ -2011,19 +2011,51 @@ def check_sources(root):
             '[psp1000-vshctrl314a4-final]'):
         if marker not in writer:
             fail("VSH +314A4 writer telemetry lacks " + marker)
-    if writer.count('[psp1000-vshctrl314a4-posthome]') != 1 or             'observed_vshctrl314a4_posthome = 1' not in writer:
+    if writer.count('[psp1000-vshctrl314a4-posthome]') != 1 or \
+            'observed_vshctrl314a4_posthome = 1' not in writer:
         fail("VSH +314A4 post-HOME proof is not one-shot")
+    posthome_start = writer.find(
+            "if (!observed_vshctrl314a4_posthome && baseline_valid")
+    posthome_end = writer.find("observed_vshctrl314a4_posthome = 1",
+            posthome_start)
+    posthome = writer[posthome_start:posthome_end]
+    for token in ("trace_state[2] == 1",
+            "!slide_diag.functional_trigger_consumed",
+            "trace_state[1] >",
+            "slide_diag.vshctrl314a4_pending_baseline"):
+        if token not in posthome:
+            fail("VSH +314A4 post-HOME proof lacks " + token)
     final_record = writer.find('[psp1000-vshctrl314a4-final]')
     final_checkpoint = writer.find('[checkpoint-fast] minimal_observation_window_complete')
     if not 0 <= final_record < final_checkpoint:
         fail("VSH +314A4 final record is not immediately before checkpoint")
+    final_block = writer[writer.rfind("unsigned int delta =", 0, final_record):
+            final_checkpoint]
+    for token in ("baseline_valid && trace_state[2] == 1",
+            "!slide_diag.functional_trigger_consumed",
+            "trace_state[1] >=", "pending=%u", "request=%u",
+            "consumed_hits=%u", "consumed=%u"):
+        if token not in final_block:
+            fail("VSH +314A4 final evidence gate lacks " + token)
     home_request = kernel[kernel.find("static void zeroCtrlRequestPsp1000FunctionalOpenFromHome("):kernel.find("\n}\n", kernel.find("zeroCtrlRequestPsp1000FunctionalOpenFromHome(")) + 3]
-    baseline = home_request.find('vshctrl314a4_home_baseline_captured = 1')
-    baseline_read = home_request.find('_lw(slide_diag.triggers[2].counter_addr)', baseline)
-    pending_write = home_request.find('functional_home_open_pending = 1', baseline_read)
+    pending_write = home_request.find('functional_home_open_pending = 1')
     request_write = home_request.find('_sw(1, trigger->request_addr)', pending_write)
-    if not 0 <= baseline < baseline_read < pending_write < request_write:
-        fail("controller pending baseline is not captured before HOME publication")
+    request_sync = home_request.find(
+            'sceKernelDcacheWritebackInvalidateRange(\n'
+            '            (const void *)trigger->request_addr, 4)', request_write)
+    baseline = home_request.find('vshctrl314a4_home_baseline_captured = 1',
+            request_sync)
+    request_value = home_request.find('_lw(trigger->request_addr) == 1',
+            baseline)
+    consumed_gate = home_request.find(
+            '!slide_diag.functional_trigger_consumed', request_value)
+    baseline_read = home_request.find(
+            '_lw(slide_diag.triggers[2].counter_addr)', consumed_gate)
+    baseline_valid = home_request.find(
+            'vshctrl314a4_home_baseline_valid = 1', baseline_read)
+    if not 0 <= pending_write < request_write < request_sync < baseline < \
+            request_value < consumed_gate < baseline_read < baseline_valid:
+        fail("controller pending baseline is not captured after HOME publication")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
