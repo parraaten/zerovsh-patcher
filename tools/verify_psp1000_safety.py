@@ -492,16 +492,8 @@ def check_sources(root):
     structure_read = structure.find("word = _lw(pc)")
     if not 0 <= structure_range < structure_read:
         fail("VSH +589C capture reads before validating its complete 0x5C-byte range")
-    structure_call = writer.find("zeroCtrlWriteFunctionalCallbackStructure();")
-    structure_gate = writer.rfind("if (slide_diag.functional_enabled &&", 0,
-            structure_call)
-    structure_mark = writer.find("minimal_memory_written |= 0x8000", structure_call)
-    structure_writer_gate = writer[structure_gate:structure_call]
-    if kernel.count("zeroCtrlWriteFunctionalCallbackStructure();") != 1 or \
-            structure_call < 0 or structure_gate < 0 or structure_mark < structure_call or \
-            "slide_diag.vsh_module_seen" not in structure_writer_gate or \
-            "slide_diag.functional_request_armed" not in structure_writer_gate:
-        fail("VSH +589C capture does not wait for VSH identity/request readiness")
+    if "zeroCtrlWriteFunctionalCallbackStructure();" in writer:
+        fail("retired VSH +589C structural capture is still emitted automatically")
     install_start = kernel.find("static void zeroCtrlInstallVsh589CCallTrace(void)")
     install_end = kernel.find("static int zeroCtrlMipsMove(", install_start)
     vsh589c_install = kernel[install_start:install_end]
@@ -530,9 +522,8 @@ def check_sources(root):
     if not 0 <= tail_write < tail_icache < owner_write < owner_icache or \
             vsh589c_install.count("_sw(") != 4:
         fail("VSH +58AC diagnostic does not commit tail/counters before sole owner")
-    if kernel.count("zeroCtrlInstallVsh589CCallTrace();") != 1 or \
-            "zeroCtrlInstallVsh589CCallTrace();" not in writer:
-        fail("VSH +58AC diagnostic installer is not writer-thread-only")
+    if "zeroCtrlInstallVsh589CCallTrace();" in writer:
+        fail("retired VSH +58AC diagnostic installer remains active")
     if "zeroCtrlWriteFunctionalVshRequestCallers();" in kernel:
         fail("superseded VSH +589C/+57B0 scan is still emitted automatically")
     vsh3_start = kernel.find(
@@ -1892,26 +1883,45 @@ def check_sources(root):
             "slide_diag.saw_request" in home_record or \
             kernel.count("[psp1000-functional-home]") != 1:
         fail("functional HOME writer validation/changed-only isolation regressed")
-    for marker in ("[psp1000-vsh589c-install] validation=%u install=%u ",
-            "[psp1000-vsh589c] total=%u pending=%u ",
-            "home_press=%u home_pending=%u request=%u ",
-            "hit58d4=%u consumed=%u"):
-        if marker not in minimal:
-            fail("VSH +58AC diagnostic writer lacks " + marker)
-    runtime_marker = minimal.find("[psp1000-vsh589c] total=%u pending=%u ")
-    runtime_gate = minimal.rfind("if (slide_diag.vsh589c_install &&", 0,
-            runtime_marker)
-    runtime_record = minimal[runtime_gate:minimal.find(
-            "if (slide_diag.functional_enabled)", runtime_marker)]
-    for token in ("zeroCtrlLoadedModuleMetadataValid(helper)",
-            "slide_diag.triggers[1].counter_addr, 4",
-            "slide_diag.triggers[2].counter_addr, 4",
-            "trigger->request_addr != 0", "(trigger->request_addr & 3) == 0",
-            "zeroCtrlReadTriggerHits(1)", "zeroCtrlReadTriggerHits(2)",
-            "zeroCtrlReadTriggerHits(0)",
-            "memcmp(state, observed_vsh589c, sizeof(state))"):
-        if token not in runtime_record:
-            fail("VSH +58AC runtime writer validation lacks " + token)
+    for marker in ("[psp1000-vsh589c-install]", "[psp1000-vsh589c]"):
+        if marker in minimal:
+            fail("retired VSH +589C automatic output remains in minimal writer")
+    install_marker = minimal.find("[psp1000-vsh6f84-consumers-install] ")
+    live_marker = minimal.find("[psp1000-vsh6f84-consumers] h13=%u ")
+    minimal_continue = minimal.find("continue;", live_marker)
+    if not 0 <= install_marker < live_marker < minimal_continue:
+        fail("compact VSH consumer evidence is not before minimal continue")
+    install_record = minimal[minimal.rfind(
+            "if (slide_diag.functional_enabled &&", 0, install_marker):live_marker]
+    for token in ("consumer_early_attempted", "consumer_guard_reason",
+            "consumer_validation[0]", "consumer_install[0]",
+            "consumer_cache_sync[0]", "consumer_validation[1]",
+            "consumer_install[1]", "consumer_cache_sync[1]",
+            "observed_vsh6f84_consumers_install"):
+        if token not in install_record:
+            fail("compact VSH consumer install record lacks " + token)
+    live_start = minimal.rfind("if (slide_diag.functional_enabled) {", 0,
+            live_marker)
+    live_end = minimal.find("if (slide_diag.functional_enabled) {", live_marker)
+    live_record = minimal[live_start:live_end]
+    for token in ('sceKernelFindModuleByName("ZeroVSH_Patcher_User")',
+            "model == 0", "sceKernelDevkitVersion() == 0x06060110",
+            "zeroCtrlLoadedModuleMetadataValid(helper)",
+            "consumer_hits_addr[0]", "consumer_result_addr[0]",
+            "consumer_13f6c_effective_result_addr",
+            "consumer_13f6c_substitution_hits_addr",
+            "consumer_hits_addr[1]", "consumer_result_addr[1]",
+            "consumer_14020_effective_result_addr",
+            "consumer_14020_substitution_hits_addr", "trigger->request_addr",
+            "scalar[i] == 0", "(scalar[i] & 3) != 0",
+            "zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)",
+            "functional_home_press_hits", "functional_home_open_pending",
+            "zeroCtrlReadTriggerHits(0)", "functional_trigger_consumed",
+            "memcmp(state, observed_vsh6f84_consumers"):
+        if token not in live_record:
+            fail("compact VSH consumer live reader lacks " + token)
+    if "_sw(" in live_record or "InstallVsh589C" in live_record:
+        fail("compact VSH consumer evidence performs a runtime write/install")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]

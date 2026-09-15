@@ -6431,10 +6431,13 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
-    unsigned int observed_vsh589c[7] = {
+    unsigned int observed_vsh6f84_consumers[13] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
-        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF
     };
+    int observed_vsh6f84_consumers_install = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6838,55 +6841,70 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
             }
-            if (slide_diag.functional_enabled && slide_diag.vsh_module_seen &&
-                    slide_diag.functional_request_armed &&
-                    !(minimal_memory_written & 0x8000)) {
-                zeroCtrlWriteFunctionalCallbackStructure();
-                zeroCtrlInstallVsh589CCallTrace();
+            if (slide_diag.functional_enabled &&
+                    slide_diag.bsman.consumer_early_attempted &&
+                    !observed_vsh6f84_consumers_install) {
+                ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
                 snprintf(line, sizeof(line),
-                        "[psp1000-vsh589c-install] validation=%u install=%u "
-                        "cache_sync=%u owner=0x%08X original=0x%08X "
-                        "replacement=0x%08X resume=0x%08X tail=0x%08X "
-                        "tail_original=0x%08X tail_replacement=0x%08X\n",
-                        slide_diag.vsh589c_validation,
-                        slide_diag.vsh589c_install,
-                        slide_diag.vsh589c_cache_sync,
-                        slide_diag.vsh589c_owner, slide_diag.vsh589c_original,
-                        slide_diag.vsh589c_replacement, slide_diag.vsh589c_resume,
-                        slide_diag.vsh589c_tail,
-                        slide_diag.vsh589c_tail_original,
-                        slide_diag.vsh589c_tail_replacement);
+                        "[psp1000-vsh6f84-consumers-install] "
+                        "guard=%s/%d 13f6c=%u/%u/%u 14020=%u/%u/%u\n",
+                        zeroCtrlConsumerGuardReasonName(
+                            bsman->consumer_guard_reason),
+                        bsman->consumer_guard_reason,
+                        bsman->consumer_validation[0],
+                        bsman->consumer_install[0],
+                        bsman->consumer_cache_sync[0],
+                        bsman->consumer_validation[1],
+                        bsman->consumer_install[1],
+                        bsman->consumer_cache_sync[1]);
                 zeroCtrlDiagnosticsText(line);
-                minimal_memory_written |= 0x8000;
+                observed_vsh6f84_consumers_install = 1;
             }
-            if (slide_diag.vsh589c_install && slide_diag.vsh589c_cache_sync) {
+            if (slide_diag.functional_enabled) {
+                ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
                 ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
                 SceModule2 *helper =
                         sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-                unsigned int state[7];
-                if (zeroCtrlLoadedModuleMetadataValid(helper) &&
-                        zeroCtrlVshModuleRangeValid(helper,
-                            slide_diag.triggers[1].counter_addr, 4) &&
-                        zeroCtrlVshModuleRangeValid(helper,
-                            slide_diag.triggers[2].counter_addr, 4) &&
-                        trigger->request_addr != 0 &&
-                        (trigger->request_addr & 3) == 0 &&
-                        zeroCtrlVshModuleRangeValid(helper,
-                            trigger->request_addr, 4)) {
-                    state[0] = zeroCtrlReadTriggerHits(1);
-                    state[1] = zeroCtrlReadTriggerHits(2);
-                    state[2] = slide_diag.functional_home_press_hits;
-                    state[3] = slide_diag.functional_home_open_pending;
-                    state[4] = _lw(trigger->request_addr);
-                    state[5] = zeroCtrlReadTriggerHits(0);
-                    state[6] = slide_diag.functional_trigger_consumed;
-                    if (memcmp(state, observed_vsh589c, sizeof(state)) != 0) {
-                        memcpy(observed_vsh589c, state, sizeof(state));
+                unsigned int scalar[9] = {
+                    bsman->consumer_hits_addr[0],
+                    bsman->consumer_result_addr[0],
+                    bsman->consumer_13f6c_effective_result_addr,
+                    bsman->consumer_13f6c_substitution_hits_addr,
+                    bsman->consumer_hits_addr[1],
+                    bsman->consumer_result_addr[1],
+                    bsman->consumer_14020_effective_result_addr,
+                    bsman->consumer_14020_substitution_hits_addr,
+                    trigger->request_addr
+                };
+                unsigned int state[13];
+                int scalar_ranges_valid = model == 0 &&
+                        sceKernelDevkitVersion() == 0x06060110 &&
+                        zeroCtrlLoadedModuleMetadataValid(helper);
+                for (i = 0; scalar_ranges_valid && i < 9; i++)
+                    if (scalar[i] == 0 || (scalar[i] & 3) != 0 ||
+                            !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
+                        scalar_ranges_valid = 0;
+                if (scalar_ranges_valid) {
+                    for (i = 0; i < 8; i++) state[i] = _lw(scalar[i]);
+                    state[8] = slide_diag.functional_home_press_hits;
+                    state[9] = slide_diag.functional_home_open_pending;
+                    state[10] = _lw(scalar[8]);
+                    state[11] = zeroCtrlReadTriggerHits(0);
+                    state[12] = slide_diag.functional_trigger_consumed;
+                    if (memcmp(state, observed_vsh6f84_consumers,
+                                sizeof(state)) != 0) {
+                        memcpy(observed_vsh6f84_consumers, state,
+                                sizeof(state));
                         snprintf(line, sizeof(line),
-                                "[psp1000-vsh589c] total=%u pending=%u "
-                                "home_press=%u home_pending=%u request=%u "
-                                "hit58d4=%u consumed=%u\n", state[0], state[1],
-                                state[2], state[3], state[4], state[5], state[6]);
+                                "[psp1000-vsh6f84-consumers] h13=%u "
+                                "nat13=0x%08X eff13=0x%08X sub13=%u "
+                                "h140=%u nat140=0x%08X eff140=0x%08X "
+                                "sub140=%u home_press=%u home_pending=%u "
+                                "request=%u hit58d4=%u consumed=%u\n",
+                                state[0], state[1], state[2], state[3],
+                                state[4], state[5], state[6], state[7],
+                                state[8], state[9], state[10], state[11],
+                                state[12]);
                         zeroCtrlDiagnosticsText(line);
                     }
                 }
