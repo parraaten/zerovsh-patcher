@@ -495,7 +495,8 @@ def check_sources(root):
     if "zeroCtrlWriteFunctionalCallbackStructure();" in writer:
         fail("retired VSH +589C structural capture is still emitted automatically")
     install_start = kernel.find("static void zeroCtrlInstallVsh589CCallTrace(void)")
-    install_end = kernel.find("static int zeroCtrlMipsMove(", install_start)
+    install_end = kernel.find("static int zeroCtrlResolveVshCtrlPeekImport(",
+            install_start)
     vsh589c_install = kernel[install_start:install_end]
     for token in ("!slide_diag.minimal_memory_test",
             "vsh->modid != slide_diag.vsh_modid",
@@ -1937,75 +1938,92 @@ def check_sources(root):
             "[psp1000-vsh57b0-pointer-map]", "[psp1000-vsh57b0-pointer]"):
         if marker in minimal:
             fail("retired indirect VSH +57B0 map remains in minimal writer")
-    map_start = kernel.find(
-            "static int zeroCtrlWriteFunctionalVshControllerMap(void)")
-    map_end = kernel.find("#define VSH57B0_INDIRECT_LIMIT", map_start)
-    vshctrl_map = kernel[map_start:map_end]
-    for token in ('sceKernelFindModuleByName("vsh_module")', "model != 0",
-            "sceKernelDevkitVersion() != 0x06060110",
-            "!slide_diag.functional_enabled",
-            "!zeroCtrlLoadedModuleMetadataValid(vsh)",
-            'strcmp(vsh->modname, "vsh_module") != 0',
-            "vsh->modid != slide_diag.vsh_modid",
-            "vsh->text_addr != slide_diag.vsh_text_addr",
-            "vsh->text_size != slide_diag.vsh_text_size",
-            "vsh->text_size != 0x556C0",
-            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,",
-            "table = (unsigned int)vsh->stub_top", "size = vsh->stub_size",
-            "table == 0 || (table & 3) != 0 || size < 12",
-            "table > 0xFFFFFFFFU - size",
-            "zeroCtrlVshModuleRangeValid(vsh, table, size)",
-            "size - cursor < 12 || table + cursor < table",
-            "zeroCtrlVshModuleRangeValid(vsh, address, 12)",
-            "entry->len == 0", "entry_size > size - cursor",
-            "zeroCtrlVshModuleRangeValid(vsh, address, entry_size)",
-            "entry->stubcount > 0xFFFFFFFFU / 8",
-            "(stubtable & 3) != 0 || (nidtable & 3) != 0",
-            "zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size)",
-            "zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size)",
-            "zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name",
-            "zeroCtrlAsciiContainsInputWord(name)",
-            "zeroCtrlVshModuleRangeValid(vsh, stub, 8)",
-            "nid = _lw(nidtable + function * 4)", "word0 = _lw(stub)",
-            "word1 = _lw(stub + 4)", "opcode != 2 && opcode != 3",
-            "zeroCtrlMipsJumpTarget(pc, word) != stub",
-            "[psp1000-vshctrl-map] controller_libs=%u imports=%u callers=%u ",
-            "jal=%u jump=%u lib_overflow=%u import_overflow=%u ",
-            "caller_overflow=%u", "if (library_total == 0)",
-            "[psp1000-vsh-import-lib] index=%u name=%s funcs=%u",
-            "[psp1000-vshctrl-lib] index=%u name=%s funcs=%u",
-            "[psp1000-vshctrl-import] lib=%u func=%u nid=0x%08X ",
-            "[psp1000-vshctrl-caller] import=%u source=0x%08X ",
-            "[psp1000-vshctrl-window] caller=%u start=0x%05X words=%u",
-            "[psp1000-vshctrl-code] caller=%u offset=0x%05X "):
-        if token not in vshctrl_map:
-            fail("read-only VSH controller map lacks " + token)
-    for token in ("#define VSHCTRL_LIBRARY_LIMIT 8",
-            "#define VSHCTRL_IMPORT_LIMIT 32", "#define VSHCTRL_CALLER_LIMIT 64",
-            "#define VSHCTRL_FALLBACK_LIMIT 32",
-            "#define VSHCTRL_CONTEXT_INSTRUCTIONS 6"):
-        if token not in kernel:
-            fail("VSH controller map has wrong bound: " + token)
-    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
-            "REDIRECT_FUNCTION", "hook_import", "zeroCtrlTrigger58D4(",
-            "zeroCtrlSetSlideState", "Alloc", "malloc"):
-        if forbidden in vshctrl_map:
-            fail("VSH controller map is not read-only: " + forbidden)
-    context_validation = vshctrl_map.find(
-            "zeroCtrlVshModuleRangeValid(vsh,\n                    vsh->text_addr + start, end - start)")
-    context_read = vshctrl_map.find("_lw(vsh->text_addr + code_offset)")
-    if not 0 <= context_validation < context_read:
-        fail("VSH controller context reads before range validation")
-    map_call = minimal.find("zeroCtrlWriteFunctionalVshControllerMap()")
-    map_continue = minimal.find("continue;", map_call)
-    map_gate = minimal[minimal.rfind("if (!vsh_controller_map_written", 0,
-            map_call):map_call]
-    if kernel.count("zeroCtrlWriteFunctionalVshControllerMap()") != 1 or \
-            not 0 <= map_call < map_continue or \
-            "slide_diag.functional_enabled" not in map_gate or \
-            "slide_diag.vsh_module_seen" not in map_gate or \
-            "slide_diag.functional_request_armed" not in map_gate:
-        fail("VSH controller map is not a gated writer-only one-shot")
+    for marker in ("[psp1000-vshctrl-map]", "[psp1000-vshctrl-lib]",
+            "[psp1000-vshctrl-import]", "[psp1000-vshctrl-caller]",
+            "[psp1000-vshctrl-window]", "[psp1000-vshctrl-code]",
+            "[psp1000-vsh-import-lib]"):
+        if marker in minimal:
+            fail("retired static VSH controller map remains in minimal writer")
+    if "zeroCtrlWriteFunctionalVshControllerMap()" in minimal:
+        fail("retired static VSH controller map is still invoked")
+    resolver = kernel[kernel.find("static " + ("void " if "Install" in "zeroCtrlResolveVshCtrlPeekImport" or "Request" in "zeroCtrlResolveVshCtrlPeekImport" else "int ") + "zeroCtrlResolveVshCtrlPeekImport("):kernel.find("\n}\n", kernel.find("zeroCtrlResolveVshCtrlPeekImport(")) + 3]
+    for token in ('table = (unsigned int)vsh->stub_top',
+            'size = vsh->stub_size', 'zeroCtrlVshModuleRangeValid(vsh, table, size)',
+            'zeroCtrlVshModuleRangeValid(vsh, address, 12)', 'entry->len == 0',
+            'entry_size > size - cursor',
+            'zeroCtrlVshModuleRangeValid(vsh, address, entry_size)',
+            'zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size)',
+            'zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size)',
+            'zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name',
+            'strcmp(name, "sceCtrl") == 0', '0x3A622550',
+            'zeroCtrlVshModuleRangeValid(vsh, stub, 8)', '0x03E00008',
+            '(_lw(stub + 4) & 0xFC00003F) != 0x0000000C', 'matches != 1'):
+        if token not in resolver:
+            fail("sceCtrl Peek import resolver lacks " + token)
+    installer = kernel[kernel.find("static " + ("void " if "Install" in "zeroCtrlInstallVshCtrl314A4Trace" or "Request" in "zeroCtrlInstallVshCtrl314A4Trace" else "int ") + "zeroCtrlInstallVshCtrl314A4Trace("):kernel.find("\n}\n", kernel.find("zeroCtrlInstallVshCtrl314A4Trace(")) + 3]
+    for token in ('model != 0', 'sceKernelDevkitVersion() != 0x06060110',
+            '!slide_diag.functional_enabled', '!slide_diag.minimal_memory_test',
+            'vsh->modid != slide_diag.vsh_modid',
+            'vsh->text_addr != slide_diag.vsh_text_addr',
+            'vsh->text_size != slide_diag.vsh_text_size',
+            'vsh->text_size != 0x556C0',
+            'vsh->text_addr + 0x31494, 0x18)',
+            '0x27BDFFE0', '0x03A02021', '0x24050001', '0xAFBF0014',
+            'owner = text + 0x314A4', '_lw(text + 0x314A8) != 0xAFB00010',
+            '(original >> 26) != 3',
+            'zeroCtrlMipsJumpTarget(owner, original) != target',
+            'trace_helper = storage_pending->stub_addr + 24',
+            'zeroCtrlVshModuleRangeValid(helper, trace_helper, 80)',
+            'storage_total->counter_addr == 0',
+            'storage_pending->counter_addr == 0',
+            'slide_diag.triggers[0].request_addr == 0',
+            'trace_tail = trace_helper + 72', '_lw(trace_tail + 4) != 0',
+            'zeroCtrlMipsJumpTarget(owner, replacement) != trace_helper',
+            'zeroCtrlMipsJumpTarget(trace_tail, tail_replacement) != target'):
+        if token not in installer:
+            fail("VSH +314A4 installer lacks " + token)
+    tail_write = installer.find('_sw(tail_replacement, trace_tail)')
+    tail_dcache = installer.find('sceKernelDcacheWritebackInvalidateRange((const void *)trace_tail, 4)', tail_write)
+    tail_icache = installer.find('sceKernelIcacheInvalidateRange((const void *)trace_tail, 4)', tail_dcache)
+    owner_write = installer.find('_sw(replacement, owner)', tail_icache)
+    owner_dcache = installer.find('sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4)', owner_write)
+    owner_icache = installer.find('sceKernelIcacheInvalidateRange((const void *)owner, 4)', owner_dcache)
+    if not 0 <= tail_write < tail_dcache < tail_icache < owner_write < owner_dcache < owner_icache:
+        fail("VSH +314A4 tail/owner commit order regressed")
+    for forbidden in ('0x13EF8', '_sw(0, storage_total->counter_addr)',
+            '_sw(0, storage_pending->counter_addr)', 'zeroCtrlSetSlideState',
+            'zeroCtrlTrigger58D4('):
+        if forbidden in installer:
+            fail("VSH +314A4 installer has forbidden behavior: " + forbidden)
+    if kernel.count('zeroCtrlInstallVsh589CCallTrace();') != 0:
+        fail("retired VSH +58AC owner was reactivated")
+    telemetry = kernel[kernel.find("static " + ("void " if "Install" in "zeroCtrlReadVshCtrl314A4Telemetry" or "Request" in "zeroCtrlReadVshCtrl314A4Telemetry" else "int ") + "zeroCtrlReadVshCtrl314A4Telemetry("):kernel.find("\n}\n", kernel.find("zeroCtrlReadVshCtrl314A4Telemetry(")) + 3]
+    for token in ('triggers[1].counter_addr', 'triggers[2].counter_addr',
+            'triggers[0].request_addr', 'triggers[0].counter_addr',
+            'zeroCtrlLoadedModuleMetadataValid(helper)', '(address[i] & 3) != 0',
+            'zeroCtrlVshModuleRangeValid(helper, address[i], 4)',
+            'state[i] = _lw(address[i])'):
+        if token not in telemetry:
+            fail("VSH +314A4 telemetry validation lacks " + token)
+    for marker in ('[psp1000-vshctrl314a4-install]',
+            '[psp1000-vshctrl314a4-home]',
+            '[psp1000-vshctrl314a4-posthome]',
+            '[psp1000-vshctrl314a4-final]'):
+        if marker not in writer:
+            fail("VSH +314A4 writer telemetry lacks " + marker)
+    if writer.count('[psp1000-vshctrl314a4-posthome]') != 1 or             'observed_vshctrl314a4_posthome = 1' not in writer:
+        fail("VSH +314A4 post-HOME proof is not one-shot")
+    final_record = writer.find('[psp1000-vshctrl314a4-final]')
+    final_checkpoint = writer.find('[checkpoint-fast] minimal_observation_window_complete')
+    if not 0 <= final_record < final_checkpoint:
+        fail("VSH +314A4 final record is not immediately before checkpoint")
+    home_request = kernel[kernel.find("static void zeroCtrlRequestPsp1000FunctionalOpenFromHome("):kernel.find("\n}\n", kernel.find("zeroCtrlRequestPsp1000FunctionalOpenFromHome(")) + 3]
+    baseline = home_request.find('vshctrl314a4_home_baseline_captured = 1')
+    baseline_read = home_request.find('_lw(slide_diag.triggers[2].counter_addr)', baseline)
+    pending_write = home_request.find('functional_home_open_pending = 1', baseline_read)
+    request_write = home_request.find('_sw(1, trigger->request_addr)', pending_write)
+    if not 0 <= baseline < baseline_read < pending_write < request_write:
+        fail("controller pending baseline is not captured before HOME publication")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]

@@ -647,6 +647,16 @@ typedef struct {
     unsigned int vsh589c_tail;
     unsigned int vsh589c_tail_original;
     unsigned int vsh589c_tail_replacement;
+    volatile int vshctrl314a4_attempted;
+    volatile int vshctrl314a4_validation;
+    volatile int vshctrl314a4_install;
+    volatile int vshctrl314a4_cache_sync;
+    unsigned int vshctrl314a4_owner;
+    unsigned int vshctrl314a4_helper;
+    unsigned int vshctrl314a4_target;
+    volatile int vshctrl314a4_home_baseline_captured;
+    volatile int vshctrl314a4_home_baseline_valid;
+    unsigned int vshctrl314a4_pending_baseline;
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -4685,6 +4695,184 @@ static void zeroCtrlInstallVsh589CCallTrace(void) {
     slide_diag.vsh589c_cache_sync = 1;
 }
 
+static int zeroCtrlResolveVshCtrlPeekImport(SceModule2 *vsh,
+        unsigned int *resolved_stub) {
+    unsigned int table = (unsigned int)vsh->stub_top;
+    unsigned int size = vsh->stub_size;
+    unsigned int cursor = 0;
+    unsigned int matches = 0;
+    unsigned int match = 0;
+
+    if (table == 0 || (table & 3) != 0 || size < 12 ||
+            table > 0xFFFFFFFFU - size ||
+            !zeroCtrlVshModuleRangeValid(vsh, table, size))
+        return 0;
+    while (cursor < size) {
+        SceLibraryStubTable *entry;
+        unsigned int address, entry_size, functions_size, nids_size;
+        unsigned int stubtable, nidtable, function;
+        char name[32];
+
+        if (size - cursor < 12 || table + cursor < table) return 0;
+        address = table + cursor;
+        if (!zeroCtrlVshModuleRangeValid(vsh, address, 12)) return 0;
+        entry = (SceLibraryStubTable *)address;
+        if (entry->len == 0) return 0;
+        entry_size = (unsigned int)entry->len * 4;
+        if (entry_size < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                entry_size > size - cursor ||
+                !zeroCtrlVshModuleRangeValid(vsh, address, entry_size) ||
+                entry->stubcount > 0xFFFFFFFFU / 8)
+            return 0;
+        functions_size = (unsigned int)entry->stubcount * 8;
+        nids_size = (unsigned int)entry->stubcount * 4;
+        stubtable = (unsigned int)entry->stubtable;
+        nidtable = (unsigned int)entry->nidtable;
+        if ((stubtable & 3) != 0 || (nidtable & 3) != 0 ||
+                (entry->stubcount != 0 &&
+                (!zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size) ||
+                 !zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size))) ||
+                !zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name,
+                    sizeof(name)))
+            return 0;
+        if (strcmp(name, "sceCtrl") == 0) {
+            for (function = 0; function < entry->stubcount; function++) {
+                unsigned int stub;
+                if (function > (0xFFFFFFFFU - stubtable) / 8 ||
+                        function > (0xFFFFFFFFU - nidtable) / 4)
+                    return 0;
+                stub = stubtable + function * 8;
+                if (!zeroCtrlVshModuleRangeValid(vsh, stub, 8) ||
+                        !zeroCtrlVshModuleRangeValid(vsh,
+                            nidtable + function * 4, 4))
+                    return 0;
+                if (_lw(nidtable + function * 4) == 0x3A622550) {
+                    if (_lw(stub) != 0x03E00008 ||
+                            (_lw(stub + 4) & 0xFC00003F) != 0x0000000C)
+                        return 0;
+                    match = stub;
+                    matches++;
+                }
+            }
+        }
+        if (cursor > 0xFFFFFFFFU - entry_size) return 0;
+        cursor += entry_size;
+    }
+    if (matches != 1) return 0;
+    *resolved_stub = match;
+    return 1;
+}
+
+static void zeroCtrlInstallVshCtrl314A4Trace(void) {
+    ZeroCtrlVshTriggerEvidence *storage_total = &slide_diag.triggers[1];
+    ZeroCtrlVshTriggerEvidence *storage_pending = &slide_diag.triggers[2];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int text, owner, original, target;
+    unsigned int trace_helper, trace_tail, tail_original;
+    unsigned int replacement, tail_replacement;
+
+    slide_diag.vshctrl314a4_attempted = 1;
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            !slide_diag.vsh_module_seen || !slide_diag.functional_request_armed ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
+                vsh->text_size) ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x314A8 ||
+            !zeroCtrlVshModuleRangeValid(vsh,
+                vsh->text_addr + 0x31494, 0x18) ||
+            !zeroCtrlResolveVshCtrlPeekImport(vsh, &target))
+        return;
+    text = vsh->text_addr;
+    owner = text + 0x314A4;
+    if (_lw(text + 0x31494) != 0x27BDFFE0 ||
+            _lw(text + 0x31498) != 0x03A02021 ||
+            _lw(text + 0x3149C) != 0x24050001 ||
+            _lw(text + 0x314A0) != 0xAFBF0014 ||
+            _lw(text + 0x314A8) != 0xAFB00010)
+        return;
+    original = _lw(owner);
+    if ((original >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner, original) != target ||
+            storage_total->patch_applied || storage_total->cache_sync ||
+            storage_pending->patch_applied || storage_pending->cache_sync ||
+            storage_pending->stub_addr > 0xFFFFFFFFU - 24)
+        return;
+    trace_helper = storage_pending->stub_addr + 24;
+    if ((storage_pending->stub_addr & 3) != 0 || (trace_helper & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_pending->stub_addr, 24) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace_helper, 80) ||
+            storage_total->counter_addr == 0 ||
+            (storage_total->counter_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                storage_total->counter_addr, 4) ||
+            storage_pending->counter_addr == 0 ||
+            (storage_pending->counter_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                storage_pending->counter_addr, 4) ||
+            slide_diag.triggers[0].request_addr == 0 ||
+            (slide_diag.triggers[0].request_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.triggers[0].request_addr, 4) ||
+            trace_helper > 0xFFFFFFFFU - 72)
+        return;
+    trace_tail = trace_helper + 72;
+    tail_original = _lw(trace_tail);
+    if (_lw(trace_helper) != 0x27BDFFF0 ||
+            _lw(trace_helper + 4) != 0xAFA80000 ||
+            _lw(trace_helper + 8) != 0xAFA90004 ||
+            _lw(trace_helper + 60) != 0x8FA90004 ||
+            _lw(trace_helper + 64) != 0x8FA80000 ||
+            _lw(trace_helper + 68) != 0x27BD0010 ||
+            (tail_original >> 26) != 2 || _lw(trace_tail + 4) != 0)
+        return;
+    replacement = 0x0C000000 | ((trace_helper >> 2) & 0x03FFFFFF);
+    tail_replacement = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(owner, replacement) != trace_helper ||
+            zeroCtrlMipsJumpTarget(trace_tail, tail_replacement) != target)
+        return;
+    slide_diag.vshctrl314a4_owner = owner;
+    slide_diag.vshctrl314a4_helper = trace_helper;
+    slide_diag.vshctrl314a4_target = target;
+    slide_diag.vshctrl314a4_validation = 1;
+    _sw(tail_replacement, trace_tail);
+    sceKernelDcacheWritebackInvalidateRange((const void *)trace_tail, 4);
+    sceKernelIcacheInvalidateRange((const void *)trace_tail, 4);
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    slide_diag.vshctrl314a4_install = 1;
+    slide_diag.vshctrl314a4_cache_sync = 1;
+}
+
+static int zeroCtrlReadVshCtrl314A4Telemetry(unsigned int state[4]) {
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int address[4];
+    unsigned int i;
+
+    address[0] = slide_diag.triggers[1].counter_addr;
+    address[1] = slide_diag.triggers[2].counter_addr;
+    address[2] = slide_diag.triggers[0].request_addr;
+    address[3] = slide_diag.triggers[0].counter_addr;
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(helper))
+        return 0;
+    for (i = 0; i < 4; i++)
+        if (address[i] == 0 || (address[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, address[i], 4))
+            return 0;
+    for (i = 0; i < 4; i++) state[i] = _lw(address[i]);
+    return 1;
+}
+
 static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
         unsigned int source) {
     unsigned int rs = (word >> 21) & 0x1F;
@@ -6954,7 +7142,9 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
-    int vsh_controller_map_written = 0;
+    int observed_vshctrl314a4_install = 0;
+    int observed_vshctrl314a4_home = 0;
+    int observed_vshctrl314a4_posthome = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -7358,11 +7548,58 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
             }
-            if (!vsh_controller_map_written && slide_diag.functional_enabled &&
+            if (!slide_diag.vshctrl314a4_attempted &&
+                    slide_diag.functional_enabled &&
                     slide_diag.vsh_module_seen &&
-                    slide_diag.functional_request_armed &&
-                    zeroCtrlWriteFunctionalVshControllerMap())
-                vsh_controller_map_written = 1;
+                    slide_diag.functional_request_armed)
+                zeroCtrlInstallVshCtrl314A4Trace();
+            if (slide_diag.vshctrl314a4_attempted &&
+                    !observed_vshctrl314a4_install) {
+                snprintf(line, sizeof(line),
+                        "[psp1000-vshctrl314a4-install] validation=%d "
+                        "install=%d cache_sync=%d owner=0x%08X helper=0x%08X "
+                        "target=0x%08X\n",
+                        slide_diag.vshctrl314a4_validation,
+                        slide_diag.vshctrl314a4_install,
+                        slide_diag.vshctrl314a4_cache_sync,
+                        slide_diag.vshctrl314a4_owner,
+                        slide_diag.vshctrl314a4_helper,
+                        slide_diag.vshctrl314a4_target);
+                zeroCtrlDiagnosticsText(line);
+                observed_vshctrl314a4_install = 1;
+            }
+            if (slide_diag.vshctrl314a4_home_baseline_captured) {
+                unsigned int trace_state[4] = { 0, 0, 0, 0 };
+                int trace_valid = zeroCtrlReadVshCtrl314A4Telemetry(trace_state);
+                unsigned int baseline_valid = trace_valid &&
+                        slide_diag.vshctrl314a4_home_baseline_valid;
+                if (!observed_vshctrl314a4_home) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-vshctrl314a4-home] baseline_valid=%u "
+                            "shared_total=%u pending_baseline=%u request=%u\n",
+                            baseline_valid, trace_valid ? trace_state[0] : 0,
+                            slide_diag.vshctrl314a4_pending_baseline,
+                            trace_valid ? trace_state[2] : 0);
+                    zeroCtrlDiagnosticsText(line);
+                    observed_vshctrl314a4_home = 1;
+                }
+                if (!observed_vshctrl314a4_posthome && baseline_valid &&
+                        trace_state[1] >
+                        slide_diag.vshctrl314a4_pending_baseline) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-vshctrl314a4-posthome] "
+                            "pending_baseline=%u pending=%u delta=%u request=%u "
+                            "home_press=%u consumed_hits=%u consumed=%u\n",
+                            slide_diag.vshctrl314a4_pending_baseline,
+                            trace_state[1], trace_state[1] -
+                            slide_diag.vshctrl314a4_pending_baseline,
+                            trace_state[2], slide_diag.functional_home_press_hits,
+                            trace_state[3],
+                            slide_diag.functional_trigger_consumed);
+                    zeroCtrlDiagnosticsText(line);
+                    observed_vshctrl314a4_posthome = 1;
+                }
+            }
             if (slide_diag.functional_enabled) {
                 ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
                 SceModule2 *helper =
@@ -9420,6 +9657,25 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         }
     }
     if (slide_diag.minimal_memory_test) {
+        unsigned int trace_state[4] = { 0, 0, 0, 0 };
+        int trace_valid = zeroCtrlReadVshCtrl314A4Telemetry(trace_state);
+        unsigned int baseline_valid = trace_valid &&
+                slide_diag.vshctrl314a4_home_baseline_valid;
+        unsigned int delta = baseline_valid && trace_state[1] >=
+                slide_diag.vshctrl314a4_pending_baseline ? trace_state[1] -
+                slide_diag.vshctrl314a4_pending_baseline : 0;
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl314a4-final] baseline_valid=%u "
+                "shared_total=%u pending_baseline=%u pending=%u delta=%u "
+                "request=%u home_press=%u consumed_hits=%u consumed=%u\n",
+                baseline_valid, trace_valid ? trace_state[0] : 0,
+                slide_diag.vshctrl314a4_pending_baseline,
+                trace_valid ? trace_state[1] : 0, delta,
+                trace_valid ? trace_state[2] : 0,
+                slide_diag.functional_home_press_hits,
+                trace_valid ? trace_state[3] : 0,
+                slide_diag.functional_trigger_consumed);
+        zeroCtrlDiagnosticsText(line);
         zeroCtrlDiagnosticsText(
                 "[checkpoint-fast] minimal_observation_window_complete\n");
         slide_diag.deferred_thread_started = 0;
@@ -12325,6 +12581,19 @@ static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void) {
         slide_diag.functional_home_first_load_reject_reason =
                 ZERO_HOME_REJECT_PENDING;
         return;
+    }
+    slide_diag.vshctrl314a4_home_baseline_captured = 1;
+    slide_diag.vshctrl314a4_home_baseline_valid = 0;
+    if (slide_diag.vshctrl314a4_validation &&
+            slide_diag.vshctrl314a4_install &&
+            slide_diag.vshctrl314a4_cache_sync &&
+            slide_diag.triggers[2].counter_addr != 0 &&
+            (slide_diag.triggers[2].counter_addr & 3) == 0 &&
+            zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.triggers[2].counter_addr, 4)) {
+        slide_diag.vshctrl314a4_pending_baseline =
+                _lw(slide_diag.triggers[2].counter_addr);
+        slide_diag.vshctrl314a4_home_baseline_valid = 1;
     }
     slide_diag.functional_home_open_pending = 1;
     _sw(1, trigger->request_addr);
