@@ -3519,6 +3519,235 @@ typedef struct {
 static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod);
 static int zeroCtrlMipsGprWriteDestination(unsigned int word);
 
+#define VSHCTRL_LIBRARY_LIMIT 8
+#define VSHCTRL_IMPORT_LIMIT 32
+#define VSHCTRL_CALLER_LIMIT 64
+#define VSHCTRL_FALLBACK_LIMIT 32
+#define VSHCTRL_NAME_CAPACITY 32
+#define VSHCTRL_CONTEXT_INSTRUCTIONS 6
+
+typedef struct {
+    char name[VSHCTRL_NAME_CAPACITY];
+    unsigned int index, functions;
+} ZeroCtrlVshControllerLibrary;
+
+typedef struct {
+    unsigned int library, function, nid, stub, word[2];
+} ZeroCtrlVshControllerImport;
+
+typedef struct {
+    unsigned int import, offset, word, kind;
+} ZeroCtrlVshControllerCaller;
+
+static int zeroCtrlAsciiContainsInputWord(const char *name) {
+    static const char *needle[3] = { "ctrl", "controller", "input" };
+    unsigned int start, which;
+
+    for (start = 0; name[start] != '\0'; start++) {
+        for (which = 0; which < 3; which++) {
+            unsigned int i;
+            for (i = 0; needle[which][i] != '\0'; i++) {
+                unsigned char value = (unsigned char)name[start + i];
+                if (value == '\0') break;
+                if (value >= 'A' && value <= 'Z') value += 'a' - 'A';
+                if (value != (unsigned char)needle[which][i]) break;
+            }
+            if (needle[which][i] == '\0') return 1;
+        }
+    }
+    return 0;
+}
+
+/* Writer-thread-only import/callsite map; loaded module memory is read-only. */
+static int zeroCtrlWriteFunctionalVshControllerMap(void) {
+    ZeroCtrlVshControllerLibrary libraries[VSHCTRL_LIBRARY_LIMIT];
+    ZeroCtrlVshControllerLibrary fallback[VSHCTRL_FALLBACK_LIMIT];
+    ZeroCtrlVshControllerImport imports[VSHCTRL_IMPORT_LIMIT];
+    ZeroCtrlVshControllerCaller callers[VSHCTRL_CALLER_LIMIT];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int table, size, cursor = 0, library_total = 0, library_stored = 0;
+    unsigned int import_total = 0, import_stored = 0, caller_total = 0;
+    unsigned int caller_stored = 0, jal = 0, jump = 0, fallback_stored = 0;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
+                vsh->text_size))
+        return 0;
+    table = (unsigned int)vsh->stub_top;
+    size = vsh->stub_size;
+    if (table == 0 || (table & 3) != 0 || size < 12 ||
+            table > 0xFFFFFFFFU - size ||
+            !zeroCtrlVshModuleRangeValid(vsh, table, size))
+        return 0;
+
+    while (cursor < size) {
+        SceLibraryStubTable *entry;
+        unsigned int address, entry_size, functions_size, nids_size;
+        unsigned int stubtable, nidtable, function, library_index;
+        char name[VSHCTRL_NAME_CAPACITY];
+        int controller;
+        if (size - cursor < 12 || table + cursor < table) return 0;
+        address = table + cursor;
+        if (!zeroCtrlVshModuleRangeValid(vsh, address, 12)) return 0;
+        entry = (SceLibraryStubTable *)address;
+        if (entry->len == 0) return 0;
+        entry_size = (unsigned int)entry->len * 4;
+        if (entry_size < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                entry_size > size - cursor ||
+                !zeroCtrlVshModuleRangeValid(vsh, address, entry_size) ||
+                entry->stubcount > 0xFFFFFFFFU / 8)
+            return 0;
+        functions_size = (unsigned int)entry->stubcount * 8;
+        nids_size = (unsigned int)entry->stubcount * 4;
+        stubtable = (unsigned int)entry->stubtable;
+        nidtable = (unsigned int)entry->nidtable;
+        if ((stubtable & 3) != 0 || (nidtable & 3) != 0 ||
+                (entry->stubcount != 0 &&
+                (!zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size) ||
+                 !zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size))))
+            return 0;
+        if (!zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name,
+                    sizeof(name)))
+            return 0;
+        if (fallback_stored < VSHCTRL_FALLBACK_LIMIT) {
+            ZeroCtrlVshControllerLibrary *saved = &fallback[fallback_stored++];
+            strcpy(saved->name, name);
+            saved->index = fallback_stored - 1;
+            saved->functions = entry->stubcount;
+        }
+        controller = zeroCtrlAsciiContainsInputWord(name);
+        library_index = library_total;
+        if (controller) {
+            library_total++;
+            if (library_stored < VSHCTRL_LIBRARY_LIMIT) {
+                ZeroCtrlVshControllerLibrary *saved = &libraries[library_stored++];
+                strcpy(saved->name, name);
+                saved->index = library_index;
+                saved->functions = entry->stubcount;
+            }
+        }
+        for (function = 0; controller && function < entry->stubcount; function++) {
+            unsigned int stub, nid, word0, word1, text_offset;
+            if (function > (0xFFFFFFFFU - stubtable) / 8 ||
+                    function > (0xFFFFFFFFU - nidtable) / 4)
+                return 0;
+            stub = stubtable + function * 8;
+            if (!zeroCtrlVshModuleRangeValid(vsh, stub, 8) ||
+                    !zeroCtrlVshModuleRangeValid(vsh,
+                        nidtable + function * 4, 4))
+                return 0;
+            nid = _lw(nidtable + function * 4);
+            word0 = _lw(stub);
+            word1 = _lw(stub + 4);
+            if (import_stored < VSHCTRL_IMPORT_LIMIT) {
+                ZeroCtrlVshControllerImport *saved = &imports[import_stored++];
+                saved->library = library_index;
+                saved->function = function;
+                saved->nid = nid;
+                saved->stub = stub;
+                saved->word[0] = word0;
+                saved->word[1] = word1;
+            }
+            for (text_offset = 0; text_offset <= vsh->text_size - 4;
+                    text_offset += 4) {
+                unsigned int pc = vsh->text_addr + text_offset;
+                unsigned int word = _lw(pc);
+                unsigned int opcode = word >> 26;
+                if ((opcode != 2 && opcode != 3) ||
+                        zeroCtrlMipsJumpTarget(pc, word) != stub)
+                    continue;
+                caller_total++;
+                if (opcode == 3) jal++;
+                else jump++;
+                if (caller_stored < VSHCTRL_CALLER_LIMIT) {
+                    ZeroCtrlVshControllerCaller *saved = &callers[caller_stored++];
+                    saved->import = import_total;
+                    saved->offset = text_offset;
+                    saved->word = word;
+                    saved->kind = opcode;
+                }
+            }
+            import_total++;
+        }
+        if (cursor > 0xFFFFFFFFU - entry_size) return 0;
+        cursor += entry_size;
+    }
+
+    snprintf(line, sizeof(line),
+            "[psp1000-vshctrl-map] controller_libs=%u imports=%u callers=%u "
+            "jal=%u jump=%u lib_overflow=%u import_overflow=%u "
+            "caller_overflow=%u\n", library_total, import_total, caller_total,
+            jal, jump, library_total - library_stored,
+            import_total - import_stored, caller_total - caller_stored);
+    zeroCtrlDiagnosticsText(line);
+    if (library_total == 0) {
+        unsigned int i;
+        for (i = 0; i < fallback_stored; i++) {
+            snprintf(line, sizeof(line),
+                    "[psp1000-vsh-import-lib] index=%u name=%s funcs=%u\n",
+                    fallback[i].index, fallback[i].name, fallback[i].functions);
+            zeroCtrlDiagnosticsText(line);
+        }
+        return 1;
+    }
+    for (cursor = 0; cursor < library_stored; cursor++) {
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-lib] index=%u name=%s funcs=%u\n",
+                libraries[cursor].index, libraries[cursor].name,
+                libraries[cursor].functions);
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (cursor = 0; cursor < import_stored; cursor++) {
+        ZeroCtrlVshControllerImport *entry = &imports[cursor];
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-import] lib=%u func=%u nid=0x%08X "
+                "stub=0x%08X w0=0x%08X w1=0x%08X\n", entry->library,
+                entry->function, entry->nid, entry->stub, entry->word[0],
+                entry->word[1]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (cursor = 0; cursor < caller_stored; cursor++) {
+        ZeroCtrlVshControllerCaller *caller = &callers[cursor];
+        unsigned int start = caller->offset >= VSHCTRL_CONTEXT_INSTRUCTIONS * 4 ?
+                caller->offset - VSHCTRL_CONTEXT_INSTRUCTIONS * 4 : 0;
+        unsigned int end = caller->offset <= vsh->text_size -
+                (VSHCTRL_CONTEXT_INSTRUCTIONS + 1) * 4 ? caller->offset +
+                (VSHCTRL_CONTEXT_INSTRUCTIONS + 1) * 4 : vsh->text_size;
+        unsigned int words = (end - start) / 4;
+        unsigned int context;
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-caller] import=%u source=0x%08X "
+                "offset=0x%05X word=0x%08X kind=%s\n", caller->import,
+                vsh->text_addr + caller->offset, caller->offset, caller->word,
+                caller->kind == 3 ? "JAL" : "J");
+        zeroCtrlDiagnosticsText(line);
+        if (!zeroCtrlVshModuleRangeValid(vsh,
+                    vsh->text_addr + start, end - start))
+            continue;
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-window] caller=%u start=0x%05X words=%u\n",
+                cursor, start, words);
+        zeroCtrlDiagnosticsText(line);
+        for (context = 0; context < words; context++) {
+            unsigned int code_offset = start + context * 4;
+            snprintf(line, sizeof(line),
+                    "[psp1000-vshctrl-code] caller=%u offset=0x%05X "
+                    "word=0x%08X\n", cursor, code_offset,
+                    _lw(vsh->text_addr + code_offset));
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+    return 1;
+}
+
 #define VSH57B0_INDIRECT_LIMIT 16
 #define VSH57B0_SEARCH_INSTRUCTIONS 8
 
@@ -6725,7 +6954,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
-    int vsh57b0_indirect_map_written = 0;
+    int vsh_controller_map_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -7129,11 +7358,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
             }
-            if (!vsh57b0_indirect_map_written && slide_diag.functional_enabled &&
+            if (!vsh_controller_map_written && slide_diag.functional_enabled &&
                     slide_diag.vsh_module_seen &&
                     slide_diag.functional_request_armed &&
-                    zeroCtrlWriteFunctionalVsh57b0IndirectMap())
-                vsh57b0_indirect_map_written = 1;
+                    zeroCtrlWriteFunctionalVshControllerMap())
+                vsh_controller_map_written = 1;
             if (slide_diag.functional_enabled) {
                 ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
                 SceModule2 *helper =
