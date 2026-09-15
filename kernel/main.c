@@ -150,6 +150,24 @@ enum zeroCtrlTriggerMode {
     ZERO_TRIGGER_14020 = 4
 };
 
+enum zeroCtrlFunctionalHomeRejectReason {
+    ZERO_HOME_REJECT_NONE = 0,
+    ZERO_HOME_REJECT_PLATFORM = 1,
+    ZERO_HOME_REJECT_COMPAT_INSTALLED = 2,
+    ZERO_HOME_REJECT_TRIGGER_MODE = 3,
+    ZERO_HOME_REJECT_TRIGGER_VALIDATION = 4,
+    ZERO_HOME_REJECT_TRIGGER_PATCH = 5,
+    ZERO_HOME_REJECT_TRIGGER_CACHE = 6,
+    ZERO_HOME_REJECT_HELPER = 7,
+    ZERO_HOME_REJECT_REQUEST_ADDRESS = 8,
+    ZERO_HOME_REJECT_MODE_ADDRESS = 9,
+    ZERO_HOME_REJECT_TARGET_ADDRESS = 10,
+    ZERO_HOME_REJECT_MODE_VALUE = 11,
+    ZERO_HOME_REJECT_REQUEST_VALUE = 12,
+    ZERO_HOME_REJECT_CONSUMED = 13,
+    ZERO_HOME_REJECT_PENDING = 14
+};
+
 static const unsigned int vsh_trigger_offsets[VSH_TRIGGER_COUNT] = {
     0x58D4, 0x13F6C, 0x14020
 };
@@ -613,6 +631,32 @@ typedef struct {
     int functional_enabled;
     volatile int functional_request_armed;
     volatile int functional_trigger_consumed;
+    volatile int functional_home_open_pending;
+    volatile unsigned int functional_home_press_hits;
+    volatile unsigned int functional_home_first_load_attempts;
+    volatile unsigned int functional_home_first_load_published;
+    volatile unsigned int functional_home_first_load_reject_reason;
+    volatile int vsh589c_validation;
+    volatile int vsh589c_install;
+    volatile int vsh589c_cache_sync;
+    unsigned int vsh589c_owner;
+    unsigned int vsh589c_original;
+    unsigned int vsh589c_replacement;
+    unsigned int vsh589c_resume;
+    unsigned int vsh589c_helper;
+    unsigned int vsh589c_tail;
+    unsigned int vsh589c_tail_original;
+    unsigned int vsh589c_tail_replacement;
+    volatile int vshctrl314a4_attempted;
+    volatile int vshctrl314a4_validation;
+    volatile int vshctrl314a4_install;
+    volatile int vshctrl314a4_cache_sync;
+    unsigned int vshctrl314a4_owner;
+    unsigned int vshctrl314a4_helper;
+    unsigned int vshctrl314a4_target;
+    volatile int vshctrl314a4_home_baseline_captured;
+    volatile int vshctrl314a4_home_baseline_valid;
+    unsigned int vshctrl314a4_pending_baseline;
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -2341,6 +2385,11 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                     all_selected_valid = 0;
                 }
             }
+            if (slide_diag.functional_enabled &&
+                    (((counters[1] | counters[2]) & 3) != 0 ||
+                    !zeroCtrlVshModuleRangeValid(helper, counters[1], 4) ||
+                    !zeroCtrlVshModuleRangeValid(helper, counters[2], 4)))
+                all_selected_valid = 0;
 
             /* Commit pass: selected callsites are all valid or none are written. */
             if (all_selected_valid) {
@@ -2355,12 +2404,17 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                             (const void *)request_evidence->original_target_addr, 4);
                     sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->functional_mode_addr, 4);
-                    if (slide_diag.functional_enabled)
-                        _sw(1, request_evidence->request_addr);
-                    else
-                        _sw(0, request_evidence->request_addr);
+                    _sw(0, request_evidence->request_addr);
                     sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->request_addr, 4);
+                    if (slide_diag.functional_enabled) {
+                        _sw(0, counters[1]);
+                        _sw(0, counters[2]);
+                        sceKernelDcacheWritebackInvalidateRange(
+                                (const void *)counters[1], 4);
+                        sceKernelDcacheWritebackInvalidateRange(
+                                (const void *)counters[2], 4);
+                    }
                 }
                 for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
                     ZeroCtrlVshTriggerEvidence *evidence =
@@ -3472,6 +3526,518 @@ typedef struct {
 #define VSH589C_WINDOW_BEFORE 0x50
 #define VSH589C_WINDOW_AFTER  0x30
 
+static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod);
+static int zeroCtrlMipsGprWriteDestination(unsigned int word);
+
+#define VSHCTRL_LIBRARY_LIMIT 8
+#define VSHCTRL_IMPORT_LIMIT 32
+#define VSHCTRL_CALLER_LIMIT 64
+#define VSHCTRL_FALLBACK_LIMIT 32
+#define VSHCTRL_NAME_CAPACITY 32
+#define VSHCTRL_CONTEXT_INSTRUCTIONS 6
+
+typedef struct {
+    char name[VSHCTRL_NAME_CAPACITY];
+    unsigned int index, functions;
+} ZeroCtrlVshControllerLibrary;
+
+typedef struct {
+    unsigned int library, function, nid, stub, word[2];
+} ZeroCtrlVshControllerImport;
+
+typedef struct {
+    unsigned int import, offset, word, kind;
+} ZeroCtrlVshControllerCaller;
+
+static int zeroCtrlAsciiContainsInputWord(const char *name) {
+    static const char *needle[3] = { "ctrl", "controller", "input" };
+    unsigned int start, which;
+
+    for (start = 0; name[start] != '\0'; start++) {
+        for (which = 0; which < 3; which++) {
+            unsigned int i;
+            for (i = 0; needle[which][i] != '\0'; i++) {
+                unsigned char value = (unsigned char)name[start + i];
+                if (value == '\0') break;
+                if (value >= 'A' && value <= 'Z') value += 'a' - 'A';
+                if (value != (unsigned char)needle[which][i]) break;
+            }
+            if (needle[which][i] == '\0') return 1;
+        }
+    }
+    return 0;
+}
+
+/* Writer-thread-only import/callsite map; loaded module memory is read-only. */
+static int zeroCtrlWriteFunctionalVshControllerMap(void) {
+    ZeroCtrlVshControllerLibrary libraries[VSHCTRL_LIBRARY_LIMIT];
+    ZeroCtrlVshControllerLibrary fallback[VSHCTRL_FALLBACK_LIMIT];
+    ZeroCtrlVshControllerImport imports[VSHCTRL_IMPORT_LIMIT];
+    ZeroCtrlVshControllerCaller callers[VSHCTRL_CALLER_LIMIT];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int table, size, cursor = 0, library_total = 0, library_stored = 0;
+    unsigned int import_total = 0, import_stored = 0, caller_total = 0;
+    unsigned int caller_stored = 0, jal = 0, jump = 0, fallback_stored = 0;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
+                vsh->text_size))
+        return 0;
+    table = (unsigned int)vsh->stub_top;
+    size = vsh->stub_size;
+    if (table == 0 || (table & 3) != 0 || size < 12 ||
+            table > 0xFFFFFFFFU - size ||
+            !zeroCtrlVshModuleRangeValid(vsh, table, size))
+        return 0;
+
+    while (cursor < size) {
+        SceLibraryStubTable *entry;
+        unsigned int address, entry_size, functions_size, nids_size;
+        unsigned int stubtable, nidtable, function, library_index;
+        char name[VSHCTRL_NAME_CAPACITY];
+        int controller;
+        if (size - cursor < 12 || table + cursor < table) return 0;
+        address = table + cursor;
+        if (!zeroCtrlVshModuleRangeValid(vsh, address, 12)) return 0;
+        entry = (SceLibraryStubTable *)address;
+        if (entry->len == 0) return 0;
+        entry_size = (unsigned int)entry->len * 4;
+        if (entry_size < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                entry_size > size - cursor ||
+                !zeroCtrlVshModuleRangeValid(vsh, address, entry_size) ||
+                entry->stubcount > 0xFFFFFFFFU / 8)
+            return 0;
+        functions_size = (unsigned int)entry->stubcount * 8;
+        nids_size = (unsigned int)entry->stubcount * 4;
+        stubtable = (unsigned int)entry->stubtable;
+        nidtable = (unsigned int)entry->nidtable;
+        if ((stubtable & 3) != 0 || (nidtable & 3) != 0 ||
+                (entry->stubcount != 0 &&
+                (!zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size) ||
+                 !zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size))))
+            return 0;
+        if (!zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name,
+                    sizeof(name)))
+            return 0;
+        if (fallback_stored < VSHCTRL_FALLBACK_LIMIT) {
+            ZeroCtrlVshControllerLibrary *saved = &fallback[fallback_stored++];
+            strcpy(saved->name, name);
+            saved->index = fallback_stored - 1;
+            saved->functions = entry->stubcount;
+        }
+        controller = zeroCtrlAsciiContainsInputWord(name);
+        library_index = library_total;
+        if (controller) {
+            library_total++;
+            if (library_stored < VSHCTRL_LIBRARY_LIMIT) {
+                ZeroCtrlVshControllerLibrary *saved = &libraries[library_stored++];
+                strcpy(saved->name, name);
+                saved->index = library_index;
+                saved->functions = entry->stubcount;
+            }
+        }
+        for (function = 0; controller && function < entry->stubcount; function++) {
+            unsigned int stub, nid, word0, word1, text_offset;
+            if (function > (0xFFFFFFFFU - stubtable) / 8 ||
+                    function > (0xFFFFFFFFU - nidtable) / 4)
+                return 0;
+            stub = stubtable + function * 8;
+            if (!zeroCtrlVshModuleRangeValid(vsh, stub, 8) ||
+                    !zeroCtrlVshModuleRangeValid(vsh,
+                        nidtable + function * 4, 4))
+                return 0;
+            nid = _lw(nidtable + function * 4);
+            word0 = _lw(stub);
+            word1 = _lw(stub + 4);
+            if (import_stored < VSHCTRL_IMPORT_LIMIT) {
+                ZeroCtrlVshControllerImport *saved = &imports[import_stored++];
+                saved->library = library_index;
+                saved->function = function;
+                saved->nid = nid;
+                saved->stub = stub;
+                saved->word[0] = word0;
+                saved->word[1] = word1;
+            }
+            for (text_offset = 0; text_offset <= vsh->text_size - 4;
+                    text_offset += 4) {
+                unsigned int pc = vsh->text_addr + text_offset;
+                unsigned int word = _lw(pc);
+                unsigned int opcode = word >> 26;
+                if ((opcode != 2 && opcode != 3) ||
+                        zeroCtrlMipsJumpTarget(pc, word) != stub)
+                    continue;
+                caller_total++;
+                if (opcode == 3) jal++;
+                else jump++;
+                if (caller_stored < VSHCTRL_CALLER_LIMIT) {
+                    ZeroCtrlVshControllerCaller *saved = &callers[caller_stored++];
+                    saved->import = import_total;
+                    saved->offset = text_offset;
+                    saved->word = word;
+                    saved->kind = opcode;
+                }
+            }
+            import_total++;
+        }
+        if (cursor > 0xFFFFFFFFU - entry_size) return 0;
+        cursor += entry_size;
+    }
+
+    snprintf(line, sizeof(line),
+            "[psp1000-vshctrl-map] controller_libs=%u imports=%u callers=%u "
+            "jal=%u jump=%u lib_overflow=%u import_overflow=%u "
+            "caller_overflow=%u\n", library_total, import_total, caller_total,
+            jal, jump, library_total - library_stored,
+            import_total - import_stored, caller_total - caller_stored);
+    zeroCtrlDiagnosticsText(line);
+    if (library_total == 0) {
+        unsigned int i;
+        for (i = 0; i < fallback_stored; i++) {
+            snprintf(line, sizeof(line),
+                    "[psp1000-vsh-import-lib] index=%u name=%s funcs=%u\n",
+                    fallback[i].index, fallback[i].name, fallback[i].functions);
+            zeroCtrlDiagnosticsText(line);
+        }
+        return 1;
+    }
+    for (cursor = 0; cursor < library_stored; cursor++) {
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-lib] index=%u name=%s funcs=%u\n",
+                libraries[cursor].index, libraries[cursor].name,
+                libraries[cursor].functions);
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (cursor = 0; cursor < import_stored; cursor++) {
+        ZeroCtrlVshControllerImport *entry = &imports[cursor];
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-import] lib=%u func=%u nid=0x%08X "
+                "stub=0x%08X w0=0x%08X w1=0x%08X\n", entry->library,
+                entry->function, entry->nid, entry->stub, entry->word[0],
+                entry->word[1]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (cursor = 0; cursor < caller_stored; cursor++) {
+        ZeroCtrlVshControllerCaller *caller = &callers[cursor];
+        unsigned int start = caller->offset >= VSHCTRL_CONTEXT_INSTRUCTIONS * 4 ?
+                caller->offset - VSHCTRL_CONTEXT_INSTRUCTIONS * 4 : 0;
+        unsigned int end = caller->offset <= vsh->text_size -
+                (VSHCTRL_CONTEXT_INSTRUCTIONS + 1) * 4 ? caller->offset +
+                (VSHCTRL_CONTEXT_INSTRUCTIONS + 1) * 4 : vsh->text_size;
+        unsigned int words = (end - start) / 4;
+        unsigned int context;
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-caller] import=%u source=0x%08X "
+                "offset=0x%05X word=0x%08X kind=%s\n", caller->import,
+                vsh->text_addr + caller->offset, caller->offset, caller->word,
+                caller->kind == 3 ? "JAL" : "J");
+        zeroCtrlDiagnosticsText(line);
+        if (!zeroCtrlVshModuleRangeValid(vsh,
+                    vsh->text_addr + start, end - start))
+            continue;
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-window] caller=%u start=0x%05X words=%u\n",
+                cursor, start, words);
+        zeroCtrlDiagnosticsText(line);
+        for (context = 0; context < words; context++) {
+            unsigned int code_offset = start + context * 4;
+            snprintf(line, sizeof(line),
+                    "[psp1000-vshctrl-code] caller=%u offset=0x%05X "
+                    "word=0x%08X\n", cursor, code_offset,
+                    _lw(vsh->text_addr + code_offset));
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+    return 1;
+}
+
+#define VSH57B0_INDIRECT_LIMIT 16
+#define VSH57B0_SEARCH_INSTRUCTIONS 8
+
+typedef struct {
+    unsigned int lui_offset, low_offset, reg, form;
+} ZeroCtrlVsh57b0Materialization;
+
+typedef struct {
+    unsigned int segment, address;
+} ZeroCtrlVsh57b0Pointer;
+
+/* Writer-thread-only reconnaissance; all target/module memory is read-only. */
+static int zeroCtrlWriteFunctionalVsh57b0IndirectMap(void) {
+    ZeroCtrlVsh57b0Materialization materialized[VSH57B0_INDIRECT_LIMIT];
+    ZeroCtrlVsh57b0Pointer pointers[VSH57B0_INDIRECT_LIMIT];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int target, offset, material_total = 0, material_stored = 0;
+    unsigned int pointer_total = 0, pointer_stored = 0, segment;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x57B0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
+                vsh->text_size))
+        return 0;
+    target = vsh->text_addr + 0x57B0;
+    if (!zeroCtrlVshModuleRangeValid(vsh, target, 4)) return 0;
+
+    for (offset = 0; offset <= vsh->text_size - 4; offset += 4) {
+        unsigned int lui = _lw(vsh->text_addr + offset);
+        unsigned int reg = (lui >> 16) & 0x1F;
+        unsigned int look;
+        if ((lui >> 26) != 0x0F || ((lui >> 21) & 0x1F) != 0 || reg == 0)
+            continue;
+        for (look = 1; look <= VSH57B0_SEARCH_INSTRUCTIONS &&
+                offset <= vsh->text_size - (look + 1) * 4; look++) {
+            unsigned int low_offset = offset + look * 4;
+            unsigned int word = _lw(vsh->text_addr + low_offset);
+            unsigned int opcode = word >> 26;
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int function = word & 0x3F;
+            unsigned int resolved = 0;
+            unsigned int form = 0;
+            int destination;
+            if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                    (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17) ||
+                    (opcode == 0 && (function == 8 || function == 9)))
+                break;
+            if (rs == reg && rt == reg && opcode == 9) {
+                resolved = ((lui & 0xFFFF) << 16) +
+                        (unsigned int)(int)(short)(word & 0xFFFF);
+                form = 9;
+            } else if (rs == reg && rt == reg && opcode == 0x0D) {
+                resolved = ((lui & 0xFFFF) << 16) | (word & 0xFFFF);
+                form = 0x0D;
+            }
+            if (form) {
+                if (resolved == target) {
+                    material_total++;
+                    if (material_stored < VSH57B0_INDIRECT_LIMIT) {
+                        ZeroCtrlVsh57b0Materialization *entry =
+                                &materialized[material_stored++];
+                        entry->lui_offset = offset;
+                        entry->low_offset = low_offset;
+                        entry->reg = reg;
+                        entry->form = form;
+                    }
+                }
+                break;
+            }
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0 || (unsigned int)destination == reg) break;
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-vsh57b0-materialize-map] total=%u stored=%u overflow=%u\n",
+            material_total, material_stored, material_total - material_stored);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset < material_stored; offset++) {
+        ZeroCtrlVsh57b0Materialization *entry = &materialized[offset];
+        unsigned int provenance = 1U << entry->reg;
+        unsigned int look;
+        const char *use = "NONE_IN_BOUNDED_FLOW";
+        unsigned int use_offset = entry->low_offset;
+        unsigned int use_reg = entry->reg;
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-materialize] index=%u lui_off=0x%05X "
+                "low_off=0x%05X reg=%u form=%s resolved=0x%08X\n",
+                offset, entry->lui_offset, entry->low_offset, entry->reg,
+                entry->form == 9 ? "ADDIU" : "ORI", target);
+        zeroCtrlDiagnosticsText(line);
+        for (look = 1; look <= VSH57B0_SEARCH_INSTRUCTIONS &&
+                entry->low_offset <= vsh->text_size - (look + 1) * 4; look++) {
+            unsigned int current = entry->low_offset + look * 4;
+            unsigned int word = _lw(vsh->text_addr + current);
+            unsigned int opcode = word >> 26;
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int rd = (word >> 11) & 0x1F;
+            unsigned int function = word & 0x3F;
+            unsigned int copy_source = 0, copy_destination = 0;
+            int copy_source_live = 0;
+            int destination;
+            if (opcode == 0 && (function == 8 || function == 9)) {
+                if (provenance & (1U << rs)) {
+                    use = function == 9 ? "JALR" : "JR";
+                    use_offset = current;
+                    use_reg = rs;
+                }
+                break;
+            }
+            if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                    (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17))
+                break;
+            if (opcode == 0x2B && (provenance & (1U << rt))) {
+                use = "SW_POINTER";
+                use_offset = current;
+                use_reg = rt;
+                break;
+            }
+            if (opcode == 0 && (function == 0x21 || function == 0x25)) {
+                if (rt == 0) { copy_source = rs; copy_destination = rd; }
+                else if (rs == 0) { copy_source = rt; copy_destination = rd; }
+            } else if (opcode == 9 && (word & 0xFFFF) == 0) {
+                copy_source = rs;
+                copy_destination = rt;
+            }
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0) break;
+            copy_source_live = copy_destination != 0 &&
+                    (provenance & (1U << copy_source));
+            if (destination > 0) provenance &= ~(1U << destination);
+            if (copy_source_live)
+                provenance |= 1U << copy_destination;
+            if (provenance == 0) break;
+        }
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-use] materialize=%u off=0x%05X "
+                "class=%s reg=%u\n", offset, use_offset, use, use_reg);
+        zeroCtrlDiagnosticsText(line);
+    }
+
+    for (segment = 0; segment < vsh->nsegment && segment < 4; segment++) {
+        unsigned int start = vsh->segmentaddr[segment];
+        unsigned int size = vsh->segmentsize[segment];
+        unsigned int address;
+        if (start == 0 || size < 4 || start > 0xFFFFFFFFU - size ||
+                !zeroCtrlVshModuleRangeValid(vsh, start, size))
+            continue;
+        address = (start + 3) & ~3U;
+        if (address < start) continue;
+        for (; address <= start + size - 4; address += 4) {
+            if (_lw(address) != target) continue;
+            pointer_total++;
+            if (pointer_stored < VSH57B0_INDIRECT_LIMIT) {
+                pointers[pointer_stored].segment = segment;
+                pointers[pointer_stored].address = address;
+                pointer_stored++;
+            }
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-vsh57b0-pointer-map] total=%u stored=%u overflow=%u\n",
+            pointer_total, pointer_stored, pointer_total - pointer_stored);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset < pointer_stored; offset++) {
+        unsigned int address = pointers[offset].address;
+        char text_offset[16];
+        if (address >= vsh->text_addr &&
+                address - vsh->text_addr < vsh->text_size)
+            snprintf(text_offset, sizeof(text_offset), "0x%05X",
+                    address - vsh->text_addr);
+        else
+            strcpy(text_offset, "NON_TEXT");
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-pointer] index=%u segment=%u "
+                "addr=0x%08X segment_off=0x%08X text_off=%s\n",
+                offset, pointers[offset].segment, address,
+                address - vsh->segmentaddr[pointers[offset].segment],
+                text_offset);
+        zeroCtrlDiagnosticsText(line);
+    }
+    return 1;
+}
+
+#define VSH57B0_REFERENCE_LIMIT 16
+#define VSH57B0_CONTEXT_INSTRUCTIONS 6
+
+/* Writer-thread-only loaded-code map; this routine performs no mutation. */
+static int zeroCtrlWriteFunctionalVsh57b0Map(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int source[VSH57B0_REFERENCE_LIMIT];
+    unsigned int instruction[VSH57B0_REFERENCE_LIMIT];
+    unsigned int kind[VSH57B0_REFERENCE_LIMIT];
+    unsigned int target, offset, total = 0, jal = 0, jump = 0, stored = 0;
+    unsigned int expected_58f0 = 0;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x57B0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
+                vsh->text_size))
+        return 0;
+    target = vsh->text_addr + 0x57B0;
+    if (!zeroCtrlVshModuleRangeValid(vsh, target, 4)) return 0;
+
+    for (offset = 0; offset <= vsh->text_size - 4; offset += 4) {
+        unsigned int pc = vsh->text_addr + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        if ((opcode != 2 && opcode != 3) ||
+                zeroCtrlMipsJumpTarget(pc, word) != target)
+            continue;
+        total++;
+        if (opcode == 3) jal++;
+        else jump++;
+        if (offset == 0x58F0 && opcode == 3) expected_58f0 = 1;
+        if (stored < VSH57B0_REFERENCE_LIMIT) {
+            source[stored] = offset;
+            instruction[stored] = word;
+            kind[stored++] = opcode;
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-vsh57b0-map] target=0x%08X total=%u jal=%u "
+            "jump=%u stored=%u overflow=%u expected58f0=%u\n",
+            target, total, jal, jump, stored, total - stored, expected_58f0);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset < stored; offset++) {
+        unsigned int start = source[offset] >=
+                VSH57B0_CONTEXT_INSTRUCTIONS * 4 ?
+                source[offset] - VSH57B0_CONTEXT_INSTRUCTIONS * 4 : 0;
+        unsigned int end = source[offset] <= vsh->text_size -
+                (VSH57B0_CONTEXT_INSTRUCTIONS + 1) * 4 ?
+                source[offset] + (VSH57B0_CONTEXT_INSTRUCTIONS + 1) * 4 :
+                vsh->text_size;
+        unsigned int words = (end - start) / 4;
+        unsigned int context;
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-ref] index=%u source=0x%08X "
+                "offset=0x%05X word=0x%08X kind=%s\n",
+                offset, vsh->text_addr + source[offset], source[offset],
+                instruction[offset], kind[offset] == 3 ? "JAL" : "J");
+        zeroCtrlDiagnosticsText(line);
+        if (!zeroCtrlVshModuleRangeValid(vsh,
+                    vsh->text_addr + start, end - start))
+            continue;
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-window] index=%u start=0x%05X words=%u\n",
+                offset, start, words);
+        zeroCtrlDiagnosticsText(line);
+        for (context = 0; context < words; context++) {
+            unsigned int code_offset = start + context * 4;
+            snprintf(line, sizeof(line),
+                    "[psp1000-vsh57b0-code] index=%u offset=0x%05X "
+                    "word=0x%08X\n", offset, code_offset,
+                    _lw(vsh->text_addr + code_offset));
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+    return 1;
+}
+
 static void zeroCtrlWriteVsh589cWindow(SceModule2 *vsh,
         const char *kind, unsigned int index, unsigned int center) {
     unsigned int start;
@@ -3493,6 +4059,64 @@ static void zeroCtrlWriteVsh589cWindow(SceModule2 *vsh,
                 _lw(address), _lw(address + 4), _lw(address + 8),
                 _lw(address + 12), _lw(address + 16), _lw(address + 20),
                 _lw(address + 24), _lw(address + 28));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
+/* Writer-thread-only structural capture; this never installs a VSH owner. */
+static void zeroCtrlWriteFunctionalCallbackStructure(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int offset;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x5894 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x5894,
+                0x5C)) {
+        zeroCtrlDiagnosticsText("[psp1000-vsh589c-structure] validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[psp1000-vsh589c-structure] validation=1 start=0x05894 words=23\n");
+    for (offset = 0x5894; offset <= 0x58EC; offset += 4) {
+        unsigned int pc = vsh->text_addr + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int target = 0;
+        const char *class_name = "IMMEDIATE";
+        if (opcode == 0 && (word & 63) == 8) class_name = "JR";
+        else if (opcode == 0 && (word & 63) == 9) class_name = "JALR";
+        else if (opcode == 0) class_name = "SPECIAL";
+        else if (opcode == 1) class_name = "REGIMM";
+        else if (opcode == 2) class_name = "J";
+        else if (opcode == 3) class_name = "JAL";
+        else if (opcode == 4) class_name = "BEQ";
+        else if (opcode == 5) class_name = "BNE";
+        else if (opcode == 6) class_name = "BLEZ";
+        else if (opcode == 7) class_name = "BGTZ";
+        else if (opcode == 0x14) class_name = "BEQL";
+        else if (opcode == 0x15) class_name = "BNEL";
+        else if (opcode == 0x16) class_name = "BLEZL";
+        else if (opcode == 0x17) class_name = "BGTZL";
+        if (opcode == 2 || opcode == 3)
+            target = zeroCtrlMipsJumpTarget(pc, word) - vsh->text_addr;
+        else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
+            int displacement = (short)(word & 0xFFFF);
+            target = pc + 4 + displacement * 4 - vsh->text_addr;
+        }
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh589c-word] off=0x%05X word=0x%08X "
+                "class=%s op=%u rs=%u rt=%u rd=%u sa=%u fn=%u "
+                "target=0x%05X\n", offset, word, class_name, opcode,
+                (word >> 21) & 31, (word >> 16) & 31, (word >> 11) & 31,
+                (word >> 6) & 31, word & 63, target);
         zeroCtrlDiagnosticsText(line);
     }
 }
@@ -3993,6 +4617,260 @@ static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod) {
             (unsigned int)mod >= 0x88000000 &&
             (unsigned int)mod < 0x8C000000 && mod->text_addr != 0 &&
             mod->text_size != 0 && mod->nsegment != 0 && mod->nsegment <= 4;
+}
+
+static void zeroCtrlInstallVsh589CCallTrace(void) {
+    ZeroCtrlVshTriggerEvidence *storage_total = &slide_diag.triggers[1];
+    ZeroCtrlVshTriggerEvidence *storage_pending = &slide_diag.triggers[2];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int text, owner, original, original_target;
+    unsigned int trace_helper, trace_tail, tail_original;
+    unsigned int replacement, tail_replacement;
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            !slide_diag.vsh_module_seen || !slide_diag.functional_request_armed ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x58B0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x589C, 0x18))
+        return;
+    text = vsh->text_addr;
+    owner = text + 0x58AC;
+    if ((_lw(text + 0x589C) & 0xFFFF0000) != 0x3C020000 ||
+            _lw(text + 0x58A0) != 0x27BDFFF0 ||
+            (_lw(text + 0x58A4) & 0xFFFF0000) != 0xAC440000 ||
+            _lw(text + 0x58A8) != 0xAFBF0000 ||
+            _lw(text + 0x58B0) != 0) return;
+    original = _lw(owner);
+    if ((original >> 26) != 3) return;
+    original_target = zeroCtrlMipsJumpTarget(owner, original);
+    if (original_target != text + 0x5C98 ||
+            !zeroCtrlVshModuleRangeValid(vsh, original_target, 4) ||
+            storage_total->patch_applied || storage_total->cache_sync ||
+            storage_pending->patch_applied || storage_pending->cache_sync ||
+            storage_pending->stub_addr > 0xFFFFFFFFU - 24) return;
+    trace_helper = storage_pending->stub_addr + 24;
+    if ((storage_pending->stub_addr & 3) != 0 || (trace_helper & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_pending->stub_addr, 24) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace_helper, 80) ||
+            trace_helper > 0xFFFFFFFFU - 72 ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_total->counter_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_pending->counter_addr, 4))
+        return;
+    trace_tail = trace_helper + 72;
+    tail_original = _lw(trace_tail);
+    if ((tail_original >> 26) != 2 || _lw(trace_tail + 4) != 0) return;
+    replacement = 0x0C000000 | ((trace_helper >> 2) & 0x03FFFFFF);
+    tail_replacement = 0x08000000 | ((original_target >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(owner, replacement) != trace_helper ||
+            zeroCtrlMipsJumpTarget(trace_tail, tail_replacement) != original_target)
+        return;
+    slide_diag.vsh589c_owner = owner;
+    slide_diag.vsh589c_original = original;
+    slide_diag.vsh589c_replacement = replacement;
+    slide_diag.vsh589c_resume = owner + 8;
+    slide_diag.vsh589c_helper = trace_helper;
+    slide_diag.vsh589c_tail = trace_tail;
+    slide_diag.vsh589c_tail_original = tail_original;
+    slide_diag.vsh589c_tail_replacement = tail_replacement;
+    slide_diag.vsh589c_validation = 1;
+    _sw(0, storage_total->counter_addr);
+    _sw(0, storage_pending->counter_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)storage_total->counter_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)storage_pending->counter_addr, 4);
+    _sw(tail_replacement, trace_tail);
+    sceKernelDcacheWritebackInvalidateRange((const void *)trace_tail, 4);
+    sceKernelIcacheInvalidateRange((const void *)trace_tail, 4);
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    slide_diag.vsh589c_install = 1;
+    slide_diag.vsh589c_cache_sync = 1;
+}
+
+static int zeroCtrlResolveVshCtrlPeekImport(SceModule2 *vsh,
+        unsigned int *resolved_stub) {
+    unsigned int table = (unsigned int)vsh->stub_top;
+    unsigned int size = vsh->stub_size;
+    unsigned int cursor = 0;
+    unsigned int matches = 0;
+    unsigned int match = 0;
+
+    if (table == 0 || (table & 3) != 0 || size < 12 ||
+            table > 0xFFFFFFFFU - size ||
+            !zeroCtrlVshModuleRangeValid(vsh, table, size))
+        return 0;
+    while (cursor < size) {
+        SceLibraryStubTable *entry;
+        unsigned int address, entry_size, functions_size, nids_size;
+        unsigned int stubtable, nidtable, function;
+        char name[32];
+
+        if (size - cursor < 12 || table + cursor < table) return 0;
+        address = table + cursor;
+        if (!zeroCtrlVshModuleRangeValid(vsh, address, 12)) return 0;
+        entry = (SceLibraryStubTable *)address;
+        if (entry->len == 0) return 0;
+        entry_size = (unsigned int)entry->len * 4;
+        if (entry_size < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                entry_size > size - cursor ||
+                !zeroCtrlVshModuleRangeValid(vsh, address, entry_size) ||
+                entry->stubcount > 0xFFFFFFFFU / 8)
+            return 0;
+        functions_size = (unsigned int)entry->stubcount * 8;
+        nids_size = (unsigned int)entry->stubcount * 4;
+        stubtable = (unsigned int)entry->stubtable;
+        nidtable = (unsigned int)entry->nidtable;
+        if ((stubtable & 3) != 0 || (nidtable & 3) != 0 ||
+                (entry->stubcount != 0 &&
+                (!zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size) ||
+                 !zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size))) ||
+                !zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name,
+                    sizeof(name)))
+            return 0;
+        if (strcmp(name, "sceCtrl") == 0) {
+            for (function = 0; function < entry->stubcount; function++) {
+                unsigned int stub;
+                if (function > (0xFFFFFFFFU - stubtable) / 8 ||
+                        function > (0xFFFFFFFFU - nidtable) / 4)
+                    return 0;
+                stub = stubtable + function * 8;
+                if (!zeroCtrlVshModuleRangeValid(vsh, stub, 8) ||
+                        !zeroCtrlVshModuleRangeValid(vsh,
+                            nidtable + function * 4, 4))
+                    return 0;
+                if (_lw(nidtable + function * 4) == 0x3A622550) {
+                    if (_lw(stub) != 0x03E00008 ||
+                            (_lw(stub + 4) & 0xFC00003F) != 0x0000000C)
+                        return 0;
+                    match = stub;
+                    matches++;
+                }
+            }
+        }
+        if (cursor > 0xFFFFFFFFU - entry_size) return 0;
+        cursor += entry_size;
+    }
+    if (matches != 1) return 0;
+    *resolved_stub = match;
+    return 1;
+}
+
+static void zeroCtrlInstallVshCtrl314A4Trace(void) {
+    ZeroCtrlVshTriggerEvidence *storage_total = &slide_diag.triggers[1];
+    ZeroCtrlVshTriggerEvidence *storage_pending = &slide_diag.triggers[2];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int text, owner, original, target;
+    unsigned int trace_helper, trace_tail, tail_original;
+    unsigned int replacement, tail_replacement;
+
+    slide_diag.vshctrl314a4_attempted = 1;
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            !slide_diag.vsh_module_seen || !slide_diag.functional_request_armed ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
+                vsh->text_size) ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x314A8 ||
+            !zeroCtrlVshModuleRangeValid(vsh,
+                vsh->text_addr + 0x31494, 0x18) ||
+            !zeroCtrlResolveVshCtrlPeekImport(vsh, &target))
+        return;
+    text = vsh->text_addr;
+    owner = text + 0x314A4;
+    if (_lw(text + 0x31494) != 0x27BDFFE0 ||
+            _lw(text + 0x31498) != 0x03A02021 ||
+            _lw(text + 0x3149C) != 0x24050001 ||
+            _lw(text + 0x314A0) != 0xAFBF0014 ||
+            _lw(text + 0x314A8) != 0xAFB00010)
+        return;
+    original = _lw(owner);
+    if ((original >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner, original) != target ||
+            storage_total->patch_applied || storage_total->cache_sync ||
+            storage_pending->patch_applied || storage_pending->cache_sync ||
+            storage_pending->stub_addr > 0xFFFFFFFFU - 24)
+        return;
+    trace_helper = storage_pending->stub_addr + 24;
+    if ((storage_pending->stub_addr & 3) != 0 || (trace_helper & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_pending->stub_addr, 24) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace_helper, 80) ||
+            storage_total->counter_addr == 0 ||
+            (storage_total->counter_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                storage_total->counter_addr, 4) ||
+            storage_pending->counter_addr == 0 ||
+            (storage_pending->counter_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                storage_pending->counter_addr, 4) ||
+            slide_diag.triggers[0].request_addr == 0 ||
+            (slide_diag.triggers[0].request_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.triggers[0].request_addr, 4) ||
+            trace_helper > 0xFFFFFFFFU - 72)
+        return;
+    trace_tail = trace_helper + 72;
+    tail_original = _lw(trace_tail);
+    if (_lw(trace_helper) != 0x27BDFFF0 ||
+            _lw(trace_helper + 4) != 0xAFA80000 ||
+            _lw(trace_helper + 8) != 0xAFA90004 ||
+            _lw(trace_helper + 60) != 0x8FA90004 ||
+            _lw(trace_helper + 64) != 0x8FA80000 ||
+            _lw(trace_helper + 68) != 0x27BD0010 ||
+            (tail_original >> 26) != 2 || _lw(trace_tail + 4) != 0)
+        return;
+    replacement = 0x0C000000 | ((trace_helper >> 2) & 0x03FFFFFF);
+    tail_replacement = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(owner, replacement) != trace_helper ||
+            zeroCtrlMipsJumpTarget(trace_tail, tail_replacement) != target)
+        return;
+    slide_diag.vshctrl314a4_owner = owner;
+    slide_diag.vshctrl314a4_helper = trace_helper;
+    slide_diag.vshctrl314a4_target = target;
+    slide_diag.vshctrl314a4_validation = 1;
+    _sw(tail_replacement, trace_tail);
+    sceKernelDcacheWritebackInvalidateRange((const void *)trace_tail, 4);
+    sceKernelIcacheInvalidateRange((const void *)trace_tail, 4);
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    slide_diag.vshctrl314a4_install = 1;
+    slide_diag.vshctrl314a4_cache_sync = 1;
+}
+
+static int zeroCtrlReadVshCtrl314A4Telemetry(unsigned int state[4]) {
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int address[4];
+    unsigned int i;
+
+    address[0] = slide_diag.triggers[1].counter_addr;
+    address[1] = slide_diag.triggers[2].counter_addr;
+    address[2] = slide_diag.triggers[0].request_addr;
+    address[3] = slide_diag.triggers[0].counter_addr;
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(helper))
+        return 0;
+    for (i = 0; i < 4; i++)
+        if (address[i] == 0 || (address[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, address[i], 4))
+            return 0;
+    for (i = 0; i < 4; i++) state[i] = _lw(address[i]);
+    return 1;
 }
 
 static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
@@ -6259,6 +7137,14 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_functional_home[11] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    int observed_vshctrl314a4_install = 0;
+    int observed_vshctrl314a4_home = 0;
+    int observed_vshctrl314a4_posthome = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6572,7 +7458,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             sizeof(state)) != 0) {
                     memcpy(observed_functional_return_install, state, sizeof(state));
                     snprintf(line, sizeof(line),
-                            "[psp1000-functional-activation-return-install] "
+                            "[psp1000-functional-paf-dispatch-return-install] "
                             "rev=1 validation=%u install=%u cache_sync=%u\n",
                             state[0], state[1], state[2]);
                     zeroCtrlDiagnosticsText(line);
@@ -6593,7 +7479,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 if (memcmp(state, observed_functional_return, sizeof(state)) != 0) {
                     memcpy(observed_functional_return, state, sizeof(state));
                     snprintf(line, sizeof(line),
-                            "[psp1000-functional-activation-return] returns=%u "
+                            "[psp1000-functional-paf-dispatch-return] returns=%u "
                             "paf_ret=%u bs_ret=%u state_ret=%u vsh_ret=%u "
                             "first_ra=0x%08X last_ra=0x%08X ra_changes=%u "
                             "first_v0=0x%08X last_v0=0x%08X v0_changes=%u\n",
@@ -6661,6 +7547,94 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 zeroCtrlDiagnosticsText(
                         "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
+            }
+            if (!slide_diag.vshctrl314a4_attempted &&
+                    slide_diag.functional_enabled &&
+                    slide_diag.vsh_module_seen &&
+                    slide_diag.functional_request_armed)
+                zeroCtrlInstallVshCtrl314A4Trace();
+            if (slide_diag.vshctrl314a4_attempted &&
+                    !observed_vshctrl314a4_install) {
+                snprintf(line, sizeof(line),
+                        "[psp1000-vshctrl314a4-install] validation=%d "
+                        "install=%d cache_sync=%d owner=0x%08X helper=0x%08X "
+                        "target=0x%08X\n",
+                        slide_diag.vshctrl314a4_validation,
+                        slide_diag.vshctrl314a4_install,
+                        slide_diag.vshctrl314a4_cache_sync,
+                        slide_diag.vshctrl314a4_owner,
+                        slide_diag.vshctrl314a4_helper,
+                        slide_diag.vshctrl314a4_target);
+                zeroCtrlDiagnosticsText(line);
+                observed_vshctrl314a4_install = 1;
+            }
+            if (slide_diag.vshctrl314a4_home_baseline_captured) {
+                unsigned int trace_state[4] = { 0, 0, 0, 0 };
+                int trace_valid = zeroCtrlReadVshCtrl314A4Telemetry(trace_state);
+                unsigned int baseline_valid = trace_valid &&
+                        slide_diag.vshctrl314a4_home_baseline_valid;
+                if (!observed_vshctrl314a4_home) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-vshctrl314a4-home] baseline_valid=%u "
+                            "shared_total=%u pending_baseline=%u request=%u\n",
+                            baseline_valid, trace_valid ? trace_state[0] : 0,
+                            slide_diag.vshctrl314a4_pending_baseline,
+                            trace_valid ? trace_state[2] : 0);
+                    zeroCtrlDiagnosticsText(line);
+                    observed_vshctrl314a4_home = 1;
+                }
+                if (!observed_vshctrl314a4_posthome && baseline_valid &&
+                        trace_state[2] == 1 &&
+                        !slide_diag.functional_trigger_consumed &&
+                        trace_state[1] >
+                        slide_diag.vshctrl314a4_pending_baseline) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-vshctrl314a4-posthome] "
+                            "pending_baseline=%u pending=%u delta=%u request=%u "
+                            "home_press=%u consumed_hits=%u consumed=%u\n",
+                            slide_diag.vshctrl314a4_pending_baseline,
+                            trace_state[1], trace_state[1] -
+                            slide_diag.vshctrl314a4_pending_baseline,
+                            trace_state[2], slide_diag.functional_home_press_hits,
+                            trace_state[3],
+                            slide_diag.functional_trigger_consumed);
+                    zeroCtrlDiagnosticsText(line);
+                    observed_vshctrl314a4_posthome = 1;
+                }
+            }
+            if (slide_diag.functional_enabled) {
+                ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
+                SceModule2 *helper =
+                        sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+                unsigned int state[11];
+                state[0] = slide_diag.functional_home_press_hits;
+                state[1] = slide_diag.functional_home_first_load_attempts;
+                state[2] = slide_diag.functional_home_first_load_published;
+                state[3] = slide_diag.functional_home_first_load_reject_reason;
+                state[4] = slide_diag.functional_home_open_pending;
+                state[5] = 0xFFFFFFFF;
+                if (zeroCtrlLoadedModuleMetadataValid(helper) &&
+                        trigger->request_addr != 0 &&
+                        (trigger->request_addr & 3) == 0 &&
+                        zeroCtrlVshModuleRangeValid(helper,
+                            trigger->request_addr, 4))
+                    state[5] = _lw(trigger->request_addr);
+                state[6] = zeroCtrlReadTriggerHits(0);
+                state[7] = slide_diag.functional_trigger_consumed;
+                state[8] = slide_diag.bsman.functional_validation;
+                state[9] = slide_diag.bsman.functional_install;
+                state[10] = slide_diag.bsman.functional_cache_sync;
+                if (memcmp(state, observed_functional_home, sizeof(state)) != 0) {
+                    memcpy(observed_functional_home, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-home] press=%u attempt=%u "
+                            "published=%u reject=%u pending=%u request=%u "
+                            "hit=%u consumed=%u compat=%u/%u/%u\n",
+                            state[0], state[1], state[2], state[3], state[4],
+                            state[5], state[6], state[7], state[8], state[9],
+                            state[10]);
+                    zeroCtrlDiagnosticsText(line);
+                }
             }
             if (slide_diag.functional_request_armed &&
                     !slide_diag.functional_trigger_consumed) {
@@ -8685,6 +9659,26 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         }
     }
     if (slide_diag.minimal_memory_test) {
+        unsigned int trace_state[4] = { 0, 0, 0, 0 };
+        int trace_valid = zeroCtrlReadVshCtrl314A4Telemetry(trace_state);
+        unsigned int baseline_valid = trace_valid &&
+                slide_diag.vshctrl314a4_home_baseline_valid;
+        unsigned int delta = baseline_valid && trace_state[2] == 1 &&
+                !slide_diag.functional_trigger_consumed && trace_state[1] >=
+                slide_diag.vshctrl314a4_pending_baseline ? trace_state[1] -
+                slide_diag.vshctrl314a4_pending_baseline : 0;
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl314a4-final] baseline_valid=%u "
+                "shared_total=%u pending_baseline=%u pending=%u delta=%u "
+                "request=%u home_press=%u consumed_hits=%u consumed=%u\n",
+                baseline_valid, trace_valid ? trace_state[0] : 0,
+                slide_diag.vshctrl314a4_pending_baseline,
+                trace_valid ? trace_state[1] : 0, delta,
+                trace_valid ? trace_state[2] : 0,
+                slide_diag.functional_home_press_hits,
+                trace_valid ? trace_state[3] : 0,
+                slide_diag.functional_trigger_consumed);
+        zeroCtrlDiagnosticsText(line);
         zeroCtrlDiagnosticsText(
                 "[checkpoint-fast] minimal_observation_window_complete\n");
         slide_diag.deferred_thread_started = 0;
@@ -9416,7 +10410,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     unsigned int paf_matches = 0, bsman_matches = 0, vshbridge_matches = 0;
     unsigned int bsman_callers = 0, bsman_caller = 0;
     unsigned int owner[4], original[4], replacement[4], leaf[4], leaf_size[4];
-    unsigned int scalar[40], scalar_count = 0, i;
+    unsigned int scalar[40], scalar_count = 0, initial_mode, i;
 
     bsman->functional_activation_stage = 1;
     if (!slide_diag.functional_enabled || model != 0 ||
@@ -9587,10 +10581,11 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
 
     bsman->activation_addr = activation;
     bsman->caller_addr = owner[1];
+    initial_mode = slide_diag.functional_home_open_pending ? 1 : 0;
     _sw(0, bsman->prefix_path_mask_addr);
     _sw(paf_stub, bsman->prefix_paf_target_addr);
     _sw(0, bsman->prefix_paf_ra_addr);
-    _sw(1, bsman->prefix_paf_compat_mode_addr);
+    _sw(initial_mode, bsman->prefix_paf_compat_mode_addr);
     _sw(0, bsman->prefix_paf_natural_result_addr);
     _sw(0, bsman->prefix_paf_substitution_hits_addr);
     _sw(0, bsman->prefix_paf_return_hits_addr);
@@ -9600,7 +10595,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0, bsman->trace_stage_addr);
     _sw(0, bsman->post_path_mask_addr);
     _sw(0, bsman->bsman_natural_result_addr);
-    _sw(1, bsman->bsman_compat_mode_addr);
+    _sw(initial_mode, bsman->bsman_compat_mode_addr);
     _sw(0, bsman->bsman_substitution_hits_addr);
     _sw(0, bsman->bsman_effective_result_addr);
     _sw(0, bsman->bsman_return_hits_addr);
@@ -9610,7 +10605,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0, bsman->post_vsh_return_hits_addr);
     _sw(0, bsman->post_vsh_entry_hits_addr);
     _sw(0xFFFFFFFF, bsman->post_vsh_argument_addr);
-    _sw(1, bsman->post_vsh_compat_mode_addr);
+    _sw(initial_mode, bsman->post_vsh_compat_mode_addr);
     _sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr);
     _sw(0, bsman->post_vsh_substitution_hits_addr);
     _sw(0, bsman->state_zero_path_mask_addr);
@@ -9619,7 +10614,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0xFFFFFFFF, bsman->state_zero_value_addr[6]);
     _sw(0, bsman->state_zero_counter_addr[1]);
     _sw(0, bsman->state_zero_counter_addr[2]);
-    _sw(1, bsman->state_zero_15to14_compat_mode_addr);
+    _sw(initial_mode, bsman->state_zero_15to14_compat_mode_addr);
     _sw(0xFFFFFFFF, bsman->state_zero_15to14_effective_result_addr);
     _sw(0, bsman->state_zero_15to14_substitution_hits_addr);
     for (i = 0; i < scalar_count; i++)
@@ -9635,6 +10630,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     bsman->functional_validation = 1;
     bsman->functional_install = 1;
     bsman->functional_cache_sync = 1;
+    slide_diag.functional_home_open_pending = 0;
     bsman->functional_activation_stage = 13;
 }
 
@@ -9918,32 +10914,49 @@ static void zeroCtrlInstallPsp1000ExitDiagnostic(SceModule2 *mod) {
     b->functional_exit_cache_sync = 1;
 }
 
-static void zeroCtrlInstallPsp1000ActivationReturnDiagnostic(SceModule2 *mod) {
-    static const unsigned int epilogue[9] = {
-        0x8FB60018, 0x8FB50014, 0x8FB40010, 0x8FB3000C, 0x8FB20008,
-        0x8FB10004, 0x8FB00000, 0x03E00008, 0x27BD0020
+static void zeroCtrlInstallPsp1000PafDispatchReturnDiagnostic(SceModule2 *mod) {
+    static const unsigned int fingerprint_offset[14] = {
+        0xDEA1C, 0xDEA20, 0xDEA28, 0xDEA2C, 0xDEA30,
+        0xDEABC, 0xDEAC0,
+        0xDEAD8, 0xDEADC, 0xDEAE0, 0xDEAE4, 0xDEAE8, 0xDEAEC, 0xDEAF0
+    };
+    static const unsigned int fingerprint[14] = {
+        0x27BDFFD0, 0xAFB00020, 0xAFBF002C, 0xAFB20028, 0xAFB10024,
+        0x0100F809, 0x8CE7002C,
+        0x8FBF002C, 0x8FB20028, 0x8FB10024, 0x8FB00020, 0x00601021,
+        0x03E00008, 0x27BD0030
     };
     ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-    unsigned int a, owner, replacement, i;
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    unsigned int owner, replacement, jump, caller, i;
     if (!slide_diag.functional_enabled || model != 0 ||
             sceKernelDevkitVersion() != 0x06060110 ||
             !b->functional_validation || !b->functional_install ||
             !b->functional_cache_sync || !b->functional_return_registered ||
             !zeroCtrlLoadedModuleMetadataValid(mod) ||
-            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
-    a = mod->text_addr + 0x9304;
-    if (b->activation_addr != a ||
-            !zeroCtrlVshModuleRangeValid(mod, a + 0x50, 0x24)) return;
-    for (i = 0; i < 9; i++)
-        if (_lw(a + 0x50 + i * 4) != epilogue[i]) return;
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
+            paf->text_addr > 0xFFFFFFFFU - 0xDECE0 ||
+            !zeroCtrlVshModuleRangeValid(paf, paf->text_addr + 0xDEA1C,
+                0x2C8)) return;
+    for (i = 0; i < 14; i++)
+        if (_lw(paf->text_addr + fingerprint_offset[i]) != fingerprint[i]) return;
+    jump = _lw(paf->text_addr + 0xDEAC4);
+    if ((jump >> 26) != 2 || zeroCtrlMipsJumpTarget(
+                paf->text_addr + 0xDEAC4, jump) != paf->text_addr + 0xDEA64 ||
+            _lw(paf->text_addr + 0xDEAC8) != 0x8E0901A0) return;
+    caller = _lw(paf->text_addr + 0xDECD8);
+    if ((caller >> 26) != 3 || zeroCtrlMipsJumpTarget(
+                paf->text_addr + 0xDECD8, caller) != paf->text_addr + 0xDEA1C)
+        return;
     if (!zeroCtrlVshModuleRangeValid(helper, b->functional_return_leaf,
                 b->functional_return_leaf_size)) return;
     for (i = 0; i < 7; i++)
         if ((b->functional_return_scalar[i] & 3) ||
                 !zeroCtrlVshModuleRangeValid(helper,
                     b->functional_return_scalar[i], 4)) return;
-    owner = a + 0x6C;
+    owner = paf->text_addr + 0xDEAEC;
     replacement = 0x08000000 |
             ((b->functional_return_leaf >> 2) & 0x03FFFFFF);
     if (((owner + 4) & 0xF0000000) !=
@@ -11247,7 +12260,6 @@ int OnModuleStart(SceModule2 *mod) {
                 zeroCtrlInstallSonyStartTrace(mod);
                 if (slide_diag.functional_enabled) {
                     zeroCtrlInstallPsp1000FunctionalCompat(mod);
-                    zeroCtrlInstallPsp1000PostBSRouteDiagnostic(mod);
                 } else {
                     zeroCtrlInstallBSManClosedShim(mod);
                 }
@@ -11463,6 +12475,142 @@ void zeroCtrlSetClockSpeed(void) {
 #define ALL_FUNCTION (PSP_CTRL_SELECT|PSP_CTRL_START|PSP_CTRL_HOME|PSP_CTRL_HOLD|PSP_CTRL_NOTE)
 #define ALL_CTRL  (ALL_ALLOW|ALL_BUTTON|ALL_TRIGGER|ALL_FUNCTION)
 
+static void zeroCtrlArmPsp1000FunctionalCompatFromHome(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int address[4], mode[4], i;
+
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !bsman->functional_validation || !bsman->functional_install ||
+            !bsman->functional_cache_sync ||
+            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
+    address[0] = bsman->bsman_compat_mode_addr;
+    address[1] = bsman->state_zero_15to14_compat_mode_addr;
+    address[2] = bsman->post_vsh_compat_mode_addr;
+    address[3] = bsman->prefix_paf_compat_mode_addr;
+    for (i = 0; i < 4; i++)
+        if (address[i] == 0 || (address[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, address[i], 4)) return;
+    for (i = 0; i < 4; i++) mode[i] = _lw(address[i]);
+    if (mode[0] == 1 && mode[1] == 1 && mode[2] == 1 && mode[3] == 1) return;
+    if (mode[0] != 0 || mode[1] != 0 || mode[2] != 0 || mode[3] != 0) return;
+    for (i = 0; i < 4; i++) {
+        _sw(1, address[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)address[i], 4);
+    }
+}
+
+static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+
+    slide_diag.functional_home_first_load_attempts++;
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_PLATFORM;
+        return;
+    }
+    if (bsman->functional_install) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_COMPAT_INSTALLED;
+        return;
+    }
+    if (!(slide_diag.trigger_mode & ZERO_TRIGGER_58D4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_MODE;
+        return;
+    }
+    if (!trigger->validation) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_VALIDATION;
+        return;
+    }
+    if (!trigger->patch_applied) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_PATCH;
+        return;
+    }
+    if (!trigger->cache_sync) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_CACHE;
+        return;
+    }
+    if (!zeroCtrlLoadedModuleMetadataValid(helper)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_HELPER;
+        return;
+    }
+    if (trigger->request_addr == 0 || (trigger->request_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, trigger->request_addr, 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_REQUEST_ADDRESS;
+        return;
+    }
+    if (trigger->functional_mode_addr == 0 ||
+            (trigger->functional_mode_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                trigger->functional_mode_addr, 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_MODE_ADDRESS;
+        return;
+    }
+    if (trigger->original_target_addr == 0 ||
+            (trigger->original_target_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                trigger->original_target_addr, 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TARGET_ADDRESS;
+        return;
+    }
+    if (_lw(trigger->functional_mode_addr) != 1) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_MODE_VALUE;
+        return;
+    }
+    if (_lw(trigger->request_addr) != 0) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_REQUEST_VALUE;
+        return;
+    }
+    if (slide_diag.functional_trigger_consumed) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_CONSUMED;
+        return;
+    }
+    if (slide_diag.functional_home_open_pending) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_PENDING;
+        return;
+    }
+    slide_diag.functional_home_open_pending = 1;
+    _sw(1, trigger->request_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trigger->request_addr, 4);
+    slide_diag.vshctrl314a4_home_baseline_captured = 1;
+    slide_diag.vshctrl314a4_home_baseline_valid = 0;
+    if (slide_diag.vshctrl314a4_validation &&
+            slide_diag.vshctrl314a4_install &&
+            slide_diag.vshctrl314a4_cache_sync &&
+            slide_diag.triggers[2].counter_addr != 0 &&
+            (slide_diag.triggers[2].counter_addr & 3) == 0 &&
+            zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.triggers[2].counter_addr, 4) &&
+            trigger->request_addr != 0 &&
+            (trigger->request_addr & 3) == 0 &&
+            zeroCtrlVshModuleRangeValid(helper, trigger->request_addr, 4) &&
+            _lw(trigger->request_addr) == 1 &&
+            !slide_diag.functional_trigger_consumed) {
+        slide_diag.vshctrl314a4_pending_baseline =
+                _lw(slide_diag.triggers[2].counter_addr);
+        slide_diag.vshctrl314a4_home_baseline_valid = 1;
+    }
+    slide_diag.functional_home_first_load_published++;
+    slide_diag.functional_home_first_load_reject_reason = ZERO_HOME_REJECT_NONE;
+}
+
 //OK
 void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 	SceCtrlLatch data;	
@@ -11475,8 +12623,15 @@ void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 				int request_ready = !slide_diag.functional_enabled;
 				zeroCtrlWriteDebug("Starting slide\n\n");
 				if (slide_diag.functional_enabled) {
-					/* Functional startup is pre-armed; HOME never executes Sony. */
+					slide_diag.functional_home_press_hits++;
+					/* HOME arms data-only compatibility; it never executes Sony. */
 					slide_diag.functional_runtime_request_blocked = 1;
+					if (slide_diag.bsman.functional_validation &&
+							slide_diag.bsman.functional_install &&
+							slide_diag.bsman.functional_cache_sync)
+						zeroCtrlArmPsp1000FunctionalCompatFromHome();
+					else
+						zeroCtrlRequestPsp1000FunctionalOpenFromHome();
 					request_ready = 0;
 				}
 				if (request_ready)

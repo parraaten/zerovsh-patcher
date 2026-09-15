@@ -44,6 +44,10 @@ zeroCtrlTrigger58D4:
     lw      $t1, %lo(zeroCtrlTrigger58D4FunctionalMode)($t0)
     beqz    $t1, 2f
     nop
+    lui     $t0, %hi(zeroCtrlTrigger13F6CHits)
+    lw      $t1, %lo(zeroCtrlTrigger13F6CHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlTrigger13F6CHits)($t0)
     lui     $t0, %hi(zeroCtrlTrigger58D4Request)
     lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)
     beqz    $t1, 1f
@@ -56,6 +60,10 @@ zeroCtrlTrigger58D4:
     jr      $ra
     addiu   $v0, $zero, 1
 1:
+    lui     $t0, %hi(zeroCtrlTrigger14020Hits)
+    lw      $t1, %lo(zeroCtrlTrigger14020Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlTrigger14020Hits)($t0)
     lui     $t0, %hi(zeroCtrlTrigger58D4OriginalTarget)
     lw      $t0, %lo(zeroCtrlTrigger58D4OriginalTarget)($t0)
     jr      $t0
@@ -72,6 +80,38 @@ zeroCtrlTrigger58D4End:
 .end zeroCtrlTrigger58D4
 CREATE_TRIGGER_STUB zeroCtrlTrigger13F6C, zeroCtrlTrigger13F6CHits
 CREATE_TRIGGER_STUB zeroCtrlTrigger14020, zeroCtrlTrigger14020Hits
+
+.globl zeroCtrlVsh589CCallTrace
+.type zeroCtrlVsh589CCallTrace @function
+.ent zeroCtrlVsh589CCallTrace, 0
+zeroCtrlVsh589CCallTrace:
+    addiu   $sp, $sp, -16
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlTrigger13F6CHits)
+    lw      $t1, %lo(zeroCtrlTrigger13F6CHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlTrigger13F6CHits)($t0)
+    lui     $t0, %hi(zeroCtrlTrigger58D4Request)
+    lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)
+    beqz    $t1, 3f
+    nop
+    lui     $t0, %hi(zeroCtrlTrigger14020Hits)
+    lw      $t1, %lo(zeroCtrlTrigger14020Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlTrigger14020Hits)($t0)
+3:
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 16
+.globl zeroCtrlVsh589CCallTraceTail
+zeroCtrlVsh589CCallTraceTail:
+    j       0
+    nop
+.globl zeroCtrlVsh589CCallTraceEnd
+zeroCtrlVsh589CCallTraceEnd:
+.end zeroCtrlVsh589CCallTrace
+
 CREATE_TRIGGER_STUB zeroCtrlGlobalPredicate6F84True, zeroCtrlGlobalPredicate6F84Hits
 
 .section .bss
@@ -312,6 +352,11 @@ zeroCtrlBSManReturnTraceEnd:
 .type zeroCtrlPostBSManBranchTrace @function
 .ent zeroCtrlPostBSManBranchTrace, 0
 zeroCtrlPostBSManBranchTrace:
+    addiu   $sp, $sp, -16
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t2, 8($sp)
+    sw      $t9, 12($sp)
     lui     $t0, %hi(zeroCtrlPostStateNaturalValue)
     sw      $v0, %lo(zeroCtrlPostStateNaturalValue)($t0)
     lui     $t0, %hi(zeroCtrlPostBSManEffectiveResult)
@@ -333,8 +378,12 @@ zeroCtrlPostBSManBranchTrace:
     lui     $t0, %hi(zeroCtrlPostBSManZero)
     lw      $t9, %lo(zeroCtrlPostBSManZero)($t0)
 9:
+    lw      $t2, 8($sp)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 16
     jr      $t9
-    nop
+    lw      $t9, -4($sp)
 .globl zeroCtrlPostBSManBranchTraceEnd
 zeroCtrlPostBSManBranchTraceEnd:
 .end zeroCtrlPostBSManBranchTrace
@@ -343,6 +392,11 @@ zeroCtrlPostBSManBranchTraceEnd:
 .type zeroCtrlPostStateBranchTrace @function
 .ent zeroCtrlPostStateBranchTrace, 0
 zeroCtrlPostStateBranchTrace:
+    addiu   $sp, $sp, -16
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t2, 8($sp)
+    sw      $t9, 12($sp)
     lui     $t0, %hi(zeroCtrlPostStateNaturalValue)
     lw      $t2, %lo(zeroCtrlPostStateNaturalValue)($t0)
     lui     $t0, %hi(zeroCtrlPostPathMask)
@@ -362,8 +416,12 @@ zeroCtrlPostStateBranchTrace:
     lui     $t0, %hi(zeroCtrlPostStateZero)
     lw      $t9, %lo(zeroCtrlPostStateZero)($t0)
 11:
+    lw      $t2, 8($sp)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 16
     jr      $t9
-    nop
+    lw      $t9, -4($sp)
 .globl zeroCtrlPostStateBranchTraceEnd
 zeroCtrlPostStateBranchTraceEnd:
 .end zeroCtrlPostStateBranchTrace
@@ -482,6 +540,14 @@ zeroCtrlPostVshReturnTrace:
     lw      $t1, %lo(zeroCtrlPostVshSubstitutionHits)($t0)
     addiu   $t1, $t1, 1
     sw      $t1, %lo(zeroCtrlPostVshSubstitutionHits)($t0)
+    lui     $t0, %hi(zeroCtrlSlidePrefixPafCompatMode)
+    sw      $zero, %lo(zeroCtrlSlidePrefixPafCompatMode)($t0)
+    lui     $t0, %hi(zeroCtrlPostBSManCompatMode)
+    sw      $zero, %lo(zeroCtrlPostBSManCompatMode)($t0)
+    lui     $t0, %hi(zeroCtrlStateZero15To14CompatMode)
+    sw      $zero, %lo(zeroCtrlStateZero15To14CompatMode)($t0)
+    lui     $t0, %hi(zeroCtrlPostVshCompatMode)
+    sw      $zero, %lo(zeroCtrlPostVshCompatMode)($t0)
 66:
     lui     $t0, %hi(zeroCtrlPostVshEffectiveResult)
     sw      $v0, %lo(zeroCtrlPostVshEffectiveResult)($t0)
@@ -794,6 +860,11 @@ zeroCtrlPostImposeVCallReturnTraceEnd:
 .type zeroCtrlStateZeroCompareTrace @function
 .ent zeroCtrlStateZeroCompareTrace, 0
 zeroCtrlStateZeroCompareTrace:
+    addiu   $sp, $sp, -16
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t2, 8($sp)
+    sw      $t9, 12($sp)
     lui     $t0, %hi(zeroCtrlStateZeroCompareLeft)
     sw      $s2, %lo(zeroCtrlStateZeroCompareLeft)($t0)
     lui     $t0, %hi(zeroCtrlStateZeroCompareRight)
@@ -814,8 +885,12 @@ zeroCtrlStateZeroCompareTrace:
     lui     $t0, %hi(zeroCtrlStateZeroCompareEqual)
     lw      $t9, %lo(zeroCtrlStateZeroCompareEqual)($t0)
 31:
+    lw      $t2, 8($sp)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 16
     jr      $t9
-    nop
+    lw      $t9, -4($sp)
 .globl zeroCtrlStateZeroCompareTraceEnd
 zeroCtrlStateZeroCompareTraceEnd:
 .end zeroCtrlStateZeroCompareTrace
@@ -824,6 +899,10 @@ zeroCtrlStateZeroCompareTraceEnd:
 .type zeroCtrlStateZeroWordTrace @function
 .ent zeroCtrlStateZeroWordTrace, 0
 zeroCtrlStateZeroWordTrace:
+    addiu   $sp, $sp, -16
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t9, 8($sp)
     lui     $t0, %hi(zeroCtrlStateZeroWordValue)
     sw      $v1, %lo(zeroCtrlStateZeroWordValue)($t0)
     lui     $t0, %hi(zeroCtrlStateZeroPathMask)
@@ -841,8 +920,11 @@ zeroCtrlStateZeroWordTrace:
     lui     $t0, %hi(zeroCtrlStateZeroWordNonzero)
     lw      $t9, %lo(zeroCtrlStateZeroWordNonzero)($t0)
 33:
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 16
     jr      $t9
-    nop
+    lw      $t9, -8($sp)
 .globl zeroCtrlStateZeroWordTraceEnd
 zeroCtrlStateZeroWordTraceEnd:
 .end zeroCtrlStateZeroWordTrace
@@ -851,6 +933,10 @@ zeroCtrlStateZeroWordTraceEnd:
 .type zeroCtrlStateZeroByteTrace @function
 .ent zeroCtrlStateZeroByteTrace, 0
 zeroCtrlStateZeroByteTrace:
+    addiu   $sp, $sp, -16
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t9, 8($sp)
     lui     $t0, %hi(zeroCtrlStateZeroByteValue)
     sw      $v1, %lo(zeroCtrlStateZeroByteValue)($t0)
     lui     $t0, %hi(zeroCtrlStateZeroPathMask)
@@ -868,8 +954,11 @@ zeroCtrlStateZeroByteTrace:
     lui     $t0, %hi(zeroCtrlStateZeroByteNonzero)
     lw      $t9, %lo(zeroCtrlStateZeroByteNonzero)($t0)
 35:
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+    addiu   $sp, $sp, 16
     jr      $t9
-    nop
+    lw      $t9, -8($sp)
 .globl zeroCtrlStateZeroByteTraceEnd
 zeroCtrlStateZeroByteTraceEnd:
 .end zeroCtrlStateZeroByteTrace

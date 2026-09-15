@@ -360,7 +360,7 @@ def check_sources(root):
     if minimal_start + minimal.find("continue;") > writer.find("[paf-parent-a0]"):
         fail("minimal memory test does not bypass parent/PAF diagnostics")
     vsh58_start = kernel.find("static void zeroCtrlWriteFunctionalVsh58Map(void)")
-    vsh58_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(",
+    vsh58_end = kernel.find("static void zeroCtrlWriteVsh589cWindow(",
             vsh58_start)
     if vsh58_start < 0 or vsh58_end < 0:
         fail("functional PSP-1000 VSH+58D4 map is missing")
@@ -402,7 +402,8 @@ def check_sources(root):
         fail("large VSH+58D4 map is still emitted automatically")
     scan_start = kernel.find(
             "static void zeroCtrlWriteFunctionalVshRequestCallers(void)")
-    scan_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(", scan_start)
+    scan_end = kernel.find("static void zeroCtrlInstallVsh589CCallTrace(void)",
+            scan_start)
     if scan_start < 0 or scan_end < 0:
         fail("read-only VSH +589C caller scan is missing")
     request_scan = kernel[scan_start:scan_end]
@@ -441,6 +442,89 @@ def check_sources(root):
             fail("bounded VSH +589C caller window lacks " + definition)
     if any(token in request_helpers for token in ("_sw(", "Dcache", "Icache")):
         fail("bounded VSH +589C caller/A0 analysis is not read-only")
+    structure_start = kernel.find(
+            "static void zeroCtrlWriteFunctionalCallbackStructure(void)")
+    metadata_declaration = kernel.find(
+            "static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod);")
+    metadata_definition = kernel.find(
+            "static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod) {")
+    if not 0 <= metadata_declaration < structure_start < metadata_definition:
+        fail("loaded-module metadata declaration does not precede VSH +589C capture")
+    structure_end = kernel.find("static int zeroCtrlVsh589cA0Definition(",
+            structure_start)
+    structure = kernel[structure_start:structure_end]
+    for token in ('sceKernelFindModuleByName("vsh_module")', "model != 0",
+            "sceKernelDevkitVersion() != 0x06060110",
+            "!slide_diag.functional_enabled",
+            "!zeroCtrlLoadedModuleMetadataValid(vsh)",
+            'strcmp(vsh->modname, "vsh_module") != 0',
+            "vsh->modid != slide_diag.vsh_modid",
+            "vsh->text_addr != slide_diag.vsh_text_addr",
+            "vsh->text_size != slide_diag.vsh_text_size",
+            "vsh->text_addr > 0xFFFFFFFFU - 0x5894",
+            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x5894,",
+            "0x5C", "words=23",
+            "for (offset = 0x5894; offset <= 0x58EC; offset += 4)",
+            "word = _lw(pc)", "opcode = word >> 26",
+            'class_name = "SPECIAL"', 'class_name = "J"',
+            'class_name = "JAL"', 'class_name = "JR"',
+            'class_name = "JALR"', 'class_name = "REGIMM"',
+            'class_name = "BEQ"', 'class_name = "BNE"',
+            'class_name = "BLEZ"', 'class_name = "BGTZ"',
+            'class_name = "BEQL"', 'class_name = "BNEL"',
+            'class_name = "BLEZL"', 'class_name = "BGTZL"',
+            "zeroCtrlMipsJumpTarget(pc, word) - vsh->text_addr",
+            "opcode >= 0x14 && opcode <= 0x17",
+            "pc + 4 + displacement * 4 - vsh->text_addr",
+            "[psp1000-vsh589c-structure] validation=1",
+            "[psp1000-vsh589c-word] off=0x%05X word=0x%08X",
+            "class=%s op=%u rs=%u rt=%u rd=%u sa=%u fn=%u ",
+            "target=0x%05X"):
+        if token not in structure:
+            fail("VSH +589C structural capture lacks " + token)
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
+            "hook_import", "zeroCtrlRedir", "zeroCtrlTrigger58D4(",
+            "zeroCtrlSetSlideState", "Alloc", "malloc"):
+        if forbidden in structure:
+            fail("VSH +589C structural capture is not read-only: " + forbidden)
+    structure_range = structure.find(
+            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x5894,")
+    structure_read = structure.find("word = _lw(pc)")
+    if not 0 <= structure_range < structure_read:
+        fail("VSH +589C capture reads before validating its complete 0x5C-byte range")
+    if "zeroCtrlWriteFunctionalCallbackStructure();" in writer:
+        fail("retired VSH +589C structural capture is still emitted automatically")
+    install_start = kernel.find("static void zeroCtrlInstallVsh589CCallTrace(void)")
+    install_end = kernel.find("static int zeroCtrlResolveVshCtrlPeekImport(",
+            install_start)
+    vsh589c_install = kernel[install_start:install_end]
+    for token in ("!slide_diag.minimal_memory_test",
+            "vsh->modid != slide_diag.vsh_modid",
+            "vsh->text_addr != slide_diag.vsh_text_addr",
+            "vsh->text_size != slide_diag.vsh_text_size",
+            "(_lw(text + 0x589C) & 0xFFFF0000) != 0x3C020000",
+            "_lw(text + 0x58A0) != 0x27BDFFF0",
+            "(_lw(text + 0x58A4) & 0xFFFF0000) != 0xAC440000",
+            "_lw(text + 0x58A8) != 0xAFBF0000",
+            "owner = text + 0x58AC", "_lw(text + 0x58B0) != 0",
+            "original_target != text + 0x5C98",
+            "trace_helper = storage_pending->stub_addr + 24",
+            "zeroCtrlVshModuleRangeValid(helper, trace_helper, 80)",
+            "trace_tail = trace_helper + 72", "owner + 8",
+            "_sw(0, storage_total->counter_addr)",
+            "_sw(0, storage_pending->counter_addr)",
+            "_sw(tail_replacement, trace_tail)", "_sw(replacement, owner)"):
+        if token not in vsh589c_install:
+            fail("VSH +58AC diagnostic transaction lacks " + token)
+    tail_write = vsh589c_install.find("_sw(tail_replacement, trace_tail)")
+    tail_icache = vsh589c_install.find("sceKernelIcacheInvalidateRange(", tail_write)
+    owner_write = vsh589c_install.find("_sw(replacement, owner)", tail_icache)
+    owner_icache = vsh589c_install.find("sceKernelIcacheInvalidateRange(", owner_write)
+    if not 0 <= tail_write < tail_icache < owner_write < owner_icache or \
+            vsh589c_install.count("_sw(") != 4:
+        fail("VSH +58AC diagnostic does not commit tail/counters before sole owner")
+    if "zeroCtrlInstallVsh589CCallTrace();" in writer:
+        fail("retired VSH +58AC diagnostic installer remains active")
     if "zeroCtrlWriteFunctionalVshRequestCallers();" in kernel:
         fail("superseded VSH +589C/+57B0 scan is still emitted automatically")
     vsh3_start = kernel.find(
@@ -1447,7 +1531,7 @@ def check_sources(root):
         if token not in minimal_gate:
             fail("minimal memory test gate lacks " + token)
     fast_memory_start = kernel.find("static void zeroCtrlWriteFastMemory(")
-    fast_memory_end = kernel.find("static int zeroCtrlWriteSlideDiagnostics(",
+    fast_memory_end = kernel.find("static void zeroCtrlInstallVsh589CCallTrace(void)",
             fast_memory_start)
     fast_memory = kernel[fast_memory_start:fast_memory_end]
     for token in ("[mem-fast] %s total_free=%u largest_block=%u",
@@ -1509,6 +1593,7 @@ def check_sources(root):
         assembly.find("zeroCtrlTrigger58D4End:")]
     for token in ("zeroCtrlTrigger58D4FunctionalMode",
             "zeroCtrlTrigger58D4Request", "zeroCtrlTrigger58D4OriginalTarget",
+            "zeroCtrlTrigger13F6CHits", "zeroCtrlTrigger14020Hits",
             "sw      $zero, %lo(zeroCtrlTrigger58D4Request)",
             "lw      $t0, %lo(zeroCtrlTrigger58D4OriginalTarget)($t0)",
             "jr      $t0", "jr      $ra", "addiu   $v0, $zero, 1"):
@@ -1518,17 +1603,36 @@ def check_sources(root):
             ("$k0", "$k1", "$sp", "$gp", "jal ", "jalr")):
         fail("functional 58D4 helper uses reserved/stateful registers or calls")
     request_test = trigger_leaf.find("beqz    $t1, 1f")
+    total_increment = trigger_leaf.find("zeroCtrlTrigger13F6CHits")
     request_clear = trigger_leaf.find(
             "sw      $zero, %lo(zeroCtrlTrigger58D4Request)", request_test)
     effective_true = trigger_leaf.find("addiu   $v0, $zero, 1", request_clear)
     natural_label = trigger_leaf.find("1:", effective_true)
+    delegated_increment = trigger_leaf.find("zeroCtrlTrigger14020Hits",
+            natural_label)
     natural_target = trigger_leaf.find(
             "lw      $t0, %lo(zeroCtrlTrigger58D4OriginalTarget)($t0)",
             natural_label)
     natural_tail = trigger_leaf.find("jr      $t0", natural_target)
-    if not 0 <= request_test < request_clear < effective_true < natural_label < \
-            natural_target < natural_tail:
+    if not 0 <= total_increment < request_test < request_clear < effective_true < \
+            natural_label < delegated_increment < natural_target < natural_tail:
         fail("functional 58D4 helper does not consume once or preserve natural tail")
+    trace_start = assembly.find("zeroCtrlVsh589CCallTrace:")
+    trace_end = assembly.find("zeroCtrlVsh589CCallTraceEnd:", trace_start)
+    vsh589c_trace = assembly[trace_start:trace_end]
+    trace_tokens = ("addiu   $sp, $sp, -16", "sw      $t0, 0($sp)",
+            "sw      $t1, 4($sp)", "zeroCtrlTrigger13F6CHits",
+            "lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)",
+            "beqz    $t1, 3f", "zeroCtrlTrigger14020Hits",
+            "lw      $t1, 4($sp)", "lw      $t0, 0($sp)",
+            "addiu   $sp, $sp, 16", "zeroCtrlVsh589CCallTraceTail:",
+            "j       0", "nop")
+    if trace_start < 0 or any(token not in vsh589c_trace for token in trace_tokens):
+        fail("VSH +58AC trace helper lacks exact transparent grammar")
+    for forbidden in ("sw      $zero, %lo(zeroCtrlTrigger58D4Request)",
+            "CompatMode", "jal ", "jalr", "syscall", "sceIo", "Alloc", "malloc"):
+        if forbidden in vsh589c_trace:
+            fail("VSH +58AC trace helper mutates functional state or calls code")
     record_start = kernel.find("void zeroCtrlRecordVshSlideTarget(")
     record_end = kernel.find("int (*msIoOpen)", record_start)
     record = kernel[record_start:record_end]
@@ -1538,7 +1642,9 @@ def check_sources(root):
             "(evidence->request_addr & 3) == 0",
             "zeroCtrlVshModuleRangeValid(helper,\n                                evidence->request_addr, 4)",
             "_sw(0, request_evidence->request_addr)",
-            "_sw(1, request_evidence->request_addr)",
+            "!zeroCtrlVshModuleRangeValid(helper, counters[1], 4)",
+            "!zeroCtrlVshModuleRangeValid(helper, counters[2], 4)",
+            "_sw(0, counters[1])", "_sw(0, counters[2])",
             "_sw(request_evidence->original_target",
             "_sw(slide_diag.functional_enabled ? 1 : 0",
             "sceKernelDcacheWritebackInvalidateRange("):
@@ -1549,31 +1655,59 @@ def check_sources(root):
     if "_sw(" in validation_pass:
         fail("functional 58D4 validation pass performs a partial write")
     commit_guard = record.find("if (all_selected_valid)")
+    reused_counter_validation = record.find(
+            "!zeroCtrlVshModuleRangeValid(helper, counters[1], 4)")
+    reused_validation_guard = record.rfind(
+            "if (slide_diag.functional_enabled &&", 0,
+            reused_counter_validation)
     original_init = record.find("_sw(request_evidence->original_target",
             commit_guard)
     mode_init = record.find("_sw(slide_diag.functional_enabled ? 1 : 0",
             original_init)
-    functional_request_guard = record.find(
-            "if (slide_diag.functional_enabled)", mode_init)
-    startup_prearm = record.find("_sw(1, request_evidence->request_addr)",
-            functional_request_guard)
+    startup_request_zero = record.find("_sw(0, request_evidence->request_addr)",
+            mode_init)
     request_sync = record.find("sceKernelDcacheWritebackInvalidateRange(\n"
             "                            (const void *)request_evidence->request_addr, 4)",
-            startup_prearm)
-    trigger_commit = record.find("_sw(evidence->replacement_word",
+            startup_request_zero)
+    counter_init_guard = record.find("if (slide_diag.functional_enabled) {",
             request_sync)
+    total_zero = record.find("_sw(0, counters[1])", counter_init_guard)
+    delegated_zero = record.find("_sw(0, counters[2])", total_zero)
+    total_sync = record.find("(const void *)counters[1], 4", delegated_zero)
+    delegated_sync = record.find("(const void *)counters[2], 4", total_sync)
+    trigger_commit = record.find("_sw(evidence->replacement_word",
+            delegated_sync)
     patch_dcache = record.find("sceKernelDcacheWritebackInvalidateRange(",
             trigger_commit)
     patch_icache = record.find("sceKernelIcacheInvalidateRange(", patch_dcache)
     patch_synced = record.find("evidence->cache_sync = 1", patch_icache)
     armed_record = record.find("functional_request_armed = 1", patch_synced)
-    if not 0 <= commit_guard < original_init < mode_init < \
-            functional_request_guard < startup_prearm < request_sync < \
+    if not 0 <= reused_validation_guard < reused_counter_validation < commit_guard < \
+            original_init < mode_init < \
+            startup_request_zero < request_sync < counter_init_guard < total_zero < delegated_zero < \
+            total_sync < delegated_sync < \
             trigger_commit < patch_dcache < patch_icache < patch_synced < \
             armed_record:
-        fail("functional 58D4 pre-arm/install transaction is out of order")
-    if record.count("_sw(1, request_evidence->request_addr)") != 1:
-        fail("functional 58D4 request is not pre-armed exactly once")
+        fail("functional 58D4 closed-request/install transaction is out of order")
+    counter_init_end = record.find("\n                    }", delegated_sync)
+    counter_init = record[counter_init_guard:counter_init_end]
+    for token in ("_sw(0, counters[1])", "_sw(0, counters[2])",
+            "(const void *)counters[1], 4",
+            "(const void *)counters[2], 4"):
+        if counter_init.count(token) != 1:
+            fail("reused 58D4 counter operation escaped its functional guard: " +
+                    token)
+    historical_init = record[record.rfind(
+            "if (slide_diag.trigger_mode & ZERO_TRIGGER_58D4)", 0,
+            original_init):counter_init_guard]
+    for token in ("_sw(request_evidence->original_target",
+            "_sw(slide_diag.functional_enabled ? 1 : 0",
+            "_sw(0, request_evidence->request_addr)"):
+        if token not in historical_init:
+            fail("historical 58D4 scalar initialization moved under functional guard")
+    if record.count("_sw(0, request_evidence->request_addr)") != 1 or \
+            "_sw(1, request_evidence->request_addr)" in record:
+        fail("functional 58D4 startup request is not initialized only to zero")
     if "&slide_diag.triggers[0]" not in record:
         fail("functional 58D4 pre-arm does not use trigger zero")
     request_alignment = record.find("(evidence->request_addr & 3) == 0")
@@ -1590,11 +1724,20 @@ def check_sources(root):
     for token in ("ZERO_SLIDE_STOPPED", "slideStartBtn",
             "slide_diag.functional_enabled",
             "functional_runtime_request_blocked = 1", "request_ready",
+            "zeroCtrlArmPsp1000FunctionalCompatFromHome()",
+            "zeroCtrlRequestPsp1000FunctionalOpenFromHome()",
             "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)"):
         if token not in button:
             fail("functional StartBtn request gating lacks " + token)
     functional_block = button[button.find("if (slide_diag.functional_enabled)"):
             button.find("if (request_ready)")]
+    for token in ("slide_diag.bsman.functional_validation &&",
+            "slide_diag.bsman.functional_install &&",
+            "slide_diag.bsman.functional_cache_sync)",
+            "zeroCtrlArmPsp1000FunctionalCompatFromHome();", "else",
+            "zeroCtrlRequestPsp1000FunctionalOpenFromHome();"):
+        if token not in functional_block:
+            fail("functional HOME two-case lifecycle lacks " + token)
     for forbidden in ("psp1000RuntimeRequestTarget",
             "zeroCtrlTrigger58D4(",
             "zeroCtrlSetSlideState(ZERO_SLIDE_STARTING)",
@@ -1605,6 +1748,127 @@ def check_sources(root):
                     forbidden)
     if "_sw(1, slide_diag.functional_runtime_request_addr)" in button:
         fail("functional HOME publishes the forbidden direct runtime request")
+    home_arm_start = kernel.find(
+            "static void zeroCtrlArmPsp1000FunctionalCompatFromHome(void)")
+    home_arm_end = kernel.find(
+            "static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void)",
+            home_arm_start)
+    home_arm = kernel[home_arm_start:home_arm_end]
+    for token in ("slide_diag.functional_enabled", "model != 0",
+            "sceKernelDevkitVersion() != 0x06060110",
+            "!bsman->functional_validation", "!bsman->functional_install",
+            "!bsman->functional_cache_sync",
+            'sceKernelFindModuleByName("ZeroVSH_Patcher_User")',
+            "!zeroCtrlLoadedModuleMetadataValid(helper)",
+            "address[i] == 0", "(address[i] & 3) != 0",
+            "!zeroCtrlVshModuleRangeValid(helper, address[i], 4)",
+            "mode[0] == 1 && mode[1] == 1 && mode[2] == 1 && mode[3] == 1",
+            "mode[0] != 0 || mode[1] != 0 || mode[2] != 0 || mode[3] != 0",
+            "for (i = 0; i < 4; i++) {", "_sw(1, address[i])",
+            "sceKernelDcacheWritebackInvalidateRange((const void *)address[i], 4)"):
+        if token not in home_arm:
+            fail("functional HOME compatibility arm lacks " + token)
+    address_order = tuple(home_arm.find(token) for token in (
+            "address[0] = bsman->bsman_compat_mode_addr",
+            "address[1] = bsman->state_zero_15to14_compat_mode_addr",
+            "address[2] = bsman->post_vsh_compat_mode_addr",
+            "address[3] = bsman->prefix_paf_compat_mode_addr"))
+    validation_end = home_arm.find("for (i = 0; i < 4; i++) mode[i] = _lw(address[i])")
+    all_one = home_arm.find("mode[0] == 1", validation_end)
+    mixed = home_arm.find("mode[0] != 0", all_one)
+    first_write = home_arm.find("_sw(1, address[i])")
+    if min(address_order) < 0 or address_order != tuple(sorted(address_order)) or \
+            not 0 <= validation_end < all_one < mixed < first_write or \
+            home_arm.count("_sw(1, address[i])") != 1:
+        fail("functional HOME validation/state checks/write ordering regressed")
+    for forbidden in ("sceKernelIcache", "zeroCtrlSetSlideState",
+            "psp1000RuntimeRequestTarget", "zeroCtrlTrigger58D4", "MAKE_CALL",
+            "MAKE_JUMP", "_sw(replacement", "sceIo", "malloc", "Alloc"):
+        if forbidden in home_arm:
+            fail("functional HOME arm performs forbidden operation " + forbidden)
+    home_request_start = home_arm_end
+    home_request_end = kernel.find("void zeroCtrlReadButtons(", home_request_start)
+    home_request = kernel[home_request_start:home_request_end]
+    for token in ("slide_diag.functional_enabled", "model != 0",
+            "sceKernelDevkitVersion() != 0x06060110",
+            "bsman->functional_install", "ZERO_TRIGGER_58D4",
+            "!trigger->validation", "!trigger->patch_applied",
+            "!trigger->cache_sync", "!zeroCtrlLoadedModuleMetadataValid(helper)",
+            "trigger->request_addr == 0", "(trigger->request_addr & 3) != 0",
+            "zeroCtrlVshModuleRangeValid(helper, trigger->request_addr, 4)",
+            "trigger->functional_mode_addr == 0",
+            "(trigger->functional_mode_addr & 3) != 0",
+            "zeroCtrlVshModuleRangeValid(helper,\n                trigger->functional_mode_addr, 4)",
+            "trigger->original_target_addr == 0",
+            "(trigger->original_target_addr & 3) != 0",
+            "zeroCtrlVshModuleRangeValid(helper,\n                trigger->original_target_addr, 4)",
+            "_lw(trigger->functional_mode_addr) != 1",
+            "_lw(trigger->request_addr) != 0",
+            "slide_diag.functional_trigger_consumed",
+            "slide_diag.functional_home_open_pending"):
+        if token not in home_request:
+            fail("functional HOME first-load validation lacks " + token)
+    reject_reasons = (
+        ("ZERO_HOME_REJECT_NONE", 0), ("ZERO_HOME_REJECT_PLATFORM", 1),
+        ("ZERO_HOME_REJECT_COMPAT_INSTALLED", 2),
+        ("ZERO_HOME_REJECT_TRIGGER_MODE", 3),
+        ("ZERO_HOME_REJECT_TRIGGER_VALIDATION", 4),
+        ("ZERO_HOME_REJECT_TRIGGER_PATCH", 5),
+        ("ZERO_HOME_REJECT_TRIGGER_CACHE", 6),
+        ("ZERO_HOME_REJECT_HELPER", 7),
+        ("ZERO_HOME_REJECT_REQUEST_ADDRESS", 8),
+        ("ZERO_HOME_REJECT_MODE_ADDRESS", 9),
+        ("ZERO_HOME_REJECT_TARGET_ADDRESS", 10),
+        ("ZERO_HOME_REJECT_MODE_VALUE", 11),
+        ("ZERO_HOME_REJECT_REQUEST_VALUE", 12),
+        ("ZERO_HOME_REJECT_CONSUMED", 13),
+        ("ZERO_HOME_REJECT_PENDING", 14),
+    )
+    for reason, value in reject_reasons:
+        if (reason + " = %d" % value) not in kernel:
+            fail("functional HOME reject mapping changed for " + reason)
+    for reason, _value in reject_reasons[1:]:
+        assignment = ("functional_home_first_load_reject_reason =\n"
+                      "                " + reason + ";\n        return;")
+        if home_request.count(assignment) != 1:
+            fail("functional HOME rejection does not record/return for " + reason)
+    attempt = home_request.find("functional_home_first_load_attempts++")
+    first_validation = home_request.find("if (!slide_diag.functional_enabled")
+    pending_write = home_request.find("functional_home_open_pending = 1")
+    request_write = home_request.find("_sw(1, trigger->request_addr)")
+    request_dcache = home_request.find(
+            "sceKernelDcacheWritebackInvalidateRange(", request_write)
+    published = home_request.find("functional_home_first_load_published++",
+            request_dcache)
+    success_reason = home_request.find(
+            "functional_home_first_load_reject_reason = ZERO_HOME_REJECT_NONE",
+            published)
+    last_validation = home_request.rfind("ZERO_HOME_REJECT_PENDING", 0,
+            pending_write)
+    if not 0 <= attempt < first_validation < last_validation < pending_write < \
+            request_write < request_dcache < published < success_reason or \
+            home_request.count("_sw(") != 1:
+        fail("functional HOME first-load publication ordering regressed")
+    for forbidden in ("sceKernelIcache", "zeroCtrlSetSlideState",
+            "psp1000RuntimeRequestTarget", "zeroCtrlTrigger58D4(", "MAKE_CALL",
+            "MAKE_JUMP", "_sw(replacement", "sceIo", "malloc", "Alloc"):
+        if forbidden in home_request:
+            fail("functional HOME first-load path performs forbidden operation " + forbidden)
+    home_fields = ("functional_home_press_hits",
+            "functional_home_first_load_attempts",
+            "functional_home_first_load_published",
+            "functional_home_first_load_reject_reason")
+    if kernel.count("volatile int functional_home_open_pending;") != 1 or any(
+            kernel.count("volatile unsigned int " + field + ";") != 1 or
+            field in bsman_header for field in home_fields) or \
+            "functional_home_open_pending" in bsman_header:
+        fail("functional HOME evidence is not kernel-local with exact fields")
+    press_branch = functional_block.find("functional_home_press_hits++")
+    lifecycle_choice = functional_block.find(
+            "if (slide_diag.bsman.functional_validation &&")
+    if press_branch < 0 or press_branch >= lifecycle_choice or \
+            kernel.count("functional_home_press_hits++") != 1:
+        fail("functional HOME press evidence is outside the exact action branch")
     consumed_start = minimal.find(
             "if (slide_diag.functional_request_armed &&\n"
             "                    !slide_diag.functional_trigger_consumed)")
@@ -1623,6 +1887,175 @@ def check_sources(root):
     if not 0 <= consumed_start < consumed_range < consumed_hits < \
             consumed_read < consumed_publish < consumed_log:
         fail("functional 58D4 consumption marker is not range/hit validated")
+    home_record_marker = minimal.find("[psp1000-functional-home] press=%u ")
+    home_record_start = minimal.rfind("if (slide_diag.functional_enabled) {",
+            0, home_record_marker)
+    home_record = minimal[home_record_start:minimal.find(
+            "if (slide_diag.functional_request_armed &&", home_record_marker)]
+    helper_metadata = home_record.find("zeroCtrlLoadedModuleMetadataValid(helper)")
+    request_nonzero = home_record.find("trigger->request_addr != 0", helper_metadata)
+    request_aligned = home_record.find("(trigger->request_addr & 3) == 0",
+            request_nonzero)
+    request_range = home_record.find(
+            "zeroCtrlVshModuleRangeValid(helper,\n                            trigger->request_addr, 4)",
+            request_aligned)
+    request_read = home_record.find("state[5] = _lw(trigger->request_addr)",
+            request_range)
+    changed = home_record.find("memcmp(state, observed_functional_home",
+            request_read)
+    output = home_record.find("zeroCtrlDiagnosticsText(line)", changed)
+    for token in ("functional_home_press_hits",
+            "functional_home_first_load_attempts",
+            "functional_home_first_load_published",
+            "functional_home_first_load_reject_reason",
+            "functional_home_open_pending", "zeroCtrlReadTriggerHits(0)",
+            "functional_trigger_consumed", "functional_validation",
+            "functional_install", "functional_cache_sync",
+            "press=%u attempt=%u ", "published=%u reject=%u pending=%u request=%u ",
+            "hit=%u consumed=%u compat=%u/%u/%u"):
+        if token not in home_record:
+            fail("functional HOME writer record lacks " + token)
+    if home_record_start < 0 or not 0 <= helper_metadata < request_nonzero < \
+            request_aligned < request_range < request_read < changed < output or \
+            "slide_diag.saw_request" in home_record or \
+            kernel.count("[psp1000-functional-home]") != 1:
+        fail("functional HOME writer validation/changed-only isolation regressed")
+    for marker in ("[psp1000-vsh589c-install]", "[psp1000-vsh589c]"):
+        if marker in minimal:
+            fail("retired VSH +589C automatic output remains in minimal writer")
+    for marker in ("[psp1000-vsh6f84-consumers-install]",
+            "[psp1000-vsh6f84-consumers]"):
+        if marker in minimal:
+            fail("retired compact VSH consumer output remains in minimal writer")
+    if "[psp1000-vsh58d4]" in minimal:
+        fail("retired compact VSH +58D4 output remains in minimal writer")
+    for marker in ("[psp1000-vsh57b0-map]", "[psp1000-vsh57b0-ref]",
+            "[psp1000-vsh57b0-window]", "[psp1000-vsh57b0-code]"):
+        if marker in minimal:
+            fail("retired direct VSH +57B0 map remains in minimal writer")
+    for marker in ("[psp1000-vsh57b0-materialize-map]",
+            "[psp1000-vsh57b0-materialize]", "[psp1000-vsh57b0-use]",
+            "[psp1000-vsh57b0-pointer-map]", "[psp1000-vsh57b0-pointer]"):
+        if marker in minimal:
+            fail("retired indirect VSH +57B0 map remains in minimal writer")
+    for marker in ("[psp1000-vshctrl-map]", "[psp1000-vshctrl-lib]",
+            "[psp1000-vshctrl-import]", "[psp1000-vshctrl-caller]",
+            "[psp1000-vshctrl-window]", "[psp1000-vshctrl-code]",
+            "[psp1000-vsh-import-lib]"):
+        if marker in minimal:
+            fail("retired static VSH controller map remains in minimal writer")
+    if "zeroCtrlWriteFunctionalVshControllerMap()" in minimal:
+        fail("retired static VSH controller map is still invoked")
+    resolver = kernel[kernel.find("static " + ("void " if "Install" in "zeroCtrlResolveVshCtrlPeekImport" or "Request" in "zeroCtrlResolveVshCtrlPeekImport" else "int ") + "zeroCtrlResolveVshCtrlPeekImport("):kernel.find("\n}\n", kernel.find("zeroCtrlResolveVshCtrlPeekImport(")) + 3]
+    for token in ('table = (unsigned int)vsh->stub_top',
+            'size = vsh->stub_size', 'zeroCtrlVshModuleRangeValid(vsh, table, size)',
+            'zeroCtrlVshModuleRangeValid(vsh, address, 12)', 'entry->len == 0',
+            'entry_size > size - cursor',
+            'zeroCtrlVshModuleRangeValid(vsh, address, entry_size)',
+            'zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size)',
+            'zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size)',
+            'zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name',
+            'strcmp(name, "sceCtrl") == 0', '0x3A622550',
+            'zeroCtrlVshModuleRangeValid(vsh, stub, 8)', '0x03E00008',
+            '(_lw(stub + 4) & 0xFC00003F) != 0x0000000C', 'matches != 1'):
+        if token not in resolver:
+            fail("sceCtrl Peek import resolver lacks " + token)
+    installer = kernel[kernel.find("static " + ("void " if "Install" in "zeroCtrlInstallVshCtrl314A4Trace" or "Request" in "zeroCtrlInstallVshCtrl314A4Trace" else "int ") + "zeroCtrlInstallVshCtrl314A4Trace("):kernel.find("\n}\n", kernel.find("zeroCtrlInstallVshCtrl314A4Trace(")) + 3]
+    for token in ('model != 0', 'sceKernelDevkitVersion() != 0x06060110',
+            '!slide_diag.functional_enabled', '!slide_diag.minimal_memory_test',
+            'vsh->modid != slide_diag.vsh_modid',
+            'vsh->text_addr != slide_diag.vsh_text_addr',
+            'vsh->text_size != slide_diag.vsh_text_size',
+            'vsh->text_size != 0x556C0',
+            'vsh->text_addr + 0x31494, 0x18)',
+            '0x27BDFFE0', '0x03A02021', '0x24050001', '0xAFBF0014',
+            'owner = text + 0x314A4', '_lw(text + 0x314A8) != 0xAFB00010',
+            '(original >> 26) != 3',
+            'zeroCtrlMipsJumpTarget(owner, original) != target',
+            'trace_helper = storage_pending->stub_addr + 24',
+            'zeroCtrlVshModuleRangeValid(helper, trace_helper, 80)',
+            'storage_total->counter_addr == 0',
+            'storage_pending->counter_addr == 0',
+            'slide_diag.triggers[0].request_addr == 0',
+            'trace_tail = trace_helper + 72', '_lw(trace_tail + 4) != 0',
+            'zeroCtrlMipsJumpTarget(owner, replacement) != trace_helper',
+            'zeroCtrlMipsJumpTarget(trace_tail, tail_replacement) != target'):
+        if token not in installer:
+            fail("VSH +314A4 installer lacks " + token)
+    tail_write = installer.find('_sw(tail_replacement, trace_tail)')
+    tail_dcache = installer.find('sceKernelDcacheWritebackInvalidateRange((const void *)trace_tail, 4)', tail_write)
+    tail_icache = installer.find('sceKernelIcacheInvalidateRange((const void *)trace_tail, 4)', tail_dcache)
+    owner_write = installer.find('_sw(replacement, owner)', tail_icache)
+    owner_dcache = installer.find('sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4)', owner_write)
+    owner_icache = installer.find('sceKernelIcacheInvalidateRange((const void *)owner, 4)', owner_dcache)
+    if not 0 <= tail_write < tail_dcache < tail_icache < owner_write < owner_dcache < owner_icache:
+        fail("VSH +314A4 tail/owner commit order regressed")
+    for forbidden in ('0x13EF8', '_sw(0, storage_total->counter_addr)',
+            '_sw(0, storage_pending->counter_addr)', 'zeroCtrlSetSlideState',
+            'zeroCtrlTrigger58D4('):
+        if forbidden in installer:
+            fail("VSH +314A4 installer has forbidden behavior: " + forbidden)
+    if kernel.count('zeroCtrlInstallVsh589CCallTrace();') != 0:
+        fail("retired VSH +58AC owner was reactivated")
+    telemetry = kernel[kernel.find("static " + ("void " if "Install" in "zeroCtrlReadVshCtrl314A4Telemetry" or "Request" in "zeroCtrlReadVshCtrl314A4Telemetry" else "int ") + "zeroCtrlReadVshCtrl314A4Telemetry("):kernel.find("\n}\n", kernel.find("zeroCtrlReadVshCtrl314A4Telemetry(")) + 3]
+    for token in ('triggers[1].counter_addr', 'triggers[2].counter_addr',
+            'triggers[0].request_addr', 'triggers[0].counter_addr',
+            'zeroCtrlLoadedModuleMetadataValid(helper)', '(address[i] & 3) != 0',
+            'zeroCtrlVshModuleRangeValid(helper, address[i], 4)',
+            'state[i] = _lw(address[i])'):
+        if token not in telemetry:
+            fail("VSH +314A4 telemetry validation lacks " + token)
+    for marker in ('[psp1000-vshctrl314a4-install]',
+            '[psp1000-vshctrl314a4-home]',
+            '[psp1000-vshctrl314a4-posthome]',
+            '[psp1000-vshctrl314a4-final]'):
+        if marker not in writer:
+            fail("VSH +314A4 writer telemetry lacks " + marker)
+    if writer.count('[psp1000-vshctrl314a4-posthome]') != 1 or \
+            'observed_vshctrl314a4_posthome = 1' not in writer:
+        fail("VSH +314A4 post-HOME proof is not one-shot")
+    posthome_start = writer.find(
+            "if (!observed_vshctrl314a4_posthome && baseline_valid")
+    posthome_end = writer.find("observed_vshctrl314a4_posthome = 1",
+            posthome_start)
+    posthome = writer[posthome_start:posthome_end]
+    for token in ("trace_state[2] == 1",
+            "!slide_diag.functional_trigger_consumed",
+            "trace_state[1] >",
+            "slide_diag.vshctrl314a4_pending_baseline"):
+        if token not in posthome:
+            fail("VSH +314A4 post-HOME proof lacks " + token)
+    final_record = writer.find('[psp1000-vshctrl314a4-final]')
+    final_checkpoint = writer.find('[checkpoint-fast] minimal_observation_window_complete')
+    if not 0 <= final_record < final_checkpoint:
+        fail("VSH +314A4 final record is not immediately before checkpoint")
+    final_block = writer[writer.rfind("unsigned int delta =", 0, final_record):
+            final_checkpoint]
+    for token in ("baseline_valid && trace_state[2] == 1",
+            "!slide_diag.functional_trigger_consumed",
+            "trace_state[1] >=", "pending=%u", "request=%u",
+            "consumed_hits=%u", "consumed=%u"):
+        if token not in final_block:
+            fail("VSH +314A4 final evidence gate lacks " + token)
+    home_request = kernel[kernel.find("static void zeroCtrlRequestPsp1000FunctionalOpenFromHome("):kernel.find("\n}\n", kernel.find("zeroCtrlRequestPsp1000FunctionalOpenFromHome(")) + 3]
+    pending_write = home_request.find('functional_home_open_pending = 1')
+    request_write = home_request.find('_sw(1, trigger->request_addr)', pending_write)
+    request_sync = home_request.find(
+            'sceKernelDcacheWritebackInvalidateRange(\n'
+            '            (const void *)trigger->request_addr, 4)', request_write)
+    baseline = home_request.find('vshctrl314a4_home_baseline_captured = 1',
+            request_sync)
+    request_value = home_request.find('_lw(trigger->request_addr) == 1',
+            baseline)
+    consumed_gate = home_request.find(
+            '!slide_diag.functional_trigger_consumed', request_value)
+    baseline_read = home_request.find(
+            '_lw(slide_diag.triggers[2].counter_addr)', consumed_gate)
+    baseline_valid = home_request.find(
+            'vshctrl314a4_home_baseline_valid = 1', baseline_read)
+    if not 0 <= pending_write < request_write < request_sync < baseline < \
+            request_value < consumed_gate < baseline_read < baseline_valid:
+        fail("controller pending baseline is not captured after HOME publication")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
@@ -1732,10 +2165,11 @@ def check_sources(root):
             "original[3] != 0x0040F809", "_lw(owner[3] + 4) != 0",
             "zeroCtrlMipsJumpTarget(owner[i], replacement[i]) != leaf[i]",
             "bsman->functional_validation = 1",
-            "_sw(1, bsman->prefix_paf_compat_mode_addr)",
-            "_sw(1, bsman->bsman_compat_mode_addr)",
-            "_sw(1, bsman->post_vsh_compat_mode_addr)",
-            "_sw(1, bsman->state_zero_15to14_compat_mode_addr)",
+            "initial_mode = slide_diag.functional_home_open_pending ? 1 : 0",
+            "_sw(initial_mode, bsman->prefix_paf_compat_mode_addr)",
+            "_sw(initial_mode, bsman->bsman_compat_mode_addr)",
+            "_sw(initial_mode, bsman->post_vsh_compat_mode_addr)",
+            "_sw(initial_mode, bsman->state_zero_15to14_compat_mode_addr)",
             "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[4])",
             "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[5])",
             "ADD_FUNCTIONAL_SCALAR(bsman->state_zero_value_addr[6])",
@@ -1749,9 +2183,24 @@ def check_sources(root):
             "sceKernelDcacheWritebackInvalidateRange((const void *)owner[i], 4)",
             "sceKernelIcacheInvalidateRange((const void *)owner[i], 4)",
             "bsman->functional_install = 1",
-            "bsman->functional_cache_sync = 1"):
+            "bsman->functional_cache_sync = 1",
+            "slide_diag.functional_home_open_pending = 0"):
         if token not in functional:
             fail("narrow functional activation installer lacks " + token)
+    for mode in ("prefix_paf", "bsman", "post_vsh", "state_zero_15to14"):
+        if functional.count("_sw(initial_mode, bsman->" +
+                mode + "_compat_mode_addr)") != 1:
+            fail("functional installer does not use shared pending mode for " + mode)
+    initial_mode_set = functional.find(
+            "initial_mode = slide_diag.functional_home_open_pending ? 1 : 0")
+    first_mode_write = functional.find("_sw(initial_mode,")
+    validation_set = functional.find("bsman->functional_validation = 1")
+    install_set = functional.find("bsman->functional_install = 1")
+    cache_set = functional.find("bsman->functional_cache_sync = 1")
+    pending_clear = functional.find("functional_home_open_pending = 0")
+    if not 0 <= initial_mode_set < first_mode_write < validation_set < \
+            install_set < cache_set < pending_clear:
+        fail("functional pending-mode handoff/clear ordering regressed")
     if "candidates" in functional or \
             "for (pc = 0; pc + 20 <= mod->text_size" in functional:
         fail("functional activation installer globally scans for the prologue")
@@ -2157,17 +2606,13 @@ def check_sources(root):
     module_start_functional = kernel_module_start[module_start_functional_start:
             kernel_module_start.find("zeroCtrlInstallBSManClosedShim(mod)",
                 module_start_functional_start)]
-    if "zeroCtrlInstallPsp1000PostBSRouteDiagnostic(mod)" not in \
-            module_start_functional or \
-            "zeroCtrlInstallPsp1000ActivationReturnDiagnostic(mod)" in \
-            module_start_functional or \
-            "zeroCtrlInstallPsp1000PostT39Diagnostic(mod)" in \
-            module_start_functional or \
-            "zeroCtrlInstallPsp1000Post1F0Diagnostic(mod)" in \
-            module_start_functional or \
-            "zeroCtrlInstallPsp1000ExitDiagnostic(mod)" in \
-            module_start_functional:
-        fail("functional path does not exclusively install the post-BS route diagnostic")
+    functional_installers = re.findall(
+            r"zeroCtrlInstallPsp1000\w+\(mod\)", module_start_functional)
+    if functional_installers != [
+            "zeroCtrlInstallPsp1000FunctionalCompat(mod)"] or \
+            re.search(r"zeroCtrlInstallPsp1000\w+Diagnostic\(mod\)",
+                module_start_functional):
+        fail("functional path does not exclusively install four-owner compatibility")
 
     post1f0_install_marker = minimal.find(
             "[psp1000-functional-post1f0-install] rev=1 ")
@@ -2202,7 +2647,7 @@ def check_sources(root):
             fail("functional post-1F0 output modifies runtime state")
     exit_start = post1f0_end
     exit_end = kernel.find(
-            "static void zeroCtrlInstallPsp1000ActivationReturnDiagnostic(",
+            "static void zeroCtrlInstallPsp1000PafDispatchReturnDiagnostic(",
             exit_start)
     exit_diag = kernel[exit_start:exit_end]
     for token in ("0x238, 0x248, 0x258, 0x268",
@@ -2297,25 +2742,47 @@ def check_sources(root):
     return_end = kernel.find("static void zeroCtrlInstallBSManClosedShim(",
             return_start)
     return_diag = kernel[return_start:return_end]
-    for token in ("0x8FB60018, 0x8FB50014, 0x8FB40010, 0x8FB3000C, 0x8FB20008",
-            "0x8FB10004, 0x8FB00000, 0x03E00008, 0x27BD0020",
-            "owner = a + 0x6C", "replacement = 0x08000000",
+    for token in (
+            "0xDEA1C, 0xDEA20, 0xDEA28, 0xDEA2C, 0xDEA30",
+            "0xDEABC, 0xDEAC0",
+            "0xDEAD8, 0xDEADC, 0xDEAE0, 0xDEAE4, 0xDEAE8, 0xDEAEC, 0xDEAF0",
+            "0x27BDFFD0, 0xAFB00020, 0xAFBF002C, 0xAFB20028, 0xAFB10024",
+            "0x0100F809, 0x8CE7002C",
+            "0x8FBF002C, 0x8FB20028, 0x8FB10024, 0x8FB00020, 0x00601021",
+            "0x03E00008, 0x27BD0030",
+            'sceKernelFindModuleByName("scePaf_Module")',
+            "paf->text_addr > 0xFFFFFFFFU - 0xDECE0",
+            "for (i = 0; i < 14; i++)",
+            "(jump >> 26) != 2", "paf->text_addr + 0xDEAC4, jump",
+            "paf->text_addr + 0xDEA64",
+            "_lw(paf->text_addr + 0xDEAC8) != 0x8E0901A0",
+            "(caller >> 26) != 3", "paf->text_addr + 0xDECD8, caller",
+            "paf->text_addr + 0xDEA1C",
+            "owner = paf->text_addr + 0xDEAEC",
+            "replacement = 0x08000000",
             "zeroCtrlMipsJumpTarget(owner, replacement)",
             "b->functional_return_leaf", "b->functional_return_scalar[i]",
             "_sw(replacement, owner)"):
         if token not in return_diag:
-            fail("functional activation-return diagnostic lacks " + token)
-    return_validation = return_diag.find("for (i = 0; i < 7; i++)\n        if")
+            fail("functional PAF-dispatch-return diagnostic lacks " + token)
+    return_fingerprint_validation = return_diag.find("for (i = 0; i < 14; i++)")
+    return_jump_validation = return_diag.find("(jump >> 26) != 2")
+    return_caller_validation = return_diag.find("(caller >> 26) != 3")
+    return_scalar_validation = return_diag.find("for (i = 0; i < 7; i++)\n        if")
     return_scalar_write = return_diag.find("_sw(i == 4 || i == 5")
     return_scalar_sync = return_diag.find("sceKernelDcacheWritebackInvalidateRange(",
             return_scalar_write)
     return_code_write = return_diag.find("_sw(replacement, owner)")
     return_code_sync = return_diag.find("sceKernelIcacheInvalidateRange(",
             return_code_write)
-    if not 0 <= return_validation < return_scalar_write < return_scalar_sync < \
-            return_code_write < return_code_sync or \
-            return_diag.count("_sw(replacement, owner)") != 1:
-        fail("functional activation-return transaction ordering/ownership regressed")
+    if not 0 <= return_fingerprint_validation < return_jump_validation < \
+            return_caller_validation < return_scalar_validation < \
+            return_scalar_write < return_scalar_sync < return_code_write < \
+            return_code_sync or return_diag.count("_sw(replacement, owner)") != 1:
+        fail("functional PAF-dispatch-return validation/transaction ordering regressed")
+    if "_sw(" in return_diag[:return_scalar_write] or \
+            "_sw(i == 4 || i == 5 ? 0xFFFFFFFF : 0," not in return_diag:
+        fail("functional PAF-dispatch-return writes before validation or changes scalars")
     return_register = kernel[kernel.find("void zeroCtrlRegisterActivationReturn("):
             kernel.find("void zeroCtrlRegisterActivationCallerRA(")]
     for token in ("zeroCtrlRegistrationLeafValid(helper, copied.leaf_addr,",
@@ -2405,6 +2872,105 @@ def check_sources(root):
             assembly.find("zeroCtrlStateZeroWordTraceEnd:")]
     byte_call = assembly[assembly.find("zeroCtrlStateZeroByteTrace:"):
             assembly.find("zeroCtrlStateZeroByteTraceEnd:")]
+    transparent_helpers = (
+        ("zeroCtrlPostBSManBranchTrace", post_bs_call, 16,
+         (("t0", 0), ("t1", 4), ("t2", 8), ("t9", 12))),
+        ("zeroCtrlPostStateBranchTrace", post_state_call, 16,
+         (("t0", 0), ("t1", 4), ("t2", 8), ("t9", 12))),
+        ("zeroCtrlStateZeroCompareTrace", compare_call, 16,
+         (("t0", 0), ("t1", 4), ("t2", 8), ("t9", 12))),
+        ("zeroCtrlStateZeroWordTrace", word_call, 16,
+         (("t0", 0), ("t1", 4), ("t9", 8))),
+        ("zeroCtrlStateZeroByteTrace", byte_call, 16,
+         (("t0", 0), ("t1", 4), ("t9", 8))),
+    )
+    counter_macro = re.search(
+        r"\.macro RECORD_PREFIX_COUNTER counter\n(.*?)\.endm", assembly, re.S)
+    expected_counter_macro = (
+        "lui     $t0, %hi(\\counter)",
+        "lw      $t2, %lo(\\counter)($t0)",
+        "addiu   $t2, $t2, 1",
+        "sw      $t2, %lo(\\counter)($t0)",
+    )
+    if not counter_macro or tuple(line.strip() for line in
+            counter_macro.group(1).splitlines() if line.strip()) != \
+            expected_counter_macro:
+        fail("RECORD_PREFIX_COUNTER body no longer has its exact modeled writes")
+
+    # This is intentionally a closed grammar.  Adding any instruction form to
+    # these helpers requires teaching the verifier whether that form writes a GPR.
+    helper_forms = (
+        (re.compile(r"addiu\s+\$(\w+),\s*\$\w+,\s*-?(?:0x[0-9A-Fa-f]+|\d+)$"), 1),
+        (re.compile(r"lui\s+\$(\w+),\s*%hi\([^)]+\)$"), 1),
+        (re.compile(r"lw\s+\$(\w+),\s*[^,]+\(\$\w+\)$"), 1),
+        (re.compile(r"sw\s+\$\w+,\s*[^,]+\(\$\w+\)$"), 0),
+        (re.compile(r"ori\s+\$(\w+),\s*\$\w+,\s*(?:0x[0-9A-Fa-f]+|\d+)$"), 1),
+        (re.compile(r"beq\s+\$\w+,\s*\$\w+,\s*\w+$"), 0),
+        (re.compile(r"(?:beqz|bnez)\s+\$\w+,\s*\w+$"), 0),
+        (re.compile(r"b\s+\w+$"), 0),
+        (re.compile(r"jr\s+\$\w+$"), 0),
+        (re.compile(r"nop$"), 0),
+    )
+    macro_form = re.compile(r"RECORD_PREFIX_COUNTER\s+\w+$")
+    for name, helper, frame, saved in transparent_helpers:
+        helper_start = assembly.find(name + ":")
+        if assembly.rfind(".set noreorder", 0, helper_start) < \
+                assembly.rfind(".set reorder", 0, helper_start):
+            fail(name + " is not protected by .set noreorder")
+        if frame % 8:
+            fail(name + " frame violates the MIPS EABI 8-byte alignment")
+        instructions = [line.split("#", 1)[0].strip()
+                        for line in helper.splitlines()]
+        instructions = [line for line in instructions if line and
+                        not line.startswith((".", name + ":")) and
+                        not re.fullmatch(r"\d+:", line)]
+        classified = []
+        for line in instructions:
+            if macro_form.fullmatch(line):
+                classified.append((line, {"t0", "t2"}))
+                continue
+            matches = [(pattern.fullmatch(line), writes)
+                       for pattern, writes in helper_forms]
+            matches = [(match, writes) for match, writes in matches if match]
+            if len(matches) != 1:
+                fail(name + " contains an unknown or ambiguous instruction form: " + line)
+            match, writes = matches[0]
+            classified.append((line, {match.group(1)} if writes else set()))
+
+        expected_prologue = ["addiu   $sp, $sp, -%d" % frame] + [
+            "sw      $%s, %d($sp)" % (reg, offset) for reg, offset in saved]
+        if instructions[:len(expected_prologue)] != expected_prologue:
+            fail(name + " does not have its exact required save layout")
+        written = set().union(*(writes for _line, writes in classified))
+        expected_written = {reg for reg, _ in saved} | {"sp"}
+        if written != expected_written:
+            fail(name + " writes unexpected GPRs or omits preservation coverage: " +
+                 repr(sorted(written)))
+        for reg, offset in saved:
+            save_line = "sw      $%s, %d($sp)" % (reg, offset)
+            save_index = instructions.index(save_line)
+            first_write = next(i for i, (_line, writes) in enumerate(classified)
+                               if reg in writes)
+            if save_index >= first_write:
+                fail(name + " modifies " + reg + " before saving its entry value")
+
+        restored = [(reg, offset) for reg, offset in reversed(saved[:-1])]
+        tail = ["lw      $%s, %d($sp)" % item for item in restored]
+        tail += ("addiu   $sp, $sp, %d" % frame, "jr      $t9",
+                 "lw      $t9, -%d($sp)" % (frame - saved[-1][1]))
+        if instructions[-len(tail):] != tail:
+            fail(name + " lacks the proven balanced-frame/JR-delay t9 restore")
+        sp_writes = [(i, line) for i, (line, writes) in enumerate(classified)
+                     if "sp" in writes]
+        if sp_writes != [(0, expected_prologue[0]),
+                         (len(instructions) - 3, tail[-3])]:
+            fail(name + " does not restore its temporary frame exactly once")
+        if re.search(r"sceIo|sceKernel|Alloc|malloc", helper):
+            fail(name + " performs I/O, a kernel operation, or allocation")
+        for forbidden in ("CompatMode", "SubstitutionHits", "15To14",
+                          "InvalidMode"):
+            if forbidden in helper:
+                fail(name + " performs a compatibility transformation")
     if "sw      $v0, %lo(zeroCtrlPostStateNaturalValue)($t0)" not in post_bs_call or \
             "zeroCtrlPostBSManEffectiveResult" not in post_bs_call:
         fail("historical post-BS helper no longer saves natural v0 before routing")
@@ -2441,10 +3007,32 @@ def check_sources(root):
         fail("functional state-route introduces snapshot locking")
     if "sizeof(ZeroCtrlActivationReturnRegistration) == 36" not in bsman_header:
         fail("activation-return registration size guard is missing")
-    for marker in ("[psp1000-functional-activation-return-install] ",
-            "[psp1000-functional-activation-return] returns=%u "):
+    for marker in ("[psp1000-functional-paf-dispatch-return-install] ",
+            "[psp1000-functional-paf-dispatch-return] returns=%u "):
         if marker not in minimal:
             fail("activation-return changed-only output lacks " + marker)
+    paf_return_install_marker = minimal.find(
+            "[psp1000-functional-paf-dispatch-return-install] ")
+    paf_return_runtime_marker = minimal.find(
+            "[psp1000-functional-paf-dispatch-return] returns=%u ")
+    paf_return_install_gate = minimal.rfind(
+            "if (slide_diag.functional_enabled) {", 0,
+            paf_return_install_marker)
+    paf_return_runtime_gate = minimal.rfind(
+            "if (slide_diag.bsman.functional_return_install &&", 0,
+            paf_return_runtime_marker)
+    if paf_return_install_gate < 0 or \
+            "memcmp(state, observed_functional_return_install" not in \
+            minimal[paf_return_install_gate:paf_return_install_marker] or \
+            "functional_return_install &&" in \
+            minimal[paf_return_install_gate:paf_return_install_marker]:
+        fail("PAF-dispatch-return install output is not failure-visible/changed-only")
+    if paf_return_runtime_gate < 0 or \
+            "functional_return_cache_sync" not in \
+            minimal[paf_return_runtime_gate:paf_return_runtime_marker] or \
+            "memcmp(state, observed_functional_return" not in \
+            minimal[paf_return_runtime_gate:paf_return_runtime_marker]:
+        fail("PAF-dispatch-return runtime output is not success-gated/changed-only")
     research_state_owner = kernel[kernel.find(
             "static void zeroCtrlInstallBSManClosedShim("):
             kernel.find("int OnModuleStart(SceModule2 *mod)")]
@@ -2971,6 +3559,10 @@ def check_sources(root):
             "ori     $t2, $t2, 0x000D", "bne     $t1, $t2, 66f",
             "ori     $t2, $t2, 0x0107", "bne     $v0, $t2, 66f",
             "addu    $v0, $zero, $zero", "zeroCtrlPostVshSubstitutionHits",
+            "sw      $zero, %lo(zeroCtrlSlidePrefixPafCompatMode)($t0)",
+            "sw      $zero, %lo(zeroCtrlPostBSManCompatMode)($t0)",
+            "sw      $zero, %lo(zeroCtrlStateZero15To14CompatMode)($t0)",
+            "sw      $zero, %lo(zeroCtrlPostVshCompatMode)($t0)",
             "\n66:", "sw      $v0, %lo(zeroCtrlPostVshEffectiveResult)",
             "lw      $ra, %lo(zeroCtrlPostVshSavedRA)"):
         if token not in post_vsh_return:
@@ -2980,9 +3572,22 @@ def check_sources(root):
             post_vsh_return.find("bne     $t1, $t2, 66f") <
             post_vsh_return.find("bne     $v0, $t2, 66f") <
             post_vsh_return.find("addu    $v0, $zero, $zero") <
+            post_vsh_return.find("sw      $t1, %lo(zeroCtrlPostVshSubstitutionHits)") <
+            post_vsh_return.find("sw      $zero, %lo(zeroCtrlSlidePrefixPafCompatMode)") <
+            post_vsh_return.find("sw      $zero, %lo(zeroCtrlPostBSManCompatMode)") <
+            post_vsh_return.find("sw      $zero, %lo(zeroCtrlStateZero15To14CompatMode)") <
+            post_vsh_return.find("sw      $zero, %lo(zeroCtrlPostVshCompatMode)") <
             post_vsh_return.find("\n66:") <
             post_vsh_return.find("zeroCtrlPostVshEffectiveResult")):
         fail("T31 natural/guard/substitution/effective ordering is invalid")
+    successful_vsh_block = post_vsh_return[
+        post_vsh_return.find("addu    $v0, $zero, $zero"):
+        post_vsh_return.find("\n66:")]
+    for mode in ("zeroCtrlSlidePrefixPafCompatMode",
+            "zeroCtrlPostBSManCompatMode", "zeroCtrlStateZero15To14CompatMode",
+            "zeroCtrlPostVshCompatMode"):
+        if successful_vsh_block.count("sw      $zero, %lo(" + mode + ")($t0)") != 1:
+            fail("T31 successful substitution does not exclusively clear " + mode)
     post_impose_call = assembly[assembly.find("zeroCtrlPostImposeVCallTrace:"):
         assembly.find("zeroCtrlPostImposeVCallTraceEnd:")]
     post_impose_return = assembly[assembly.find(
@@ -4975,6 +5580,8 @@ def check_t31_vsh_return_semantics(body):
         r"\bbne\s+t1,\s*t2,", r"\blui\s+t2,\s*0x8000",
         r"\bori\s+t2,.*0x107", r"\bbne\s+v0,\s*t2,", set_v0_zero,
         r"\blw\s+t1,", r"\baddiu\s+t1,\s*t1,\s*1", r"\bsw\s+t1,",
+        r"\blui\s+t0,", r"\bsw\s+zero,", r"\blui\s+t0,", r"\bsw\s+zero,",
+        r"\blui\s+t0,", r"\bsw\s+zero,", r"\blui\s+t0,", r"\bsw\s+zero,",
         r"\bsw\s+v0,", r"\blw\s+ra,", r"\bjr\s+ra\b", r"\bnop\b")
     cursor = 0
     for pattern in ordered:
@@ -5163,9 +5770,12 @@ def check_t311_linked(disassembly, symbol_addresses):
     body = function_body(disassembly, "zeroCtrlPostVshReturnTrace")
     use_specs = (
         ("zeroCtrlPostVshNaturalResult", [("sw", 2, 8)]),
-        ("zeroCtrlPostVshCompatMode", [("lw", 9, 8)]),
+        ("zeroCtrlPostVshCompatMode", [("lw", 9, 8), ("sw", 0, 8)]),
         ("zeroCtrlPostVshArgument", [("lw", 9, 8)]),
         ("zeroCtrlPostVshSubstitutionHits", [("lw", 9, 8), ("sw", 9, 8)]),
+        ("zeroCtrlSlidePrefixPafCompatMode", [("sw", 0, 8)]),
+        ("zeroCtrlPostBSManCompatMode", [("sw", 0, 8)]),
+        ("zeroCtrlStateZero15To14CompatMode", [("sw", 0, 8)]),
         ("zeroCtrlPostVshEffectiveResult", [("sw", 2, 8)]),
         ("zeroCtrlPostVshSavedRA", [("lw", 31, 8)]),
     )
@@ -5201,6 +5811,13 @@ def check_t311_linked(disassembly, symbol_addresses):
     effective_lui_pc = use_pcs["zeroCtrlPostVshEffectiveResult"][0] - 4
     if bypass != effective_lui_pc or not branches[-1][0] < zero_pc < bypass:
         fail("T31 linked bypass does not enter immediately before effective store")
+    disarm_pcs = [use_pcs[name][0] for name in (
+        "zeroCtrlSlidePrefixPafCompatMode", "zeroCtrlPostBSManCompatMode",
+        "zeroCtrlStateZero15To14CompatMode")]
+    disarm_pcs.append(use_pcs["zeroCtrlPostVshCompatMode"][1])
+    substitution_store = use_pcs["zeroCtrlPostVshSubstitutionHits"][1]
+    if not substitution_store < min(disarm_pcs) <= max(disarm_pcs) < bypass:
+        fail("T31 linked mode clears are not confined after successful substitution")
     if not (use_pcs["zeroCtrlPostVshNaturalResult"][0] < branches[0][0] and
             use_pcs["zeroCtrlPostVshSavedRA"][0] >
             use_pcs["zeroCtrlPostVshEffectiveResult"][0]):
@@ -5495,8 +6112,8 @@ def check_t39_linked(disassembly, symbol_addresses):
 
 def check_post_bsman_branch_semantics(body, relocatable=False):
     """Verify transparent state capture followed by the saved BSMan decision."""
-    if re.search(r"\bgp\b|\bsp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
-        fail("post-BSMan branch trace uses gp, sp, a call, I/O, or allocation")
+    if re.search(r"\bgp\b|\bjalr?\b|sceIo|Alloc|malloc", body):
+        fail("post-BSMan branch trace uses gp, a call, I/O, or allocation")
     if re.search(r"\blbu\b", body):
         fail("post-BSMan branch trace reconstructs the relocated state load")
 
@@ -5588,6 +6205,8 @@ def check_elf(elf):
     for symbol in (SONY_ENTRY_STUB, SONY_ENTRY_STUB_END,
             SONY_EXIT_STUB, SONY_EXIT_STUB_END, BSMAN_STUB, BSMAN_STUB_END,
             BSMAN_RETURN_TRACE, BSMAN_RETURN_TRACE_END,
+            "zeroCtrlVsh589CCallTrace", "zeroCtrlVsh589CCallTraceTail",
+            "zeroCtrlVsh589CCallTraceEnd",
             *PREFIX_TRACE_STUBS, *POST_TRACE_STUBS, *STATE_ZERO_TRACE_STUBS,
             "zeroCtrlPostBSManNaturalResult", "zeroCtrlPostBSManCompatMode",
             "zeroCtrlPostBSManSubstitutionHits",
@@ -5606,6 +6225,13 @@ def check_elf(elf):
         match = re.match(r"^([0-9a-fA-F]+)\s+\w\s+(\S+)$", line)
         if match:
             symbol_addresses[match.group(2)] = int(match.group(1), 16)
+    if symbol_addresses["zeroCtrlVsh589CCallTrace"] != \
+            symbol_addresses["zeroCtrlTrigger14020"] + 24 or \
+            symbol_addresses["zeroCtrlVsh589CCallTraceTail"] != \
+            symbol_addresses["zeroCtrlVsh589CCallTrace"] + 72 or \
+            symbol_addresses["zeroCtrlVsh589CCallTraceEnd"] != \
+            symbol_addresses["zeroCtrlVsh589CCallTrace"] + 80:
+        fail("linked VSH +58AC helper adjacency/size/tail offset changed")
     for start, end, counter, result in T22_CONSUMER_WRAPPERS:
         for symbol in (start, end, counter, result):
             if symbol not in symbol_addresses:
@@ -5735,6 +6361,27 @@ def check_stub_object(stub_object):
     disassembly = subprocess.check_output(
         ["psp-objdump", "-dr", str(stub_object)], text=True
     )
+    nm = subprocess.check_output(["psp-nm", "-n", str(stub_object)], text=True)
+    addresses = {match.group(2): int(match.group(1), 16) for match in
+            re.finditer(r"^([0-9a-fA-F]+)\s+\w\s+(\S+)$", nm, re.M)}
+    for symbol in ("zeroCtrlTrigger14020", "zeroCtrlVsh589CCallTrace",
+            "zeroCtrlVsh589CCallTraceTail", "zeroCtrlVsh589CCallTraceEnd"):
+        if symbol not in addresses:
+            fail("VSH +58AC object lacks symbol " + symbol)
+    if addresses["zeroCtrlVsh589CCallTrace"] != \
+            addresses["zeroCtrlTrigger14020"] + 24 or \
+            addresses["zeroCtrlVsh589CCallTraceTail"] != \
+            addresses["zeroCtrlVsh589CCallTrace"] + 72 or \
+            addresses["zeroCtrlVsh589CCallTraceEnd"] != \
+            addresses["zeroCtrlVsh589CCallTrace"] + 80:
+        fail("VSH +58AC object helper adjacency/size/tail offset changed")
+    vsh589c_body = function_body(disassembly, "zeroCtrlVsh589CCallTrace")
+    for scalar, hi, lo in (("zeroCtrlTrigger13F6CHits", 1, 2),
+            ("zeroCtrlTrigger58D4Request", 1, 1),
+            ("zeroCtrlTrigger14020Hits", 1, 2)):
+        if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b", vsh589c_body)) != hi or \
+                len(re.findall(r"R_MIPS_LO16\s+" + scalar + r"\b", vsh589c_body)) != lo:
+            fail("VSH +58AC helper relocation grammar changed for " + scalar)
     for symbol in ("zeroCtrlStateZeroClass15Trace",
             "zeroCtrlStateZeroClass17Trace"):
         check_t301_class_input(function_body(disassembly, symbol), symbol,
@@ -5915,7 +6562,9 @@ def check_stub_object(stub_object):
             ("zeroCtrlTrigger58D4FunctionalMode", 1, 1),
             ("zeroCtrlTrigger58D4Request", 1, 2),
             ("zeroCtrlTrigger58D4OriginalTarget", 1, 1),
-            ("zeroCtrlTrigger58D4Hits", 2, 4)):
+            ("zeroCtrlTrigger58D4Hits", 2, 4),
+            ("zeroCtrlTrigger13F6CHits", 1, 2),
+            ("zeroCtrlTrigger14020Hits", 1, 2)):
         if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b",
                 trigger58)) != hi_count or len(re.findall(
                 r"R_MIPS_LO16\s+" + scalar + r"\b", trigger58)) != lo_count:
@@ -5924,7 +6573,11 @@ def check_stub_object(stub_object):
             ("zeroCtrlTrigger58D4FunctionalMode", r"\blw\s+t1,"),
             ("zeroCtrlTrigger58D4Request", r"\blw\s+t1,"),
             ("zeroCtrlTrigger58D4Request", r"\bsw\s+zero,"),
-            ("zeroCtrlTrigger58D4OriginalTarget", r"\blw\s+t0,")):
+            ("zeroCtrlTrigger58D4OriginalTarget", r"\blw\s+t0,"),
+            ("zeroCtrlTrigger13F6CHits", r"\blw\s+t1,"),
+            ("zeroCtrlTrigger13F6CHits", r"\bsw\s+t1,"),
+            ("zeroCtrlTrigger14020Hits", r"\blw\s+t1,"),
+            ("zeroCtrlTrigger14020Hits", r"\bsw\s+t1,")):
         if not relocation_bound_to_instruction(trigger58, scalar, operation):
             fail("zeroCtrlTrigger58D4 does not bind " + scalar + " to " + operation)
     for operation in (r"\blw\s+t1,", r"\bsw\s+t1,"):
@@ -6093,7 +6746,10 @@ def check_stub_object(stub_object):
             not re.search(r"\bjr\s+ra\b", post_vsh_return):
         fail("post-BSMan VshBridge return trace violates leaf/RA invariants")
     t31_relocations = (
-        ("zeroCtrlPostVshCompatMode", 1, 1, r"\blw\s+t1,"),
+        ("zeroCtrlPostVshCompatMode", 2, 2, None),
+        ("zeroCtrlSlidePrefixPafCompatMode", 1, 1, r"\bsw\s+zero,"),
+        ("zeroCtrlPostBSManCompatMode", 1, 1, r"\bsw\s+zero,"),
+        ("zeroCtrlStateZero15To14CompatMode", 1, 1, r"\bsw\s+zero,"),
         ("zeroCtrlPostVshEffectiveResult", 1, 1, r"\bsw\s+v0,"),
         ("zeroCtrlPostVshSubstitutionHits", 1, 2, None),
     )
@@ -6104,6 +6760,10 @@ def check_stub_object(stub_object):
         if instruction and not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+" +
                 scalar + r"\b", post_vsh_return):
             fail("T31 return does not bind relocation for " + scalar)
+    for instruction in (r"\blw\s+t1,", r"\bsw\s+zero,"):
+        if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
+                r"zeroCtrlPostVshCompatMode\b", post_vsh_return):
+            fail("T31 return does not bind VSH mode load/clear")
     for instruction in (r"\blw\s+t1,", r"\bsw\s+t1,"):
         if not re.search(instruction + r"[^\n]*\n[^\n]*R_MIPS_LO16\s+"
                 r"zeroCtrlPostVshSubstitutionHits\b", post_vsh_return):
