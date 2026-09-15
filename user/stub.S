@@ -44,6 +44,10 @@ zeroCtrlTrigger58D4:
     lw      $t1, %lo(zeroCtrlTrigger58D4FunctionalMode)($t0)
     beqz    $t1, 2f
     nop
+    lui     $t0, %hi(zeroCtrlTrigger13F6CHits)
+    lw      $t1, %lo(zeroCtrlTrigger13F6CHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlTrigger13F6CHits)($t0)
     lui     $t0, %hi(zeroCtrlTrigger58D4Request)
     lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)
     beqz    $t1, 1f
@@ -56,6 +60,10 @@ zeroCtrlTrigger58D4:
     jr      $ra
     addiu   $v0, $zero, 1
 1:
+    lui     $t0, %hi(zeroCtrlTrigger14020Hits)
+    lw      $t1, %lo(zeroCtrlTrigger14020Hits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlTrigger14020Hits)($t0)
     lui     $t0, %hi(zeroCtrlTrigger58D4OriginalTarget)
     lw      $t0, %lo(zeroCtrlTrigger58D4OriginalTarget)($t0)
     jr      $t0

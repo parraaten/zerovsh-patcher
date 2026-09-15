@@ -1592,6 +1592,7 @@ def check_sources(root):
         assembly.find("zeroCtrlTrigger58D4End:")]
     for token in ("zeroCtrlTrigger58D4FunctionalMode",
             "zeroCtrlTrigger58D4Request", "zeroCtrlTrigger58D4OriginalTarget",
+            "zeroCtrlTrigger13F6CHits", "zeroCtrlTrigger14020Hits",
             "sw      $zero, %lo(zeroCtrlTrigger58D4Request)",
             "lw      $t0, %lo(zeroCtrlTrigger58D4OriginalTarget)($t0)",
             "jr      $t0", "jr      $ra", "addiu   $v0, $zero, 1"):
@@ -1601,16 +1602,19 @@ def check_sources(root):
             ("$k0", "$k1", "$sp", "$gp", "jal ", "jalr")):
         fail("functional 58D4 helper uses reserved/stateful registers or calls")
     request_test = trigger_leaf.find("beqz    $t1, 1f")
+    total_increment = trigger_leaf.find("zeroCtrlTrigger13F6CHits")
     request_clear = trigger_leaf.find(
             "sw      $zero, %lo(zeroCtrlTrigger58D4Request)", request_test)
     effective_true = trigger_leaf.find("addiu   $v0, $zero, 1", request_clear)
     natural_label = trigger_leaf.find("1:", effective_true)
+    delegated_increment = trigger_leaf.find("zeroCtrlTrigger14020Hits",
+            natural_label)
     natural_target = trigger_leaf.find(
             "lw      $t0, %lo(zeroCtrlTrigger58D4OriginalTarget)($t0)",
             natural_label)
     natural_tail = trigger_leaf.find("jr      $t0", natural_target)
-    if not 0 <= request_test < request_clear < effective_true < natural_label < \
-            natural_target < natural_tail:
+    if not 0 <= total_increment < request_test < request_clear < effective_true < \
+            natural_label < delegated_increment < natural_target < natural_tail:
         fail("functional 58D4 helper does not consume once or preserve natural tail")
     trace_start = assembly.find("zeroCtrlVsh589CCallTrace:")
     trace_end = assembly.find("zeroCtrlVsh589CCallTraceEnd:", trace_start)
@@ -1637,6 +1641,9 @@ def check_sources(root):
             "(evidence->request_addr & 3) == 0",
             "zeroCtrlVshModuleRangeValid(helper,\n                                evidence->request_addr, 4)",
             "_sw(0, request_evidence->request_addr)",
+            "!zeroCtrlVshModuleRangeValid(helper, counters[1], 4)",
+            "!zeroCtrlVshModuleRangeValid(helper, counters[2], 4)",
+            "_sw(0, counters[1])", "_sw(0, counters[2])",
             "_sw(request_evidence->original_target",
             "_sw(slide_diag.functional_enabled ? 1 : 0",
             "sceKernelDcacheWritebackInvalidateRange("):
@@ -1647,6 +1654,8 @@ def check_sources(root):
     if "_sw(" in validation_pass:
         fail("functional 58D4 validation pass performs a partial write")
     commit_guard = record.find("if (all_selected_valid)")
+    reused_counter_validation = record.find(
+            "!zeroCtrlVshModuleRangeValid(helper, counters[1], 4)")
     original_init = record.find("_sw(request_evidence->original_target",
             commit_guard)
     mode_init = record.find("_sw(slide_diag.functional_enabled ? 1 : 0",
@@ -1656,15 +1665,20 @@ def check_sources(root):
     request_sync = record.find("sceKernelDcacheWritebackInvalidateRange(\n"
             "                            (const void *)request_evidence->request_addr, 4)",
             startup_request_zero)
+    total_zero = record.find("_sw(0, counters[1])", request_sync)
+    delegated_zero = record.find("_sw(0, counters[2])", total_zero)
+    total_sync = record.find("(const void *)counters[1], 4", delegated_zero)
+    delegated_sync = record.find("(const void *)counters[2], 4", total_sync)
     trigger_commit = record.find("_sw(evidence->replacement_word",
-            request_sync)
+            delegated_sync)
     patch_dcache = record.find("sceKernelDcacheWritebackInvalidateRange(",
             trigger_commit)
     patch_icache = record.find("sceKernelIcacheInvalidateRange(", patch_dcache)
     patch_synced = record.find("evidence->cache_sync = 1", patch_icache)
     armed_record = record.find("functional_request_armed = 1", patch_synced)
-    if not 0 <= commit_guard < original_init < mode_init < \
-            startup_request_zero < request_sync < \
+    if not 0 <= reused_counter_validation < commit_guard < original_init < mode_init < \
+            startup_request_zero < request_sync < total_zero < delegated_zero < \
+            total_sync < delegated_sync < \
             trigger_commit < patch_dcache < patch_icache < patch_synced < \
             armed_record:
         fail("functional 58D4 closed-request/install transaction is out of order")
@@ -1886,20 +1900,14 @@ def check_sources(root):
     for marker in ("[psp1000-vsh589c-install]", "[psp1000-vsh589c]"):
         if marker in minimal:
             fail("retired VSH +589C automatic output remains in minimal writer")
-    install_marker = minimal.find("[psp1000-vsh6f84-consumers-install] ")
-    live_marker = minimal.find("[psp1000-vsh6f84-consumers] h13=%u ")
+    for marker in ("[psp1000-vsh6f84-consumers-install]",
+            "[psp1000-vsh6f84-consumers]"):
+        if marker in minimal:
+            fail("retired compact VSH consumer output remains in minimal writer")
+    live_marker = minimal.find("[psp1000-vsh58d4] total=%u delegated=%u ")
     minimal_continue = minimal.find("continue;", live_marker)
-    if not 0 <= install_marker < live_marker < minimal_continue:
-        fail("compact VSH consumer evidence is not before minimal continue")
-    install_record = minimal[minimal.rfind(
-            "if (slide_diag.functional_enabled &&", 0, install_marker):live_marker]
-    for token in ("consumer_early_attempted", "consumer_guard_reason",
-            "consumer_validation[0]", "consumer_install[0]",
-            "consumer_cache_sync[0]", "consumer_validation[1]",
-            "consumer_install[1]", "consumer_cache_sync[1]",
-            "observed_vsh6f84_consumers_install"):
-        if token not in install_record:
-            fail("compact VSH consumer install record lacks " + token)
+    if not 0 <= live_marker < minimal_continue:
+        fail("compact VSH +58D4 evidence is not before minimal continue")
     live_start = minimal.rfind("if (slide_diag.functional_enabled) {", 0,
             live_marker)
     live_end = minimal.find("if (slide_diag.functional_enabled) {", live_marker)
@@ -1907,19 +1915,16 @@ def check_sources(root):
     for token in ('sceKernelFindModuleByName("ZeroVSH_Patcher_User")',
             "model == 0", "sceKernelDevkitVersion() == 0x06060110",
             "zeroCtrlLoadedModuleMetadataValid(helper)",
-            "consumer_hits_addr[0]", "consumer_result_addr[0]",
-            "consumer_13f6c_effective_result_addr",
-            "consumer_13f6c_substitution_hits_addr",
-            "consumer_hits_addr[1]", "consumer_result_addr[1]",
-            "consumer_14020_effective_result_addr",
-            "consumer_14020_substitution_hits_addr", "trigger->request_addr",
+            "slide_diag.triggers[1].counter_addr",
+            "slide_diag.triggers[2].counter_addr", "trigger->counter_addr",
+            "trigger->request_addr",
             "scalar[i] == 0", "(scalar[i] & 3) != 0",
             "zeroCtrlVshModuleRangeValid(helper, scalar[i], 4)",
             "functional_home_press_hits", "functional_home_open_pending",
             "zeroCtrlReadTriggerHits(0)", "functional_trigger_consumed",
-            "memcmp(state, observed_vsh6f84_consumers"):
+            "memcmp(state, observed_vsh58d4"):
         if token not in live_record:
-            fail("compact VSH consumer live reader lacks " + token)
+            fail("compact VSH +58D4 live reader lacks " + token)
     if "_sw(" in live_record or "InstallVsh589C" in live_record:
         fail("compact VSH consumer evidence performs a runtime write/install")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
@@ -6428,7 +6433,9 @@ def check_stub_object(stub_object):
             ("zeroCtrlTrigger58D4FunctionalMode", 1, 1),
             ("zeroCtrlTrigger58D4Request", 1, 2),
             ("zeroCtrlTrigger58D4OriginalTarget", 1, 1),
-            ("zeroCtrlTrigger58D4Hits", 2, 4)):
+            ("zeroCtrlTrigger58D4Hits", 2, 4),
+            ("zeroCtrlTrigger13F6CHits", 1, 2),
+            ("zeroCtrlTrigger14020Hits", 1, 2)):
         if len(re.findall(r"R_MIPS_HI16\s+" + scalar + r"\b",
                 trigger58)) != hi_count or len(re.findall(
                 r"R_MIPS_LO16\s+" + scalar + r"\b", trigger58)) != lo_count:
@@ -6437,7 +6444,11 @@ def check_stub_object(stub_object):
             ("zeroCtrlTrigger58D4FunctionalMode", r"\blw\s+t1,"),
             ("zeroCtrlTrigger58D4Request", r"\blw\s+t1,"),
             ("zeroCtrlTrigger58D4Request", r"\bsw\s+zero,"),
-            ("zeroCtrlTrigger58D4OriginalTarget", r"\blw\s+t0,")):
+            ("zeroCtrlTrigger58D4OriginalTarget", r"\blw\s+t0,"),
+            ("zeroCtrlTrigger13F6CHits", r"\blw\s+t1,"),
+            ("zeroCtrlTrigger13F6CHits", r"\bsw\s+t1,"),
+            ("zeroCtrlTrigger14020Hits", r"\blw\s+t1,"),
+            ("zeroCtrlTrigger14020Hits", r"\bsw\s+t1,")):
         if not relocation_bound_to_instruction(trigger58, scalar, operation):
             fail("zeroCtrlTrigger58D4 does not bind " + scalar + " to " + operation)
     for operation in (r"\blw\s+t1,", r"\bsw\s+t1,"):
