@@ -150,6 +150,24 @@ enum zeroCtrlTriggerMode {
     ZERO_TRIGGER_14020 = 4
 };
 
+enum zeroCtrlFunctionalHomeRejectReason {
+    ZERO_HOME_REJECT_NONE = 0,
+    ZERO_HOME_REJECT_PLATFORM = 1,
+    ZERO_HOME_REJECT_COMPAT_INSTALLED = 2,
+    ZERO_HOME_REJECT_TRIGGER_MODE = 3,
+    ZERO_HOME_REJECT_TRIGGER_VALIDATION = 4,
+    ZERO_HOME_REJECT_TRIGGER_PATCH = 5,
+    ZERO_HOME_REJECT_TRIGGER_CACHE = 6,
+    ZERO_HOME_REJECT_HELPER = 7,
+    ZERO_HOME_REJECT_REQUEST_ADDRESS = 8,
+    ZERO_HOME_REJECT_MODE_ADDRESS = 9,
+    ZERO_HOME_REJECT_TARGET_ADDRESS = 10,
+    ZERO_HOME_REJECT_MODE_VALUE = 11,
+    ZERO_HOME_REJECT_REQUEST_VALUE = 12,
+    ZERO_HOME_REJECT_CONSUMED = 13,
+    ZERO_HOME_REJECT_PENDING = 14
+};
+
 static const unsigned int vsh_trigger_offsets[VSH_TRIGGER_COUNT] = {
     0x58D4, 0x13F6C, 0x14020
 };
@@ -614,6 +632,10 @@ typedef struct {
     volatile int functional_request_armed;
     volatile int functional_trigger_consumed;
     volatile int functional_home_open_pending;
+    volatile unsigned int functional_home_press_hits;
+    volatile unsigned int functional_home_first_load_attempts;
+    volatile unsigned int functional_home_first_load_published;
+    volatile unsigned int functional_home_first_load_reject_reason;
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -6257,6 +6279,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_functional_home[11] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6659,6 +6686,40 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 zeroCtrlDiagnosticsText(
                         "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
+            }
+            if (slide_diag.functional_enabled) {
+                ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
+                SceModule2 *helper =
+                        sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+                unsigned int state[11];
+                state[0] = slide_diag.functional_home_press_hits;
+                state[1] = slide_diag.functional_home_first_load_attempts;
+                state[2] = slide_diag.functional_home_first_load_published;
+                state[3] = slide_diag.functional_home_first_load_reject_reason;
+                state[4] = slide_diag.functional_home_open_pending;
+                state[5] = 0xFFFFFFFF;
+                if (zeroCtrlLoadedModuleMetadataValid(helper) &&
+                        trigger->request_addr != 0 &&
+                        (trigger->request_addr & 3) == 0 &&
+                        zeroCtrlVshModuleRangeValid(helper,
+                            trigger->request_addr, 4))
+                    state[5] = _lw(trigger->request_addr);
+                state[6] = zeroCtrlReadTriggerHits(0);
+                state[7] = slide_diag.functional_trigger_consumed;
+                state[8] = slide_diag.bsman.functional_validation;
+                state[9] = slide_diag.bsman.functional_install;
+                state[10] = slide_diag.bsman.functional_cache_sync;
+                if (memcmp(state, observed_functional_home, sizeof(state)) != 0) {
+                    memcpy(observed_functional_home, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-home] press=%u attempt=%u "
+                            "published=%u reject=%u pending=%u request=%u "
+                            "hit=%u consumed=%u compat=%u/%u/%u\n",
+                            state[0], state[1], state[2], state[3], state[4],
+                            state[5], state[6], state[7], state[8], state[9],
+                            state[10]);
+                    zeroCtrlDiagnosticsText(line);
+                }
             }
             if (slide_diag.functional_request_armed &&
                     !slide_diag.functional_trigger_consumed) {
@@ -11510,30 +11571,91 @@ static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void) {
     ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
 
+    slide_diag.functional_home_first_load_attempts++;
     if (!slide_diag.functional_enabled || model != 0 ||
-            sceKernelDevkitVersion() != 0x06060110 ||
-            bsman->functional_install ||
-            !(slide_diag.trigger_mode & ZERO_TRIGGER_58D4) ||
-            !trigger->validation || !trigger->patch_applied ||
-            !trigger->cache_sync || !zeroCtrlLoadedModuleMetadataValid(helper) ||
-            trigger->request_addr == 0 || (trigger->request_addr & 3) != 0 ||
-            !zeroCtrlVshModuleRangeValid(helper, trigger->request_addr, 4) ||
-            trigger->functional_mode_addr == 0 ||
+            sceKernelDevkitVersion() != 0x06060110) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_PLATFORM;
+        return;
+    }
+    if (bsman->functional_install) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_COMPAT_INSTALLED;
+        return;
+    }
+    if (!(slide_diag.trigger_mode & ZERO_TRIGGER_58D4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_MODE;
+        return;
+    }
+    if (!trigger->validation) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_VALIDATION;
+        return;
+    }
+    if (!trigger->patch_applied) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_PATCH;
+        return;
+    }
+    if (!trigger->cache_sync) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_CACHE;
+        return;
+    }
+    if (!zeroCtrlLoadedModuleMetadataValid(helper)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_HELPER;
+        return;
+    }
+    if (trigger->request_addr == 0 || (trigger->request_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, trigger->request_addr, 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_REQUEST_ADDRESS;
+        return;
+    }
+    if (trigger->functional_mode_addr == 0 ||
             (trigger->functional_mode_addr & 3) != 0 ||
             !zeroCtrlVshModuleRangeValid(helper,
-                trigger->functional_mode_addr, 4) ||
-            trigger->original_target_addr == 0 ||
+                trigger->functional_mode_addr, 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_MODE_ADDRESS;
+        return;
+    }
+    if (trigger->original_target_addr == 0 ||
             (trigger->original_target_addr & 3) != 0 ||
             !zeroCtrlVshModuleRangeValid(helper,
-                trigger->original_target_addr, 4) ||
-            _lw(trigger->functional_mode_addr) != 1 ||
-            _lw(trigger->request_addr) != 0 ||
-            slide_diag.functional_trigger_consumed ||
-            slide_diag.functional_home_open_pending) return;
+                trigger->original_target_addr, 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TARGET_ADDRESS;
+        return;
+    }
+    if (_lw(trigger->functional_mode_addr) != 1) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_MODE_VALUE;
+        return;
+    }
+    if (_lw(trigger->request_addr) != 0) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_REQUEST_VALUE;
+        return;
+    }
+    if (slide_diag.functional_trigger_consumed) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_CONSUMED;
+        return;
+    }
+    if (slide_diag.functional_home_open_pending) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_PENDING;
+        return;
+    }
     slide_diag.functional_home_open_pending = 1;
     _sw(1, trigger->request_addr);
     sceKernelDcacheWritebackInvalidateRange(
             (const void *)trigger->request_addr, 4);
+    slide_diag.functional_home_first_load_published++;
+    slide_diag.functional_home_first_load_reject_reason = ZERO_HOME_REJECT_NONE;
 }
 
 //OK
@@ -11548,6 +11670,7 @@ void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 				int request_ready = !slide_diag.functional_enabled;
 				zeroCtrlWriteDebug("Starting slide\n\n");
 				if (slide_diag.functional_enabled) {
+					slide_diag.functional_home_press_hits++;
 					/* HOME arms data-only compatibility; it never executes Sony. */
 					slide_diag.functional_runtime_request_blocked = 1;
 					if (slide_diag.bsman.functional_validation &&

@@ -1672,13 +1672,45 @@ def check_sources(root):
             "slide_diag.functional_home_open_pending"):
         if token not in home_request:
             fail("functional HOME first-load validation lacks " + token)
+    reject_reasons = (
+        ("ZERO_HOME_REJECT_NONE", 0), ("ZERO_HOME_REJECT_PLATFORM", 1),
+        ("ZERO_HOME_REJECT_COMPAT_INSTALLED", 2),
+        ("ZERO_HOME_REJECT_TRIGGER_MODE", 3),
+        ("ZERO_HOME_REJECT_TRIGGER_VALIDATION", 4),
+        ("ZERO_HOME_REJECT_TRIGGER_PATCH", 5),
+        ("ZERO_HOME_REJECT_TRIGGER_CACHE", 6),
+        ("ZERO_HOME_REJECT_HELPER", 7),
+        ("ZERO_HOME_REJECT_REQUEST_ADDRESS", 8),
+        ("ZERO_HOME_REJECT_MODE_ADDRESS", 9),
+        ("ZERO_HOME_REJECT_TARGET_ADDRESS", 10),
+        ("ZERO_HOME_REJECT_MODE_VALUE", 11),
+        ("ZERO_HOME_REJECT_REQUEST_VALUE", 12),
+        ("ZERO_HOME_REJECT_CONSUMED", 13),
+        ("ZERO_HOME_REJECT_PENDING", 14),
+    )
+    for reason, value in reject_reasons:
+        if (reason + " = %d" % value) not in kernel:
+            fail("functional HOME reject mapping changed for " + reason)
+    for reason, _value in reject_reasons[1:]:
+        assignment = ("functional_home_first_load_reject_reason =\n"
+                      "                " + reason + ";\n        return;")
+        if home_request.count(assignment) != 1:
+            fail("functional HOME rejection does not record/return for " + reason)
+    attempt = home_request.find("functional_home_first_load_attempts++")
+    first_validation = home_request.find("if (!slide_diag.functional_enabled")
     pending_write = home_request.find("functional_home_open_pending = 1")
     request_write = home_request.find("_sw(1, trigger->request_addr)")
     request_dcache = home_request.find(
             "sceKernelDcacheWritebackInvalidateRange(", request_write)
-    last_validation = home_request.find(
-            "slide_diag.functional_home_open_pending) return")
-    if not 0 <= last_validation < pending_write < request_write < request_dcache or \
+    published = home_request.find("functional_home_first_load_published++",
+            request_dcache)
+    success_reason = home_request.find(
+            "functional_home_first_load_reject_reason = ZERO_HOME_REJECT_NONE",
+            published)
+    last_validation = home_request.rfind("ZERO_HOME_REJECT_PENDING", 0,
+            pending_write)
+    if not 0 <= attempt < first_validation < last_validation < pending_write < \
+            request_write < request_dcache < published < success_reason or \
             home_request.count("_sw(") != 1:
         fail("functional HOME first-load publication ordering regressed")
     for forbidden in ("sceKernelIcache", "zeroCtrlSetSlideState",
@@ -1686,9 +1718,21 @@ def check_sources(root):
             "MAKE_JUMP", "_sw(replacement", "sceIo", "malloc", "Alloc"):
         if forbidden in home_request:
             fail("functional HOME first-load path performs forbidden operation " + forbidden)
-    if kernel.count("volatile int functional_home_open_pending;") != 1 or \
+    home_fields = ("functional_home_press_hits",
+            "functional_home_first_load_attempts",
+            "functional_home_first_load_published",
+            "functional_home_first_load_reject_reason")
+    if kernel.count("volatile int functional_home_open_pending;") != 1 or any(
+            kernel.count("volatile unsigned int " + field + ";") != 1 or
+            field in bsman_header for field in home_fields) or \
             "functional_home_open_pending" in bsman_header:
-        fail("functional HOME pending state is not exactly one kernel-local field")
+        fail("functional HOME evidence is not kernel-local with exact fields")
+    press_branch = functional_block.find("functional_home_press_hits++")
+    lifecycle_choice = functional_block.find(
+            "if (slide_diag.bsman.functional_validation &&")
+    if press_branch < 0 or press_branch >= lifecycle_choice or \
+            kernel.count("functional_home_press_hits++") != 1:
+        fail("functional HOME press evidence is outside the exact action branch")
     consumed_start = minimal.find(
             "if (slide_diag.functional_request_armed &&\n"
             "                    !slide_diag.functional_trigger_consumed)")
@@ -1707,6 +1751,39 @@ def check_sources(root):
     if not 0 <= consumed_start < consumed_range < consumed_hits < \
             consumed_read < consumed_publish < consumed_log:
         fail("functional 58D4 consumption marker is not range/hit validated")
+    home_record_marker = minimal.find("[psp1000-functional-home] press=%u ")
+    home_record_start = minimal.rfind("if (slide_diag.functional_enabled) {",
+            0, home_record_marker)
+    home_record = minimal[home_record_start:minimal.find(
+            "if (slide_diag.functional_request_armed &&", home_record_marker)]
+    helper_metadata = home_record.find("zeroCtrlLoadedModuleMetadataValid(helper)")
+    request_nonzero = home_record.find("trigger->request_addr != 0", helper_metadata)
+    request_aligned = home_record.find("(trigger->request_addr & 3) == 0",
+            request_nonzero)
+    request_range = home_record.find(
+            "zeroCtrlVshModuleRangeValid(helper,\n                            trigger->request_addr, 4)",
+            request_aligned)
+    request_read = home_record.find("state[5] = _lw(trigger->request_addr)",
+            request_range)
+    changed = home_record.find("memcmp(state, observed_functional_home",
+            request_read)
+    output = home_record.find("zeroCtrlDiagnosticsText(line)", changed)
+    for token in ("functional_home_press_hits",
+            "functional_home_first_load_attempts",
+            "functional_home_first_load_published",
+            "functional_home_first_load_reject_reason",
+            "functional_home_open_pending", "zeroCtrlReadTriggerHits(0)",
+            "functional_trigger_consumed", "functional_validation",
+            "functional_install", "functional_cache_sync",
+            "press=%u attempt=%u ", "published=%u reject=%u pending=%u request=%u ",
+            "hit=%u consumed=%u compat=%u/%u/%u"):
+        if token not in home_record:
+            fail("functional HOME writer record lacks " + token)
+    if home_record_start < 0 or not 0 <= helper_metadata < request_nonzero < \
+            request_aligned < request_range < request_read < changed < output or \
+            "slide_diag.saw_request" in home_record or \
+            kernel.count("[psp1000-functional-home]") != 1:
+        fail("functional HOME writer validation/changed-only isolation regressed")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
