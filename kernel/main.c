@@ -4962,6 +4962,99 @@ static void zeroCtrlWriteClockPathXrefs(SceModule2 *vsh, unsigned int target,
     }
 }
 
+static void zeroCtrlDescribeRegistrationArgument(SceModule2 *vsh,
+        unsigned int call_offset, unsigned int reg, char *description,
+        unsigned int capacity) {
+    unsigned int step;
+
+    strcpy(description, "UNKNOWN");
+    for (step = 0; step <= 12; step++) {
+        unsigned int offset = step == 0 ? call_offset + 4 :
+                call_offset - step * 4;
+        unsigned int word, opcode, rs, rt, function;
+        int destination;
+        if ((step == 0 && call_offset > vsh->text_size - 8) ||
+                (step != 0 && call_offset < step * 4) ||
+                !zeroCtrlVshModuleRangeValid(vsh,
+                    vsh->text_addr + offset, 4))
+            return;
+        word = _lw(vsh->text_addr + offset);
+        opcode = word >> 26;
+        rs = (word >> 21) & 0x1F;
+        rt = (word >> 16) & 0x1F;
+        function = word & 0x3F;
+        if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && (function == 8 || function == 9)))
+            return;
+        destination = zeroCtrlMipsGprWriteDestination(word);
+        if (destination < 0) return;
+        if ((unsigned int)destination != reg) continue;
+        if (opcode == 9) {
+            int value = (short)(word & 0xFFFF);
+            if (rs == 0 && value == 0) strcpy(description, "CONST_0");
+            else if (rs == 0 && value == 1) strcpy(description, "CONST_1");
+            else if (rs == 29)
+                snprintf(description, capacity, "STACK_%04X", word & 0xFFFF);
+            else if (value == 0)
+                snprintf(description, capacity, "REG_R%u", rs);
+            return;
+        }
+        if (opcode == 0x0D && rs == 0) {
+            snprintf(description, capacity, "CONST_%08X", word & 0xFFFF);
+            return;
+        }
+        if (opcode == 0x0F) {
+            snprintf(description, capacity, "TEXT_HI_%04X", word & 0xFFFF);
+            return;
+        }
+        if (opcode == 0x23) {
+            snprintf(description, capacity, "LW_R%u_%04X", rs, word & 0xFFFF);
+            return;
+        }
+        if (opcode == 0 && (function == 0x21 || function == 0x25)) {
+            if (rs == 0 && rt != 0)
+                snprintf(description, capacity, "REG_R%u", rt);
+            else if (rt == 0 && rs != 0)
+                snprintf(description, capacity, "REG_R%u", rs);
+            return;
+        }
+        return;
+    }
+}
+
+static unsigned int zeroCtrlClockPathPropagateCallback(unsigned int word,
+        unsigned int provenance, int *ambiguous) {
+    unsigned int opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int rd = (word >> 11) & 0x1F;
+    unsigned int function = word & 0x3F;
+    int destination = zeroCtrlMipsGprWriteDestination(word);
+    unsigned int source = 0, copy = 0;
+
+    if (opcode == 0 && (function == 0x21 || function == 0x25) &&
+            ((rs == 0) != (rt == 0))) {
+        source = rs == 0 ? rt : rs;
+        copy = 1;
+    } else if (opcode == 9 && (short)(word & 0xFFFF) == 0) {
+        source = rs;
+        copy = 1;
+    }
+    if (destination < 0) {
+        *ambiguous = 1;
+        return provenance;
+    }
+    if (destination != 0) {
+        int source_live = copy && (provenance & (1U << source));
+        provenance &= ~(1U << destination);
+        if (source_live) provenance |= 1U << destination;
+    }
+    (void)rd;
+    return provenance;
+}
+
 /* Writer-thread-only loaded-code archaeology; this routine performs no mutation. */
 static int zeroCtrlWriteFunctionalClockPathAnalysis(void) {
     SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
@@ -5181,6 +5274,213 @@ static int zeroCtrlWriteFunctionalClockPathAnalysis(void) {
                     "[psp1000-clockpath-materialize] source=0x%05X reg=%u "
                     "address=0x%08X\n", i, reg, resolved);
             zeroCtrlDiagnosticsText(line);
+        }
+    }
+    {
+        unsigned int material_count = 0, material_source = 0;
+        unsigned int material_low = 0, material_reg = 0, material_address = 0;
+        unsigned int call_offset = 0, call_target = 0, callback_reg = 5;
+        unsigned int provenance = 1U << 5;
+        const char *status = "NO_CALL";
+        const char *kind = "NONE";
+        char argument[4][32];
+        unsigned int look;
+
+        for (i = 0; i <= vsh->text_size - 8; i += 4) {
+            unsigned int lui = _lw(text + i);
+            unsigned int low = _lw(text + i + 4);
+            unsigned int reg = (lui >> 16) & 0x1F;
+            unsigned int resolved = 0;
+            if ((lui >> 26) != 0x0F || reg == 0 ||
+                    ((low >> 21) & 0x1F) != reg ||
+                    ((low >> 16) & 0x1F) != reg)
+                continue;
+            if ((low >> 26) == 9)
+                resolved = ((lui & 0xFFFF) << 16) +
+                        (unsigned int)(int)(short)(low & 0xFFFF);
+            else if ((low >> 26) == 0x0D)
+                resolved = ((lui & 0xFFFF) << 16) | (low & 0xFFFF);
+            if (resolved != text + 0x589C) continue;
+            material_count++;
+            material_source = i;
+            material_low = i + 4;
+            material_reg = reg;
+            material_address = resolved;
+        }
+        snprintf(line, sizeof(line),
+                "[psp1000-clockpath-registration-materialize] count=%u "
+                "source=0x%05X low=0x%05X reg=%u address=0x%08X\n",
+                material_count, material_source, material_low, material_reg,
+                material_address);
+        zeroCtrlDiagnosticsText(line);
+        if (material_count != 1 || material_source != 0x56FC ||
+                material_reg != 5)
+            return 0;
+        for (look = 1; look <= 16 &&
+                material_low <= vsh->text_size - (look + 1) * 4; look++) {
+            unsigned int source = material_low + look * 4;
+            unsigned int transfer = _lw(text + source);
+            unsigned int opcode = transfer >> 26;
+            unsigned int function = transfer & 0x3F;
+            int ambiguous = 0;
+            if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17)) {
+                status = "AMBIGUOUS";
+                break;
+            }
+            if (opcode == 3) {
+                unsigned int delay = _lw(text + source + 4);
+                provenance = zeroCtrlClockPathPropagateCallback(delay,
+                        provenance, &ambiguous);
+                if (ambiguous) {
+                    status = "AMBIGUOUS";
+                    break;
+                }
+                if (provenance & (1U << 5)) {
+                    call_offset = source;
+                    call_target = zeroCtrlMipsJumpTarget(text + source,
+                            transfer);
+                    status = "FOUND";
+                    kind = "JAL";
+                    break;
+                }
+                status = "OVERWRITTEN";
+                break;
+            }
+            if (opcode == 0 && function == 9) {
+                if (!(provenance & (1U << 5))) {
+                    status = "OVERWRITTEN";
+                    break;
+                }
+                call_offset = source;
+                status = "FOUND";
+                kind = "JALR";
+                call_target = 0;
+                break;
+            }
+            if (opcode == 2 || (opcode == 0 && function == 8)) {
+                status = "AMBIGUOUS";
+                break;
+            }
+            provenance = zeroCtrlClockPathPropagateCallback(transfer,
+                    provenance, &ambiguous);
+            if (ambiguous) {
+                status = "AMBIGUOUS";
+                break;
+            }
+            if (provenance == 0) {
+                status = "OVERWRITTEN";
+                break;
+            }
+        }
+        snprintf(line, sizeof(line),
+                "[psp1000-clockpath-registration-consumer] status=%s "
+                "call=0x%05X kind=%s target=0x%05X callback_reg=%u\n",
+                status, call_offset, kind,
+                call_target >= text ? call_target - text : 0, callback_reg);
+        zeroCtrlDiagnosticsText(line);
+        if (strcmp(status, "FOUND") != 0) return 1;
+        for (i = 0; i < 4; i++)
+            zeroCtrlDescribeRegistrationArgument(vsh, call_offset, i + 4,
+                    argument[i], sizeof(argument[i]));
+        if (provenance & (1U << 5))
+            strcpy(argument[1], "CALLBACK_VSH_589C");
+        snprintf(line, sizeof(line),
+                "[psp1000-clockpath-registration-args] call=0x%05X "
+                "a0=%s a1=%s a2=%s a3=%s\n", call_offset, argument[0],
+                argument[1], argument[2], argument[3]);
+        zeroCtrlDiagnosticsText(line);
+        {
+            unsigned int start = call_offset >= 32 ? call_offset - 32 : 0;
+            unsigned int end = call_offset <= vsh->text_size - 24 ?
+                    call_offset + 24 : vsh->text_size;
+            if (!zeroCtrlVshModuleRangeValid(vsh, text + start, end - start))
+                return 0;
+            for (i = start; i < end; i += 4) {
+                snprintf(line, sizeof(line),
+                        "[psp1000-clockpath-registration-code] "
+                        "offset=0x%05X word=0x%08X\n", i, _lw(text + i));
+                zeroCtrlDiagnosticsText(line);
+            }
+        }
+        if (strcmp(kind, "JAL") == 0 && call_target >= text &&
+                call_target - text <= vsh->text_size - 96 * 4 &&
+                zeroCtrlVshModuleRangeValid(vsh, call_target, 96 * 4)) {
+            unsigned int callee = call_target - text;
+            unsigned int tracked = 1U << 5;
+            int flow_done = 0;
+            for (i = 0; i < 0x60; i += 4) {
+                snprintf(line, sizeof(line),
+                        "[psp1000-clockpath-registration-code] "
+                        "offset=0x%05X word=0x%08X\n", callee + i,
+                        _lw(text + callee + i));
+                zeroCtrlDiagnosticsText(line);
+            }
+            for (i = 0; i < 96 * 4; i += 4) {
+                unsigned int source = callee + i;
+                unsigned int instruction = _lw(text + source);
+                unsigned int opcode = instruction >> 26;
+                unsigned int rs = (instruction >> 21) & 0x1F;
+                unsigned int rt = (instruction >> 16) & 0x1F;
+                unsigned int function = instruction & 0x3F;
+                int ambiguous = 0;
+                if (opcode == 0x2B && (tracked & (1U << rt))) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-registration-store] "
+                            "source=0x%05X value_reg=%u base_reg=%u disp=%d\n",
+                            source, rt, rs, (short)(instruction & 0xFFFF));
+                    zeroCtrlDiagnosticsText(line);
+                }
+                if (opcode == 3) {
+                    unsigned int arg;
+                    unsigned int delay = _lw(text + source + 4);
+                    tracked = zeroCtrlClockPathPropagateCallback(delay,
+                            tracked, &ambiguous);
+                    if (ambiguous) {
+                        snprintf(line, sizeof(line),
+                                "[psp1000-clockpath-registration-flow] "
+                                "status=AMBIGUOUS offset=0x%05X\n", source + 4);
+                        zeroCtrlDiagnosticsText(line);
+                        flow_done = 1;
+                        break;
+                    }
+                    for (arg = 0; arg < 4; arg++)
+                        if (tracked & (1U << (arg + 4))) {
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-clockpath-registration-forward] "
+                                    "source=0x%05X target=0x%05X arg=%u\n",
+                                    source, zeroCtrlMipsJumpTarget(text + source,
+                                        instruction) - text, arg);
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                    flow_done = 1;
+                    break;
+                }
+                if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                        (opcode >= 0x14 && opcode <= 0x17) || opcode == 2 ||
+                        (opcode == 0 && (function == 8 || function == 9))) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-registration-flow] "
+                            "status=AMBIGUOUS offset=0x%05X\n", source);
+                    zeroCtrlDiagnosticsText(line);
+                    flow_done = 1;
+                    break;
+                }
+                tracked = zeroCtrlClockPathPropagateCallback(instruction,
+                        tracked, &ambiguous);
+                if (ambiguous || tracked == 0) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-registration-flow] "
+                            "status=AMBIGUOUS offset=0x%05X\n", source);
+                    zeroCtrlDiagnosticsText(line);
+                    flow_done = 1;
+                    break;
+                }
+            }
+            if (!flow_done)
+                zeroCtrlDiagnosticsText(
+                        "[psp1000-clockpath-registration-flow] "
+                        "status=AMBIGUOUS offset=0x00000\n");
         }
     }
     return 1;

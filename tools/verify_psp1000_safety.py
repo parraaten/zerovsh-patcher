@@ -2036,7 +2036,19 @@ def check_sources(root):
             "[psp1000-clockpath-pointer]",
             "[psp1000-clockpath-materialize]",
             "[psp1000-clockpath-entry-arg]",
-            "[psp1000-clockpath-58b8-arg]"):
+            "[psp1000-clockpath-58b8-arg]",
+            "[psp1000-clockpath-registration-materialize]",
+            "material_count != 1", "material_source != 0x56FC",
+            "material_reg != 5", "look <= 16",
+            "zeroCtrlClockPathPropagateCallback(delay",
+            "[psp1000-clockpath-registration-consumer]",
+            "[psp1000-clockpath-registration-args]",
+            "CALLBACK_VSH_589C",
+            "[psp1000-clockpath-registration-store]",
+            "[psp1000-clockpath-registration-forward]",
+            "[psp1000-clockpath-registration-flow]",
+            "[psp1000-clockpath-registration-code]",
+            "i < 96 * 4"):
         if token not in clockpath:
             fail("read-only Clock & Date CFG analysis lacks " + token)
     if "#define CLOCKPATH_CFG_LIMIT 128" not in kernel:
@@ -2069,11 +2081,50 @@ def check_sources(root):
             fail("Clock path exact xref scanner lacks " + token)
     if "#define CLOCKPATH_XREF_LOOKAHEAD 8" not in kernel:
         fail("Clock path xref scan is not bounded")
+    registration_start = kernel.find(
+            "static void zeroCtrlDescribeRegistrationArgument(")
+    registration = kernel[registration_start:clock_end]
+    for token in ('strcpy(description, "UNKNOWN")',
+            "zeroCtrlVshModuleRangeValid(vsh,",
+            "zeroCtrlMipsGprWriteDestination(word)",
+            "opcode == 3", "opcode == 0 && function == 9"):
+        if token not in registration:
+            fail("Clock callback registration provenance lacks " + token)
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
+            "REDIRECT_FUNCTION", "hook_import"):
+        if forbidden in registration:
+            fail("Clock callback registration analysis mutates runtime state")
     if "zeroCtrlInstallVshCtrl314A4Trace();" in writer:
         fail("VSH +314A4 is still patched automatically")
     call = minimal.find("zeroCtrlWriteFunctionalClockPathAnalysis()")
     if call < 0 or "clockpath_written" not in minimal[:call]:
         fail("Clock path analysis is not a writer-only one-shot")
+    parsed_keys = []
+    for raw_line in sample_config.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("["):
+            continue
+        if "=" not in line:
+            fail("sample INI contains an invalid active line: " + line)
+        parsed_keys.append(line.split("=", 1)[0].strip())
+    if len(parsed_keys) != len(set(parsed_keys)):
+        fail("sample INI contains duplicate active configuration keys")
+    required_ini = ("PSP1000SlidePlugin", "PSP1000SlideTriggerMode",
+            "PSP1000Diagnostics", "PSP1000SonyStartTrace",
+            "PSP1000SelectiveSlideTrigger58D4")
+    for key in required_ini:
+        if parsed_keys.count(key) != 1:
+            fail("sample INI must contain exactly one " + key)
+    experimental = sample_config[sample_config.find("[Experimental]"):]
+    for line in experimental.splitlines():
+        line = line.strip()
+        if line.startswith("PSP1000") and not line.endswith("= Disabled"):
+            fail("sample INI enables experimental PSP-1000 behavior: " + line)
+    legacy_pos = sample_config.find("PSP1000SelectiveSlideTrigger58D4")
+    legacy_context = sample_config[max(0, legacy_pos - 160):legacy_pos].lower()
+    if legacy_pos < 0 or "legacy" not in legacy_context or \
+            "deprecated" not in legacy_context:
+        fail("legacy selective +58D4 alias is not clearly documented")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
