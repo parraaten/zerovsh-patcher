@@ -2005,99 +2005,68 @@ def check_sources(root):
             'state[i] = _lw(address[i])'):
         if token not in telemetry:
             fail("VSH +314A4 telemetry validation lacks " + token)
-    for marker in ('[psp1000-vshctrl314a4-install]',
-            '[psp1000-vshctrl314a4-home]',
-            '[psp1000-vshctrl314a4-posthome]',
-            '[psp1000-vshctrl314a4-final]'):
-        if marker not in writer:
-            fail("VSH +314A4 writer telemetry lacks " + marker)
-    if writer.count('[psp1000-vshctrl314a4-posthome]') != 1 or \
-            'observed_vshctrl314a4_posthome = 1' not in writer:
-        fail("VSH +314A4 post-HOME proof is not one-shot")
-    posthome_start = writer.find(
-            "if (slide_diag.vshctrl314a4_home_baseline_captured)")
-    posthome_end = writer.find("observed_vshctrl314a4_posthome = 1",
-            posthome_start)
-    posthome = writer[posthome_start:posthome_end]
-    for token in ("trace_state[0] >=",
-            "slide_diag.vshctrl314a4_total_baseline",
-            "trace_state[1] >=",
-            "slide_diag.vshctrl314a4_pending_baseline",
-            "trace_state[3] ==",
-            "slide_diag.vshctrl314a4_consumed_hits_baseline",
-            "trace_state[2] == 1",
-            "!slide_diag.functional_trigger_consumed",
-            "total_delta > 0", "pending_delta > 0",
-            "total_delta == pending_delta",
-            "candidate &&\n                        vshctrl314a4_candidate_seen"):
-        if token not in posthome:
-            fail("VSH +314A4 post-HOME proof lacks " + token)
-    candidate_update = writer.find(
-            "vshctrl314a4_candidate_seen = candidate ? 1 : 0", posthome_start)
-    if candidate_update < posthome_end:
-        fail("VSH +314A4 proof can be emitted on its first candidate poll")
-    final_record = writer.find('[psp1000-vshctrl314a4-final]')
-    final_checkpoint = writer.find('[checkpoint-fast] minimal_observation_window_complete')
-    if not 0 <= final_record < final_checkpoint:
-        fail("VSH +314A4 final record is not immediately before checkpoint")
-    final_block = writer[writer.rfind("unsigned int total_delta =", 0,
-            final_record):
-            final_checkpoint]
-    for token in ("trace_state[0] >=",
-            "trace_state[1] >=",
-            "baseline_valid && trace_state[2] == 1",
-            "!slide_diag.functional_trigger_consumed",
-            "trace_state[3] ==",
-            "total_delta > 0", "pending_delta > 0",
-            "total_delta == pending_delta",
-            "if (!final_evidence) total_delta = pending_delta = 0",
-            "total=%u", "pending=%u", "request=%u",
-            "consumed_hits=%u", "consumed=%u", "proof=%u"):
-        if token not in final_block:
-            fail("VSH +314A4 final evidence gate lacks " + token)
-    home_request = kernel[kernel.find("static void zeroCtrlRequestPsp1000FunctionalOpenFromHome("):kernel.find("\n}\n", kernel.find("zeroCtrlRequestPsp1000FunctionalOpenFromHome(")) + 3]
-    pending_write = home_request.find('functional_home_open_pending = 1')
-    request_write = home_request.find('_sw(1, trigger->request_addr)', pending_write)
-    request_sync = home_request.find(
-            'sceKernelDcacheWritebackInvalidateRange(\n'
-            '            (const void *)trigger->request_addr, 4)', request_write)
-    baseline = home_request.find('vshctrl314a4_home_baseline_captured = 1',
-            request_sync)
-    first_snapshot = home_request.find(
-            'baseline_a[i] = _lw(baseline_address[i])', baseline)
-    second_snapshot = home_request.find(
-            'baseline_b[i] = _lw(baseline_address[i])', first_snapshot)
-    request_value = home_request.find(
-            'baseline_a[3] == 1 && baseline_b[3] == 1', second_snapshot)
-    consumed_gate = home_request.find(
-            '!slide_diag.functional_trigger_consumed', request_value)
-    stable_total = home_request.find('baseline_a[0] == baseline_b[0]',
-            consumed_gate)
-    stable_pending = home_request.find('baseline_a[1] == baseline_b[1]',
-            stable_total)
-    stable_consumed = home_request.find('baseline_a[2] == baseline_b[2]',
-            stable_pending)
-    total_baseline = home_request.find(
-            'vshctrl314a4_total_baseline = baseline_b[0]', stable_consumed)
-    pending_baseline = home_request.find(
-            'vshctrl314a4_pending_baseline = baseline_b[1]', total_baseline)
-    consumed_baseline = home_request.find(
-            'vshctrl314a4_consumed_hits_baseline = baseline_b[2]',
-            pending_baseline)
-    baseline_valid = home_request.find(
-            'vshctrl314a4_home_baseline_valid = 1', consumed_baseline)
-    if not 0 <= pending_write < request_write < request_sync < baseline < \
-            first_snapshot < second_snapshot < request_value < consumed_gate < \
-            stable_total < stable_pending < stable_consumed < total_baseline < \
-            pending_baseline < consumed_baseline < baseline_valid:
-        fail("controller pending baseline is not captured after HOME publication")
-    for token in ("triggers[1].counter_addr", "triggers[2].counter_addr",
-            "trigger->counter_addr", "trigger->request_addr"):
-        if token not in home_request:
-            fail("controller paired baseline lacks " + token)
-    baseline_logic = home_request[baseline:baseline_valid]
-    if "_sw(" in baseline_logic:
-        fail("controller paired baseline modifies shared helper state")
+    for marker in ("[psp1000-vshctrl314a4-install]",
+            "[psp1000-vshctrl314a4-home]",
+            "[psp1000-vshctrl314a4-posthome]",
+            "[psp1000-vshctrl314a4-final]"):
+        if marker in writer:
+            fail("retired VSH +314A4 runtime experiment remains automatic")
+    if "zeroCtrlInstallVshCtrl314A4Trace();" in writer:
+        fail("VSH +314A4 is still patched automatically")
+    clock_start = kernel.find(
+            "static int zeroCtrlWriteFunctionalClockPathAnalysis(void)")
+    clock_end = kernel.find("static int zeroCtrlMipsMove(", clock_start)
+    clockpath = kernel[clock_start:clock_end]
+    for token in ('sceKernelFindModuleByName("vsh_module")', "model != 0",
+            "sceKernelDevkitVersion() != 0x06060110",
+            "!slide_diag.functional_enabled",
+            "!zeroCtrlLoadedModuleMetadataValid(vsh)",
+            'strcmp(vsh->modname, "vsh_module") != 0',
+            "vsh->modid != slide_diag.vsh_modid",
+            "vsh->text_addr != slide_diag.vsh_text_addr",
+            "vsh->text_size != slide_diag.vsh_text_size",
+            "vsh->text_size != 0x556C0",
+            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,",
+            "vsh->text_addr + 0x5894, 0x6C",
+            "_lw(text + 0x5894) != 0x03E00008",
+            "_lw(text + 0x5898) != 0x27BD0080",
+            "_lw(text + 0x58A0) != 0x27BDFFF0",
+            "_lw(text + 0x58A8) != 0xAFBF0000",
+            "_lw(text + 0x58E8) != 0x03E00008",
+            "_lw(text + 0x58EC) != 0x27BD0010",
+            "text + 0x57B0", "text + 0x58E8",
+            "opcode == 2 || opcode == 3",
+            "zeroCtrlMipsJumpTarget(text + offset, word)",
+            "zeroCtrlVshModuleRangeValid(vsh, text + start, end - start)",
+            "[psp1000-clockpath-function]",
+            "[psp1000-clockpath-code]",
+            "[psp1000-clockpath-caller]",
+            "[psp1000-clockpath-args]",
+            "[psp1000-clockpath-57b0]"):
+        if token not in clockpath:
+            fail("read-only Clock & Date path analysis lacks " + token)
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
+            "REDIRECT_FUNCTION", "hook_import", "zeroCtrlSetSlideState",
+            "zeroCtrlInstallVshCtrl314A4Trace("):
+        if forbidden in clockpath:
+            fail("Clock & Date path analysis is not read-only: " + forbidden)
+    arg_start = kernel.find("static void zeroCtrlDescribeClockPathArgument(")
+    arg_end = clock_start
+    arg_tracker = kernel[arg_start:arg_end]
+    for token in ('strcpy(description, "UNKNOWN")',
+            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + offset, 4)",
+            "zeroCtrlMipsGprWriteDestination(word)",
+            'strcpy(description, "CONST_0")',
+            'strcpy(description, "CONST_1")', '"STACK_%X"',
+            '"REG_R%u"', '"LW_R%u_%04X"'):
+        if token not in arg_tracker:
+            fail("Clock path conservative argument tracker lacks " + token)
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP"):
+        if forbidden in arg_tracker:
+            fail("Clock path argument tracking is not read-only: " + forbidden)
+    call = minimal.find("zeroCtrlWriteFunctionalClockPathAnalysis()")
+    if call < 0 or "clockpath_written" not in minimal[:call]:
+        fail("Clock path analysis is not a writer-only one-shot")
     button_install = kernel[kernel.find("if (slide_diag.functional_enabled)",
         kernel.find("zeroCtrlCreatePatchThread();")):kernel.find("return 0;",
         kernel.find("zeroCtrlCreatePatchThread();"))]
