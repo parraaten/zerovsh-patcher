@@ -953,10 +953,7 @@ def check_sources(root):
             "zeroCtrlMipsMove(_lw(constructed[1] + 0x0C), 16, 5)",
             "load = _lw(constructed[1] + 0x40)",
             "(short)(load & 0xFFFF) == 12",
-            "branch = _lw(constructed[1] + 0x44)",
-            "zeroCtrlMipsBranchTarget(constructed[1] + 0x44, branch)",
-            "constructed[1] + 0xB4", "delay == 0",
-            "jalr = _lw(constructed[1] + 0xB4)",
+            "constructed[1] + 0xB4",
             "jalr_delay = _lw(constructed[1] + 0xB8)",
             "(short)(jalr_delay & 0xFFFF) == 4",
             "[paf-a989-constructed1-indirect] validation=1",
@@ -964,83 +961,56 @@ def check_sources(root):
             "arg0_field_off=0x04 jalr_off=0xB4",
             "[paf-a989-callback-adapter] validation=1",
             "adapter_off=0x34658 base_arg=a1 callback_field=0x0C",
-            "constructed[0]", "remaining > 0x30 ? 0x30",
-            "constructed0_size == 0x30",
-            "zeroCtrlVshModuleRangeValid(paf,\n                    constructed[0], constructed0_size)",
-            "_lw(constructed[0]) == 0x27BDFFF0",
-            "_lw(constructed[0] + 0x04) == 0xAFB10004",
-            "zeroCtrlMipsMove(_lw(constructed[0] + 0x08), 17, 4)",
-            "_lw(constructed[0] + 0x0C) == 0x240401D8",
-            "_lw(constructed[0] + 0x10) == 0xAFBF0008",
-            "first_call_word = _lw(constructed[0] + 0x14)",
-            "first_call_target = zeroCtrlMipsJumpTarget(",
-            "(first_call_word >> 26) == 3",
-            "zeroCtrlModuleContainingSegment(paf, first_call_target",
-            "_lw(constructed[0] + 0x18) == 0xAFB00000",
-            "zeroCtrlMipsMove(_lw(constructed[0] + 0x1C), 16, 2)",
-            "_lw(constructed[0] + 0x20) == 0x8E250008",
-            "second_call_word = _lw(constructed[0] + 0x24)",
-            "second_call_target = zeroCtrlMipsJumpTarget(",
-            "(second_call_word >> 26) == 3",
-            "zeroCtrlModuleContainingSegment(paf, second_call_target",
-            "zeroCtrlMipsMove(_lw(constructed[0] + 0x28), 4, 2)",
-            "_lw(constructed[0] + 0x2C) == 0xAE300004",
             "[paf-a989-constructed0-write] validation=1",
-            "base_arg_reg=4 base_saved_reg=17 field_off=0x04",
-            "source=first_call_return_saved_reg source_reg=16",
-            "store_off=0x2C",
             "zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size)",
-            "(short)(load & 0xFFFF) != 0x14", "look <= offset + 0x40",
-            "base == target",
-            "unsigned char source[32] = { 0 }",
-            "zeroCtrlMipsGprWriteDestination(word)",
-            "(unsigned int)destination == target",
-            "(unsigned int)destination == base", "function == 9",
-            "if (rs != target || rd != 31) break",
-            "delay = _lw(paf->text_addr + look + 4)",
-            "zeroCtrlMipsGprWriteDestination(delay)",
-            "delay_writes_base",
-            "(unsigned int)delay_destination == base",
-            "A delay-slot load uses the original base before any write",
-            "source[(delay >> 16) & 0x1F] = 1",
-            "source[delay_destination] = 0",
-            "[paf-a989-outer14-call-candidate]", "reported < 16",
-            "[paf-a989-outer14-call-provenance]", "base_plus_0x04",
-            'source[5] ? "base_plus_0x04" : "UNKNOWN"',
-            "back_start = offset > 0x40 ?",
-            "offset - 0x40 : 0",
-            "definition_off = back - 4",
-            "_lw(paf->text_addr + definition_off)",
-            "definition_off - 4",
-            "prior_opcode == 1 || prior_opcode == 2",
-            "prior_function == 8 ||",
-            "prior_function == 9",
-            "zeroCtrlMipsGprWriteDestination(definition)",
-            "(unsigned int)definition_destination == base",
-            "zeroCtrlMipsMove(definition, base",
-            "definition_opcode == 9",
-            "definition_opcode == 0x23",
-            "status=LOCAL_DEFINITION",
-            "path=BRANCH_FREE_SUFFIX",
-            "[paf-a989-outer14-base-origin]",
-            "load_off=0x%X status=UNKNOWN",
+            "typedef struct", "ZeroCtrlOuterProvenance",
+            "unsigned int kind;", "unsigned int id;",
+            "OUTER_PROV_UNKNOWN", "OUTER_PROV_BASE",
+            "OUTER_PROV_PLUS04", "OUTER_PROV_PLUS14",
+            "candidate_id = offset / 4 + 1",
+            "provenance[base].kind = OUTER_PROV_BASE",
+            "provenance[target].kind = OUTER_PROV_PLUS14",
+            "look <= offset + 0x80", "provenance[rd] = provenance[rs]",
+            "provenance[rd] = provenance[rt]",
+            "provenance[rt] = provenance[rs]",
+            "provenance[delay_rd] = provenance[delay_rs]",
+            "provenance[delay_rd] = provenance[delay_rt]",
+            "provenance[delay_rt] = provenance[delay_rs]",
+            "provenance[delay_rs].kind == OUTER_PROV_BASE",
+            "OUTER_PROV_PLUS04 : OUTER_PROV_PLUS14",
+            "provenance[delay_rt].id = provenance[delay_rs].id",
+            "provenance[rs].kind == OUTER_PROV_BASE",
+            "provenance[rt].id = provenance[rs].id",
+            "provenance[destination].kind = OUTER_PROV_UNKNOWN",
+            "provenance[delay_destination].kind = OUTER_PROV_UNKNOWN",
+            "unsigned int delay_supported = 1",
+            "if (!delay_supported)",
+            "Classify only after applying the architectural delay slot",
+            "target_value = provenance[rs]", "a1_value = provenance[5]",
+            "target_value.kind != OUTER_PROV_PLUS14",
+            "a1_value.kind != OUTER_PROV_PLUS04",
+            "target_value.id != a1_value.id",
+            "[paf-a989-outer14-exact-check]",
+            "target_kind=%s target_id=%u", "a1_kind=%s a1_id=%u",
+            'terminal_result = "MATCH"', 'terminal_result = "DIFFERENT_BASE"',
+            'terminal_result = "A1_UNKNOWN"',
+            'terminal_result = "TARGET_UNKNOWN"',
+            'terminal_result = "CONTROL_FLOW"',
+            'terminal_result = "OVERWRITTEN"',
+            "reported < 16", "if (matched)",
             "[paf-a989-exact-dispatch]", "same_outer=1",
-            "outer_origin=%s", "HEADER_PLUS_04",
             "[paf-a989-exact-dispatch-function]",
             "STACK_FRAME_AND_SAVED_RA", "offset - search <= 0x100",
-            "(prologue >> 26) == 2",
             "[paf-a989-exact-dispatch-caller]", "caller_reported < 16",
             "[paf-a989-exact-dispatch-arg]",
             "[paf-a989-root-slot]", "root_slot - paf->segmentaddr[root_segment]",
             "[paf-a989-exact-dispatch-root]",
             "[paf-a989-dispatch-chain] validation=1",
-            "exact_dispatches && adapter_valid && closure",
-            "[paf-a989-outer14-dispatch-shape] validation=1",
-            "target_field_off=0x14 arg1_field_off=0x04",
-            "[paf-a989-constructed1-provenance]",
-            "if_base_is_a989_outer=1", "execution=NOT_OBSERVED"):
+            "exact_dispatches && exact_same_outer && adapter_valid",
+            "if (exact_same_outer)",
+            "[paf-a989-outer14-dispatch-shape] validation=1"):
         if token not in constructed_flow:
-            fail("constructed/OUTER+0x14 structural search lacks " + token)
+            fail("constructed/OUTER+0x14 symbolic search lacks " + token)
     c1_range = constructed_flow.find(
             "zeroCtrlVshModuleRangeValid(paf, constructed[1], 0xBC)")
     c1_read = constructed_flow.find("_lw(constructed[1]", c1_range)
@@ -1050,69 +1020,37 @@ def check_sources(root):
             outer_text_range)
     if not 0 <= c1_range < c1_read < outer_text_range < outer_scan_read:
         fail("constructed/OUTER+0x14 analysis reads before range validation")
-    if "unsigned int provenance_reg" in constructed_flow or \
-            "unsigned int provenance =" in constructed_flow:
-        fail("OUTER+0x14 analysis retains sticky a1 provenance")
+    if "unsigned char source[32]" in constructed_flow or \
+            "if (source[5])" in constructed_flow:
+        fail("exact OUTER dispatch still uses boolean source[5] provenance")
+    exact_gate = constructed_flow.find("if (matched)", outer_scan_read)
+    origin_scan = constructed_flow.find("while (back > back_start)", exact_gate)
+    exact_output = constructed_flow.find("[paf-a989-exact-dispatch]", origin_scan)
+    chain_gate = constructed_flow.find(
+            "exact_dispatches && exact_same_outer && adapter_valid", exact_output)
+    if not 0 <= exact_gate < origin_scan < exact_output < chain_gate:
+        fail("exact dispatch origin/chain work is not gated by SAME_OUTER")
+    if "exact_dispatches && adapter_valid && closure" in constructed_flow or \
+            "if (closure)" in constructed_flow:
+        fail("broad closure still controls exact dispatch decisions")
+    delay_read = constructed_flow.find(
+            "delay = _lw(paf->text_addr + look + 4)", outer_scan_read)
+    delay_apply = constructed_flow.find(
+            "provenance[delay_rt].id = provenance[delay_rs].id", delay_read)
+    classify = constructed_flow.find("target_value = provenance[rs]", delay_apply)
+    id_compare = constructed_flow.find("target_value.id != a1_value.id", classify)
+    if not 0 <= delay_read < delay_apply < classify < id_compare < exact_gate:
+        fail("JALR delay slot is not applied before SAME_OUTER classification")
     for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
             "REDIRECT_FUNCTION", "hook_import"):
         if forbidden in constructed_flow:
             fail("exact OUTER dispatch analysis is not read-only: " + forbidden)
-    alias_reject = constructed_flow.find("base == target", outer_text_range)
-    destination_decode = constructed_flow.find(
-            "zeroCtrlMipsGprWriteDestination(word)", alias_reject)
-    target_barrier = constructed_flow.find(
-            "(unsigned int)destination == target", destination_decode)
-    base_barrier = constructed_flow.find(
-            "(unsigned int)destination == base", target_barrier)
-    jalr_gate = constructed_flow.find("if (opcode == 0 && function == 9)",
-            base_barrier)
-    unrelated_barrier = constructed_flow.find("if (rs != target || rd != 31) break",
-            jalr_gate)
-    delay_read = constructed_flow.find(
-            "delay = _lw(paf->text_addr + look + 4)", unrelated_barrier)
-    delay_decode = constructed_flow.find(
-            "zeroCtrlMipsGprWriteDestination(delay)", delay_read)
-    delay_base = constructed_flow.find(
-            "(unsigned int)delay_destination == base", delay_decode)
-    delay_update = constructed_flow.find("source[delay_destination] = 0",
-            delay_decode)
-    provenance_output = constructed_flow.find(
-            'source[5] ? "base_plus_0x04" : "UNKNOWN"', delay_update)
-    closure_update = constructed_flow.find("if (source[5]) closure = 1",
-            provenance_output)
-    if not 0 <= alias_reject < destination_decode < target_barrier < \
-            base_barrier < jalr_gate < unrelated_barrier < delay_read < \
-            delay_decode < delay_base < delay_update < provenance_output < \
-            closure_update:
-        fail("base/target liveness or JALR delay provenance ordering is not conservative")
-    origin_bound = constructed_flow.find(
-            "back_start = offset > 0x40 ?", delay_update)
-    origin_read = constructed_flow.find(
-            "_lw(paf->text_addr + definition_off)", origin_bound)
-    origin_delay_guard = constructed_flow.find(
-            "definition_off - 4", origin_read)
-    origin_control_barrier = constructed_flow.find(
-            "prior_opcode == 1 || prior_opcode == 2", origin_delay_guard)
-    origin_decode = constructed_flow.find(
-            "zeroCtrlMipsGprWriteDestination(definition)",
-            origin_control_barrier)
-    origin_base_write = constructed_flow.find(
-            "(unsigned int)definition_destination == base", origin_decode)
-    origin_move = constructed_flow.find(
-            "zeroCtrlMipsMove(definition, base", origin_base_write)
-    origin_addiu = constructed_flow.find(
-            "definition_opcode == 9", origin_move)
-    origin_lw = constructed_flow.find(
-            "definition_opcode == 0x23", origin_addiu)
-    origin_output = constructed_flow.find(
-            "status=LOCAL_DEFINITION", origin_lw)
-    origin_unknown = constructed_flow.find(
-            "load_off=0x%X status=UNKNOWN", origin_output)
-    if not 0 <= origin_bound < provenance_output < origin_read < origin_delay_guard < \
-            origin_control_barrier < origin_decode < origin_base_write < \
-            origin_move < origin_addiu < origin_lw < origin_output < \
-            origin_unknown or "kind=OTHER" in constructed_flow:
-        fail("OUTER+0x14 base-origin observation is unbounded or not fail-closed")
+    # The longest exact-dispatch format plus maximal substituted fields remains
+    # below the fixed 256-byte local diagnostics line buffer.
+    exact_formats = re.findall(r'"(\[paf-a989-(?:outer14-exact-check|exact-dispatch)[^"\n]*)"',
+            constructed_flow)
+    if not exact_formats or any(len(fmt) + 96 >= 256 for fmt in exact_formats):
+        fail("exact-dispatch diagnostic format exceeds line-buffer allowance")
     c0_frame = constructed_flow.find(
             "_lw(constructed[0]) == 0x27BDFFF0")
     c0_save_s1 = constructed_flow.find(
@@ -1265,8 +1203,8 @@ def check_sources(root):
     if "entry_valid = 1" in nearby or \
             "direct_j_refs != 0);" in nearby[nearby_strong_gate:nearby_weak_reject]:
         fail("plain J reference can still authorize entry-argument provenance")
-    if "look <= offset + 0x40" not in constructed_flow:
-        fail("generic OUTER+0x14 search window was widened")
+    if "look <= offset + 0x80" not in constructed_flow:
+        fail("symbolic OUTER+0x14 search is not bounded to 32 instructions")
     for forbidden in ("_sw(", "MAKE_CALL", "MAKE_JUMP", "REDIRECT_FUNCTION",
             "zeroCtrlRedir", "Dcache", "Icache", "sceKernelCreateThread",
             "sceKernelStartThread", "request_function()"):

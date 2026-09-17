@@ -6360,7 +6360,7 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
         unsigned int root_segment) {
     unsigned int segment, remaining, offset, look;
     unsigned int constructed0_size;
-    unsigned int candidates = 0, reported = 0, closure = 0;
+    unsigned int candidates = 0, reported = 0, exact_same_outer = 0;
     unsigned int adapter_valid = 0, exact_dispatches = 0, exact_entry = 0;
     const char *exact_origin = "UNKNOWN";
     char line[256];
@@ -6459,13 +6459,33 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
     if (!zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size))
         return;
     for (offset = 0; offset + 8 <= paf->text_size; offset += 4) {
+        enum {
+            OUTER_PROV_UNKNOWN = 0,
+            OUTER_PROV_BASE,
+            OUTER_PROV_PLUS04,
+            OUTER_PROV_PLUS14
+        };
+        typedef struct {
+            unsigned int kind;
+            unsigned int id;
+        } ZeroCtrlOuterProvenance;
         unsigned int load = _lw(paf->text_addr + offset);
         unsigned int base = (load >> 21) & 0x1F;
         unsigned int target = (load >> 16) & 0x1F;
-        unsigned char source[32] = { 0 };
+        unsigned int candidate_id = offset / 4 + 1;
+        ZeroCtrlOuterProvenance provenance[32] = { { 0, 0 } };
+        const char *terminal_result = "CONTROL_FLOW";
+        unsigned int terminal_jalr = 0;
+        unsigned int matched = 0;
+
         if ((load >> 26) != 0x23 || target == 0 || base == target ||
                 (short)(load & 0xFFFF) != 0x14) continue;
-        for (look = offset + 4; look <= offset + 0x40 &&
+        provenance[base].kind = OUTER_PROV_BASE;
+        provenance[base].id = candidate_id;
+        provenance[target].kind = OUTER_PROV_PLUS14;
+        provenance[target].id = candidate_id;
+
+        for (look = offset + 4; look <= offset + 0x80 &&
                 look + 4 <= paf->text_size; look += 4) {
             unsigned int word = _lw(paf->text_addr + look);
             unsigned int opcode = word >> 26;
@@ -6474,58 +6494,81 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
             unsigned int rd = (word >> 11) & 0x1F;
             unsigned int function = word & 0x3F;
             int destination;
-            if (!(opcode == 0 && function == 9)) {
-                destination = zeroCtrlMipsGprWriteDestination(word);
-                if (destination < 0 || (unsigned int)destination == target ||
-                        (unsigned int)destination == base) break;
-            }
+
             if (opcode == 0 && function == 9) {
                 unsigned int delay;
+                unsigned int delay_opcode, delay_rs, delay_rt, delay_rd;
                 int delay_destination;
-                unsigned int delay_writes_base;
-                if (rs != target || rd != 31) break;
+                unsigned int delay_supported = 1;
+                ZeroCtrlOuterProvenance target_value;
+                ZeroCtrlOuterProvenance a1_value;
+                const char *target_kind;
+                const char *a1_kind;
+
+                if (look + 8 > paf->text_size) break;
                 delay = _lw(paf->text_addr + look + 4);
+                delay_opcode = delay >> 26;
+                delay_rs = (delay >> 21) & 0x1F;
+                delay_rt = (delay >> 16) & 0x1F;
+                delay_rd = (delay >> 11) & 0x1F;
                 delay_destination = zeroCtrlMipsGprWriteDestination(delay);
-                if (delay_destination < 0 ||
-                        (unsigned int)delay_destination == target) break;
-                delay_writes_base =
-                        (unsigned int)delay_destination == base;
-                if ((delay >> 26) == 0x23 &&
-                        ((delay >> 21) & 0x1F) == base &&
-                        (short)(delay & 0xFFFF) == 4 &&
-                        ((delay >> 16) & 0x1F) != 0) {
-                    source[(delay >> 16) & 0x1F] = 1;
-                } else if ((zeroCtrlMipsMove(delay,
-                            (delay >> 11) & 0x1F,
-                            (delay >> 21) & 0x1F) ||
-                            zeroCtrlMipsMove(delay,
-                            (delay >> 11) & 0x1F,
-                            (delay >> 16) & 0x1F)) &&
-                        ((delay >> 11) & 0x1F) != 0) {
-                    unsigned int copy_source =
-                            ((delay >> 21) & 0x1F) == 0 ?
-                            (delay >> 16) & 0x1F : (delay >> 21) & 0x1F;
-                    source[(delay >> 11) & 0x1F] = source[copy_source];
-                } else if ((delay >> 26) == 9 &&
-                        (short)(delay & 0xFFFF) == 0 &&
-                        ((delay >> 16) & 0x1F) != 0) {
-                    source[(delay >> 16) & 0x1F] =
-                            source[(delay >> 21) & 0x1F];
+                if (delay_destination < 0) {
+                    delay_supported = 0;
+                } else if (zeroCtrlMipsMove(delay, delay_rd, delay_rs) &&
+                        delay_rd != 0) {
+                    provenance[delay_rd] = provenance[delay_rs];
+                } else if (zeroCtrlMipsMove(delay, delay_rd, delay_rt) &&
+                        delay_rd != 0) {
+                    provenance[delay_rd] = provenance[delay_rt];
+                } else if (delay_opcode == 9 &&
+                        (short)(delay & 0xFFFF) == 0 && delay_rt != 0) {
+                    provenance[delay_rt] = provenance[delay_rs];
+                } else if (delay_opcode == 0x23 && delay_rt != 0 &&
+                        provenance[delay_rs].kind == OUTER_PROV_BASE &&
+                        ((short)(delay & 0xFFFF) == 4 ||
+                         (short)(delay & 0xFFFF) == 0x14)) {
+                    provenance[delay_rt].kind =
+                            (short)(delay & 0xFFFF) == 4 ?
+                            OUTER_PROV_PLUS04 : OUTER_PROV_PLUS14;
+                    provenance[delay_rt].id = provenance[delay_rs].id;
                 } else if (delay_destination != 0) {
-                    source[delay_destination] = 0;
+                    provenance[delay_destination].kind = OUTER_PROV_UNKNOWN;
+                    provenance[delay_destination].id = 0;
                 }
-                /* A delay-slot load uses the original base before any write. */
-                if (delay_writes_base && !((delay >> 26) == 0x23 &&
-                        ((delay >> 21) & 0x1F) == base &&
-                        (short)(delay & 0xFFFF) == 4))
-                    source[base] = 0;
+
+                /* Classify only after applying the architectural delay slot. */
+                target_value = provenance[rs];
+                a1_value = provenance[5];
+                terminal_jalr = look;
                 candidates++;
-                if (reported < 16 || source[5]) {
-                    unsigned int back = offset;
-                    unsigned int back_start = offset > 0x40 ?
-                            offset - 0x40 : 0;
-                    unsigned int definition_found = 0;
-                    const char *outer_origin = "UNKNOWN";
+                target_kind = target_value.kind == OUTER_PROV_BASE ? "BASE" :
+                        target_value.kind == OUTER_PROV_PLUS04 ? "PLUS04" :
+                        target_value.kind == OUTER_PROV_PLUS14 ? "PLUS14" :
+                        "UNKNOWN";
+                a1_kind = a1_value.kind == OUTER_PROV_BASE ? "BASE" :
+                        a1_value.kind == OUTER_PROV_PLUS04 ? "PLUS04" :
+                        a1_value.kind == OUTER_PROV_PLUS14 ? "PLUS14" :
+                        "UNKNOWN";
+                if (!delay_supported)
+                    terminal_result = "OVERWRITTEN";
+                else if (target_value.kind != OUTER_PROV_PLUS14)
+                    terminal_result = "TARGET_UNKNOWN";
+                else if (a1_value.kind != OUTER_PROV_PLUS04)
+                    terminal_result = "A1_UNKNOWN";
+                else if (target_value.id != a1_value.id)
+                    terminal_result = "DIFFERENT_BASE";
+                else {
+                    terminal_result = "MATCH";
+                    matched = 1;
+                }
+                if (reported < 16) {
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-outer14-exact-check] load_off=0x%X "
+                            "jalr_off=0x%X target_kind=%s target_id=%u "
+                            "a1_kind=%s a1_id=%u result=%s\n", offset, look,
+                            target_kind, target_value.id, a1_kind, a1_value.id,
+                            terminal_result);
+                    zeroCtrlDiagnosticsText(line);
                     snprintf(line, sizeof(line),
                             "[paf-a989-outer14-call-candidate] load_off=0x%X "
                             "jalr_off=0x%X base_reg=%u target_reg=%u\n",
@@ -6534,210 +6577,179 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                     snprintf(line, sizeof(line),
                             "[paf-a989-outer14-call-provenance] jalr_off=0x%X "
                             "a1_source=%s\n", look,
-                            source[5] ? "base_plus_0x04" : "UNKNOWN");
+                            a1_value.kind == OUTER_PROV_PLUS04 &&
+                            a1_value.id == target_value.id ?
+                            "same_base_plus_0x04" : "UNKNOWN");
                     zeroCtrlDiagnosticsText(line);
-                    while (back > back_start) {
-                        unsigned int definition_off = back - 4;
-                        unsigned int definition =
-                                _lw(paf->text_addr + definition_off);
-                        unsigned int definition_opcode = definition >> 26;
-                        unsigned int definition_rs =
-                                (definition >> 21) & 0x1F;
-                        unsigned int definition_rt =
-                                (definition >> 16) & 0x1F;
-                        unsigned int definition_function = definition & 0x3F;
-                        int definition_destination;
-                        if (definition_off >= 4) {
-                            unsigned int prior = _lw(paf->text_addr +
-                                    definition_off - 4);
-                            unsigned int prior_opcode = prior >> 26;
-                            unsigned int prior_function = prior & 0x3F;
-                            if (prior_opcode == 1 || prior_opcode == 2 ||
-                                    prior_opcode == 3 ||
-                                    (prior_opcode >= 4 && prior_opcode <= 7) ||
-                                    (prior_opcode >= 0x14 &&
-                                        prior_opcode <= 0x17) ||
-                                    (prior_opcode == 0 &&
-                                        (prior_function == 8 ||
-                                         prior_function == 9)))
-                                break;
-                        }
-                        if (definition_opcode == 1 ||
-                                definition_opcode == 2 ||
-                                definition_opcode == 3 ||
-                                (definition_opcode >= 4 &&
-                                    definition_opcode <= 7) ||
-                                (definition_opcode >= 0x14 &&
-                                    definition_opcode <= 0x17) ||
-                                (definition_opcode == 0 &&
-                                    (definition_function == 8 ||
-                                     definition_function == 9)))
-                            break;
-                        definition_destination =
-                                zeroCtrlMipsGprWriteDestination(definition);
-                        if (definition_destination < 0) break;
-                        if ((unsigned int)definition_destination == base) {
-                            const char *kind = 0;
-                            unsigned int source_reg = definition_rs;
-                            int displacement = 0;
-                            if (zeroCtrlMipsMove(definition, base,
-                                        definition_rs) ||
-                                    zeroCtrlMipsMove(definition, base,
-                                        definition_rt)) {
-                                kind = "MOVE";
-                                source_reg = definition_rs == 0 ?
-                                        definition_rt : definition_rs;
-                            } else if (definition_opcode == 9 &&
-                                    definition_rt == base) {
-                                kind = "ADDIU";
-                                displacement =
-                                        (int)(short)(definition & 0xFFFF);
-                            } else if (definition_opcode == 0x23 &&
-                                    definition_rt == base) {
-                                kind = "LW";
-                                displacement =
-                                        (int)(short)(definition & 0xFFFF);
-                            }
-                            if (kind != 0) {
-                                if (definition_opcode == 0x23 &&
-                                        displacement == 4)
-                                    outer_origin = "HEADER_PLUS_04";
-                                else if (definition_opcode == 0x23)
-                                    outer_origin = "LOCAL_LW";
-                                snprintf(line, sizeof(line),
-                                        "[paf-a989-outer14-base-origin] "
-                                        "load_off=0x%X "
-                                        "status=LOCAL_DEFINITION "
-                                        "definition_off=0x%X kind=%s "
-                                        "source_reg=%u disp=%d "
-                                        "path=BRANCH_FREE_SUFFIX\n",
-                                        offset, definition_off, kind,
-                                        source_reg, displacement);
-                                zeroCtrlDiagnosticsText(line);
-                                definition_found = 1;
-                            }
-                            break;
-                        }
-                        back = definition_off;
-                    }
-                    if (!definition_found) {
-                        snprintf(line, sizeof(line),
-                                "[paf-a989-outer14-base-origin] "
-                                "load_off=0x%X status=UNKNOWN "
-                                "path=BRANCH_FREE_SUFFIX\n", offset);
-                        zeroCtrlDiagnosticsText(line);
-                    }
-                    if (source[5]) {
-                        unsigned int search = offset;
-                        unsigned int function_entry = 0;
-                        while (search >= 4 && offset - search <= 0x100) {
-                            unsigned int prologue = _lw(paf->text_addr + search);
-                            if ((prologue >> 26) == 1 ||
-                                    ((prologue >> 26) >= 4 &&
-                                     (prologue >> 26) <= 7) ||
-                                    ((prologue >> 26) >= 0x14 &&
-                                     (prologue >> 26) <= 0x17) ||
-                                    (prologue >> 26) == 2 ||
-                                    ((prologue >> 26) == 0 &&
-                                     ((prologue & 0x3F) == 8 ||
-                                      (prologue & 0x3F) == 9))) break;
-                            if ((prologue >> 26) == 9 &&
-                                    ((prologue >> 21) & 0x1F) == 29 &&
-                                    ((prologue >> 16) & 0x1F) == 29 &&
-                                    (short)(prologue & 0xFFFF) < 0) {
-                                unsigned int save;
-                                for (save = search + 4; save <= search + 0x20 &&
-                                        save + 4 <= paf->text_size; save += 4) {
-                                    unsigned int save_word = _lw(
-                                            paf->text_addr + save);
-                                    if ((save_word >> 26) == 0x2B &&
-                                            ((save_word >> 21) & 0x1F) == 29 &&
-                                            ((save_word >> 16) & 0x1F) == 31) {
-                                        function_entry = search;
-                                        break;
-                                    }
-                                }
-                                if (function_entry) break;
-                            }
-                            search -= 4;
-                        }
-                        snprintf(line, sizeof(line),
-                                "[paf-a989-exact-dispatch] site=0x%X "
-                                "target_load=0x%X jalr=0x%X outer_reg=%u "
-                                "a1_reg=5 same_outer=1 outer_origin=%s\n",
-                                look, offset, look, base, outer_origin);
-                        zeroCtrlDiagnosticsText(line);
-                        snprintf(line, sizeof(line),
-                                "[paf-a989-exact-dispatch-function] site=0x%X "
-                                "entry=0x%X status=%s evidence=%s\n", look,
-                                function_entry, function_entry ? "VALID" :
-                                "UNKNOWN", function_entry ?
-                                "STACK_FRAME_AND_SAVED_RA" : "NONE");
-                        zeroCtrlDiagnosticsText(line);
-                        exact_dispatches++;
-                        exact_entry = function_entry;
-                        exact_origin = outer_origin;
-                        if (function_entry) {
-                            unsigned int caller_off, caller_reported = 0;
-                            for (caller_off = 0;
-                                    caller_off + 4 <= paf->text_size &&
-                                    caller_reported < 16; caller_off += 4) {
-                                unsigned int caller_word = _lw(
-                                        paf->text_addr + caller_off);
-                                unsigned int caller_opcode = caller_word >> 26;
-                                unsigned int arg;
-                                if ((caller_opcode != 2 && caller_opcode != 3) ||
-                                        zeroCtrlMipsJumpTarget(
-                                            paf->text_addr + caller_off,
-                                            caller_word) !=
-                                        paf->text_addr + function_entry)
-                                    continue;
-                                snprintf(line, sizeof(line),
-                                        "[paf-a989-exact-dispatch-caller] "
-                                        "entry=0x%X caller=0x%X kind=%s\n",
-                                        function_entry, caller_off,
-                                        caller_opcode == 3 ? "JAL" : "J");
-                                zeroCtrlDiagnosticsText(line);
-                                for (arg = 0; arg < 4; arg++) {
-                                    snprintf(line, sizeof(line),
-                                            "[paf-a989-exact-dispatch-arg] "
-                                            "caller=0x%X arg=a%u kind=UNKNOWN "
-                                            "reg=%u disp=0\n", caller_off, arg,
-                                            arg + 4);
-                                    zeroCtrlDiagnosticsText(line);
-                                }
-                                caller_reported++;
-                            }
-                        }
-                    }
                     reported++;
                 }
-                if (source[5]) closure = 1;
                 break;
             }
-            if (opcode == 0x23 && rs == base &&
-                    (short)(word & 0xFFFF) == 4 && rt != 0) {
-                source[rt] = 1;
-            } else if (zeroCtrlMipsMove(word, rd, rs) && rd != 0) {
-                source[rd] = source[rs];
-            } else if (zeroCtrlMipsMove(word, rd, rt) && rd != 0) {
-                source[rd] = source[rt];
-            } else if (opcode == 9 && (short)(word & 0xFFFF) == 0 && rt != 0) {
-                source[rt] = source[rs];
-            } else if (destination != 0) {
-                source[destination] = 0;
-            }
+
             if (opcode == 1 || opcode == 2 || opcode == 3 ||
                     (opcode >= 4 && opcode <= 7) ||
                     (opcode >= 0x14 && opcode <= 0x17) ||
-                    (opcode == 0 && function == 8)) break;
+                    (opcode == 0 && function == 8)) {
+                terminal_result = "CONTROL_FLOW";
+                break;
+            }
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0) {
+                terminal_result = "OVERWRITTEN";
+                break;
+            }
+            if (zeroCtrlMipsMove(word, rd, rs) && rd != 0) {
+                provenance[rd] = provenance[rs];
+            } else if (zeroCtrlMipsMove(word, rd, rt) && rd != 0) {
+                provenance[rd] = provenance[rt];
+            } else if (opcode == 9 && (short)(word & 0xFFFF) == 0 && rt != 0) {
+                provenance[rt] = provenance[rs];
+            } else if (opcode == 0x23 && rt != 0 &&
+                    provenance[rs].kind == OUTER_PROV_BASE &&
+                    ((short)(word & 0xFFFF) == 4 ||
+                     (short)(word & 0xFFFF) == 0x14)) {
+                provenance[rt].kind = (short)(word & 0xFFFF) == 4 ?
+                        OUTER_PROV_PLUS04 : OUTER_PROV_PLUS14;
+                provenance[rt].id = provenance[rs].id;
+            } else if (destination != 0) {
+                provenance[destination].kind = OUTER_PROV_UNKNOWN;
+                provenance[destination].id = 0;
+            }
+        }
+
+        if (matched) {
+            unsigned int back = offset;
+            unsigned int back_start = offset > 0x100 ? offset - 0x100 : 0;
+            unsigned int definition_found = 0;
+            const char *outer_origin = "UNKNOWN";
+            unsigned int search = offset;
+            unsigned int function_entry = 0;
+
+            while (back > back_start) {
+                unsigned int definition_off = back - 4;
+                unsigned int definition = _lw(paf->text_addr + definition_off);
+                unsigned int definition_opcode = definition >> 26;
+                unsigned int definition_rs = (definition >> 21) & 0x1F;
+                unsigned int definition_rt = (definition >> 16) & 0x1F;
+                unsigned int definition_function = definition & 0x3F;
+                int definition_destination;
+                if (definition_opcode == 1 || definition_opcode == 2 ||
+                        definition_opcode == 3 ||
+                        (definition_opcode >= 4 && definition_opcode <= 7) ||
+                        (definition_opcode >= 0x14 && definition_opcode <= 0x17) ||
+                        (definition_opcode == 0 &&
+                         (definition_function == 8 || definition_function == 9)))
+                    break;
+                definition_destination =
+                        zeroCtrlMipsGprWriteDestination(definition);
+                if (definition_destination < 0) break;
+                if ((unsigned int)definition_destination == base) {
+                    if (definition_opcode == 0x23 &&
+                            (short)(definition & 0xFFFF) == 4 &&
+                            definition_rs >= 4 && definition_rs <= 7)
+                        outer_origin = "HEADER_PLUS_04";
+                    else if (definition_opcode == 0x23)
+                        outer_origin = "LOCAL_LW";
+                    else if (definition_opcode == 9 &&
+                            (short)(definition & 0xFFFF) == 0 &&
+                            definition_rs >= 4 && definition_rs <= 7)
+                        outer_origin = definition_rs == 4 ? "ENTRY_A0" :
+                                definition_rs == 5 ? "ENTRY_A1" :
+                                definition_rs == 6 ? "ENTRY_A2" : "ENTRY_A3";
+                    else if ((zeroCtrlMipsMove(definition, base, definition_rs) ||
+                            zeroCtrlMipsMove(definition, base, definition_rt)) &&
+                            (definition_rs >= 4 && definition_rs <= 7))
+                        outer_origin = definition_rs == 4 ? "ENTRY_A0" :
+                                definition_rs == 5 ? "ENTRY_A1" :
+                                definition_rs == 6 ? "ENTRY_A2" : "ENTRY_A3";
+                    definition_found = 1;
+                    break;
+                }
+                back = definition_off;
+            }
+            snprintf(line, sizeof(line),
+                    "[paf-a989-outer14-base-origin] load_off=0x%X status=%s "
+                    "path=BRANCH_FREE_SUFFIX\n", offset,
+                    definition_found ? outer_origin : "UNKNOWN");
+            zeroCtrlDiagnosticsText(line);
+
+            while (search >= 4 && offset - search <= 0x100) {
+                unsigned int prologue = _lw(paf->text_addr + search);
+                if ((prologue >> 26) == 1 ||
+                        ((prologue >> 26) >= 4 && (prologue >> 26) <= 7) ||
+                        ((prologue >> 26) >= 0x14 && (prologue >> 26) <= 0x17) ||
+                        (prologue >> 26) == 2 ||
+                        ((prologue >> 26) == 0 &&
+                         ((prologue & 0x3F) == 8 || (prologue & 0x3F) == 9)))
+                    break;
+                if ((prologue >> 26) == 9 &&
+                        ((prologue >> 21) & 0x1F) == 29 &&
+                        ((prologue >> 16) & 0x1F) == 29 &&
+                        (short)(prologue & 0xFFFF) < 0) {
+                    unsigned int save;
+                    for (save = search + 4; save <= search + 0x20 &&
+                            save + 4 <= paf->text_size; save += 4) {
+                        unsigned int save_word = _lw(paf->text_addr + save);
+                        if ((save_word >> 26) == 0x2B &&
+                                ((save_word >> 21) & 0x1F) == 29 &&
+                                ((save_word >> 16) & 0x1F) == 31) {
+                            function_entry = search;
+                            break;
+                        }
+                    }
+                    if (function_entry) break;
+                }
+                search -= 4;
+            }
+            snprintf(line, sizeof(line),
+                    "[paf-a989-exact-dispatch] site=0x%X target_load=0x%X "
+                    "jalr=0x%X outer_reg=%u a1_reg=5 same_outer=1 "
+                    "outer_origin=%s\n", terminal_jalr, offset, terminal_jalr,
+                    base, outer_origin);
+            zeroCtrlDiagnosticsText(line);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-exact-dispatch-function] site=0x%X entry=0x%X "
+                    "status=%s evidence=%s\n", terminal_jalr, function_entry,
+                    function_entry ? "VALID" : "UNKNOWN", function_entry ?
+                    "STACK_FRAME_AND_SAVED_RA" : "NONE");
+            zeroCtrlDiagnosticsText(line);
+            exact_dispatches++;
+            exact_same_outer = 1;
+            exact_entry = function_entry;
+            exact_origin = outer_origin;
+            if (function_entry) {
+                unsigned int caller_off, caller_reported = 0;
+                for (caller_off = 0; caller_off + 4 <= paf->text_size &&
+                        caller_reported < 16; caller_off += 4) {
+                    unsigned int caller_word = _lw(paf->text_addr + caller_off);
+                    unsigned int caller_opcode = caller_word >> 26;
+                    unsigned int arg;
+                    if ((caller_opcode != 2 && caller_opcode != 3) ||
+                            zeroCtrlMipsJumpTarget(paf->text_addr + caller_off,
+                                caller_word) != paf->text_addr + function_entry)
+                        continue;
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-exact-dispatch-caller] entry=0x%X "
+                            "caller=0x%X kind=%s\n", function_entry, caller_off,
+                            caller_opcode == 3 ? "JAL" : "J");
+                    zeroCtrlDiagnosticsText(line);
+                    for (arg = 0; arg < 4; arg++) {
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-exact-dispatch-arg] caller=0x%X "
+                                "arg=a%u kind=UNKNOWN reg=%u disp=0\n",
+                                caller_off, arg, arg + 4);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                    caller_reported++;
+                }
+            }
         }
     }
     snprintf(line, sizeof(line),
             "[paf-a989-outer14-scan] candidates=%u reported=%u\n",
             candidates, reported);
     zeroCtrlDiagnosticsText(line);
-    if (closure) {
+    if (exact_same_outer) {
         zeroCtrlDiagnosticsText(
                 "[paf-a989-outer14-dispatch-shape] validation=1 "
                 "target_field_off=0x14 arg1_field_off=0x04\n");
@@ -6765,7 +6777,7 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 root_segment, root_off, exact_entry);
         zeroCtrlDiagnosticsText(line);
     }
-    if (exact_dispatches && adapter_valid && closure) {
+    if (exact_dispatches && exact_same_outer && adapter_valid) {
         zeroCtrlDiagnosticsText(
                 "[paf-a989-dispatch-chain] validation=1 "
                 "outer_plus_14=constructed_1 outer_plus_04=inner "
