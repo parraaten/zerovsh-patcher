@@ -5046,28 +5046,54 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
             pc += 8;
         } else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
                 (opcode >= 0x14 && opcode <= 0x17)) {
-            unsigned int branch_taint = taint;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int taken_taint = taint;
+            unsigned int fallthrough_taint = taint;
             unsigned int reads = 0;
+            int likely = opcode >= 0x14 && opcode <= 0x17;
+            int link = 0;
+
+            if (opcode == 1) {
+                if (rt == 2 || rt == 3 || rt == 18 || rt == 19)
+                    likely = 1;
+                else if (rt != 0 && rt != 1 && rt != 16 && rt != 17) {
+                    if (taint != 0)
+                        zeroCtrlBridgeSetBlocker(context, module, pc,
+                                original_arg);
+                    return taint != 0 ? 2 : 0;
+                }
+                link = rt == 16 || rt == 17 || rt == 18 || rt == 19;
+            }
             if (!zeroCtrlBridgeReadMask(word, &reads) || (reads & taint)) {
                 zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
                 return (reads & taint) ? 1 : 2;
+            }
+            /* Do not guess whether a pre-existing tainted $ra survives link. */
+            if (link && (taint & (1U << 31))) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                return 2;
+            }
+            if (link) {
+                taken_taint &= ~(1U << 31);
+                fallthrough_taint &= ~(1U << 31);
             }
             if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) return 2;
             if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS)
                 return 2;
             delay = _lw(pc + 4);
-            result = zeroCtrlBridgeApplyTaint(delay, &branch_taint);
+            result = zeroCtrlBridgeApplyTaint(delay, &taken_taint);
             if (result) {
                 zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg);
                 return result;
             }
+            if (!likely) fallthrough_taint = taken_taint;
             target = zeroCtrlMipsBranchTarget(pc, word);
             if (tail + 2 > BRIDGE_TAINT_MAX_NODES ||
                     !zeroCtrlBridgeExecutableRange(module, target, 4)) return 2;
             queue[tail].address = target;
-            queue[tail++].taint = branch_taint;
+            queue[tail++].taint = taken_taint;
             queue[tail].address = pc + 8;
-            queue[tail++].taint = branch_taint;
+            queue[tail++].taint = fallthrough_taint;
             continue;
         } else if (opcode == 2) {
             if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) return 2;

@@ -2145,6 +2145,36 @@ def check_sources(root):
     for offset in ('0x18', '0x24', '0x30', '0x38'):
         if offset not in livein:
             fail("constructed1 call is not reachable to live-in proof: +" + offset)
+    branch_start = taint.find(
+            '} else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||')
+    branch_end = taint.find('} else if (opcode == 2)', branch_start)
+    branch = taint[branch_start:branch_end]
+    for token in ('opcode >= 0x14 && opcode <= 0x17',
+            'unsigned int taken_taint = taint',
+            'unsigned int fallthrough_taint = taint',
+            'rt == 2 || rt == 3 || rt == 18 || rt == 19',
+            'rt != 0 && rt != 1 && rt != 16 && rt != 17',
+            'return taint != 0 ? 2 : 0',
+            'rt == 16 || rt == 17 || rt == 18 || rt == 19',
+            'link && (taint & (1U << 31))',
+            'taken_taint &= ~(1U << 31)',
+            'fallthrough_taint &= ~(1U << 31)',
+            'zeroCtrlBridgeApplyTaint(delay, &taken_taint)',
+            'if (!likely) fallthrough_taint = taken_taint',
+            'queue[tail++].taint = taken_taint',
+            'queue[tail++].taint = fallthrough_taint'):
+        if token not in branch:
+            fail("branch-likely taint semantics lack " + token)
+    delay_apply = branch.find(
+            'zeroCtrlBridgeApplyTaint(delay, &taken_taint)')
+    normal_merge = branch.find(
+            'if (!likely) fallthrough_taint = taken_taint', delay_apply)
+    target_enqueue = branch.find(
+            'queue[tail++].taint = taken_taint', normal_merge)
+    fallthrough_enqueue = branch.find(
+            'queue[tail++].taint = fallthrough_taint', target_enqueue)
+    if not 0 <= delay_apply < normal_merge < target_enqueue < fallthrough_enqueue:
+        fail("branch successor taint ordering regressed")
     jalr_start = taint.find(
             'opcode == 0 && (function == 8 || function == 9)')
     jalr_end = taint.find('} else {', jalr_start)
