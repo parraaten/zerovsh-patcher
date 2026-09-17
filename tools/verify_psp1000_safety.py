@@ -2041,6 +2041,17 @@ def check_sources(root):
             fail("read-only Clock & Date CFG analysis lacks " + token)
     if "#define CLOCKPATH_CFG_LIMIT 128" not in kernel:
         fail("Clock path CFG bound is not 128 reachable instructions")
+    reconstruction = clockpath[clockpath.find(
+            "if ((_lw(text + 0x58A4)"):clockpath.find(
+            "[psp1000-clockpath-entry-arg]")]
+    for upper, lower, target in (("0x589C", "0x58A4", "0x56C7C"),
+            ("0x58B4", "0x58BC", "0x56CA4")):
+        pattern = (r"_lw\(text \+ " + upper +
+                r"\)[\s\S]{0,180}_lw\(text \+ " + lower +
+                r"\)[\s\S]{0,80}\)\s*!=\s*text \+ " + target)
+        if not re.search(pattern, reconstruction):
+            fail("Clock path reconstructed address comparison lacks " +
+                    upper + "/" + lower + " -> " + target)
     for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
             "REDIRECT_FUNCTION", "hook_import", "zeroCtrlSetSlideState",
             "zeroCtrlInstallVshCtrl314A4Trace("):

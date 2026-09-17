@@ -5112,11 +5112,11 @@ static int zeroCtrlWriteFunctionalClockPathAnalysis(void) {
             (_lw(text + 0x58BC) >> 26) != 9 ||
             ((_lw(text + 0x58BC) >> 21) & 0x1F) != 4 ||
             ((_lw(text + 0x58BC) >> 16) & 0x1F) != 4 ||
-            (((_lw(text + 0x589C) & 0xFFFF) << 16) +
-            (unsigned int)(int)(short)(_lw(text + 0x58A4) & 0xFFFF) !=
+            ((((_lw(text + 0x589C) & 0xFFFF) << 16) +
+            (unsigned int)(int)(short)(_lw(text + 0x58A4) & 0xFFFF)) !=
             text + 0x56C7C ||
             (((_lw(text + 0x58B4) & 0xFFFF) << 16) +
-            (unsigned int)(int)(short)(_lw(text + 0x58BC) & 0xFFFF) !=
+            (unsigned int)(int)(short)(_lw(text + 0x58BC) & 0xFFFF)) !=
             text + 0x56CA4))
         return 0;
     zeroCtrlDiagnosticsText(
