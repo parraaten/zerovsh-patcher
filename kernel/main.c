@@ -4953,8 +4953,11 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *paf,
                     return result;
                 }
             }
-            /* O32 caller-saved values cannot carry the old incoming taint. */
-            taint &= ~0x8300FFFCU;
+            /*
+             * A caller-saved register may legally retain its physical value.
+             * Preserve taint after a proven-unobserving callee so later calls
+             * cannot be incorrectly classified independent of that value.
+             */
             pc += 8;
         } else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
                 (opcode >= 0x14 && opcode <= 0x17)) {
@@ -5062,8 +5065,8 @@ static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf,
     slide_diag.bridge_livein_arg[0] = ZERO_BRIDGE_LIVEIN_OVERWRITTEN;
     slide_diag.bridge_livein_arg[1] = ZERO_BRIDGE_LIVEIN_REQUIRED;
     memset(&context, 0, sizeof(context));
-    a2 = zeroCtrlBridgeAnalyzeTaintedFunction(paf, target[0], 1U << 6,
-            1, 2, &context);
+    a2 = zeroCtrlBridgeAnalyzeTaintedFunction(paf, constructed1, 1U << 6,
+            0, 2, &context);
     if (a2 != 0) {
         slide_diag.bridge_livein_arg[2] = a2 == 1 ?
                 ZERO_BRIDGE_LIVEIN_REQUIRED : ZERO_BRIDGE_LIVEIN_UNKNOWN;
@@ -5074,8 +5077,8 @@ static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf,
     }
     slide_diag.bridge_livein_arg[2] = ZERO_BRIDGE_LIVEIN_IGNORED;
     memset(&context, 0, sizeof(context));
-    a3 = zeroCtrlBridgeAnalyzeTaintedFunction(paf, target[0], 1U << 7,
-            1, 3, &context);
+    a3 = zeroCtrlBridgeAnalyzeTaintedFunction(paf, constructed1, 1U << 7,
+            0, 3, &context);
     if (a3 != 0) {
         slide_diag.bridge_livein_arg[3] = a3 == 1 ?
                 ZERO_BRIDGE_LIVEIN_REQUIRED : ZERO_BRIDGE_LIVEIN_UNKNOWN;

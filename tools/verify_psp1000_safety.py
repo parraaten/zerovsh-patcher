@@ -2044,8 +2044,8 @@ def check_sources(root):
             'ZERO_BRIDGE_LIVEIN_REQUIRED',
             'ZERO_BRIDGE_LIVEIN_IGNORED',
             'ZERO_BRIDGE_LIVEIN_UNKNOWN',
-            'zeroCtrlBridgeAnalyzeTaintedFunction(paf, target[0], 1U << 6',
-            'zeroCtrlBridgeAnalyzeTaintedFunction(paf, target[0], 1U << 7',
+            'zeroCtrlBridgeAnalyzeTaintedFunction(paf, constructed1, 1U << 6',
+            'zeroCtrlBridgeAnalyzeTaintedFunction(paf, constructed1, 1U << 7',
             'slide_diag.bridge_livein_validation = 1'):
         if token not in livein and token not in taint and token not in kernel:
             fail("constructed1 live-in proof lacks " + token)
@@ -2065,6 +2065,27 @@ def check_sources(root):
             'context->blocker_call = pc - paf->text_addr'):
         if token not in taint:
             fail("constructed1 bounded callee-taint proof lacks " + token)
+    delay_apply = taint.find(
+            'result = zeroCtrlBridgeApplyTaint(delay, &taint)')
+    call_classify = taint.find('call_taint = taint & 0xF0', delay_apply)
+    recursive_call = taint.find(
+            'zeroCtrlBridgeAnalyzeTaintedFunction(paf, target', call_classify)
+    continuation = taint.find('pc += 8', recursive_call)
+    if not 0 <= delay_apply < call_classify < recursive_call < continuation:
+        fail("direct-call taint/delay-slot ordering regressed")
+    forbidden_abi_kills = ('taint &= ~0x8300FFFCU',
+            'taint &= ~VSH_CALLER_SAVED_GPR_MASK',
+            'caller-saved values cannot carry the old incoming taint')
+    for token in forbidden_abi_kills:
+        if token in taint:
+            fail("ABI-only caller-saved taint kill returned: " + token)
+    preserve_comment = taint.find(
+            'Preserve taint after a proven-unobserving callee')
+    if preserve_comment < recursive_call or preserve_comment > continuation:
+        fail("direct-call proof does not conservatively preserve input taint")
+    for offset in ('0x18', '0x24', '0x30', '0x38'):
+        if offset not in livein:
+            fail("constructed1 call is not reachable to live-in proof: +" + offset)
     livein_call = bridge_resolver.find(
             'zeroCtrlPsp1000BridgeLiveInValid(paf, *constructed1)')
     root_pair = bridge_resolver.find('words[0xA8 / 4] >> 16')
