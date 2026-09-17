@@ -656,7 +656,9 @@ typedef struct {
     unsigned int vshctrl314a4_target;
     volatile int vshctrl314a4_home_baseline_captured;
     volatile int vshctrl314a4_home_baseline_valid;
+    unsigned int vshctrl314a4_total_baseline;
     unsigned int vshctrl314a4_pending_baseline;
+    unsigned int vshctrl314a4_consumed_hits_baseline;
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -7145,6 +7147,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int observed_vshctrl314a4_install = 0;
     int observed_vshctrl314a4_home = 0;
     int observed_vshctrl314a4_posthome = 0;
+    int vshctrl314a4_candidate_seen = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -7573,34 +7576,52 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 int trace_valid = zeroCtrlReadVshCtrl314A4Telemetry(trace_state);
                 unsigned int baseline_valid = trace_valid &&
                         slide_diag.vshctrl314a4_home_baseline_valid;
+                unsigned int total_delta = baseline_valid && trace_state[0] >=
+                        slide_diag.vshctrl314a4_total_baseline ? trace_state[0] -
+                        slide_diag.vshctrl314a4_total_baseline : 0;
+                unsigned int pending_delta = baseline_valid && trace_state[1] >=
+                        slide_diag.vshctrl314a4_pending_baseline ? trace_state[1] -
+                        slide_diag.vshctrl314a4_pending_baseline : 0;
+                int candidate = baseline_valid && trace_state[2] == 1 &&
+                        !slide_diag.functional_trigger_consumed &&
+                        trace_state[3] ==
+                        slide_diag.vshctrl314a4_consumed_hits_baseline &&
+                        total_delta > 0 && pending_delta > 0 &&
+                        total_delta == pending_delta;
                 if (!observed_vshctrl314a4_home) {
                     snprintf(line, sizeof(line),
                             "[psp1000-vshctrl314a4-home] baseline_valid=%u "
-                            "shared_total=%u pending_baseline=%u request=%u\n",
-                            baseline_valid, trace_valid ? trace_state[0] : 0,
+                            "total_baseline=%u pending_baseline=%u "
+                            "consumed_hits_baseline=%u request=%u\n",
+                            baseline_valid,
+                            slide_diag.vshctrl314a4_total_baseline,
                             slide_diag.vshctrl314a4_pending_baseline,
+                            slide_diag.vshctrl314a4_consumed_hits_baseline,
                             trace_valid ? trace_state[2] : 0);
                     zeroCtrlDiagnosticsText(line);
                     observed_vshctrl314a4_home = 1;
                 }
-                if (!observed_vshctrl314a4_posthome && baseline_valid &&
-                        trace_state[2] == 1 &&
-                        !slide_diag.functional_trigger_consumed &&
-                        trace_state[1] >
-                        slide_diag.vshctrl314a4_pending_baseline) {
+                if (!observed_vshctrl314a4_posthome && candidate &&
+                        vshctrl314a4_candidate_seen) {
                     snprintf(line, sizeof(line),
                             "[psp1000-vshctrl314a4-posthome] "
-                            "pending_baseline=%u pending=%u delta=%u request=%u "
-                            "home_press=%u consumed_hits=%u consumed=%u\n",
+                            "total_baseline=%u total=%u total_delta=%u "
+                            "pending_baseline=%u pending=%u pending_delta=%u "
+                            "request=%u home_press=%u consumed_hits_baseline=%u "
+                            "consumed_hits=%u consumed=%u\n",
+                            slide_diag.vshctrl314a4_total_baseline,
+                            trace_state[0], total_delta,
                             slide_diag.vshctrl314a4_pending_baseline,
-                            trace_state[1], trace_state[1] -
-                            slide_diag.vshctrl314a4_pending_baseline,
+                            trace_state[1], pending_delta,
                             trace_state[2], slide_diag.functional_home_press_hits,
+                            slide_diag.vshctrl314a4_consumed_hits_baseline,
                             trace_state[3],
                             slide_diag.functional_trigger_consumed);
                     zeroCtrlDiagnosticsText(line);
                     observed_vshctrl314a4_posthome = 1;
                 }
+                if (!observed_vshctrl314a4_posthome)
+                    vshctrl314a4_candidate_seen = candidate ? 1 : 0;
             }
             if (slide_diag.functional_enabled) {
                 ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
@@ -9663,21 +9684,34 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         int trace_valid = zeroCtrlReadVshCtrl314A4Telemetry(trace_state);
         unsigned int baseline_valid = trace_valid &&
                 slide_diag.vshctrl314a4_home_baseline_valid;
-        unsigned int delta = baseline_valid && trace_state[2] == 1 &&
-                !slide_diag.functional_trigger_consumed && trace_state[1] >=
+        unsigned int total_delta = baseline_valid && trace_state[0] >=
+                slide_diag.vshctrl314a4_total_baseline ? trace_state[0] -
+                slide_diag.vshctrl314a4_total_baseline : 0;
+        unsigned int pending_delta = baseline_valid && trace_state[1] >=
                 slide_diag.vshctrl314a4_pending_baseline ? trace_state[1] -
                 slide_diag.vshctrl314a4_pending_baseline : 0;
+        int final_evidence = baseline_valid && trace_state[2] == 1 &&
+                !slide_diag.functional_trigger_consumed && trace_state[3] ==
+                slide_diag.vshctrl314a4_consumed_hits_baseline &&
+                total_delta > 0 && pending_delta > 0 &&
+                total_delta == pending_delta;
+        if (!final_evidence) total_delta = pending_delta = 0;
         snprintf(line, sizeof(line),
                 "[psp1000-vshctrl314a4-final] baseline_valid=%u "
-                "shared_total=%u pending_baseline=%u pending=%u delta=%u "
-                "request=%u home_press=%u consumed_hits=%u consumed=%u\n",
-                baseline_valid, trace_valid ? trace_state[0] : 0,
+                "total_baseline=%u total=%u total_delta=%u "
+                "pending_baseline=%u pending=%u pending_delta=%u request=%u "
+                "home_press=%u consumed_hits_baseline=%u consumed_hits=%u "
+                "consumed=%u proof=%u\n",
+                baseline_valid, slide_diag.vshctrl314a4_total_baseline,
+                trace_valid ? trace_state[0] : 0, total_delta,
                 slide_diag.vshctrl314a4_pending_baseline,
-                trace_valid ? trace_state[1] : 0, delta,
+                trace_valid ? trace_state[1] : 0, pending_delta,
                 trace_valid ? trace_state[2] : 0,
                 slide_diag.functional_home_press_hits,
+                slide_diag.vshctrl314a4_consumed_hits_baseline,
                 trace_valid ? trace_state[3] : 0,
-                slide_diag.functional_trigger_consumed);
+                slide_diag.functional_trigger_consumed,
+                observed_vshctrl314a4_posthome);
         zeroCtrlDiagnosticsText(line);
         zeroCtrlDiagnosticsText(
                 "[checkpoint-fast] minimal_observation_window_complete\n");
@@ -12505,6 +12539,9 @@ static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void) {
     ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
     ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int baseline_address[4];
+    unsigned int baseline_a[4], baseline_b[4];
+    unsigned int i;
 
     slide_diag.functional_home_first_load_attempts++;
     if (!slide_diag.functional_enabled || model != 0 ||
@@ -12591,21 +12628,33 @@ static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void) {
             (const void *)trigger->request_addr, 4);
     slide_diag.vshctrl314a4_home_baseline_captured = 1;
     slide_diag.vshctrl314a4_home_baseline_valid = 0;
+    baseline_address[0] = slide_diag.triggers[1].counter_addr;
+    baseline_address[1] = slide_diag.triggers[2].counter_addr;
+    baseline_address[2] = trigger->counter_addr;
+    baseline_address[3] = trigger->request_addr;
     if (slide_diag.vshctrl314a4_validation &&
             slide_diag.vshctrl314a4_install &&
             slide_diag.vshctrl314a4_cache_sync &&
-            slide_diag.triggers[2].counter_addr != 0 &&
-            (slide_diag.triggers[2].counter_addr & 3) == 0 &&
-            zeroCtrlVshModuleRangeValid(helper,
-                slide_diag.triggers[2].counter_addr, 4) &&
-            trigger->request_addr != 0 &&
-            (trigger->request_addr & 3) == 0 &&
-            zeroCtrlVshModuleRangeValid(helper, trigger->request_addr, 4) &&
-            _lw(trigger->request_addr) == 1 &&
-            !slide_diag.functional_trigger_consumed) {
-        slide_diag.vshctrl314a4_pending_baseline =
-                _lw(slide_diag.triggers[2].counter_addr);
-        slide_diag.vshctrl314a4_home_baseline_valid = 1;
+            baseline_address[0] != 0 && (baseline_address[0] & 3) == 0 &&
+            zeroCtrlVshModuleRangeValid(helper, baseline_address[0], 4) &&
+            baseline_address[1] != 0 && (baseline_address[1] & 3) == 0 &&
+            zeroCtrlVshModuleRangeValid(helper, baseline_address[1], 4) &&
+            baseline_address[2] != 0 && (baseline_address[2] & 3) == 0 &&
+            zeroCtrlVshModuleRangeValid(helper, baseline_address[2], 4) &&
+            baseline_address[3] != 0 && (baseline_address[3] & 3) == 0 &&
+            zeroCtrlVshModuleRangeValid(helper, baseline_address[3], 4)) {
+        for (i = 0; i < 4; i++) baseline_a[i] = _lw(baseline_address[i]);
+        for (i = 0; i < 4; i++) baseline_b[i] = _lw(baseline_address[i]);
+        if (baseline_a[3] == 1 && baseline_b[3] == 1 &&
+                !slide_diag.functional_trigger_consumed &&
+                baseline_a[0] == baseline_b[0] &&
+                baseline_a[1] == baseline_b[1] &&
+                baseline_a[2] == baseline_b[2]) {
+            slide_diag.vshctrl314a4_total_baseline = baseline_b[0];
+            slide_diag.vshctrl314a4_pending_baseline = baseline_b[1];
+            slide_diag.vshctrl314a4_consumed_hits_baseline = baseline_b[2];
+            slide_diag.vshctrl314a4_home_baseline_valid = 1;
+        }
     }
     slide_diag.functional_home_first_load_published++;
     slide_diag.functional_home_first_load_reject_reason = ZERO_HOME_REJECT_NONE;
