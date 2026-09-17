@@ -2026,44 +2026,40 @@ def check_sources(root):
             "vsh->text_addr != slide_diag.vsh_text_addr",
             "vsh->text_size != slide_diag.vsh_text_size",
             "vsh->text_size != 0x556C0",
-            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,",
-            "vsh->text_addr + 0x5894, 0x6C",
-            "_lw(text + 0x5894) != 0x03E00008",
-            "_lw(text + 0x5898) != 0x27BD0080",
-            "_lw(text + 0x58A0) != 0x27BDFFF0",
-            "_lw(text + 0x58A8) != 0xAFBF0000",
-            "_lw(text + 0x58E8) != 0x03E00008",
-            "_lw(text + 0x58EC) != 0x27BD0010",
-            "text + 0x57B0", "text + 0x58E8",
-            "opcode == 2 || opcode == 3",
-            "zeroCtrlMipsJumpTarget(text + offset, word)",
-            "zeroCtrlVshModuleRangeValid(vsh, text + start, end - start)",
-            "[psp1000-clockpath-function]",
-            "[psp1000-clockpath-code]",
-            "[psp1000-clockpath-caller]",
-            "[psp1000-clockpath-args]",
-            "[psp1000-clockpath-57b0]"):
+            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr, vsh->text_size)",
+            "target58cc != text + 0x5900",
+            "CLOCKPATH_DELAY(offset)", "CLOCKPATH_QUEUE(target - text)",
+            "CLOCKPATH_QUEUE(offset + 8)",
+            "zeroCtrlClockPathNodeIndex(node, count, 0x5900) < 0",
+            "[psp1000-clockpath-cfg]", "[psp1000-clockpath-node]",
+            "[psp1000-clockpath-exit]", "[psp1000-clockpath-call]",
+            "[psp1000-clockpath-pointer]",
+            "[psp1000-clockpath-materialize]",
+            "[psp1000-clockpath-entry-arg]",
+            "[psp1000-clockpath-58b8-arg]"):
         if token not in clockpath:
-            fail("read-only Clock & Date path analysis lacks " + token)
+            fail("read-only Clock & Date CFG analysis lacks " + token)
+    if "#define CLOCKPATH_CFG_LIMIT 128" not in kernel:
+        fail("Clock path CFG bound is not 128 reachable instructions")
     for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
             "REDIRECT_FUNCTION", "hook_import", "zeroCtrlSetSlideState",
             "zeroCtrlInstallVshCtrl314A4Trace("):
         if forbidden in clockpath:
-            fail("Clock & Date path analysis is not read-only: " + forbidden)
-    arg_start = kernel.find("static void zeroCtrlDescribeClockPathArgument(")
-    arg_end = clock_start
-    arg_tracker = kernel[arg_start:arg_end]
-    for token in ('strcpy(description, "UNKNOWN")',
-            "zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + offset, 4)",
+            fail("Clock & Date CFG analysis is not read-only: " + forbidden)
+    xref_start = kernel.find("static void zeroCtrlWriteClockPathXrefs(")
+    xref_end = clock_start
+    xrefs = kernel[xref_start:xref_end]
+    for token in ("opcode == 0x23", "opcode == 0x2B", "opcode == 9", "opcode == 0x0D",
+            "effective == target", "zeroCtrlClockPathControl(word)",
             "zeroCtrlMipsGprWriteDestination(word)",
-            'strcpy(description, "CONST_0")',
-            'strcpy(description, "CONST_1")', '"STACK_%X"',
-            '"REG_R%u"', '"LW_R%u_%04X"'):
-        if token not in arg_tracker:
-            fail("Clock path conservative argument tracker lacks " + token)
-    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP"):
-        if forbidden in arg_tracker:
-            fail("Clock path argument tracking is not read-only: " + forbidden)
+            "[psp1000-clockpath-global-xref]",
+            "[psp1000-clockpath-pointer-xref]"):
+        if token not in xrefs:
+            fail("Clock path exact xref scanner lacks " + token)
+    if "#define CLOCKPATH_XREF_LOOKAHEAD 8" not in kernel:
+        fail("Clock path xref scan is not bounded")
+    if "zeroCtrlInstallVshCtrl314A4Trace();" in writer:
+        fail("VSH +314A4 is still patched automatically")
     call = minimal.find("zeroCtrlWriteFunctionalClockPathAnalysis()")
     if call < 0 or "clockpath_written" not in minimal[:call]:
         fail("Clock path analysis is not a writer-only one-shot")

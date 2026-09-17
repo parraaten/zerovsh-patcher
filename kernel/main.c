@@ -4875,85 +4875,103 @@ static int zeroCtrlReadVshCtrl314A4Telemetry(unsigned int state[4]) {
     return 1;
 }
 
-static void zeroCtrlDescribeClockPathArgument(SceModule2 *vsh,
-        unsigned int call_offset, unsigned int reg, char *description,
-        unsigned int capacity) {
-    unsigned int step;
+#define CLOCKPATH_CFG_LIMIT 128
+#define CLOCKPATH_NEAR_START 0x589C
+#define CLOCKPATH_NEAR_END 0x5A9C
+#define CLOCKPATH_XREF_LOOKAHEAD 8
 
-    strcpy(description, "UNKNOWN");
-    for (step = 0; step <= 12; step++) {
-        unsigned int offset;
-        unsigned int word;
-        unsigned int opcode, rs, rt, function;
-        int destination;
+static int zeroCtrlClockPathNodeIndex(unsigned int *node, unsigned int count,
+        unsigned int offset) {
+    unsigned int i;
+    for (i = 0; i < count; i++) if (node[i] == offset) return (int)i;
+    return -1;
+}
 
-        if (step == 0) {
-            if (call_offset > vsh->text_size - 8) return;
-            offset = call_offset + 4;
-        } else {
-            if (call_offset < step * 4) return;
-            offset = call_offset - step * 4;
+static int zeroCtrlClockPathAddNode(unsigned int *node, unsigned int *count,
+        unsigned int offset) {
+    if (zeroCtrlClockPathNodeIndex(node, *count, offset) >= 0) return 1;
+    if (*count >= CLOCKPATH_CFG_LIMIT) return 0;
+    node[(*count)++] = offset;
+    return 1;
+}
+
+static int zeroCtrlClockPathControl(unsigned int word) {
+    unsigned int opcode = word >> 26;
+    unsigned int function = word & 0x3F;
+    return opcode == 1 || opcode == 2 || opcode == 3 ||
+            (opcode >= 4 && opcode <= 7) ||
+            (opcode >= 0x14 && opcode <= 0x17) ||
+            (opcode == 0 && (function == 8 || function == 9));
+}
+
+static unsigned int zeroCtrlClockPathBranchTarget(unsigned int pc,
+        unsigned int word) {
+    return pc + 4 + ((int)(short)(word & 0xFFFF) << 2);
+}
+
+static void zeroCtrlWriteClockPathXrefs(SceModule2 *vsh, unsigned int target,
+        unsigned int pointer) {
+    unsigned int text = vsh->text_addr;
+    unsigned int offset;
+    char line[192];
+
+    for (offset = 0; offset <= vsh->text_size - 4; offset += 4) {
+        unsigned int lui = _lw(text + offset);
+        unsigned int reg, look;
+        if ((lui >> 26) != 0x0F) continue;
+        reg = (lui >> 16) & 0x1F;
+        if (reg == 0) continue;
+        for (look = 1; look <= CLOCKPATH_XREF_LOOKAHEAD &&
+                offset <= vsh->text_size - (look + 1) * 4; look++) {
+            unsigned int source = offset + look * 4;
+            unsigned int word = _lw(text + source);
+            unsigned int opcode = word >> 26;
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int effective = 0;
+            const char *access = 0;
+            int destination;
+            if (zeroCtrlClockPathControl(word)) break;
+            if ((opcode == 0x23 || opcode == 0x2B) && rs == reg) {
+                effective = ((lui & 0xFFFF) << 16) +
+                        (unsigned int)(int)(short)(word & 0xFFFF);
+                access = opcode == 0x23 ? "LOAD" : "STORE";
+            } else if (opcode == 9 && rs == reg && rt == reg) {
+                effective = ((lui & 0xFFFF) << 16) +
+                        (unsigned int)(int)(short)(word & 0xFFFF);
+                access = "ADDRESS";
+            } else if (opcode == 0x0D && rs == reg && rt == reg) {
+                effective = ((lui & 0xFFFF) << 16) | (word & 0xFFFF);
+                access = "ADDRESS";
+            }
+            if (access && effective == target) {
+                if (pointer)
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-pointer-xref] pointer=0x%08X "
+                            "source=0x%05X access=%s\n", pointer, source, access);
+                else
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-global-xref] global=0x%05X "
+                            "source=0x%05X access=%s word=0x%08X\n",
+                            target - text, source, access, word);
+                zeroCtrlDiagnosticsText(line);
+            }
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0 || (unsigned int)destination == reg) break;
         }
-        if (!zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + offset, 4))
-            return;
-        word = _lw(vsh->text_addr + offset);
-        opcode = word >> 26;
-        rs = (word >> 21) & 0x1F;
-        rt = (word >> 16) & 0x1F;
-        function = word & 0x3F;
-        if (opcode == 1 || opcode == 2 || opcode == 3 ||
-                (opcode >= 4 && opcode <= 7) ||
-                (opcode >= 0x14 && opcode <= 0x17) ||
-                (opcode == 0 && (function == 8 || function == 9)))
-            return;
-        destination = zeroCtrlMipsGprWriteDestination(word);
-        if (destination < 0) return;
-        if ((unsigned int)destination != reg) continue;
-        if (opcode == 9) {
-            int value = (short)(word & 0xFFFF);
-            if (rs == 0 && value == 0) strcpy(description, "CONST_0");
-            else if (rs == 0 && value == 1) strcpy(description, "CONST_1");
-            else if (rs == 0)
-                snprintf(description, capacity, "CONST_%08X", value);
-            else if (rs == 29)
-                snprintf(description, capacity, "STACK_%X", word & 0xFFFF);
-            else if (value == 0)
-                snprintf(description, capacity, "REG_R%u", rs);
-            return;
-        }
-        if (opcode == 0x0D && rs == 0) {
-            snprintf(description, capacity, "CONST_%08X", word & 0xFFFF);
-            return;
-        }
-        if (opcode == 0x0F && rs == 0) {
-            snprintf(description, capacity, "CONST_HI_%04X", word & 0xFFFF);
-            return;
-        }
-        if (opcode == 0x23) {
-            if (rs == 29)
-                snprintf(description, capacity, "STACK_LW_%X", word & 0xFFFF);
-            else
-                snprintf(description, capacity, "LW_R%u_%04X", rs,
-                        word & 0xFFFF);
-            return;
-        }
-        if (opcode == 0 && (function == 0x21 || function == 0x25)) {
-            if (rs == 0 && rt != 0)
-                snprintf(description, capacity, "REG_R%u", rt);
-            else if (rt == 0 && rs != 0)
-                snprintf(description, capacity, "REG_R%u", rs);
-            return;
-        }
-        return;
     }
 }
 
-/* Writer-thread-only loaded-code analysis; this routine performs no mutation. */
+/* Writer-thread-only loaded-code archaeology; this routine performs no mutation. */
 static int zeroCtrlWriteFunctionalClockPathAnalysis(void) {
     SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
-    unsigned int text, offset, callers = 0, index = 0;
-    const unsigned int function_start = 0x589C;
-    const unsigned int function_end = 0x58FC;
+    unsigned int node[CLOCKPATH_CFG_LIMIT], queue[CLOCKPATH_CFG_LIMIT];
+    unsigned int exit_offset[CLOCKPATH_CFG_LIMIT];
+    unsigned int exit_target[CLOCKPATH_CFG_LIMIT];
+    unsigned char exit_kind[CLOCKPATH_CFG_LIMIT];
+    unsigned int count = 0, queued = 0, cursor = 0, exits = 0;
+    unsigned int returns = 0, branches = 0, calls = 0, indirect = 0;
+    unsigned int text, i, word58cc, target58cc;
     char line[256];
 
     if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
@@ -4964,84 +4982,207 @@ static int zeroCtrlWriteFunctionalClockPathAnalysis(void) {
             vsh->text_addr != slide_diag.vsh_text_addr ||
             vsh->text_size != slide_diag.vsh_text_size ||
             vsh->text_size != 0x556C0 ||
-            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
-                vsh->text_size) ||
-            !zeroCtrlVshModuleRangeValid(vsh,
-                vsh->text_addr + 0x5894, 0x6C))
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr, vsh->text_size))
         return 0;
     text = vsh->text_addr;
+    if (!zeroCtrlVshModuleRangeValid(vsh, text + CLOCKPATH_NEAR_START,
+                CLOCKPATH_NEAR_END - CLOCKPATH_NEAR_START + 4) ||
+            !zeroCtrlVshModuleRangeValid(vsh, text + 0x5894, 8))
+        return 0;
     if (_lw(text + 0x5894) != 0x03E00008 ||
             _lw(text + 0x5898) != 0x27BD0080 ||
-            (_lw(text + function_start) >> 26) != 0x0F ||
-            ((_lw(text + function_start) >> 16) & 0x1F) != 2 ||
+            (_lw(text + 0x589C) >> 26) != 0x0F ||
             _lw(text + 0x58A0) != 0x27BDFFF0 ||
-            ((_lw(text + 0x58A4) >> 26) != 0x2B) ||
-            ((_lw(text + 0x58A4) >> 16) & 0x1F) != 4 ||
-            _lw(text + 0x58A8) != 0xAFBF0000 ||
-            (_lw(text + 0x58AC) >> 26) != 3 ||
-            (_lw(text + 0x58B8) >> 26) != 3 ||
-            (_lw(text + 0x58D4) >> 26) != 3 ||
-            (_lw(text + 0x58DC) >> 26) != 5 ||
-            _lw(text + 0x58E4) != 0x8FBF0000 ||
-            _lw(text + 0x58E8) != 0x03E00008 ||
-            _lw(text + 0x58EC) != 0x27BD0010 ||
-            (_lw(text + 0x58F0) >> 26) != 3 ||
-            zeroCtrlMipsJumpTarget(text + 0x58F0,
-                _lw(text + 0x58F0)) != text + 0x57B0 ||
-            (_lw(text + 0x58F8) >> 26) != 2 ||
-            zeroCtrlMipsJumpTarget(text + 0x58F8,
-                _lw(text + 0x58F8)) != text + 0x58E8)
+            _lw(text + 0x58A8) != 0xAFBF0000)
         return 0;
-    for (offset = 0; offset <= vsh->text_size - 4; offset += 4) {
-        unsigned int word = _lw(text + offset);
+    word58cc = _lw(text + 0x58CC);
+    target58cc = zeroCtrlClockPathBranchTarget(text + 0x58CC, word58cc);
+    if ((word58cc >> 26) != 4 || target58cc != text + 0x5900)
+        return 0;
+
+#define CLOCKPATH_QUEUE(off) do { \
+    unsigned int queue_offset = (off); \
+    if (queue_offset < CLOCKPATH_NEAR_START || queue_offset > CLOCKPATH_NEAR_END || \
+            !zeroCtrlVshModuleRangeValid(vsh, text + queue_offset, 4) || \
+            !zeroCtrlClockPathAddNode(node, &count, queue_offset)) return 0; \
+    if (zeroCtrlClockPathNodeIndex(queue, queued, queue_offset) < 0) { \
+        if (queued >= CLOCKPATH_CFG_LIMIT) return 0; \
+        queue[queued++] = queue_offset; \
+    } \
+} while (0)
+#define CLOCKPATH_DELAY(off) do { \
+    unsigned int delay_offset = (off) + 4; \
+    if (delay_offset > CLOCKPATH_NEAR_END || \
+            !zeroCtrlVshModuleRangeValid(vsh, text + delay_offset, 4) || \
+            !zeroCtrlClockPathAddNode(node, &count, delay_offset)) return 0; \
+} while (0)
+#define CLOCKPATH_EXIT(off, kind_value, target_value) do { \
+    if (exits >= CLOCKPATH_CFG_LIMIT) return 0; \
+    exit_offset[exits] = (off); exit_kind[exits] = (kind_value); \
+    exit_target[exits++] = (target_value); \
+} while (0)
+
+    CLOCKPATH_QUEUE(0x589C);
+    while (cursor < queued) {
+        unsigned int offset = queue[cursor++];
+        unsigned int pc = text + offset;
+        unsigned int word = _lw(pc);
         unsigned int opcode = word >> 26;
-        if ((opcode == 2 || opcode == 3) &&
-                zeroCtrlMipsJumpTarget(text + offset, word) ==
-                text + function_start)
-            callers++;
+        unsigned int function = word & 0x3F;
+        if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
+            unsigned int target = zeroCtrlClockPathBranchTarget(pc, word);
+            branches++;
+            CLOCKPATH_DELAY(offset);
+            CLOCKPATH_QUEUE(target - text);
+            CLOCKPATH_QUEUE(offset + 8);
+        } else if (opcode == 2) {
+            unsigned int target = zeroCtrlMipsJumpTarget(pc, word);
+            CLOCKPATH_DELAY(offset);
+            if (target >= text + CLOCKPATH_NEAR_START &&
+                    target <= text + CLOCKPATH_NEAR_END)
+                CLOCKPATH_QUEUE(target - text);
+            else
+                CLOCKPATH_EXIT(offset, 2, target);
+        } else if (opcode == 3) {
+            calls++;
+            CLOCKPATH_DELAY(offset);
+            CLOCKPATH_QUEUE(offset + 8);
+        } else if (opcode == 0 && function == 8) {
+            unsigned int rs = (word >> 21) & 0x1F;
+            CLOCKPATH_DELAY(offset);
+            if (rs == 31) {
+                returns++;
+                CLOCKPATH_EXIT(offset, 1, 0);
+            } else {
+                indirect++;
+                CLOCKPATH_EXIT(offset, 3, 0);
+            }
+        } else if (opcode == 0 && function == 9) {
+            indirect++;
+            calls++;
+            CLOCKPATH_DELAY(offset);
+            CLOCKPATH_EXIT(offset, 4, 0);
+            CLOCKPATH_QUEUE(offset + 8);
+        } else {
+            CLOCKPATH_QUEUE(offset + 4);
+        }
     }
+#undef CLOCKPATH_QUEUE
+#undef CLOCKPATH_DELAY
+#undef CLOCKPATH_EXIT
+
+    if (zeroCtrlClockPathNodeIndex(node, count, 0x5900) < 0) return 0;
     snprintf(line, sizeof(line),
-            "[psp1000-clockpath-function] start=0x%05X end=0x%05X "
-            "frame=0x%X callers=%u\n", function_start, function_end, 0x10,
-            callers);
+            "[psp1000-clockpath-cfg] reachable=%u returns=%u branches=%u "
+            "calls=%u indirect=%u\n", count, returns, branches, calls, indirect);
     zeroCtrlDiagnosticsText(line);
-    for (offset = function_start; offset <= function_end; offset += 4) {
+    for (i = 0; i < count; i++) {
         snprintf(line, sizeof(line),
-                "[psp1000-clockpath-code] offset=0x%05X word=0x%08X\n",
-                offset, _lw(text + offset));
+                "[psp1000-clockpath-node] offset=0x%05X word=0x%08X\n",
+                node[i], _lw(text + node[i]));
         zeroCtrlDiagnosticsText(line);
     }
-    for (offset = 0; offset <= vsh->text_size - 4; offset += 4) {
-        unsigned int word = _lw(text + offset);
-        unsigned int opcode = word >> 26;
-        unsigned int start, end;
-        char argument[4][32];
-        unsigned int reg;
-        if ((opcode != 2 && opcode != 3) ||
-                zeroCtrlMipsJumpTarget(text + offset, word) !=
-                text + function_start)
-            continue;
-        start = offset >= 48 ? offset - 48 : 0;
-        end = offset <= vsh->text_size - 20 ? offset + 20 : vsh->text_size;
-        if (!zeroCtrlVshModuleRangeValid(vsh, text + start, end - start))
-            return 0;
-        for (reg = 0; reg < 4; reg++)
-            zeroCtrlDescribeClockPathArgument(vsh, offset, reg + 4,
-                    argument[reg], sizeof(argument[reg]));
+    for (i = 0; i < exits; i++) {
+        const char *kind = exit_kind[i] == 1 ? "JR_RA" :
+                exit_kind[i] == 2 ? "J_TAIL" :
+                exit_kind[i] == 3 ? "JR_INDIRECT" : "JALR_INDIRECT";
         snprintf(line, sizeof(line),
-                "[psp1000-clockpath-caller] index=%u source=0x%08X "
-                "offset=0x%05X word=0x%08X kind=%s\n", index,
-                text + offset, offset, word, opcode == 3 ? "JAL" : "J");
+                "[psp1000-clockpath-exit] offset=0x%05X kind=%s target=0x%08X\n",
+                exit_offset[i], kind, exit_target[i]);
         zeroCtrlDiagnosticsText(line);
-        snprintf(line, sizeof(line),
-                "[psp1000-clockpath-args] caller=%u a0=%s a1=%s a2=%s a3=%s\n",
-                index, argument[0], argument[1], argument[2], argument[3]);
-        zeroCtrlDiagnosticsText(line);
-        index++;
     }
+    for (i = 0; i < 3; i++) {
+        unsigned int source = i == 0 ? 0x58AC : i == 1 ? 0x58B8 : 0x58F0;
+        unsigned int call_word = _lw(text + source);
+        unsigned int target;
+        if ((call_word >> 26) != 3) return 0;
+        target = zeroCtrlMipsJumpTarget(text + source, call_word);
+        snprintf(line, sizeof(line),
+                "[psp1000-clockpath-call] source=0x%05X target=0x%05X\n",
+                source, target - text);
+        zeroCtrlDiagnosticsText(line);
+    }
+    if ((_lw(text + 0x58A4) >> 26) != 0x2B ||
+            ((_lw(text + 0x58A4) >> 21) & 0x1F) != 2 ||
+            ((_lw(text + 0x58A4) >> 16) & 0x1F) != 4 ||
+            (_lw(text + 0x58B4) >> 26) != 0x0F ||
+            ((_lw(text + 0x58B4) >> 16) & 0x1F) != 4 ||
+            (_lw(text + 0x58B8) >> 26) != 3 ||
+            (_lw(text + 0x58BC) >> 26) != 9 ||
+            ((_lw(text + 0x58BC) >> 21) & 0x1F) != 4 ||
+            ((_lw(text + 0x58BC) >> 16) & 0x1F) != 4 ||
+            (((_lw(text + 0x589C) & 0xFFFF) << 16) +
+            (unsigned int)(int)(short)(_lw(text + 0x58A4) & 0xFFFF) !=
+            text + 0x56C7C ||
+            (((_lw(text + 0x58B4) & 0xFFFF) << 16) +
+            (unsigned int)(int)(short)(_lw(text + 0x58BC) & 0xFFFF) !=
+            text + 0x56CA4))
+        return 0;
     zeroCtrlDiagnosticsText(
-            "[psp1000-clockpath-57b0] a0=UNKNOWN a1=UNKNOWN "
-            "a2=UNKNOWN a3=UNKNOWN\n");
+            "[psp1000-clockpath-entry-arg] store_global=0x56C7C\n");
+    snprintf(line, sizeof(line),
+            "[psp1000-clockpath-58b8-arg] a0=0x%08X\n", text + 0x56CA4);
+    zeroCtrlDiagnosticsText(line);
+
+    zeroCtrlWriteClockPathXrefs(vsh, text + 0x56C7C, 0);
+    zeroCtrlWriteClockPathXrefs(vsh, text + 0x56C80, 0);
+    zeroCtrlWriteClockPathXrefs(vsh, text + 0x56CA4, 0);
+
+    for (i = 0; i < vsh->nsegment; i++) {
+        unsigned int start = vsh->segmentaddr[i];
+        unsigned int size = vsh->segmentsize[i];
+        unsigned int address;
+        if (start == 0 || size < 4 || start > 0xFFFFFFFFU - size ||
+                !zeroCtrlVshModuleRangeValid(vsh, start, size))
+            return 0;
+        address = (start + 3) & ~3U;
+        while (address >= start && address <= start + size - 4) {
+            if (_lw(address) == text + 0x589C) {
+                unsigned int window_start = address >= start + 8 ? address - 8 : start;
+                unsigned int window_end = address <= start + size - 12 ?
+                        address + 12 : start + size;
+                unsigned int p;
+                snprintf(line, sizeof(line),
+                        "[psp1000-clockpath-pointer] segment=%u address=0x%08X "
+                        "offset=0x%08X\n", i, address, address - start);
+                zeroCtrlDiagnosticsText(line);
+                if (!zeroCtrlVshModuleRangeValid(vsh, window_start,
+                            window_end - window_start)) return 0;
+                for (p = window_start; p + 4 <= window_end; p += 4) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-pointer-code] address=0x%08X "
+                            "word=0x%08X\n", p, _lw(p));
+                    zeroCtrlDiagnosticsText(line);
+                }
+                zeroCtrlWriteClockPathXrefs(vsh, address, address);
+            }
+            if (address > 0xFFFFFFFFU - 4) break;
+            address += 4;
+        }
+    }
+
+    for (i = 0; i <= vsh->text_size - 8; i += 4) {
+        unsigned int lui = _lw(text + i);
+        unsigned int low = _lw(text + i + 4);
+        unsigned int reg = (lui >> 16) & 0x1F;
+        unsigned int resolved = 0;
+        if ((lui >> 26) != 0x0F || reg == 0 ||
+                ((low >> 21) & 0x1F) != reg ||
+                ((low >> 16) & 0x1F) != reg)
+            continue;
+        if ((low >> 26) == 9)
+            resolved = ((lui & 0xFFFF) << 16) +
+                    (unsigned int)(int)(short)(low & 0xFFFF);
+        else if ((low >> 26) == 0x0D)
+            resolved = ((lui & 0xFFFF) << 16) | (low & 0xFFFF);
+        if (resolved == text + 0x589C) {
+            snprintf(line, sizeof(line),
+                    "[psp1000-clockpath-materialize] source=0x%05X reg=%u "
+                    "address=0x%08X\n", i, reg, resolved);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
     return 1;
 }
 
