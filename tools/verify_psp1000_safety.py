@@ -1695,12 +1695,16 @@ def check_sources(root):
     patch_icache = record.find("sceKernelIcacheInvalidateRange(", patch_dcache)
     patch_synced = record.find("evidence->cache_sync = 1", patch_icache)
     armed_record = record.find("functional_request_armed = 1", patch_synced)
+    bridge_retry_guard = record.find("if (slide_diag.bridge_registered &&",
+            armed_record)
+    bridge_retry = record.find("zeroCtrlInstallVshCtrl314A4Bridge();",
+            bridge_retry_guard)
     if not 0 <= reused_validation_guard < reused_counter_validation < commit_guard < \
             original_init < mode_init < \
             startup_request_zero < request_sync < counter_init_guard < total_zero < delegated_zero < \
             total_sync < delegated_sync < \
             trigger_commit < patch_dcache < patch_icache < patch_synced < \
-            armed_record:
+            armed_record < bridge_retry_guard < bridge_retry:
         fail("functional 58D4 closed-request/install transaction is out of order")
     counter_init_end = record.find("\n                    }", delegated_sync)
     counter_init = record[counter_init_guard:counter_init_end]
@@ -1869,7 +1873,8 @@ def check_sources(root):
         fail("functional HOME first-load publication ordering regressed")
     for forbidden in ("sceKernelIcache", "zeroCtrlSetSlideState",
             "psp1000RuntimeRequestTarget", "zeroCtrlTrigger58D4(", "MAKE_CALL",
-            "MAKE_JUMP", "_sw(replacement", "sceIo", "malloc", "Alloc"):
+            "MAKE_JUMP", "_sw(replacement", "sceIo", "malloc", "Alloc",
+            "zeroCtrlInstallVshCtrl314A4Bridge"):
         if forbidden in home_request:
             fail("functional HOME first-load path performs forbidden operation " + forbidden)
     home_fields = ("functional_home_press_hits",
@@ -1978,7 +1983,8 @@ def check_sources(root):
             '(_lw(stub + 4) & 0xFC00003F) != 0x0000000C', 'matches != 1'):
         if token not in resolver:
             fail("sceCtrl Peek import resolver lacks " + token)
-    bridge_start = kernel.find("static void zeroCtrlInstallVshCtrl314A4Bridge(")
+    bridge_start = kernel.find(
+            "static void zeroCtrlInstallVshCtrl314A4Bridge(void) {")
     bridge_end = kernel.find("void zeroCtrlRegisterPsp1000FunctionalBridge(",
             bridge_start)
     bridge = kernel[bridge_start:bridge_end]
@@ -2004,6 +2010,18 @@ def check_sources(root):
             '_sw(replacement, owner)', 'slide_diag.bridge_install = 1'):
         if token not in bridge:
             fail("functional +314A4 bridge installer lacks " + token)
+    attempt_increment = bridge.find('slide_diag.bridge_install_attempts++')
+    precondition_guard = bridge.find('!slide_diag.bridge_registered)')
+    ctrl_resolution = bridge.find('zeroCtrlResolveVshCtrlPeekImport(vsh, &target)')
+    paf_resolution = bridge.find('zeroCtrlResolvePsp1000FunctionalBridge(vsh, paf')
+    if not 0 <= precondition_guard < attempt_increment < ctrl_resolution < paf_resolution:
+        fail("bridge attempts are not limited to armed registered installs")
+    for token in ('ZERO_BRIDGE_STAGE_INSTALL_PRECONDITIONS',
+            'ZERO_BRIDGE_STAGE_CTRL_IMPORT', 'ZERO_BRIDGE_STAGE_CALLSITE_314A4',
+            'ZERO_BRIDGE_STAGE_READY', 'ZERO_BRIDGE_REJECT_CTRL_IMPORT',
+            'ZERO_BRIDGE_REJECT_CALLSITE_314A4'):
+        if token not in bridge:
+            fail("functional bridge installer staging lacks " + token)
     owner_write = bridge.find('_sw(replacement, owner)')
     owner_dcache = bridge.find(
             'sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4)',
@@ -2025,6 +2043,26 @@ def check_sources(root):
             fail("functional PAF bridge resolver lacks " + token)
     if '0x089B5978' in bridge_resolver:
         fail("functional bridge hard-codes a boot-specific PAF root")
+    stage_order = [bridge_resolver.find(token) for token in (
+            'ZERO_BRIDGE_STAGE_VSH_PAF_METADATA',
+            'ZERO_BRIDGE_STAGE_VSH_CALLBACK_REGISTRATION',
+            'ZERO_BRIDGE_STAGE_PAF_A989_IMPORT', 'ZERO_BRIDGE_STAGE_WRAPPER',
+            'ZERO_BRIDGE_STAGE_INNER_CONSUMER', 'ZERO_BRIDGE_STAGE_ROOT_SLOT',
+            'ZERO_BRIDGE_STAGE_CONSTRUCTED0', 'ZERO_BRIDGE_STAGE_CONSTRUCTED1',
+            'ZERO_BRIDGE_STAGE_LIVEIN_ENTERED',
+            'ZERO_BRIDGE_STAGE_LIVEIN_PASSED')]
+    if any(position < 0 for position in stage_order) or \
+            stage_order != sorted(stage_order):
+        fail("functional resolver milestones are absent or non-monotonic")
+    livein_entered = bridge_resolver.find(
+            'bridge_resolve_stage = ZERO_BRIDGE_STAGE_LIVEIN_ENTERED')
+    livein_validate = bridge_resolver.find(
+            'zeroCtrlPsp1000BridgeLiveInValid(paf, *constructed1)', livein_entered)
+    livein_passed = bridge_resolver.find(
+            'bridge_resolve_stage = ZERO_BRIDGE_STAGE_LIVEIN_PASSED',
+            livein_validate)
+    if not 0 <= livein_entered < livein_validate < livein_passed:
+        fail("live-in resolver milestones do not bracket the proof")
     livein_start = kernel.find(
             "static int zeroCtrlPsp1000BridgeLiveInValid(")
     livein_end = kernel.find("static int zeroCtrlPsp1000BridgeImportMatches(",
@@ -2104,6 +2142,11 @@ def check_sources(root):
         if declaration < 0 or declaration > resolve_pos:
             fail("functional bridge uses helper before static declaration: " +
                     signature)
+    armed_pos = kernel.find('slide_diag.functional_request_armed = 1')
+    installer_declaration = kernel.find(
+            'static void zeroCtrlInstallVshCtrl314A4Bridge(void);')
+    if not 0 <= installer_declaration < armed_pos < bridge_start:
+        fail("+314A4 installer is used before its static declaration")
     register_start = kernel.find("void zeroCtrlRegisterPsp1000FunctionalBridge(")
     register_end = kernel.find("static int zeroCtrlReadVshCtrl314A4Telemetry",
             register_start)
@@ -2116,6 +2159,12 @@ def check_sources(root):
             'zeroCtrlInstallVshCtrl314A4Bridge();'):
         if token not in registration:
             fail("functional bridge registration lacks " + token)
+    module_start = kernel[kernel.find("int OnModuleStart(SceModule2 *mod)"):
+            kernel.find("int zeroCtrlLoadStartModule(")]
+    if 'slide_diag.bridge_registered &&' not in module_start or \
+            '!slide_diag.bridge_install' not in module_start or \
+            'zeroCtrlInstallVshCtrl314A4Bridge();' not in module_start:
+        fail("OnModuleStart no longer retries functional bridge installation")
     helper_start = assembly.find("zeroCtrlVsh314A4FunctionalBridge:")
     helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
     helper = assembly[helper_start:helper_end]
@@ -2158,6 +2207,11 @@ def check_sources(root):
     if '[psp1000-functional-314a4-livein]' not in writer or \
             'blocker_call=0x%X' not in writer or 'blocker_arg=%u' not in writer:
         fail("functional bridge live-in evidence is missing")
+    install_line = re.search(
+            r'"\[psp1000-functional-314a4-install\][\s\S]{0,360}?'
+            r'"validation=%u install=%u cache_sync=%u\\n"', writer)
+    if not install_line:
+        fail("functional bridge install-stage telemetry is missing or oversized")
     bridge_line = re.search(
             r'"\[psp1000-functional-314a4-bridge\][\s\S]{0,420}?"consumed=%u\\n"',
             writer)

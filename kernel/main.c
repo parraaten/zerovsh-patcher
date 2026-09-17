@@ -581,6 +581,7 @@ static const char *zeroCtrlConsumerGuardReasonName(int reason) {
 static void zeroCtrlInstallDispatchEntryTrace(void);
 static void zeroCtrlInstall6F84ConsumerTraces(void);
 static void zeroCtrlInstallCapabilityMaskTraces(void);
+static void zeroCtrlInstallVshCtrl314A4Bridge(void);
 
 enum zeroCtrlBSManStubForm {
     ZERO_BSMAN_STUB_UNKNOWN = 0,
@@ -676,6 +677,9 @@ typedef struct {
     volatile unsigned int bridge_livein_arg[4];
     volatile unsigned int bridge_livein_blocker_call;
     volatile unsigned int bridge_livein_blocker_arg;
+    volatile unsigned int bridge_install_attempts;
+    volatile unsigned int bridge_resolve_stage;
+    volatile unsigned int bridge_resolve_reject;
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -2452,8 +2456,12 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                 if (slide_diag.functional_enabled &&
                         (slide_diag.trigger_mode & ZERO_TRIGGER_58D4) &&
                         request_evidence->patch_applied == 1 &&
-                        request_evidence->cache_sync == 1)
+                        request_evidence->cache_sync == 1) {
                     slide_diag.functional_request_armed = 1;
+                    if (slide_diag.bridge_registered &&
+                            !slide_diag.bridge_install)
+                        zeroCtrlInstallVshCtrl314A4Bridge();
+                }
             }
 
             /* Dangerous global predicate block: never edits direct callers. */
@@ -4793,6 +4801,39 @@ enum ZeroCtrlBridgeLiveInClass {
     ZERO_BRIDGE_LIVEIN_IGNORED
 };
 
+enum ZeroCtrlBridgeResolveStage {
+    ZERO_BRIDGE_STAGE_NONE = 0,
+    ZERO_BRIDGE_STAGE_INSTALL_PRECONDITIONS,
+    ZERO_BRIDGE_STAGE_CTRL_IMPORT,
+    ZERO_BRIDGE_STAGE_VSH_PAF_METADATA,
+    ZERO_BRIDGE_STAGE_VSH_CALLBACK_REGISTRATION,
+    ZERO_BRIDGE_STAGE_PAF_A989_IMPORT,
+    ZERO_BRIDGE_STAGE_WRAPPER,
+    ZERO_BRIDGE_STAGE_INNER_CONSUMER,
+    ZERO_BRIDGE_STAGE_ROOT_SLOT,
+    ZERO_BRIDGE_STAGE_CONSTRUCTED0,
+    ZERO_BRIDGE_STAGE_CONSTRUCTED1,
+    ZERO_BRIDGE_STAGE_LIVEIN_ENTERED,
+    ZERO_BRIDGE_STAGE_LIVEIN_PASSED,
+    ZERO_BRIDGE_STAGE_CALLSITE_314A4,
+    ZERO_BRIDGE_STAGE_READY
+};
+
+enum ZeroCtrlBridgeResolveReject {
+    ZERO_BRIDGE_REJECT_NONE = 0,
+    ZERO_BRIDGE_REJECT_CTRL_IMPORT,
+    ZERO_BRIDGE_REJECT_VSH_PAF_METADATA,
+    ZERO_BRIDGE_REJECT_VSH_CALLBACK_REGISTRATION,
+    ZERO_BRIDGE_REJECT_PAF_A989_IMPORT,
+    ZERO_BRIDGE_REJECT_WRAPPER,
+    ZERO_BRIDGE_REJECT_INNER_CONSUMER,
+    ZERO_BRIDGE_REJECT_ROOT_SLOT,
+    ZERO_BRIDGE_REJECT_CONSTRUCTED0,
+    ZERO_BRIDGE_REJECT_CONSTRUCTED1,
+    ZERO_BRIDGE_REJECT_LIVEIN,
+    ZERO_BRIDGE_REJECT_CALLSITE_314A4
+};
+
 static const char *zeroCtrlBridgeLiveInClassName(unsigned int value) {
     static const char *name[] = {
         "UNKNOWN", "OVERWRITTEN", "REQUIRED", "IGNORED"
@@ -5149,8 +5190,12 @@ static int zeroCtrlResolvePsp1000FunctionalBridge(SceModule2 *vsh,
             strcmp(paf->modname, "scePaf_Module") != 0 ||
             vsh->text_size != 0x556C0 || paf->text_size <= 0x359A4 ||
             !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x56FC, 0x10) ||
-            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x3F568, 8))
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x3F568, 8)) {
+        slide_diag.bridge_resolve_reject =
+                ZERO_BRIDGE_REJECT_VSH_PAF_METADATA;
         return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_VSH_PAF_METADATA;
     vtext = vsh->text_addr;
     ptext = paf->text_addr;
     if ((_lw(vtext + 0x56FC) >> 26) != 0x0F ||
@@ -5160,16 +5205,27 @@ static int zeroCtrlResolvePsp1000FunctionalBridge(SceModule2 *vsh,
              (int)(short)(_lw(vtext + 0x5700) & 0xFFFF)) != vtext + 0x589C ||
             (_lw(vtext + 0x5704) >> 26) != 3 ||
             zeroCtrlMipsJumpTarget(vtext + 0x5704, _lw(vtext + 0x5704)) !=
-                vtext + 0x3F568 || !zeroCtrlMipsMove(_lw(vtext + 0x5708), 4, 29))
+                vtext + 0x3F568 || !zeroCtrlMipsMove(_lw(vtext + 0x5708), 4, 29)) {
+        slide_diag.bridge_resolve_reject =
+                ZERO_BRIDGE_REJECT_VSH_CALLBACK_REGISTRATION;
         return 0;
+    }
+    slide_diag.bridge_resolve_stage =
+            ZERO_BRIDGE_STAGE_VSH_CALLBACK_REGISTRATION;
     thunk = _lw(vtext + 0x3F568);
     if ((thunk >> 26) != 2 || _lw(vtext + 0x3F56C) != 0 ||
             !zeroCtrlPsp1000BridgeImportMatches(vsh, vtext + 0x3F568,
-                "scePaf", 0xA989A2C4)) return 0;
+                "scePaf", 0xA989A2C4)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_PAF_A989_IMPORT;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_PAF_A989_IMPORT;
     resolved = zeroCtrlMipsJumpTarget(vtext + 0x3F568, thunk);
     if (resolved != ptext + 0x35978 ||
-            !zeroCtrlVshModuleRangeValid(paf, resolved, sizeof(wrapper)))
+            !zeroCtrlVshModuleRangeValid(paf, resolved, sizeof(wrapper))) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_WRAPPER;
         return 0;
+    }
     for (i = 0; i < 11; i++) wrapper[i] = _lw(resolved + i * 4);
     if ((wrapper[0] >> 26) != 0x0F || !zeroCtrlMipsMove(wrapper[1], 2, 4) ||
             (wrapper[2] >> 26) != 0x23 || wrapper[3] != 0x27BDFFF0 ||
@@ -5177,31 +5233,46 @@ static int zeroCtrlResolvePsp1000FunctionalBridge(SceModule2 *vsh,
             wrapper[5] != 0xAFBF0000 || (wrapper[6] >> 26) != 3 ||
             !zeroCtrlMipsMove(wrapper[7], 5, 2) ||
             wrapper[8] != 0x8FBF0000 || wrapper[9] != 0x03E00008 ||
-            wrapper[10] != 0x27BD0010)
+            wrapper[10] != 0x27BD0010) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_WRAPPER;
         return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_WRAPPER;
     inner = zeroCtrlMipsJumpTarget(resolved + 0x18, wrapper[6]);
     if (inner != ptext + 0x34A24 ||
-            !zeroCtrlVshModuleRangeValid(paf, inner, 0x98)) return 0;
+            !zeroCtrlVshModuleRangeValid(paf, inner, 0x98)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_INNER_CONSUMER;
+        return 0;
+    }
     consumer = zeroCtrlMipsJumpTarget(inner + 0x90, _lw(inner + 0x90));
     if ((_lw(inner + 0x90) >> 26) != 3 ||
-            !zeroCtrlVshModuleRangeValid(paf, consumer, sizeof(words)))
+            !zeroCtrlVshModuleRangeValid(paf, consumer, sizeof(words))) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_INNER_CONSUMER;
         return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_INNER_CONSUMER;
     for (i = 0; i < sizeof(words) / 4; i++) words[i] = _lw(consumer + i * 4);
     if ((words[0xA8 / 4] >> 26) != 0x0F ||
             ((words[0xA8 / 4] >> 16) & 0x1F) != 2 ||
             (words[0xAC / 4] >> 26) != 0x23 ||
             ((words[0xAC / 4] >> 21) & 0x1F) != 2 ||
-            ((words[0xAC / 4] >> 16) & 0x1F) != 4) return 0;
+            ((words[0xAC / 4] >> 16) & 0x1F) != 4) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_ROOT_SLOT;
+        return 0;
+    }
     slot = ((words[0xA8 / 4] & 0xFFFF) << 16) +
             (int)(short)(words[0xAC / 4] & 0xFFFF);
     if (!zeroCtrlModuleContainingSegment(paf, slot, &segment, &remaining) ||
             segment != 1 || slot - paf->segmentaddr[1] != 0x1338 ||
-            !zeroCtrlVshModuleRangeValid(paf, slot, 4)) return 0;
+            !zeroCtrlVshModuleRangeValid(paf, slot, 4)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_ROOT_SLOT;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_ROOT_SLOT;
     *constructed0 = ptext + 0x34610;
     *constructed1 = ptext + 0x34658;
     *callback = vtext + 0x589C;
     if (!zeroCtrlVshModuleRangeValid(paf, *constructed0, 0x30) ||
-            !zeroCtrlVshModuleRangeValid(paf, *constructed1, 0xBC) ||
             _lw(*constructed0) != 0x27BDFFF0 ||
             _lw(*constructed0 + 0x04) != 0xAFB10004 ||
             !zeroCtrlMipsMove(_lw(*constructed0 + 0x08), 17, 4) ||
@@ -5213,7 +5284,12 @@ static int zeroCtrlResolvePsp1000FunctionalBridge(SceModule2 *vsh,
             _lw(*constructed0 + 0x20) != 0x8E250008 ||
             (_lw(*constructed0 + 0x24) >> 26) != 3 ||
             !zeroCtrlMipsMove(_lw(*constructed0 + 0x28), 4, 2) ||
-            _lw(*constructed0 + 0x2C) != 0xAE300004 ||
+            _lw(*constructed0 + 0x2C) != 0xAE300004) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_CONSTRUCTED0;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_CONSTRUCTED0;
+    if (!zeroCtrlVshModuleRangeValid(paf, *constructed1, 0xBC) ||
             _lw(*constructed1) != 0x27BDFFF0 ||
             _lw(*constructed1 + 4) != 0xAFBF0008 ||
             _lw(*constructed1 + 8) != 0xAFB00000 ||
@@ -5230,9 +5306,17 @@ static int zeroCtrlResolvePsp1000FunctionalBridge(SceModule2 *vsh,
             (_lw(*constructed1 + 0xB8) >> 26) != 0x23 ||
             ((_lw(*constructed1 + 0xB8) >> 21) & 0x1F) != 16 ||
             ((_lw(*constructed1 + 0xB8) >> 16) & 0x1F) != 4 ||
-            (short)(_lw(*constructed1 + 0xB8) & 0xFFFF) != 4 ||
-            !zeroCtrlPsp1000BridgeLiveInValid(paf, *constructed1))
+            (short)(_lw(*constructed1 + 0xB8) & 0xFFFF) != 4) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_CONSTRUCTED1;
         return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_CONSTRUCTED1;
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_LIVEIN_ENTERED;
+    if (!zeroCtrlPsp1000BridgeLiveInValid(paf, *constructed1)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_LIVEIN;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_LIVEIN_PASSED;
     *root_slot = slot;
     return 1;
 }
@@ -5248,10 +5332,22 @@ static void zeroCtrlInstallVshCtrl314A4Bridge(void) {
     if (slide_diag.bridge_install || model != 0 ||
             sceKernelDevkitVersion() != 0x06060110 ||
             !slide_diag.functional_enabled || !slide_diag.functional_request_armed ||
-            !slide_diag.bridge_registered ||
-            !zeroCtrlLoadedModuleMetadataValid(helper) ||
-            !zeroCtrlResolveVshCtrlPeekImport(vsh, &target) ||
-            !zeroCtrlResolvePsp1000FunctionalBridge(vsh, paf, &root, &c0,
+            !slide_diag.bridge_registered)
+        return;
+    slide_diag.bridge_install_attempts++;
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_INSTALL_PRECONDITIONS;
+    slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_NONE;
+    if (!zeroCtrlLoadedModuleMetadataValid(helper)) {
+        slide_diag.bridge_resolve_reject =
+                ZERO_BRIDGE_REJECT_VSH_PAF_METADATA;
+        return;
+    }
+    if (!zeroCtrlResolveVshCtrlPeekImport(vsh, &target)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_CTRL_IMPORT;
+        return;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_CTRL_IMPORT;
+    if (!zeroCtrlResolvePsp1000FunctionalBridge(vsh, paf, &root, &c0,
                 &c1, &callback))
         return;
     owner = vsh->text_addr + 0x314A4;
@@ -5264,18 +5360,27 @@ static void zeroCtrlInstallVshCtrl314A4Bridge(void) {
             zeroCtrlMipsJumpTarget(owner, _lw(owner)) != target ||
             _lw(vsh->text_addr + 0x314A8) != 0xAFB00010 ||
             !zeroCtrlVshModuleRangeValid(helper, slide_diag.bridge_helper,
-                slide_diag.bridge_helper_end - slide_diag.bridge_helper))
+                slide_diag.bridge_helper_end - slide_diag.bridge_helper)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_CALLSITE_314A4;
         return;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_CALLSITE_314A4;
     memset(&info, 0, sizeof(info));
     info.size = sizeof(info);
     if (sceKernelQueryMemoryPartitionInfo(2, &info) < 0 ||
             (unsigned int)info.startaddr >
-                0xFFFFFFFFU - (unsigned int)info.memsize)
+                0xFFFFFFFFU - (unsigned int)info.memsize) {
+        slide_diag.bridge_resolve_reject =
+                ZERO_BRIDGE_REJECT_CALLSITE_314A4;
         return;
+    }
     replacement = 0x0C000000 |
             ((slide_diag.bridge_helper >> 2) & 0x03FFFFFF);
-    if (zeroCtrlMipsJumpTarget(owner, replacement) != slide_diag.bridge_helper)
+    if (zeroCtrlMipsJumpTarget(owner, replacement) != slide_diag.bridge_helper) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_CALLSITE_314A4;
         return;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_READY;
     _sw(target, slide_diag.bridge_scalar[0]);
     _sw(root, slide_diag.bridge_scalar[1]);
     _sw(c0, slide_diag.bridge_scalar[2]);
@@ -8485,6 +8590,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_functional_bridge_install[8] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     int clockpath_written = 0;
     int bridge_livein_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
@@ -8632,6 +8741,28 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             if (slide_diag.functional_enabled && slide_diag.bridge_registered) {
                 unsigned int state[12];
                 unsigned int livein[7];
+                unsigned int install_state[8];
+                install_state[0] = slide_diag.bridge_install_attempts;
+                install_state[1] = slide_diag.bridge_resolve_stage;
+                install_state[2] = slide_diag.bridge_resolve_reject;
+                install_state[3] = slide_diag.functional_request_armed;
+                install_state[4] = slide_diag.bridge_registered;
+                install_state[5] = slide_diag.bridge_validation;
+                install_state[6] = slide_diag.bridge_install;
+                install_state[7] = slide_diag.bridge_cache_sync;
+                if (memcmp(install_state, observed_functional_bridge_install,
+                            sizeof(install_state)) != 0) {
+                    memcpy(observed_functional_bridge_install, install_state,
+                            sizeof(install_state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-314a4-install] attempts=%u "
+                            "stage=%u reject=%u armed=%u registered=%u "
+                            "validation=%u install=%u cache_sync=%u\n",
+                            install_state[0], install_state[1], install_state[2],
+                            install_state[3], install_state[4], install_state[5],
+                            install_state[6], install_state[7]);
+                    zeroCtrlDiagnosticsText(line);
+                }
                 livein[0] = slide_diag.bridge_livein_validation;
                 livein[1] = slide_diag.bridge_livein_arg[0];
                 livein[2] = slide_diag.bridge_livein_arg[1];
