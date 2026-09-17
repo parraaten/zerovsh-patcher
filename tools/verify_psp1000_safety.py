@@ -2038,7 +2038,8 @@ def check_sources(root):
             '*constructed0 = ptext + 0x34610',
             '*constructed1 = ptext + 0x34658',
             'slot - paf->segmentaddr[1] != 0x1338',
-            'zeroCtrlPsp1000BridgeLiveInValid(paf, *constructed1)'):
+            'zeroCtrlPsp1000BridgeLiveInValid(paf, vsh, *constructed1',
+            '*callback)'):
         if token not in bridge_resolver:
             fail("functional PAF bridge resolver lacks " + token)
     if '0x089B5978' in bridge_resolver:
@@ -2057,7 +2058,8 @@ def check_sources(root):
     livein_entered = bridge_resolver.find(
             'bridge_resolve_stage = ZERO_BRIDGE_STAGE_LIVEIN_ENTERED')
     livein_validate = bridge_resolver.find(
-            'zeroCtrlPsp1000BridgeLiveInValid(paf, *constructed1)', livein_entered)
+            'zeroCtrlPsp1000BridgeLiveInValid(paf, vsh, *constructed1',
+            livein_entered)
     livein_passed = bridge_resolver.find(
             'bridge_resolve_stage = ZERO_BRIDGE_STAGE_LIVEIN_PASSED',
             livein_validate)
@@ -2087,6 +2089,25 @@ def check_sources(root):
             'slide_diag.bridge_livein_validation = 1'):
         if token not in livein and token not in taint and token not in kernel:
             fail("constructed1 live-in proof lacks " + token)
+    for token in ('SceModule2 *module', 'SceModule2 *vsh',
+            'unsigned int expected_callback',
+            'expected_callback != vsh->text_addr + 0x589C',
+            'pc == context->constructed1 + 0xB4',
+            'word == 0x0040F809',
+            '_lw(context->constructed1 + 0x40) == 0x8E02000C',
+            '(_lw(context->constructed1 + 0x44) >> 26) >= 4',
+            '(_lw(context->constructed1 + 0x44) >> 26) <= 7',
+            'context->constructed1 + 0xB4',
+            '_lw(context->constructed1 + 0x48) == 0',
+            '_lw(context->constructed1 + 0xB8) == 0x8E040004',
+            'zeroCtrlBridgeAnalyzeTaintedFunction(context->vsh',
+            'context->expected_callback, call_taint',
+            'zeroCtrlBridgeExecutableRange(module, pc, 4)',
+            'sceKernelFindModuleByAddress(target)',
+            'zeroCtrlLoadedModuleMetadataValid(owner)',
+            'segment != 0'):
+        if token not in livein and token not in taint and token not in kernel:
+            fail("callback-aware cross-module proof lacks " + token)
     for known_word in ('0x27BDFFF0', '0xAFBF0008', '0xAFB00000',
             '0x00A08021', '0xAFB10004', '0x8CA40000', '0x24840010',
             '0x8E040000', '0x26050004', '0x8E040004', '0x8E02000C'):
@@ -2096,18 +2117,18 @@ def check_sources(root):
             r'opcode\s*==\s*3[\s\S]{0,80}return\s+0', livein):
         fail("constructed1 validator still rejects its known direct JALs")
     for token in ('call_taint = taint & 0xF0',
-            'zeroCtrlBridgeAnalyzeTaintedFunction(paf, target',
+            'zeroCtrlBridgeAnalyzeTaintedFunction(owner, target',
             'depth + 1', 'context->functions >= BRIDGE_TAINT_MAX_FUNCTIONS',
             'context->instructions >= BRIDGE_TAINT_MAX_INSTRUCTIONS',
             'opcode == 0 && (function == 8 || function == 9)',
-            'context->blocker_call = pc - paf->text_addr'):
+            'zeroCtrlBridgeSetBlocker(context, module, pc, original_arg)'):
         if token not in taint:
             fail("constructed1 bounded callee-taint proof lacks " + token)
     delay_apply = taint.find(
             'result = zeroCtrlBridgeApplyTaint(delay, &taint)')
     call_classify = taint.find('call_taint = taint & 0xF0', delay_apply)
     recursive_call = taint.find(
-            'zeroCtrlBridgeAnalyzeTaintedFunction(paf, target', call_classify)
+            'zeroCtrlBridgeAnalyzeTaintedFunction(owner, target', call_classify)
     continuation = taint.find('pc += 8', recursive_call)
     if not 0 <= delay_apply < call_classify < recursive_call < continuation:
         fail("direct-call taint/delay-slot ordering regressed")
@@ -2124,8 +2145,21 @@ def check_sources(root):
     for offset in ('0x18', '0x24', '0x30', '0x38'):
         if offset not in livein:
             fail("constructed1 call is not reachable to live-in proof: +" + offset)
+    jalr_start = taint.find(
+            'opcode == 0 && (function == 8 || function == 9)')
+    jalr_end = taint.find('} else {', jalr_start)
+    jalr = taint[jalr_start:jalr_end]
+    jalr_delay = jalr.find('zeroCtrlBridgeApplyTaint(delay, &taint)')
+    trusted_check = jalr.find('int known_callback =', jalr_delay)
+    callback_recurse = jalr.find(
+            'zeroCtrlBridgeAnalyzeTaintedFunction(context->vsh', trusted_check)
+    generic_reject = jalr.find('if (!known_callback)', trusted_check)
+    if not 0 <= jalr_delay < trusted_check < generic_reject < callback_recurse:
+        fail("constructed1 callback exception weakens JALR or delay-slot checks")
+    if 'return 2;' not in jalr[generic_reject:callback_recurse]:
+        fail("ordinary tainted JALR no longer fails closed")
     livein_call = bridge_resolver.find(
-            'zeroCtrlPsp1000BridgeLiveInValid(paf, *constructed1)')
+            'zeroCtrlPsp1000BridgeLiveInValid(paf, vsh, *constructed1')
     root_pair = bridge_resolver.find('words[0xA8 / 4] >> 16')
     for token in ('((words[0xA8 / 4] >> 16) & 0x1F) != 2',
             '((words[0xAC / 4] >> 21) & 0x1F) != 2',
@@ -2188,6 +2222,16 @@ def check_sources(root):
             'move    $a3, $zero'):
         if token not in helper:
             fail("functional assembly bridge lacks " + token)
+    callback_load = helper.rfind('lw      $t3, 0x0C($s3)', 0,
+            helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage1Calls'))
+    expected_load = helper.find(
+            'lw      $t0, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)',
+            callback_load)
+    callback_compare = helper.find('bne     $t3, $t0, 5f', expected_load)
+    constructed1_call = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage1Calls',
+            callback_compare)
+    if not 0 <= callback_load < expected_load < callback_compare < constructed1_call:
+        fail("runtime constructed1 call lacks expected-callback equality gate")
     for forbidden in ('sw      $zero, %lo(zeroCtrlTrigger58D4Request)',
             'zeroCtrlTrigger13F6CHits', 'zeroCtrlTrigger14020Hits',
             '0x57B0', '0x58D4'):
@@ -2205,7 +2249,8 @@ def check_sources(root):
     if '[psp1000-functional-314a4-bridge]' not in writer:
         fail("functional bridge telemetry is missing")
     if '[psp1000-functional-314a4-livein]' not in writer or \
-            'blocker_call=0x%X' not in writer or 'blocker_arg=%u' not in writer:
+            'blocker_domain=%u' not in writer or \
+            'blocker_off=0x%X' not in writer or 'blocker_arg=%u' not in writer:
         fail("functional bridge live-in evidence is missing")
     install_line = re.search(
             r'"\[psp1000-functional-314a4-install\][\s\S]{0,360}?'
