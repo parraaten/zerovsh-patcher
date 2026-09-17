@@ -257,6 +257,11 @@ def check_sources(root):
     if "STUB_FUNC 0x1337357B, zeroCtrlRegisterSonyStartTrace" \
             not in user_imports:
         fail("Sony trace registration import NID changed")
+    if "PSP_EXPORT_FUNC_NID(zeroCtrlRegisterPsp1000FunctionalBridge, 0x13373581)" \
+            not in kernel_exports or \
+            "STUB_FUNC 0x13373581, zeroCtrlRegisterPsp1000FunctionalBridge" \
+            not in user_imports:
+        fail("functional bridge registration import/export is missing")
     zeroctrl_import = re.search(
         r'STUB_START\s+"ZeroCtrlForUser"\s+0x[0-9A-Fa-f]+,\s*'
         r'0x([0-9A-Fa-f]{4})0005(?P<body>.*?)STUB_END',
@@ -1831,6 +1836,8 @@ def check_sources(root):
         ("ZERO_HOME_REJECT_REQUEST_VALUE", 12),
         ("ZERO_HOME_REJECT_CONSUMED", 13),
         ("ZERO_HOME_REJECT_PENDING", 14),
+        ("ZERO_HOME_REJECT_BRIDGE", 15),
+        ("ZERO_HOME_REJECT_BRIDGE_BUSY", 16),
     )
     for reason, value in reject_reasons:
         if (reason + " = %d" % value) not in kernel:
@@ -1851,11 +1858,14 @@ def check_sources(root):
     success_reason = home_request.find(
             "functional_home_first_load_reject_reason = ZERO_HOME_REJECT_NONE",
             published)
-    last_validation = home_request.rfind("ZERO_HOME_REJECT_PENDING", 0,
+    last_validation = home_request.rfind("ZERO_HOME_REJECT_BRIDGE_BUSY", 0,
             pending_write)
-    if not 0 <= attempt < first_validation < last_validation < pending_write < \
-            request_write < request_dcache < published < success_reason or \
-            home_request.count("_sw(") != 1:
+    attempted_reset = home_request.find("_sw(0, slide_diag.bridge_scalar[7])")
+    reject_reset = home_request.find("_sw(0, slide_diag.bridge_scalar[14])")
+    if not 0 <= attempt < first_validation < last_validation < \
+            attempted_reset < reject_reset < pending_write < request_write < \
+            request_dcache < published < success_reason or \
+            home_request.count("_sw(") != 3:
         fail("functional HOME first-load publication ordering regressed")
     for forbidden in ("sceKernelIcache", "zeroCtrlSetSlideState",
             "psp1000RuntimeRequestTarget", "zeroCtrlTrigger58D4(", "MAKE_CALL",
@@ -1968,59 +1978,112 @@ def check_sources(root):
             '(_lw(stub + 4) & 0xFC00003F) != 0x0000000C', 'matches != 1'):
         if token not in resolver:
             fail("sceCtrl Peek import resolver lacks " + token)
-    installer = kernel[kernel.find("static " + ("void " if "Install" in "zeroCtrlInstallVshCtrl314A4Trace" or "Request" in "zeroCtrlInstallVshCtrl314A4Trace" else "int ") + "zeroCtrlInstallVshCtrl314A4Trace("):kernel.find("\n}\n", kernel.find("zeroCtrlInstallVshCtrl314A4Trace(")) + 3]
+    bridge_start = kernel.find("static void zeroCtrlInstallVshCtrl314A4Bridge(")
+    bridge_end = kernel.find("void zeroCtrlRegisterPsp1000FunctionalBridge(",
+            bridge_start)
+    bridge = kernel[bridge_start:bridge_end]
+    bridge_resolver_start = kernel.find(
+            "static int zeroCtrlResolvePsp1000FunctionalBridge(")
+    bridge_resolver = kernel[bridge_resolver_start:bridge_start]
     for token in ('model != 0', 'sceKernelDevkitVersion() != 0x06060110',
-            '!slide_diag.functional_enabled', '!slide_diag.minimal_memory_test',
-            'vsh->modid != slide_diag.vsh_modid',
-            'vsh->text_addr != slide_diag.vsh_text_addr',
-            'vsh->text_size != slide_diag.vsh_text_size',
-            'vsh->text_size != 0x556C0',
-            'vsh->text_addr + 0x31494, 0x18)',
-            '0x27BDFFE0', '0x03A02021', '0x24050001', '0xAFBF0014',
-            'owner = text + 0x314A4', '_lw(text + 0x314A8) != 0xAFB00010',
-            '(original >> 26) != 3',
-            'zeroCtrlMipsJumpTarget(owner, original) != target',
-            'trace_helper = storage_pending->stub_addr + 24',
-            'zeroCtrlVshModuleRangeValid(helper, trace_helper, 80)',
-            'storage_total->counter_addr == 0',
-            'storage_pending->counter_addr == 0',
-            'slide_diag.triggers[0].request_addr == 0',
-            'trace_tail = trace_helper + 72', '_lw(trace_tail + 4) != 0',
-            'zeroCtrlMipsJumpTarget(owner, replacement) != trace_helper',
-            'zeroCtrlMipsJumpTarget(trace_tail, tail_replacement) != target'):
-        if token not in installer:
-            fail("VSH +314A4 installer lacks " + token)
-    tail_write = installer.find('_sw(tail_replacement, trace_tail)')
-    tail_dcache = installer.find('sceKernelDcacheWritebackInvalidateRange((const void *)trace_tail, 4)', tail_write)
-    tail_icache = installer.find('sceKernelIcacheInvalidateRange((const void *)trace_tail, 4)', tail_dcache)
-    owner_write = installer.find('_sw(replacement, owner)', tail_icache)
-    owner_dcache = installer.find('sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4)', owner_write)
-    owner_icache = installer.find('sceKernelIcacheInvalidateRange((const void *)owner, 4)', owner_dcache)
-    if not 0 <= tail_write < tail_dcache < tail_icache < owner_write < owner_dcache < owner_icache:
-        fail("VSH +314A4 tail/owner commit order regressed")
-    for forbidden in ('0x13EF8', '_sw(0, storage_total->counter_addr)',
-            '_sw(0, storage_pending->counter_addr)', 'zeroCtrlSetSlideState',
-            'zeroCtrlTrigger58D4('):
-        if forbidden in installer:
-            fail("VSH +314A4 installer has forbidden behavior: " + forbidden)
-    if kernel.count('zeroCtrlInstallVsh589CCallTrace();') != 0:
-        fail("retired VSH +58AC owner was reactivated")
-    telemetry = kernel[kernel.find("static " + ("void " if "Install" in "zeroCtrlReadVshCtrl314A4Telemetry" or "Request" in "zeroCtrlReadVshCtrl314A4Telemetry" else "int ") + "zeroCtrlReadVshCtrl314A4Telemetry("):kernel.find("\n}\n", kernel.find("zeroCtrlReadVshCtrl314A4Telemetry(")) + 3]
-    for token in ('triggers[1].counter_addr', 'triggers[2].counter_addr',
-            'triggers[0].request_addr', 'triggers[0].counter_addr',
-            'zeroCtrlLoadedModuleMetadataValid(helper)', '(address[i] & 3) != 0',
-            'zeroCtrlVshModuleRangeValid(helper, address[i], 4)',
-            'state[i] = _lw(address[i])'):
-        if token not in telemetry:
-            fail("VSH +314A4 telemetry validation lacks " + token)
-    for marker in ("[psp1000-vshctrl314a4-install]",
-            "[psp1000-vshctrl314a4-home]",
-            "[psp1000-vshctrl314a4-posthome]",
-            "[psp1000-vshctrl314a4-final]"):
-        if marker in writer:
-            fail("retired VSH +314A4 runtime experiment remains automatic")
-    if "zeroCtrlInstallVshCtrl314A4Trace();" in writer:
-        fail("VSH +314A4 is still patched automatically")
+            '!slide_diag.functional_enabled',
+            '!slide_diag.functional_request_armed',
+            'zeroCtrlResolveVshCtrlPeekImport(vsh, &target)',
+            'zeroCtrlResolvePsp1000FunctionalBridge(vsh, paf',
+            'vsh->text_addr + 0x31494, 0x18', '0x27BDFFE0',
+            '0x03A02021', '0x24050001', '0xAFBF0014',
+            'owner = vsh->text_addr + 0x314A4',
+            'vsh->text_addr + 0x314A8) != 0xAFB00010',
+            'zeroCtrlMipsJumpTarget(owner, _lw(owner)) != target',
+            'sceKernelQueryMemoryPartitionInfo(2, &info)',
+            '_sw(target, slide_diag.bridge_scalar[0])',
+            '_sw(root, slide_diag.bridge_scalar[1])',
+            '_sw(c0, slide_diag.bridge_scalar[2])',
+            '_sw(c1, slide_diag.bridge_scalar[3])',
+            '_sw(callback, slide_diag.bridge_scalar[4])',
+            '_sw(replacement, owner)', 'slide_diag.bridge_install = 1'):
+        if token not in bridge:
+            fail("functional +314A4 bridge installer lacks " + token)
+    owner_write = bridge.find('_sw(replacement, owner)')
+    owner_dcache = bridge.find(
+            'sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4)',
+            owner_write)
+    owner_icache = bridge.find(
+            'sceKernelIcacheInvalidateRange((const void *)owner, 4)', owner_dcache)
+    if not 0 <= owner_write < owner_dcache < owner_icache:
+        fail("functional +314A4 owner commit/cache order regressed")
+    if '0x13EF8' in bridge or 'minimal_memory_test' in bridge:
+        fail("functional +314A4 bridge patches another caller or depends on diagnostics")
+    for token in ('vtext + 0x589C', 'vtext + 0x3F568', '"scePaf"',
+            '0xA989A2C4', 'strcmp(paf->modname, "scePaf_Module")',
+            'resolved != ptext + 0x35978', 'inner != ptext + 0x34A24',
+            '*constructed0 = ptext + 0x34610',
+            '*constructed1 = ptext + 0x34658',
+            'slot - paf->segmentaddr[1] != 0x1338',
+            'zeroCtrlPsp1000BridgeLiveInValid(paf, *constructed1)'):
+        if token not in bridge_resolver:
+            fail("functional PAF bridge resolver lacks " + token)
+    if '0x089B5978' in bridge_resolver:
+        fail("functional bridge hard-codes a boot-specific PAF root")
+    if 'Calls/branches before the proven +44 branch make live-ins ambiguous' \
+            not in kernel:
+        fail("constructed1 unknown live-ins do not fail closed at control flow")
+    register_start = kernel.find("void zeroCtrlRegisterPsp1000FunctionalBridge(")
+    register_end = kernel.find("static int zeroCtrlReadVshCtrl314A4Telemetry",
+            register_start)
+    registration = kernel[register_start:register_end]
+    for token in ('ZeroCtrlPsp1000BridgeRegistration copied',
+            'zeroCtrlVshModuleRangeValid(helper, (unsigned int)registration',
+            'copied.helper_end_addr - copied.helper_addr',
+            'zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[i], 4)',
+            'slide_diag.bridge_registered = 1',
+            'zeroCtrlInstallVshCtrl314A4Bridge();'):
+        if token not in registration:
+            fail("functional bridge registration lacks " + token)
+    helper_start = assembly.find("zeroCtrlVsh314A4FunctionalBridge:")
+    helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
+    helper = assembly[helper_start:helper_end]
+    controller_call = helper.find("jalr    $t9")
+    result_save = helper.find("sw      $v0, 32($sp)", controller_call)
+    request_read = helper.find("%lo(zeroCtrlTrigger58D4Request)", result_save)
+    root_read = helper.find("%lo(zeroCtrlVsh314A4RootSlot)", request_read)
+    result_restore = helper.rfind("lw      $v0, 32($sp)")
+    if not 0 <= controller_call < result_save < request_read < root_read < \
+            result_restore or helper.count("zeroCtrlVsh314A4OriginalController") != 2:
+        fail("bridge does not call controller once before request/root access")
+    for token in ('zeroCtrlVsh314A4Busy', 'zeroCtrlVsh314A4Attempted',
+            'zeroCtrlVsh314A4Hits', 'zeroCtrlVsh314A4RequestSeen',
+            'zeroCtrlVsh314A4Stage0Calls', 'zeroCtrlVsh314A4Stage1Calls',
+            'BRIDGE_VALIDATE $s1, 8, 1f', 'BRIDGE_VALIDATE $s2, 0x18, 1f',
+            'BRIDGE_VALIDATE $s3, 0x10, 1f',
+            'lw      $t3, 0($s2)', 'lw      $s3, 4($s2)',
+            'lw      $t3, 0x14($s2)', 'lw      $t3, 0x0C($s3)',
+            'move    $a0, $s3', 'move    $a1, $s2',
+            'move    $a1, $s3', 'move    $a2, $zero',
+            'move    $a3, $zero'):
+        if token not in helper:
+            fail("functional assembly bridge lacks " + token)
+    for forbidden in ('sw      $zero, %lo(zeroCtrlTrigger58D4Request)',
+            'zeroCtrlTrigger13F6CHits', 'zeroCtrlTrigger14020Hits',
+            '0x57B0', '0x58D4'):
+        if forbidden in helper:
+            fail("functional bridge violates request/counter/call isolation: " + forbidden)
+    if "sizeof(ZeroCtrlPsp1000BridgeRegistration) == 72" not in bsman_header or \
+            "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header or \
+            "sizeof(ZeroCtrlActivationWideRegistration) == 304" not in bsman_header:
+        fail("bridge registration changed a fixed activation ABI")
+    if 'zeroCtrlTrigger13F6CHits' in user[user.find(
+            'psp1000BridgeRegistration.helper_addr'):user.find(
+            'zeroCtrlRegisterPsp1000FunctionalBridge', user.find(
+                'psp1000BridgeRegistration.helper_addr'))]:
+        fail("bridge registration aliases historical trigger counters")
+    if '[psp1000-functional-314a4-bridge]' not in writer:
+        fail("functional bridge telemetry is missing")
+    bridge_line = re.search(
+            r'"\[psp1000-functional-314a4-bridge\][\s\S]{0,420}?"consumed=%u\\n"',
+            writer)
+    if not bridge_line:
+        fail("functional bridge telemetry is incomplete or oversized")
     clock_start = kernel.find(
             "static int zeroCtrlWriteFunctionalClockPathAnalysis(void)")
     clock_end = kernel.find("static int zeroCtrlMipsMove(", clock_start)

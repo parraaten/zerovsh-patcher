@@ -165,7 +165,9 @@ enum zeroCtrlFunctionalHomeRejectReason {
     ZERO_HOME_REJECT_MODE_VALUE = 11,
     ZERO_HOME_REJECT_REQUEST_VALUE = 12,
     ZERO_HOME_REJECT_CONSUMED = 13,
-    ZERO_HOME_REJECT_PENDING = 14
+    ZERO_HOME_REJECT_PENDING = 14,
+    ZERO_HOME_REJECT_BRIDGE = 15,
+    ZERO_HOME_REJECT_BRIDGE_BUSY = 16
 };
 
 static const unsigned int vsh_trigger_offsets[VSH_TRIGGER_COUNT] = {
@@ -659,6 +661,17 @@ typedef struct {
     unsigned int vshctrl314a4_total_baseline;
     unsigned int vshctrl314a4_pending_baseline;
     unsigned int vshctrl314a4_consumed_hits_baseline;
+    int bridge_registered;
+    volatile int bridge_validation;
+    volatile int bridge_install;
+    volatile int bridge_cache_sync;
+    unsigned int bridge_helper;
+    unsigned int bridge_helper_end;
+    unsigned int bridge_scalar[16];
+    unsigned int bridge_root_slot;
+    unsigned int bridge_constructed0;
+    unsigned int bridge_constructed1;
+    unsigned int bridge_callback;
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -4765,93 +4778,291 @@ static int zeroCtrlResolveVshCtrlPeekImport(SceModule2 *vsh,
     return 1;
 }
 
-static void zeroCtrlInstallVshCtrl314A4Trace(void) {
-    ZeroCtrlVshTriggerEvidence *storage_total = &slide_diag.triggers[1];
-    ZeroCtrlVshTriggerEvidence *storage_pending = &slide_diag.triggers[2];
-    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
-    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-    unsigned int text, owner, original, target;
-    unsigned int trace_helper, trace_tail, tail_original;
-    unsigned int replacement, tail_replacement;
+static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf,
+        unsigned int constructed1) {
+    unsigned int offset;
+    unsigned int defined = 1U << 5;
 
-    slide_diag.vshctrl314a4_attempted = 1;
-    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
-            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
-            !slide_diag.vsh_module_seen || !slide_diag.functional_request_armed ||
-            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
-            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+    if (!zeroCtrlVshModuleRangeValid(paf, constructed1, 0xBC)) return 0;
+    for (offset = 0; offset <= 0x40; offset += 4) {
+        unsigned int word = _lw(constructed1 + offset);
+        unsigned int opcode = word >> 26;
+        unsigned int rs = (word >> 21) & 0x1F;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int function = word & 0x3F;
+        unsigned int reads_rs = 0, reads_rt = 0;
+        int destination = zeroCtrlMipsGprWriteDestination(word);
+
+        if (destination < 0) return 0;
+        /* Calls/branches before the proven +44 branch make live-ins ambiguous. */
+        if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && (function == 8 || function == 9)))
+            return 0;
+        if (opcode == 0) {
+            reads_rs = function != 0 && function != 2 && function != 3;
+            reads_rt = function != 8 && function != 9;
+        } else if (opcode == 0x0F || opcode == 2 || opcode == 3) {
+            reads_rs = reads_rt = 0;
+        } else if ((opcode >= 0x20 && opcode <= 0x26) || opcode == 0x30) {
+            reads_rs = 1;
+        } else if (opcode >= 0x28 && opcode <= 0x2F) {
+            reads_rs = reads_rt = 1;
+        } else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
+            reads_rs = 1;
+            reads_rt = opcode != 1;
+        } else if (opcode >= 8 && opcode <= 0x0E) {
+            reads_rs = 1;
+        } else {
+            return 0;
+        }
+        if ((reads_rs && (rs == 4 || rs == 6 || rs == 7) &&
+                    !(defined & (1U << rs))) ||
+                (reads_rt && (rt == 4 || rt == 6 || rt == 7) &&
+                    !(defined & (1U << rt))))
+            return 0;
+        if (destination > 0) defined |= 1U << destination;
+    }
+    /* The validated JALR delay slot defines a0. a2/a3 must be defined above. */
+    return (defined & ((1U << 6) | (1U << 7))) ==
+            ((1U << 6) | (1U << 7));
+}
+
+static int zeroCtrlPsp1000BridgeImportMatches(SceModule2 *vsh,
+        unsigned int wanted_stub, const char *wanted_library,
+        unsigned int wanted_nid) {
+    unsigned int table = (unsigned int)vsh->stub_top;
+    unsigned int size = vsh->stub_size, cursor = 0, matches = 0;
+
+    if (table == 0 || (table & 3) != 0 || size < 12 ||
+            table > 0xFFFFFFFFU - size ||
+            !zeroCtrlVshModuleRangeValid(vsh, table, size)) return 0;
+    while (cursor < size) {
+        SceLibraryStubTable *entry;
+        unsigned int address, entry_size, functions_size, nids_size;
+        unsigned int stubtable, nidtable, function;
+        char name[32];
+        if (size - cursor < 12 || table + cursor < table) return 0;
+        address = table + cursor;
+        if (!zeroCtrlVshModuleRangeValid(vsh, address, 12)) return 0;
+        entry = (SceLibraryStubTable *)address;
+        if (entry->len == 0) return 0;
+        entry_size = (unsigned int)entry->len * 4;
+        if (entry_size < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                entry_size > size - cursor ||
+                !zeroCtrlVshModuleRangeValid(vsh, address, entry_size) ||
+                entry->stubcount > 0xFFFFFFFFU / 8) return 0;
+        functions_size = (unsigned int)entry->stubcount * 8;
+        nids_size = (unsigned int)entry->stubcount * 4;
+        stubtable = (unsigned int)entry->stubtable;
+        nidtable = (unsigned int)entry->nidtable;
+        if ((stubtable & 3) != 0 || (nidtable & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size) ||
+                !zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size) ||
+                !zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name,
+                    sizeof(name))) return 0;
+        if (strcmp(name, wanted_library) == 0)
+            for (function = 0; function < entry->stubcount; function++)
+                if (stubtable + function * 8 == wanted_stub &&
+                        _lw(nidtable + function * 4) == wanted_nid)
+                    matches++;
+        cursor += entry_size;
+    }
+    return matches == 1;
+}
+
+static int zeroCtrlResolvePsp1000FunctionalBridge(SceModule2 *vsh,
+        SceModule2 *paf, unsigned int *root_slot,
+        unsigned int *constructed0, unsigned int *constructed1,
+        unsigned int *callback) {
+    unsigned int vtext, ptext, thunk, resolved, inner, consumer;
+    unsigned int wrapper[11], words[0xB0 / 4];
+    unsigned int i, slot, segment, remaining;
+
+    if (!zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
             strcmp(vsh->modname, "vsh_module") != 0 ||
-            vsh->modid != slide_diag.vsh_modid ||
-            vsh->text_addr != slide_diag.vsh_text_addr ||
-            vsh->text_size != slide_diag.vsh_text_size ||
-            vsh->text_size != 0x556C0 ||
-            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
-                vsh->text_size) ||
-            vsh->text_addr > 0xFFFFFFFFU - 0x314A8 ||
-            !zeroCtrlVshModuleRangeValid(vsh,
-                vsh->text_addr + 0x31494, 0x18) ||
-            !zeroCtrlResolveVshCtrlPeekImport(vsh, &target))
+            strcmp(paf->modname, "scePaf_Module") != 0 ||
+            vsh->text_size != 0x556C0 || paf->text_size <= 0x359A4 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x56FC, 0x10) ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x3F568, 8))
+        return 0;
+    vtext = vsh->text_addr;
+    ptext = paf->text_addr;
+    if ((_lw(vtext + 0x56FC) >> 26) != 0x0F ||
+            ((_lw(vtext + 0x56FC) >> 16) & 0x1F) != 5 ||
+            (_lw(vtext + 0x5700) >> 26) != 9 ||
+            (((_lw(vtext + 0x56FC) & 0xFFFF) << 16) +
+             (int)(short)(_lw(vtext + 0x5700) & 0xFFFF)) != vtext + 0x589C ||
+            (_lw(vtext + 0x5704) >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(vtext + 0x5704, _lw(vtext + 0x5704)) !=
+                vtext + 0x3F568 || !zeroCtrlMipsMove(_lw(vtext + 0x5708), 4, 29))
+        return 0;
+    thunk = _lw(vtext + 0x3F568);
+    if ((thunk >> 26) != 2 || _lw(vtext + 0x3F56C) != 0 ||
+            !zeroCtrlPsp1000BridgeImportMatches(vsh, vtext + 0x3F568,
+                "scePaf", 0xA989A2C4)) return 0;
+    resolved = zeroCtrlMipsJumpTarget(vtext + 0x3F568, thunk);
+    if (resolved != ptext + 0x35978 ||
+            !zeroCtrlVshModuleRangeValid(paf, resolved, sizeof(wrapper)))
+        return 0;
+    for (i = 0; i < 11; i++) wrapper[i] = _lw(resolved + i * 4);
+    if ((wrapper[0] >> 26) != 0x0F || !zeroCtrlMipsMove(wrapper[1], 2, 4) ||
+            (wrapper[2] >> 26) != 0x23 || wrapper[3] != 0x27BDFFF0 ||
+            !zeroCtrlMipsMove(wrapper[4], 6, 5) ||
+            wrapper[5] != 0xAFBF0000 || (wrapper[6] >> 26) != 3 ||
+            !zeroCtrlMipsMove(wrapper[7], 5, 2) ||
+            wrapper[8] != 0x8FBF0000 || wrapper[9] != 0x03E00008 ||
+            wrapper[10] != 0x27BD0010)
+        return 0;
+    inner = zeroCtrlMipsJumpTarget(resolved + 0x18, wrapper[6]);
+    if (inner != ptext + 0x34A24 ||
+            !zeroCtrlVshModuleRangeValid(paf, inner, 0x98)) return 0;
+    consumer = zeroCtrlMipsJumpTarget(inner + 0x90, _lw(inner + 0x90));
+    if ((_lw(inner + 0x90) >> 26) != 3 ||
+            !zeroCtrlVshModuleRangeValid(paf, consumer, sizeof(words)))
+        return 0;
+    for (i = 0; i < sizeof(words) / 4; i++) words[i] = _lw(consumer + i * 4);
+    if ((words[0xA8 / 4] >> 26) != 0x0F ||
+            (words[0xAC / 4] >> 26) != 0x23) return 0;
+    slot = ((words[0xA8 / 4] & 0xFFFF) << 16) +
+            (int)(short)(words[0xAC / 4] & 0xFFFF);
+    if (!zeroCtrlModuleContainingSegment(paf, slot, &segment, &remaining) ||
+            segment != 1 || slot - paf->segmentaddr[1] != 0x1338 ||
+            !zeroCtrlVshModuleRangeValid(paf, slot, 4)) return 0;
+    *constructed0 = ptext + 0x34610;
+    *constructed1 = ptext + 0x34658;
+    *callback = vtext + 0x589C;
+    if (!zeroCtrlVshModuleRangeValid(paf, *constructed0, 0x30) ||
+            !zeroCtrlVshModuleRangeValid(paf, *constructed1, 0xBC) ||
+            _lw(*constructed0) != 0x27BDFFF0 ||
+            _lw(*constructed0 + 0x04) != 0xAFB10004 ||
+            !zeroCtrlMipsMove(_lw(*constructed0 + 0x08), 17, 4) ||
+            _lw(*constructed0 + 0x0C) != 0x240401D8 ||
+            _lw(*constructed0 + 0x10) != 0xAFBF0008 ||
+            (_lw(*constructed0 + 0x14) >> 26) != 3 ||
+            _lw(*constructed0 + 0x18) != 0xAFB00000 ||
+            !zeroCtrlMipsMove(_lw(*constructed0 + 0x1C), 16, 2) ||
+            _lw(*constructed0 + 0x20) != 0x8E250008 ||
+            (_lw(*constructed0 + 0x24) >> 26) != 3 ||
+            !zeroCtrlMipsMove(_lw(*constructed0 + 0x28), 4, 2) ||
+            _lw(*constructed0 + 0x2C) != 0xAE300004 ||
+            _lw(*constructed1) != 0x27BDFFF0 ||
+            _lw(*constructed1 + 4) != 0xAFBF0008 ||
+            _lw(*constructed1 + 8) != 0xAFB00000 ||
+            !zeroCtrlMipsMove(_lw(*constructed1 + 0x0C), 16, 5) ||
+            (_lw(*constructed1 + 0x40) >> 26) != 0x23 ||
+            ((_lw(*constructed1 + 0x40) >> 21) & 0x1F) != 16 ||
+            ((_lw(*constructed1 + 0x40) >> 16) & 0x1F) != 2 ||
+            (short)(_lw(*constructed1 + 0x40) & 0xFFFF) != 12 ||
+            zeroCtrlMipsBranchTarget(*constructed1 + 0x44,
+                _lw(*constructed1 + 0x44)) != *constructed1 + 0xB4 ||
+            _lw(*constructed1 + 0x48) != 0 ||
+            (_lw(*constructed1 + 0xB4) & 0x3F) != 9 ||
+            ((_lw(*constructed1 + 0xB4) >> 21) & 0x1F) != 2 ||
+            (_lw(*constructed1 + 0xB8) >> 26) != 0x23 ||
+            ((_lw(*constructed1 + 0xB8) >> 21) & 0x1F) != 16 ||
+            ((_lw(*constructed1 + 0xB8) >> 16) & 0x1F) != 4 ||
+            (short)(_lw(*constructed1 + 0xB8) & 0xFFFF) != 4 ||
+            !zeroCtrlPsp1000BridgeLiveInValid(paf, *constructed1))
+        return 0;
+    *root_slot = slot;
+    return 1;
+}
+
+static void zeroCtrlInstallVshCtrl314A4Bridge(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    PspSysmemPartitionInfo info;
+    unsigned int target, root, c0, c1, callback, owner, replacement;
+    unsigned int i;
+
+    if (slide_diag.bridge_install || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled || !slide_diag.functional_request_armed ||
+            !slide_diag.bridge_registered ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            !zeroCtrlResolveVshCtrlPeekImport(vsh, &target) ||
+            !zeroCtrlResolvePsp1000FunctionalBridge(vsh, paf, &root, &c0,
+                &c1, &callback))
         return;
-    text = vsh->text_addr;
-    owner = text + 0x314A4;
-    if (_lw(text + 0x31494) != 0x27BDFFE0 ||
-            _lw(text + 0x31498) != 0x03A02021 ||
-            _lw(text + 0x3149C) != 0x24050001 ||
-            _lw(text + 0x314A0) != 0xAFBF0014 ||
-            _lw(text + 0x314A8) != 0xAFB00010)
+    owner = vsh->text_addr + 0x314A4;
+    if (!zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x31494, 0x18) ||
+            _lw(vsh->text_addr + 0x31494) != 0x27BDFFE0 ||
+            _lw(vsh->text_addr + 0x31498) != 0x03A02021 ||
+            _lw(vsh->text_addr + 0x3149C) != 0x24050001 ||
+            _lw(vsh->text_addr + 0x314A0) != 0xAFBF0014 ||
+            (_lw(owner) >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner, _lw(owner)) != target ||
+            _lw(vsh->text_addr + 0x314A8) != 0xAFB00010 ||
+            !zeroCtrlVshModuleRangeValid(helper, slide_diag.bridge_helper,
+                slide_diag.bridge_helper_end - slide_diag.bridge_helper))
         return;
-    original = _lw(owner);
-    if ((original >> 26) != 3 ||
-            zeroCtrlMipsJumpTarget(owner, original) != target ||
-            storage_total->patch_applied || storage_total->cache_sync ||
-            storage_pending->patch_applied || storage_pending->cache_sync ||
-            storage_pending->stub_addr > 0xFFFFFFFFU - 24)
+    memset(&info, 0, sizeof(info));
+    info.size = sizeof(info);
+    if (sceKernelQueryMemoryPartitionInfo(2, &info) < 0 ||
+            (unsigned int)info.startaddr >
+                0xFFFFFFFFU - (unsigned int)info.memsize)
         return;
-    trace_helper = storage_pending->stub_addr + 24;
-    if ((storage_pending->stub_addr & 3) != 0 || (trace_helper & 3) != 0 ||
-            !zeroCtrlVshModuleRangeValid(helper, storage_pending->stub_addr, 24) ||
-            !zeroCtrlVshModuleRangeValid(helper, trace_helper, 80) ||
-            storage_total->counter_addr == 0 ||
-            (storage_total->counter_addr & 3) != 0 ||
-            !zeroCtrlVshModuleRangeValid(helper,
-                storage_total->counter_addr, 4) ||
-            storage_pending->counter_addr == 0 ||
-            (storage_pending->counter_addr & 3) != 0 ||
-            !zeroCtrlVshModuleRangeValid(helper,
-                storage_pending->counter_addr, 4) ||
-            slide_diag.triggers[0].request_addr == 0 ||
-            (slide_diag.triggers[0].request_addr & 3) != 0 ||
-            !zeroCtrlVshModuleRangeValid(helper,
-                slide_diag.triggers[0].request_addr, 4) ||
-            trace_helper > 0xFFFFFFFFU - 72)
+    replacement = 0x0C000000 |
+            ((slide_diag.bridge_helper >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(owner, replacement) != slide_diag.bridge_helper)
         return;
-    trace_tail = trace_helper + 72;
-    tail_original = _lw(trace_tail);
-    if (_lw(trace_helper) != 0x27BDFFF0 ||
-            _lw(trace_helper + 4) != 0xAFA80000 ||
-            _lw(trace_helper + 8) != 0xAFA90004 ||
-            _lw(trace_helper + 60) != 0x8FA90004 ||
-            _lw(trace_helper + 64) != 0x8FA80000 ||
-            _lw(trace_helper + 68) != 0x27BD0010 ||
-            (tail_original >> 26) != 2 || _lw(trace_tail + 4) != 0)
-        return;
-    replacement = 0x0C000000 | ((trace_helper >> 2) & 0x03FFFFFF);
-    tail_replacement = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
-    if (zeroCtrlMipsJumpTarget(owner, replacement) != trace_helper ||
-            zeroCtrlMipsJumpTarget(trace_tail, tail_replacement) != target)
-        return;
-    slide_diag.vshctrl314a4_owner = owner;
-    slide_diag.vshctrl314a4_helper = trace_helper;
-    slide_diag.vshctrl314a4_target = target;
-    slide_diag.vshctrl314a4_validation = 1;
-    _sw(tail_replacement, trace_tail);
-    sceKernelDcacheWritebackInvalidateRange((const void *)trace_tail, 4);
-    sceKernelIcacheInvalidateRange((const void *)trace_tail, 4);
+    _sw(target, slide_diag.bridge_scalar[0]);
+    _sw(root, slide_diag.bridge_scalar[1]);
+    _sw(c0, slide_diag.bridge_scalar[2]);
+    _sw(c1, slide_diag.bridge_scalar[3]);
+    _sw(callback, slide_diag.bridge_scalar[4]);
+    _sw((unsigned int)info.startaddr, slide_diag.bridge_scalar[5]);
+    _sw((unsigned int)info.startaddr + (unsigned int)info.memsize,
+            slide_diag.bridge_scalar[6]);
+    for (i = 7; i <= 14; i++) _sw(0, slide_diag.bridge_scalar[i]);
+    for (i = 0; i <= 14; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)slide_diag.bridge_scalar[i], 4);
+    slide_diag.bridge_root_slot = root;
+    slide_diag.bridge_constructed0 = c0;
+    slide_diag.bridge_constructed1 = c1;
+    slide_diag.bridge_callback = callback;
+    slide_diag.bridge_validation = 1;
     _sw(replacement, owner);
     sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
     sceKernelIcacheInvalidateRange((const void *)owner, 4);
-    slide_diag.vshctrl314a4_install = 1;
-    slide_diag.vshctrl314a4_cache_sync = 1;
+    slide_diag.bridge_install = 1;
+    slide_diag.bridge_cache_sync = 1;
+}
+
+void zeroCtrlRegisterPsp1000FunctionalBridge(
+        const ZeroCtrlPsp1000BridgeRegistration *registration) {
+    ZeroCtrlPsp1000BridgeRegistration copied;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int i;
+
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 || !registration ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            ((unsigned int)registration & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, (unsigned int)registration,
+                sizeof(copied)))
+        return;
+    memcpy(&copied, registration, sizeof(copied));
+    if ((copied.helper_addr & 3) != 0 || copied.helper_end_addr <=
+            copied.helper_addr || !zeroCtrlVshModuleRangeValid(helper,
+                copied.helper_addr, copied.helper_end_addr - copied.helper_addr))
+        return;
+    for (i = 0; i < 15; i++)
+        if (copied.scalar_addr[i] == 0 || (copied.scalar_addr[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[i], 4))
+            return;
+    slide_diag.bridge_helper = copied.helper_addr;
+    slide_diag.bridge_helper_end = copied.helper_end_addr;
+    memcpy(slide_diag.bridge_scalar, copied.scalar_addr,
+            sizeof(slide_diag.bridge_scalar));
+    slide_diag.bridge_registered = 1;
+    zeroCtrlInstallVshCtrl314A4Bridge();
 }
 
 static int zeroCtrlReadVshCtrl314A4Telemetry(unsigned int state[4]) {
@@ -8000,6 +8211,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_functional_bridge[12] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     int clockpath_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
@@ -8140,6 +8356,42 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             "stage=%u validation=%u install=%u cache_sync=%u\n",
                             post_t39_install[0], post_t39_install[1],
                             post_t39_install[2], post_t39_install[3]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled && slide_diag.bridge_registered) {
+                unsigned int state[12];
+                state[0] = slide_diag.bridge_validation;
+                state[1] = slide_diag.bridge_install;
+                state[2] = slide_diag.bridge_cache_sync;
+                state[3] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[9]);
+                state[4] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[10]);
+                state[5] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[11]);
+                state[6] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[12]);
+                state[7] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[13]);
+                state[8] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[8]);
+                state[9] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[14]);
+                state[10] = zeroCtrlReadHelperCounter(
+                        slide_diag.triggers[0].request_addr);
+                state[11] = slide_diag.functional_trigger_consumed;
+                if (memcmp(state, observed_functional_bridge,
+                            sizeof(state)) != 0) {
+                    memcpy(observed_functional_bridge, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-314a4-bridge] "
+                            "validation=%u install=%u cache_sync=%u hits=%u "
+                            "request_seen=%u attempts=%u stage0_calls=%u "
+                            "stage1_calls=%u busy=%u reject=%u request=%u "
+                            "consumed=%u\n", state[0], state[1], state[2],
+                            state[3], state[4], state[5], state[6], state[7],
+                            state[8], state[9], state[10], state[11]);
                     zeroCtrlDiagnosticsText(line);
                 }
             }
@@ -13022,6 +13274,10 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
 int OnModuleStart(SceModule2 *mod) {
         zeroCtrlWriteDebug("Module: %s\n", mod->modname);
 
+        if (slide_diag.functional_enabled && slide_diag.bridge_registered &&
+                !slide_diag.bridge_install)
+                zeroCtrlInstallVshCtrl314A4Bridge();
+
         if (zeroCtrlIsPsp1000SlideExperimentEnabled() &&
                 strcmp(mod->modname, "slide_plugin_module") == 0) {
                 int previous_result;
@@ -13372,6 +13628,31 @@ static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void) {
                 ZERO_HOME_REJECT_PENDING;
         return;
     }
+    if (!slide_diag.bridge_validation || !slide_diag.bridge_install ||
+            !slide_diag.bridge_cache_sync || !slide_diag.bridge_registered ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.bridge_scalar[7], 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.bridge_scalar[8], 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.bridge_scalar[14], 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_BRIDGE;
+        return;
+    }
+    if (_lw(slide_diag.bridge_scalar[8]) != 0) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_BRIDGE_BUSY;
+        return;
+    }
+    /* HOME changes bridge DATA only; Sony execution remains scheduler-owned. */
+    _sw(0, slide_diag.bridge_scalar[7]);
+    _sw(0, slide_diag.bridge_scalar[14]);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.bridge_scalar[7], 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.bridge_scalar[14], 4);
     slide_diag.functional_home_open_pending = 1;
     _sw(1, trigger->request_addr);
     sceKernelDcacheWritebackInvalidateRange(

@@ -112,6 +112,174 @@ zeroCtrlVsh589CCallTraceTail:
 zeroCtrlVsh589CCallTraceEnd:
 .end zeroCtrlVsh589CCallTrace
 
+/*
+ * Functional PSP-1000 scheduler entered only by VSH+0x314A4.  It calls the
+ * original controller import before inspecting request state, preserves that
+ * call's v0, and never clears the +58D4 request itself.
+ */
+.macro BRIDGE_INC scalar
+    lui     $t0, %hi(\scalar)
+    lw      $t1, %lo(\scalar)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(\scalar)($t0)
+.endm
+
+.macro BRIDGE_VALIDATE reg, bytes, reject
+    andi    $t2, \reg, 3
+    bnez    $t2, \reject
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4UserLower)
+    lw      $t0, %lo(zeroCtrlVsh314A4UserLower)($t0)
+    sltu    $t2, \reg, $t0
+    bnez    $t2, \reject
+    nop
+    lui     $t1, %hi(zeroCtrlVsh314A4UserUpper)
+    lw      $t1, %lo(zeroCtrlVsh314A4UserUpper)($t1)
+    addiu   $t0, \reg, \bytes
+    sltu    $t2, $t0, \reg
+    bnez    $t2, \reject
+    nop
+    sltu    $t2, $t1, $t0
+    bnez    $t2, \reject
+    nop
+.endm
+
+.globl zeroCtrlVsh314A4FunctionalBridge
+.type zeroCtrlVsh314A4FunctionalBridge @function
+.ent zeroCtrlVsh314A4FunctionalBridge, 0
+zeroCtrlVsh314A4FunctionalBridge:
+    addiu   $sp, $sp, -64
+    sw      $ra, 28($sp)
+    sw      $s0, 0($sp)
+    sw      $s1, 4($sp)
+    sw      $s2, 8($sp)
+    sw      $s3, 12($sp)
+    sw      $s4, 16($sp)
+    sw      $s5, 20($sp)
+    sw      $gp, 24($sp)
+    lui     $t9, %hi(zeroCtrlVsh314A4OriginalController)
+    lw      $t9, %lo(zeroCtrlVsh314A4OriginalController)($t9)
+    jalr    $t9
+    nop
+    sw      $v0, 32($sp)
+    BRIDGE_INC zeroCtrlVsh314A4Hits
+    lui     $t0, %hi(zeroCtrlTrigger58D4Request)
+    lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)
+    beqz    $t1, 9f
+    nop
+    BRIDGE_INC zeroCtrlVsh314A4RequestSeen
+    lui     $t0, %hi(zeroCtrlVsh314A4Busy)
+    lw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)
+    bnez    $t1, 9f
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4Attempted)
+    lw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)
+    bnez    $t1, 9f
+    nop
+
+    /* No PAF pointer is read before the request, busy, and attempted gates. */
+    lui     $t0, %hi(zeroCtrlVsh314A4RootSlot)
+    lw      $s5, %lo(zeroCtrlVsh314A4RootSlot)($t0)
+    BRIDGE_VALIDATE $s5, 4, 1f
+    lw      $s1, 0($s5)
+    BRIDGE_VALIDATE $s1, 8, 1f
+    lw      $s2, 4($s1)
+    BRIDGE_VALIDATE $s2, 0x18, 1f
+    lw      $t3, 0($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4Constructed0)
+    lw      $t0, %lo(zeroCtrlVsh314A4Constructed0)($t0)
+    bne     $t3, $t0, 2f
+    nop
+    lw      $s3, 4($s2)
+    BRIDGE_VALIDATE $s3, 0x10, 1f
+    lw      $t3, 0x14($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4Constructed1)
+    lw      $t0, %lo(zeroCtrlVsh314A4Constructed1)($t0)
+    bne     $t3, $t0, 3f
+    nop
+    lw      $t3, 0x0C($s3)
+    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
+    lw      $t0, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
+    bne     $t3, $t0, 4f
+    nop
+
+    lui     $t0, %hi(zeroCtrlVsh314A4Busy)
+    addiu   $t1, $zero, 1
+    sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4Attempted)
+    sw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)
+    BRIDGE_INC zeroCtrlVsh314A4Attempts
+    BRIDGE_INC zeroCtrlVsh314A4Stage0Calls
+    lui     $t9, %hi(zeroCtrlVsh314A4Constructed0)
+    lw      $t9, %lo(zeroCtrlVsh314A4Constructed0)($t9)
+    move    $a0, $s3
+    jalr    $t9
+    move    $a1, $s2
+
+    BRIDGE_VALIDATE $s3, 0x10, 5f
+    lw      $s4, 4($s3)
+    BRIDGE_VALIDATE $s4, 4, 5f
+    lw      $t3, 4($s2)
+    bne     $t3, $s3, 5f
+    nop
+    lw      $t3, 0x14($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4Constructed1)
+    lw      $t0, %lo(zeroCtrlVsh314A4Constructed1)($t0)
+    bne     $t3, $t0, 5f
+    nop
+    lw      $t3, 0x0C($s3)
+    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
+    lw      $t0, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
+    bne     $t3, $t0, 5f
+    nop
+
+    BRIDGE_INC zeroCtrlVsh314A4Stage1Calls
+    lui     $t9, %hi(zeroCtrlVsh314A4Constructed1)
+    lw      $t9, %lo(zeroCtrlVsh314A4Constructed1)($t9)
+    move    $a0, $zero
+    move    $a1, $s3
+    move    $a2, $zero
+    jalr    $t9
+    move    $a3, $zero
+    lui     $t0, %hi(zeroCtrlVsh314A4Reject)
+    sw      $zero, %lo(zeroCtrlVsh314A4Reject)($t0)
+    b       8f
+    nop
+1:  addiu   $t1, $zero, 1
+    b       7f
+    nop
+2:  addiu   $t1, $zero, 2
+    b       7f
+    nop
+3:  addiu   $t1, $zero, 3
+    b       7f
+    nop
+4:  addiu   $t1, $zero, 4
+    b       7f
+    nop
+5:  addiu   $t1, $zero, 5
+7:
+    lui     $t0, %hi(zeroCtrlVsh314A4Reject)
+    sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
+8:
+    lui     $t0, %hi(zeroCtrlVsh314A4Busy)
+    sw      $zero, %lo(zeroCtrlVsh314A4Busy)($t0)
+9:
+    lw      $v0, 32($sp)
+    lw      $gp, 24($sp)
+    lw      $s5, 20($sp)
+    lw      $s4, 16($sp)
+    lw      $s3, 12($sp)
+    lw      $s2, 8($sp)
+    lw      $s1, 4($sp)
+    lw      $s0, 0($sp)
+    lw      $ra, 28($sp)
+    jr      $ra
+    addiu   $sp, $sp, 64
+.globl zeroCtrlVsh314A4FunctionalBridgeEnd
+zeroCtrlVsh314A4FunctionalBridgeEnd:
+.end zeroCtrlVsh314A4FunctionalBridge
+
 CREATE_TRIGGER_STUB zeroCtrlGlobalPredicate6F84True, zeroCtrlGlobalPredicate6F84Hits
 
 .section .bss
@@ -128,6 +296,36 @@ zeroCtrlTrigger58D4FunctionalMode: .space 4
 zeroCtrlTrigger13F6CHits: .space 4
 .globl zeroCtrlTrigger14020Hits
 zeroCtrlTrigger14020Hits: .space 4
+.globl zeroCtrlVsh314A4OriginalController
+zeroCtrlVsh314A4OriginalController: .space 4
+.globl zeroCtrlVsh314A4RootSlot
+zeroCtrlVsh314A4RootSlot: .space 4
+.globl zeroCtrlVsh314A4Constructed0
+zeroCtrlVsh314A4Constructed0: .space 4
+.globl zeroCtrlVsh314A4Constructed1
+zeroCtrlVsh314A4Constructed1: .space 4
+.globl zeroCtrlVsh314A4ExpectedCallback
+zeroCtrlVsh314A4ExpectedCallback: .space 4
+.globl zeroCtrlVsh314A4UserLower
+zeroCtrlVsh314A4UserLower: .space 4
+.globl zeroCtrlVsh314A4UserUpper
+zeroCtrlVsh314A4UserUpper: .space 4
+.globl zeroCtrlVsh314A4Attempted
+zeroCtrlVsh314A4Attempted: .space 4
+.globl zeroCtrlVsh314A4Busy
+zeroCtrlVsh314A4Busy: .space 4
+.globl zeroCtrlVsh314A4Hits
+zeroCtrlVsh314A4Hits: .space 4
+.globl zeroCtrlVsh314A4RequestSeen
+zeroCtrlVsh314A4RequestSeen: .space 4
+.globl zeroCtrlVsh314A4Attempts
+zeroCtrlVsh314A4Attempts: .space 4
+.globl zeroCtrlVsh314A4Stage0Calls
+zeroCtrlVsh314A4Stage0Calls: .space 4
+.globl zeroCtrlVsh314A4Stage1Calls
+zeroCtrlVsh314A4Stage1Calls: .space 4
+.globl zeroCtrlVsh314A4Reject
+zeroCtrlVsh314A4Reject: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 

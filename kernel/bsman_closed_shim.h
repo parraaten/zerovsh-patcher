@@ -271,4 +271,14 @@ typedef struct {
 typedef char ZeroCtrlActivationReturnRegistration_size[
     sizeof(ZeroCtrlActivationReturnRegistration) == 36 ? 1 : -1];
 
+/* Separate from the fixed activation ABIs above. */
+typedef struct {
+    u32 helper_addr;
+    u32 helper_end_addr;
+    u32 scalar_addr[16];
+} ZeroCtrlPsp1000BridgeRegistration;
+
+typedef char ZeroCtrlPsp1000BridgeRegistration_size[
+    sizeof(ZeroCtrlPsp1000BridgeRegistration) == 72 ? 1 : -1];
+
 #endif
