@@ -6361,6 +6361,7 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
     unsigned int segment, remaining, offset, look;
     unsigned int constructed0_size;
     unsigned int candidates = 0, reported = 0, exact_same_outer = 0;
+    unsigned int a1_origin_reported = 0;
     unsigned int adapter_valid = 0, exact_dispatches = 0, exact_entry = 0;
     unsigned int exact_header_link_proven = 0;
     char line[256];
@@ -6472,20 +6473,51 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
         unsigned int load = _lw(paf->text_addr + offset);
         unsigned int base = (load >> 21) & 0x1F;
         unsigned int target = (load >> 16) & 0x1F;
-        unsigned int candidate_id = offset / 4 + 1;
+        unsigned int prefix_floor = offset > 0x80 ? offset - 0x80 : 0;
+        unsigned int prefix_start = prefix_floor;
+        unsigned int boundary_scan = prefix_floor >= 4 ? prefix_floor - 4 : 0;
+        unsigned int next_opaque_id = 1;
+        unsigned int candidate_outer_id = 0;
         ZeroCtrlOuterProvenance provenance[32] = { { 0, 0 } };
         const char *terminal_result = "CONTROL_FLOW";
+        const char *a1_writer_kind = "ENTRY";
+        unsigned int a1_writer_off = prefix_start;
+        unsigned int a1_writer_base = 5;
+        int a1_writer_disp = 0;
         unsigned int terminal_jalr = 0;
         unsigned int matched = 0;
+        unsigned int reg;
 
         if ((load >> 26) != 0x23 || target == 0 || base == target ||
                 (short)(load & 0xFFFF) != 0x14) continue;
-        provenance[base].kind = OUTER_PROV_BASE;
-        provenance[base].id = candidate_id;
-        provenance[target].kind = OUTER_PROV_PLUS14;
-        provenance[target].id = candidate_id;
 
-        for (look = offset + 4; look <= offset + 0x80 &&
+        /* Select one bounded basic-block prefix, never a predecessor delay slot. */
+        for (; boundary_scan < offset; boundary_scan += 4) {
+            unsigned int boundary = _lw(paf->text_addr + boundary_scan);
+            unsigned int boundary_opcode = boundary >> 26;
+            unsigned int boundary_function = boundary & 0x3F;
+            if (boundary_opcode == 1 || boundary_opcode == 2 ||
+                    boundary_opcode == 3 ||
+                    (boundary_opcode >= 4 && boundary_opcode <= 7) ||
+                    (boundary_opcode >= 0x14 && boundary_opcode <= 0x17) ||
+                    (boundary_opcode == 0 &&
+                     (boundary_function == 8 || boundary_function == 9))) {
+                if (boundary_scan + 8 <= offset)
+                    prefix_start = boundary_scan + 8;
+                else
+                    prefix_start = offset + 4;
+            }
+        }
+        if (prefix_start > offset) continue;
+
+        /* Distinct opaque entry values; equality is learned only by replay. */
+        for (reg = 1; reg < 32; reg++) {
+            provenance[reg].kind = OUTER_PROV_BASE;
+            provenance[reg].id = next_opaque_id++;
+        }
+        a1_writer_off = prefix_start;
+
+        for (look = prefix_start; look <= offset + 0x80 &&
                 look + 4 <= paf->text_size; look += 4) {
             unsigned int word = _lw(paf->text_addr + look);
             unsigned int opcode = word >> 26;
@@ -6494,6 +6526,15 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
             unsigned int rd = (word >> 11) & 0x1F;
             unsigned int function = word & 0x3F;
             int destination;
+
+            if (look == offset) {
+                if (word != load || provenance[base].kind != OUTER_PROV_BASE)
+                    break;
+                candidate_outer_id = provenance[base].id;
+                provenance[target].kind = OUTER_PROV_PLUS14;
+                provenance[target].id = candidate_outer_id;
+                continue;
+            }
 
             if (opcode == 0 && function == 9) {
                 unsigned int delay;
@@ -6505,9 +6546,14 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 const char *target_kind;
                 const char *a1_kind;
 
+                /* Unrelated indirect calls terminate replay without accounting. */
+                target_value_before_delay = provenance[rs];
+                if (candidate_outer_id == 0 ||
+                        target_value_before_delay.kind != OUTER_PROV_PLUS14 ||
+                        target_value_before_delay.id != candidate_outer_id)
+                    break;
                 if (look + 8 > paf->text_size) break;
                 /* JALR consumes rs before its architectural delay slot. */
-                target_value_before_delay = provenance[rs];
                 delay = _lw(paf->text_addr + look + 4);
                 delay_opcode = delay >> 26;
                 delay_rs = (delay >> 21) & 0x1F;
@@ -6519,48 +6565,74 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 } else if (zeroCtrlMipsMove(delay, delay_rd, delay_rs) &&
                         delay_rd != 0) {
                     provenance[delay_rd] = provenance[delay_rs];
+                    if (delay_rd == 5) {
+                        a1_writer_kind = "MOVE";
+                        a1_writer_off = look + 4;
+                        a1_writer_base = delay_rs;
+                        a1_writer_disp = 0;
+                    }
                 } else if (zeroCtrlMipsMove(delay, delay_rd, delay_rt) &&
                         delay_rd != 0) {
                     provenance[delay_rd] = provenance[delay_rt];
+                    if (delay_rd == 5) {
+                        a1_writer_kind = "MOVE";
+                        a1_writer_off = look + 4;
+                        a1_writer_base = delay_rt;
+                        a1_writer_disp = 0;
+                    }
                 } else if (delay_opcode == 9 &&
                         (short)(delay & 0xFFFF) == 0 && delay_rt != 0) {
                     provenance[delay_rt] = provenance[delay_rs];
-                } else if (delay_opcode == 0x23 && delay_rt != 0 &&
-                        provenance[delay_rs].kind == OUTER_PROV_BASE &&
-                        ((short)(delay & 0xFFFF) == 4 ||
-                         (short)(delay & 0xFFFF) == 0x14)) {
-                    provenance[delay_rt].kind =
-                            (short)(delay & 0xFFFF) == 4 ?
-                            OUTER_PROV_PLUS04 : OUTER_PROV_PLUS14;
-                    provenance[delay_rt].id = provenance[delay_rs].id;
+                    if (delay_rt == 5) {
+                        a1_writer_kind = "ADDIU_ZERO";
+                        a1_writer_off = look + 4;
+                        a1_writer_base = delay_rs;
+                        a1_writer_disp = 0;
+                    }
+                } else if (delay_opcode == 0x23 && delay_rt != 0) {
+                    if (provenance[delay_rs].kind == OUTER_PROV_BASE &&
+                            ((short)(delay & 0xFFFF) == 4 ||
+                             (short)(delay & 0xFFFF) == 0x14)) {
+                        provenance[delay_rt].kind =
+                                (short)(delay & 0xFFFF) == 4 ?
+                                OUTER_PROV_PLUS04 : OUTER_PROV_PLUS14;
+                        provenance[delay_rt].id = provenance[delay_rs].id;
+                    } else {
+                        provenance[delay_rt].kind = OUTER_PROV_BASE;
+                        provenance[delay_rt].id = next_opaque_id++;
+                    }
+                    if (delay_rt == 5) {
+                        a1_writer_kind = "DELAY_LW";
+                        a1_writer_off = look + 4;
+                        a1_writer_base = delay_rs;
+                        a1_writer_disp = (int)(short)(delay & 0xFFFF);
+                    }
                 } else if (delay_destination != 0) {
                     provenance[delay_destination].kind = OUTER_PROV_UNKNOWN;
                     provenance[delay_destination].id = 0;
+                    if ((unsigned int)delay_destination == 5) {
+                        a1_writer_kind = "UNKNOWN";
+                        a1_writer_off = look + 4;
+                        a1_writer_base = 0;
+                        a1_writer_disp = 0;
+                    }
                 }
 
                 /* a1 observes the delay slot; the captured target does not. */
                 a1_value_after_delay = provenance[5];
                 terminal_jalr = look;
                 candidates++;
-                target_kind = target_value_before_delay.kind ==
-                        OUTER_PROV_BASE ? "BASE" :
-                        target_value_before_delay.kind == OUTER_PROV_PLUS04 ?
-                        "PLUS04" : target_value_before_delay.kind ==
-                        OUTER_PROV_PLUS14 ? "PLUS14" :
-                        "UNKNOWN";
+                target_kind = "PLUS14";
                 a1_kind = a1_value_after_delay.kind == OUTER_PROV_BASE ?
                         "BASE" : a1_value_after_delay.kind ==
                         OUTER_PROV_PLUS04 ? "PLUS04" :
                         a1_value_after_delay.kind == OUTER_PROV_PLUS14 ?
-                        "PLUS14" :
-                        "UNKNOWN";
+                        "PLUS14" : "UNKNOWN";
                 if (!delay_supported)
                     terminal_result = "OVERWRITTEN";
-                else if (target_value_before_delay.kind != OUTER_PROV_PLUS14)
-                    terminal_result = "TARGET_UNKNOWN";
                 else if (a1_value_after_delay.kind != OUTER_PROV_PLUS04)
                     terminal_result = "A1_UNKNOWN";
-                else if (target_value_before_delay.id != a1_value_after_delay.id)
+                else if (a1_value_after_delay.id != candidate_outer_id)
                     terminal_result = "DIFFERENT_BASE";
                 else {
                     terminal_result = "MATCH";
@@ -6582,12 +6654,22 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                     snprintf(line, sizeof(line),
                             "[paf-a989-outer14-call-provenance] jalr_off=0x%X "
                             "a1_source=%s\n", look,
-                            a1_value_after_delay.kind ==
-                            OUTER_PROV_PLUS04 && a1_value_after_delay.id ==
-                            target_value_before_delay.id ?
+                            a1_value_after_delay.kind == OUTER_PROV_PLUS04 &&
+                            a1_value_after_delay.id == candidate_outer_id ?
                             "same_base_plus_0x04" : "UNKNOWN");
                     zeroCtrlDiagnosticsText(line);
                     reported++;
+                }
+                if (delay_supported && !matched && a1_origin_reported < 8 &&
+                        a1_value_after_delay.kind != OUTER_PROV_PLUS04) {
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-outer14-a1-origin] load_off=0x%X "
+                            "jalr_off=0x%X writer_off=0x%X kind=%s "
+                            "base_reg=%u disp=%d\n", offset, look,
+                            a1_writer_off, a1_writer_kind, a1_writer_base,
+                            a1_writer_disp);
+                    zeroCtrlDiagnosticsText(line);
+                    a1_origin_reported++;
                 }
                 break;
             }
@@ -6595,31 +6677,60 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
             if (opcode == 1 || opcode == 2 || opcode == 3 ||
                     (opcode >= 4 && opcode <= 7) ||
                     (opcode >= 0x14 && opcode <= 0x17) ||
-                    (opcode == 0 && function == 8)) {
-                terminal_result = "CONTROL_FLOW";
+                    (opcode == 0 && function == 8))
                 break;
-            }
             destination = zeroCtrlMipsGprWriteDestination(word);
-            if (destination < 0) {
-                terminal_result = "OVERWRITTEN";
-                break;
-            }
+            if (destination < 0) break;
             if (zeroCtrlMipsMove(word, rd, rs) && rd != 0) {
                 provenance[rd] = provenance[rs];
+                if (rd == 5) {
+                    a1_writer_kind = "MOVE";
+                    a1_writer_off = look;
+                    a1_writer_base = rs;
+                    a1_writer_disp = 0;
+                }
             } else if (zeroCtrlMipsMove(word, rd, rt) && rd != 0) {
                 provenance[rd] = provenance[rt];
+                if (rd == 5) {
+                    a1_writer_kind = "MOVE";
+                    a1_writer_off = look;
+                    a1_writer_base = rt;
+                    a1_writer_disp = 0;
+                }
             } else if (opcode == 9 && (short)(word & 0xFFFF) == 0 && rt != 0) {
                 provenance[rt] = provenance[rs];
-            } else if (opcode == 0x23 && rt != 0 &&
-                    provenance[rs].kind == OUTER_PROV_BASE &&
-                    ((short)(word & 0xFFFF) == 4 ||
-                     (short)(word & 0xFFFF) == 0x14)) {
-                provenance[rt].kind = (short)(word & 0xFFFF) == 4 ?
-                        OUTER_PROV_PLUS04 : OUTER_PROV_PLUS14;
-                provenance[rt].id = provenance[rs].id;
+                if (rt == 5) {
+                    a1_writer_kind = "ADDIU_ZERO";
+                    a1_writer_off = look;
+                    a1_writer_base = rs;
+                    a1_writer_disp = 0;
+                }
+            } else if (opcode == 0x23 && rt != 0) {
+                if (provenance[rs].kind == OUTER_PROV_BASE &&
+                        ((short)(word & 0xFFFF) == 4 ||
+                         (short)(word & 0xFFFF) == 0x14)) {
+                    provenance[rt].kind = (short)(word & 0xFFFF) == 4 ?
+                            OUTER_PROV_PLUS04 : OUTER_PROV_PLUS14;
+                    provenance[rt].id = provenance[rs].id;
+                } else {
+                    provenance[rt].kind = OUTER_PROV_BASE;
+                    provenance[rt].id = next_opaque_id++;
+                }
+                if (rt == 5) {
+                    a1_writer_kind = "LW";
+                    a1_writer_off = look;
+                    a1_writer_base = rs;
+                    a1_writer_disp = (int)(short)(word & 0xFFFF);
+                }
             } else if (destination != 0) {
                 provenance[destination].kind = OUTER_PROV_UNKNOWN;
                 provenance[destination].id = 0;
+                if ((unsigned int)destination == 5) {
+                    a1_writer_kind = "UNKNOWN";
+                    a1_writer_off = look;
+                    a1_writer_base = 0;
+                    a1_writer_disp = 0;
+                }
             }
         }
 

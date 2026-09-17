@@ -967,10 +967,20 @@ def check_sources(root):
             "unsigned int kind;", "unsigned int id;",
             "OUTER_PROV_UNKNOWN", "OUTER_PROV_BASE",
             "OUTER_PROV_PLUS04", "OUTER_PROV_PLUS14",
-            "candidate_id = offset / 4 + 1",
-            "provenance[base].kind = OUTER_PROV_BASE",
+            "prefix_floor = offset > 0x80 ? offset - 0x80 : 0",
+            "prefix_start = prefix_floor",
+            "boundary_scan = prefix_floor >= 4 ? prefix_floor - 4 : 0",
+            "prefix_start = boundary_scan + 8",
+            "if (prefix_start > offset) continue",
+            "for (reg = 1; reg < 32; reg++)",
+            "provenance[reg].id = next_opaque_id++",
+            "for (look = prefix_start; look <= offset + 0x80",
+            "if (look == offset)",
+            "provenance[base].kind != OUTER_PROV_BASE",
+            "candidate_outer_id = provenance[base].id",
             "provenance[target].kind = OUTER_PROV_PLUS14",
-            "look <= offset + 0x80", "provenance[rd] = provenance[rs]",
+            "provenance[target].id = candidate_outer_id",
+            "provenance[rd] = provenance[rs]",
             "provenance[rd] = provenance[rt]",
             "provenance[rt] = provenance[rs]",
             "provenance[delay_rd] = provenance[delay_rs]",
@@ -990,17 +1000,19 @@ def check_sources(root):
             "target_value_before_delay = provenance[rs]",
             "a1_value_after_delay = provenance[5]",
             "target_value_before_delay.kind != OUTER_PROV_PLUS14",
+            "target_value_before_delay.id != candidate_outer_id",
             "a1_value_after_delay.kind != OUTER_PROV_PLUS04",
-            "target_value_before_delay.id != a1_value_after_delay.id",
+            "a1_value_after_delay.id != candidate_outer_id",
             "exact_header_link_proven = 0",
             "exact_header_link_proven ? \"PARTIALLY_LINKED\" : \"UNKNOWN\"",
             "[paf-a989-outer14-exact-check]",
             "target_kind=%s target_id=%u", "a1_kind=%s a1_id=%u",
             'terminal_result = "MATCH"', 'terminal_result = "DIFFERENT_BASE"',
             'terminal_result = "A1_UNKNOWN"',
-            'terminal_result = "TARGET_UNKNOWN"',
             'terminal_result = "CONTROL_FLOW"',
             'terminal_result = "OVERWRITTEN"',
+            "[paf-a989-outer14-a1-origin]",
+            "a1_origin_reported < 8",
             "reported < 16", "if (matched)",
             "[paf-a989-exact-dispatch]", "same_outer=1",
             "[paf-a989-exact-dispatch-function]",
@@ -1037,23 +1049,40 @@ def check_sources(root):
     if "exact_dispatches && adapter_valid && closure" in constructed_flow or \
             "if (closure)" in constructed_flow:
         fail("broad closure still controls exact dispatch decisions")
+    prefix_replay = constructed_flow.find("for (look = prefix_start",
+            outer_scan_read)
+    anchor = constructed_flow.find("if (look == offset)", prefix_replay)
+    parent_id = constructed_flow.find(
+            "candidate_outer_id = provenance[base].id", anchor)
     target_snapshot = constructed_flow.find(
-            "target_value_before_delay = provenance[rs]", outer_scan_read)
+            "target_value_before_delay = provenance[rs]", parent_id)
+    unrelated_gate = constructed_flow.find(
+            "target_value_before_delay.id != candidate_outer_id",
+            target_snapshot)
     delay_read = constructed_flow.find(
-            "delay = _lw(paf->text_addr + look + 4)", target_snapshot)
+            "delay = _lw(paf->text_addr + look + 4)", unrelated_gate)
     delay_apply = constructed_flow.find(
             "provenance[delay_rt].id = provenance[delay_rs].id", delay_read)
     a1_snapshot = constructed_flow.find(
             "a1_value_after_delay = provenance[5]", delay_apply)
     id_compare = constructed_flow.find(
-            "target_value_before_delay.id != a1_value_after_delay.id",
-            a1_snapshot)
-    if not 0 <= target_snapshot < delay_read < delay_apply < a1_snapshot < \
+            "a1_value_after_delay.id != candidate_outer_id", a1_snapshot)
+    if not 0 <= prefix_replay < anchor < parent_id < target_snapshot < \
+            unrelated_gate < delay_read < delay_apply < a1_snapshot < \
             id_compare < exact_gate:
-        fail("JALR target/a1 snapshots do not bracket delay-slot semantics")
+        fail("prefix replay or JALR target/a1 timing is not fail-closed")
     if constructed_flow.find("target_value_before_delay = provenance[rs]",
             delay_read) != -1:
         fail("current JALR target provenance is reassigned after its delay slot")
+    if "candidate_id = offset / 4 + 1" in constructed_flow:
+        fail("candidate identity still comes from its instruction offset")
+    fresh_load = constructed_flow.find(
+            "provenance[rt].id = next_opaque_id++", prefix_replay)
+    if fresh_load < 0:
+        fail("ordinary LW results do not receive fresh opaque identities")
+    candidate_count = constructed_flow.find("candidates++;", delay_read)
+    if not unrelated_gate < delay_read < candidate_count:
+        fail("unrelated JALR can enter outer14 candidate accounting")
     weak_header = re.search(
             r'definition_opcode == 0x23[\s\S]{0,240}'
             r'definition_rs >= 4[\s\S]{0,160}HEADER_PLUS_04',
@@ -1071,7 +1100,7 @@ def check_sources(root):
             fail("exact OUTER dispatch analysis is not read-only: " + forbidden)
     # The longest exact-dispatch format plus maximal substituted fields remains
     # below the fixed 256-byte local diagnostics line buffer.
-    exact_formats = re.findall(r'"(\[paf-a989-(?:outer14-exact-check|exact-dispatch)[^"\n]*)"',
+    exact_formats = re.findall(r'"(\[paf-a989-(?:outer14-exact-check|outer14-a1-origin|exact-dispatch)[^"\n]*)"',
             constructed_flow)
     if not exact_formats or any(len(fmt) + 96 >= 256 for fmt in exact_formats):
         fail("exact-dispatch diagnostic format exceeds line-buffer allowance")
