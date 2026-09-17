@@ -6362,7 +6362,7 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
     unsigned int constructed0_size;
     unsigned int candidates = 0, reported = 0, exact_same_outer = 0;
     unsigned int adapter_valid = 0, exact_dispatches = 0, exact_entry = 0;
-    const char *exact_origin = "UNKNOWN";
+    unsigned int exact_header_link_proven = 0;
     char line[256];
 
     if (!zeroCtrlModuleContainingSegment(paf, constructed[1], &segment,
@@ -6500,12 +6500,14 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 unsigned int delay_opcode, delay_rs, delay_rt, delay_rd;
                 int delay_destination;
                 unsigned int delay_supported = 1;
-                ZeroCtrlOuterProvenance target_value;
-                ZeroCtrlOuterProvenance a1_value;
+                ZeroCtrlOuterProvenance target_value_before_delay;
+                ZeroCtrlOuterProvenance a1_value_after_delay;
                 const char *target_kind;
                 const char *a1_kind;
 
                 if (look + 8 > paf->text_size) break;
+                /* JALR consumes rs before its architectural delay slot. */
+                target_value_before_delay = provenance[rs];
                 delay = _lw(paf->text_addr + look + 4);
                 delay_opcode = delay >> 26;
                 delay_rs = (delay >> 21) & 0x1F;
@@ -6536,26 +6538,29 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                     provenance[delay_destination].id = 0;
                 }
 
-                /* Classify only after applying the architectural delay slot. */
-                target_value = provenance[rs];
-                a1_value = provenance[5];
+                /* a1 observes the delay slot; the captured target does not. */
+                a1_value_after_delay = provenance[5];
                 terminal_jalr = look;
                 candidates++;
-                target_kind = target_value.kind == OUTER_PROV_BASE ? "BASE" :
-                        target_value.kind == OUTER_PROV_PLUS04 ? "PLUS04" :
-                        target_value.kind == OUTER_PROV_PLUS14 ? "PLUS14" :
+                target_kind = target_value_before_delay.kind ==
+                        OUTER_PROV_BASE ? "BASE" :
+                        target_value_before_delay.kind == OUTER_PROV_PLUS04 ?
+                        "PLUS04" : target_value_before_delay.kind ==
+                        OUTER_PROV_PLUS14 ? "PLUS14" :
                         "UNKNOWN";
-                a1_kind = a1_value.kind == OUTER_PROV_BASE ? "BASE" :
-                        a1_value.kind == OUTER_PROV_PLUS04 ? "PLUS04" :
-                        a1_value.kind == OUTER_PROV_PLUS14 ? "PLUS14" :
+                a1_kind = a1_value_after_delay.kind == OUTER_PROV_BASE ?
+                        "BASE" : a1_value_after_delay.kind ==
+                        OUTER_PROV_PLUS04 ? "PLUS04" :
+                        a1_value_after_delay.kind == OUTER_PROV_PLUS14 ?
+                        "PLUS14" :
                         "UNKNOWN";
                 if (!delay_supported)
                     terminal_result = "OVERWRITTEN";
-                else if (target_value.kind != OUTER_PROV_PLUS14)
+                else if (target_value_before_delay.kind != OUTER_PROV_PLUS14)
                     terminal_result = "TARGET_UNKNOWN";
-                else if (a1_value.kind != OUTER_PROV_PLUS04)
+                else if (a1_value_after_delay.kind != OUTER_PROV_PLUS04)
                     terminal_result = "A1_UNKNOWN";
-                else if (target_value.id != a1_value.id)
+                else if (target_value_before_delay.id != a1_value_after_delay.id)
                     terminal_result = "DIFFERENT_BASE";
                 else {
                     terminal_result = "MATCH";
@@ -6566,8 +6571,8 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                             "[paf-a989-outer14-exact-check] load_off=0x%X "
                             "jalr_off=0x%X target_kind=%s target_id=%u "
                             "a1_kind=%s a1_id=%u result=%s\n", offset, look,
-                            target_kind, target_value.id, a1_kind, a1_value.id,
-                            terminal_result);
+                            target_kind, target_value_before_delay.id,
+                            a1_kind, a1_value_after_delay.id, terminal_result);
                     zeroCtrlDiagnosticsText(line);
                     snprintf(line, sizeof(line),
                             "[paf-a989-outer14-call-candidate] load_off=0x%X "
@@ -6577,8 +6582,9 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                     snprintf(line, sizeof(line),
                             "[paf-a989-outer14-call-provenance] jalr_off=0x%X "
                             "a1_source=%s\n", look,
-                            a1_value.kind == OUTER_PROV_PLUS04 &&
-                            a1_value.id == target_value.id ?
+                            a1_value_after_delay.kind ==
+                            OUTER_PROV_PLUS04 && a1_value_after_delay.id ==
+                            target_value_before_delay.id ?
                             "same_base_plus_0x04" : "UNKNOWN");
                     zeroCtrlDiagnosticsText(line);
                     reported++;
@@ -6644,11 +6650,7 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                         zeroCtrlMipsGprWriteDestination(definition);
                 if (definition_destination < 0) break;
                 if ((unsigned int)definition_destination == base) {
-                    if (definition_opcode == 0x23 &&
-                            (short)(definition & 0xFFFF) == 4 &&
-                            definition_rs >= 4 && definition_rs <= 7)
-                        outer_origin = "HEADER_PLUS_04";
-                    else if (definition_opcode == 0x23)
+                    if (definition_opcode == 0x23)
                         outer_origin = "LOCAL_LW";
                     else if (definition_opcode == 9 &&
                             (short)(definition & 0xFFFF) == 0 &&
@@ -6716,7 +6718,6 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
             exact_dispatches++;
             exact_same_outer = 1;
             exact_entry = function_entry;
-            exact_origin = outer_origin;
             if (function_entry) {
                 unsigned int caller_off, caller_reported = 0;
                 for (caller_off = 0; caller_off + 4 <= paf->text_size &&
@@ -6765,8 +6766,7 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
             zeroCtrlVshModuleRangeValid(paf, root_slot, 4)) {
         unsigned int root_off = root_slot - paf->segmentaddr[root_segment];
         const char *root_status = exact_dispatches && exact_entry &&
-                strcmp(exact_origin, "HEADER_PLUS_04") == 0 ?
-                "PARTIALLY_LINKED" : "UNKNOWN";
+                exact_header_link_proven ? "PARTIALLY_LINKED" : "UNKNOWN";
         snprintf(line, sizeof(line),
                 "[paf-a989-root-slot] segment=%u segment_off=0x%X "
                 "value=0x%08X\n", root_segment, root_off, _lw(root_slot));

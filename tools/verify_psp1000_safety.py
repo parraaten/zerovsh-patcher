@@ -985,11 +985,15 @@ def check_sources(root):
             "provenance[delay_destination].kind = OUTER_PROV_UNKNOWN",
             "unsigned int delay_supported = 1",
             "if (!delay_supported)",
-            "Classify only after applying the architectural delay slot",
-            "target_value = provenance[rs]", "a1_value = provenance[5]",
-            "target_value.kind != OUTER_PROV_PLUS14",
-            "a1_value.kind != OUTER_PROV_PLUS04",
-            "target_value.id != a1_value.id",
+            "JALR consumes rs before its architectural delay slot",
+            "a1 observes the delay slot; the captured target does not",
+            "target_value_before_delay = provenance[rs]",
+            "a1_value_after_delay = provenance[5]",
+            "target_value_before_delay.kind != OUTER_PROV_PLUS14",
+            "a1_value_after_delay.kind != OUTER_PROV_PLUS04",
+            "target_value_before_delay.id != a1_value_after_delay.id",
+            "exact_header_link_proven = 0",
+            "exact_header_link_proven ? \"PARTIALLY_LINKED\" : \"UNKNOWN\"",
             "[paf-a989-outer14-exact-check]",
             "target_kind=%s target_id=%u", "a1_kind=%s a1_id=%u",
             'terminal_result = "MATCH"', 'terminal_result = "DIFFERENT_BASE"',
@@ -1033,14 +1037,34 @@ def check_sources(root):
     if "exact_dispatches && adapter_valid && closure" in constructed_flow or \
             "if (closure)" in constructed_flow:
         fail("broad closure still controls exact dispatch decisions")
+    target_snapshot = constructed_flow.find(
+            "target_value_before_delay = provenance[rs]", outer_scan_read)
     delay_read = constructed_flow.find(
-            "delay = _lw(paf->text_addr + look + 4)", outer_scan_read)
+            "delay = _lw(paf->text_addr + look + 4)", target_snapshot)
     delay_apply = constructed_flow.find(
             "provenance[delay_rt].id = provenance[delay_rs].id", delay_read)
-    classify = constructed_flow.find("target_value = provenance[rs]", delay_apply)
-    id_compare = constructed_flow.find("target_value.id != a1_value.id", classify)
-    if not 0 <= delay_read < delay_apply < classify < id_compare < exact_gate:
-        fail("JALR delay slot is not applied before SAME_OUTER classification")
+    a1_snapshot = constructed_flow.find(
+            "a1_value_after_delay = provenance[5]", delay_apply)
+    id_compare = constructed_flow.find(
+            "target_value_before_delay.id != a1_value_after_delay.id",
+            a1_snapshot)
+    if not 0 <= target_snapshot < delay_read < delay_apply < a1_snapshot < \
+            id_compare < exact_gate:
+        fail("JALR target/a1 snapshots do not bracket delay-slot semantics")
+    if constructed_flow.find("target_value_before_delay = provenance[rs]",
+            delay_read) != -1:
+        fail("current JALR target provenance is reassigned after its delay slot")
+    weak_header = re.search(
+            r'definition_opcode == 0x23[\s\S]{0,240}'
+            r'definition_rs >= 4[\s\S]{0,160}HEADER_PLUS_04',
+            constructed_flow)
+    if weak_header:
+        fail("LW +4 from an entry argument is treated as proven A989 header")
+    root_gate = constructed_flow.find(
+            'exact_header_link_proven ? "PARTIALLY_LINKED" : "UNKNOWN"',
+            exact_output)
+    if root_gate < 0:
+        fail("root-link status lacks an explicit independent header proof")
     for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
             "REDIRECT_FUNCTION", "hook_import"):
         if forbidden in constructed_flow:
