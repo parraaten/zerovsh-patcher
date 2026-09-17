@@ -672,6 +672,10 @@ typedef struct {
     unsigned int bridge_constructed0;
     unsigned int bridge_constructed1;
     unsigned int bridge_callback;
+    volatile unsigned int bridge_livein_validation;
+    volatile unsigned int bridge_livein_arg[4];
+    volatile unsigned int bridge_livein_blocker_call;
+    volatile unsigned int bridge_livein_blocker_arg;
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -3543,6 +3547,10 @@ typedef struct {
 
 static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod);
 static int zeroCtrlMipsGprWriteDestination(unsigned int word);
+static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
+        unsigned int source);
+static int zeroCtrlModuleContainingSegment(SceModule2 *mod,
+        unsigned int address, unsigned int *segment, unsigned int *remaining);
 
 #define VSHCTRL_LIBRARY_LIMIT 8
 #define VSHCTRL_IMPORT_LIMIT 32
@@ -4778,56 +4786,307 @@ static int zeroCtrlResolveVshCtrlPeekImport(SceModule2 *vsh,
     return 1;
 }
 
-static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf,
-        unsigned int constructed1) {
-    unsigned int offset;
-    unsigned int defined = 1U << 5;
+enum ZeroCtrlBridgeLiveInClass {
+    ZERO_BRIDGE_LIVEIN_UNKNOWN = 0,
+    ZERO_BRIDGE_LIVEIN_OVERWRITTEN,
+    ZERO_BRIDGE_LIVEIN_REQUIRED,
+    ZERO_BRIDGE_LIVEIN_IGNORED
+};
 
-    if (!zeroCtrlVshModuleRangeValid(paf, constructed1, 0xBC)) return 0;
-    for (offset = 0; offset <= 0x40; offset += 4) {
-        unsigned int word = _lw(constructed1 + offset);
-        unsigned int opcode = word >> 26;
-        unsigned int rs = (word >> 21) & 0x1F;
-        unsigned int rt = (word >> 16) & 0x1F;
-        unsigned int function = word & 0x3F;
-        unsigned int reads_rs = 0, reads_rt = 0;
-        int destination = zeroCtrlMipsGprWriteDestination(word);
+static const char *zeroCtrlBridgeLiveInClassName(unsigned int value) {
+    static const char *name[] = {
+        "UNKNOWN", "OVERWRITTEN", "REQUIRED", "IGNORED"
+    };
+    if (value >= sizeof(name) / sizeof(name[0])) return "UNKNOWN";
+    return name[value];
+}
 
-        if (destination < 0) return 0;
-        /* Calls/branches before the proven +44 branch make live-ins ambiguous. */
-        if (opcode == 1 || opcode == 2 || opcode == 3 ||
-                (opcode >= 4 && opcode <= 7) ||
-                (opcode >= 0x14 && opcode <= 0x17) ||
-                (opcode == 0 && (function == 8 || function == 9)))
+#define BRIDGE_TAINT_MAX_DEPTH 3
+#define BRIDGE_TAINT_MAX_FUNCTIONS 16
+#define BRIDGE_TAINT_MAX_NODES 128
+#define BRIDGE_TAINT_MAX_INSTRUCTIONS 512
+
+typedef struct ZeroCtrlBridgeTaintContext {
+    unsigned int functions;
+    unsigned int instructions;
+    unsigned int blocker_call;
+    unsigned int blocker_arg;
+} ZeroCtrlBridgeTaintContext;
+
+typedef struct ZeroCtrlBridgeTaintNode {
+    unsigned int address;
+    unsigned int taint;
+} ZeroCtrlBridgeTaintNode;
+
+/* Return the GPRs read by the integer instructions used by the bounded proof. */
+static int zeroCtrlBridgeReadMask(unsigned int word, unsigned int *mask) {
+    unsigned int opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int function = word & 0x3F;
+
+    *mask = 0;
+    if (word == 0) return 1;
+    if (opcode == 0) {
+        if (function == 0 || function == 2 || function == 3)
+            *mask = 1U << rt;
+        else if (function == 8 || function == 9 || function == 0x11 ||
+                function == 0x13)
+            *mask = 1U << rs;
+        else if (function == 0x10 || function == 0x12 || function == 0x0C)
+            *mask = 0;
+        else if ((function >= 4 && function <= 7) ||
+                (function >= 0x18 && function <= 0x1B) ||
+                (function >= 0x20 && function <= 0x2B))
+            *mask = (1U << rs) | (1U << rt);
+        else
             return 0;
-        if (opcode == 0) {
-            reads_rs = function != 0 && function != 2 && function != 3;
-            reads_rt = function != 8 && function != 9;
-        } else if (opcode == 0x0F || opcode == 2 || opcode == 3) {
-            reads_rs = reads_rt = 0;
-        } else if ((opcode >= 0x20 && opcode <= 0x26) || opcode == 0x30) {
-            reads_rs = 1;
-        } else if (opcode >= 0x28 && opcode <= 0x2F) {
-            reads_rs = reads_rt = 1;
+        return 1;
+    }
+    if (opcode == 2 || opcode == 3 || opcode == 0x0F) return 1;
+    if (opcode == 1 || opcode == 6 || opcode == 7 || opcode == 0x16 ||
+            opcode == 0x17)
+        *mask = 1U << rs;
+    else if (opcode == 4 || opcode == 5 || opcode == 0x14 || opcode == 0x15)
+        *mask = (1U << rs) | (1U << rt);
+    else if (opcode >= 8 && opcode <= 0x0E)
+        *mask = 1U << rs;
+    else if ((opcode >= 0x20 && opcode <= 0x26) || opcode == 0x30)
+        *mask = 1U << rs;
+    else if (opcode >= 0x28 && opcode <= 0x2F)
+        *mask = (1U << rs) | (1U << rt);
+    else
+        return 0;
+    return 1;
+}
+
+/* 0 is safe, 1 observes taint, and 2 is an unsupported tainted operation. */
+static int zeroCtrlBridgeApplyTaint(unsigned int word, unsigned int *taint) {
+    unsigned int reads, opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int rd = (word >> 11) & 0x1F;
+    unsigned int function = word & 0x3F;
+    unsigned int source = 0;
+    unsigned int source_tainted = 0;
+    int destination = zeroCtrlMipsGprWriteDestination(word);
+
+    if (!zeroCtrlBridgeReadMask(word, &reads))
+        return *taint ? 2 : 0;
+    if (reads & *taint) {
+        if (zeroCtrlMipsMove(word, rd, rs)) source = rs;
+        else if (zeroCtrlMipsMove(word, rd, rt)) source = rt;
+        else if (opcode == 9 && (short)(word & 0xFFFF) == 0) source = rs;
+        else return 1;
+    }
+    if (source != 0) source_tainted = *taint & (1U << source);
+    if (destination > 0) {
+        *taint &= ~(1U << destination);
+        if (source_tainted)
+            *taint |= 1U << destination;
+    }
+    /* Stores have no decoded destination and any tainted operand is visible. */
+    if (opcode >= 0x28 && opcode <= 0x2F && (reads & *taint)) return 1;
+    if (opcode == 0 && (function == 8 || function == 9) &&
+            (reads & *taint)) return 1;
+    return 0;
+}
+
+static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *paf,
+        unsigned int entry, unsigned int input_taint, unsigned int depth,
+        unsigned int original_arg, ZeroCtrlBridgeTaintContext *context) {
+    ZeroCtrlBridgeTaintNode queue[BRIDGE_TAINT_MAX_NODES];
+    unsigned int seen_addr[BRIDGE_TAINT_MAX_NODES];
+    unsigned int seen_taint[BRIDGE_TAINT_MAX_NODES];
+    unsigned int head = 0, tail = 1, seen = 0;
+
+    if (depth > BRIDGE_TAINT_MAX_DEPTH ||
+            context->functions >= BRIDGE_TAINT_MAX_FUNCTIONS ||
+            !zeroCtrlVshModuleRangeValid(paf, entry, 8)) return 2;
+    context->functions++;
+    queue[0].address = entry;
+    queue[0].taint = input_taint;
+    while (head < tail) {
+        unsigned int pc = queue[head].address;
+        unsigned int taint = queue[head++].taint;
+        unsigned int word, opcode, function, delay, target, i;
+        int result;
+
+        for (i = 0; i < seen; i++)
+            if (seen_addr[i] == pc && (taint & ~seen_taint[i]) == 0) break;
+        if (i < seen) continue;
+        if (seen >= BRIDGE_TAINT_MAX_NODES ||
+                context->instructions >= BRIDGE_TAINT_MAX_INSTRUCTIONS ||
+                !zeroCtrlVshModuleRangeValid(paf, pc, 4)) return 2;
+        if (i == seen) {
+            seen_addr[seen] = pc;
+            seen_taint[seen++] = taint;
+        }
+        context->instructions++;
+        word = _lw(pc);
+        opcode = word >> 26;
+        function = word & 0x3F;
+        if (opcode == 3) {
+            unsigned int call_taint;
+            if (!zeroCtrlVshModuleRangeValid(paf, pc + 4, 4)) return 2;
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS)
+                return 2;
+            delay = _lw(pc + 4);
+            result = zeroCtrlBridgeApplyTaint(delay, &taint);
+            if (result) return result;
+            call_taint = taint & 0xF0;
+            target = zeroCtrlMipsJumpTarget(pc, word);
+            if (call_taint != 0) {
+                unsigned int segment, remaining;
+                if (!zeroCtrlModuleContainingSegment(paf, target, &segment,
+                            &remaining) || segment != 0 || remaining < 8) {
+                    context->blocker_call = pc - paf->text_addr;
+                    context->blocker_arg = original_arg;
+                    return 2;
+                }
+                result = zeroCtrlBridgeAnalyzeTaintedFunction(paf, target,
+                        call_taint, depth + 1, original_arg, context);
+                if (result) {
+                    if (context->blocker_call == 0)
+                        context->blocker_call = pc - paf->text_addr;
+                    context->blocker_arg = original_arg;
+                    return result;
+                }
+            }
+            /* O32 caller-saved values cannot carry the old incoming taint. */
+            taint &= ~0x8300FFFCU;
+            pc += 8;
         } else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
                 (opcode >= 0x14 && opcode <= 0x17)) {
-            reads_rs = 1;
-            reads_rt = opcode != 1;
-        } else if (opcode >= 8 && opcode <= 0x0E) {
-            reads_rs = 1;
+            unsigned int branch_taint = taint;
+            unsigned int reads = 0;
+            if (!zeroCtrlBridgeReadMask(word, &reads) || (reads & taint))
+                return (reads & taint) ? 1 : 2;
+            if (!zeroCtrlVshModuleRangeValid(paf, pc + 4, 4)) return 2;
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS)
+                return 2;
+            delay = _lw(pc + 4);
+            result = zeroCtrlBridgeApplyTaint(delay, &branch_taint);
+            if (result) return result;
+            target = zeroCtrlMipsBranchTarget(pc, word);
+            if (tail + 2 > BRIDGE_TAINT_MAX_NODES ||
+                    !zeroCtrlVshModuleRangeValid(paf, target, 4)) return 2;
+            queue[tail].address = target;
+            queue[tail++].taint = branch_taint;
+            queue[tail].address = pc + 8;
+            queue[tail++].taint = branch_taint;
+            continue;
+        } else if (opcode == 2) {
+            if (!zeroCtrlVshModuleRangeValid(paf, pc + 4, 4)) return 2;
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS)
+                return 2;
+            delay = _lw(pc + 4);
+            result = zeroCtrlBridgeApplyTaint(delay, &taint);
+            if (result) return result;
+            target = zeroCtrlMipsJumpTarget(pc, word);
+            if (tail >= BRIDGE_TAINT_MAX_NODES ||
+                    !zeroCtrlVshModuleRangeValid(paf, target, 4)) return 2;
+            queue[tail].address = target;
+            queue[tail++].taint = taint;
+            continue;
+        } else if (opcode == 0 && (function == 8 || function == 9)) {
+            unsigned int rs = (word >> 21) & 0x1F;
+            if (taint & (1U << rs)) return 1;
+            if (!zeroCtrlVshModuleRangeValid(paf, pc + 4, 4)) return 2;
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS)
+                return 2;
+            delay = _lw(pc + 4);
+            result = zeroCtrlBridgeApplyTaint(delay, &taint);
+            if (result) return result;
+            if (function == 9 && (taint & 0xF0) != 0) {
+                context->blocker_call = pc - paf->text_addr;
+                context->blocker_arg = original_arg;
+                return 2;
+            }
+            if (function == 8 && rs == 31) continue;
+            return taint ? 2 : 0;
         } else {
-            return 0;
+            result = zeroCtrlBridgeApplyTaint(word, &taint);
+            if (result) return result;
+            pc += 4;
         }
-        if ((reads_rs && (rs == 4 || rs == 6 || rs == 7) &&
-                    !(defined & (1U << rs))) ||
-                (reads_rt && (rt == 4 || rt == 6 || rt == 7) &&
-                    !(defined & (1U << rt))))
-            return 0;
-        if (destination > 0) defined |= 1U << destination;
+        if (tail >= BRIDGE_TAINT_MAX_NODES) return 2;
+        queue[tail].address = pc;
+        queue[tail++].taint = taint;
     }
-    /* The validated JALR delay slot defines a0. a2/a3 must be defined above. */
-    return (defined & ((1U << 6) | (1U << 7))) ==
-            ((1U << 6) | (1U << 7));
+    return 0;
+}
+
+static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf,
+        unsigned int constructed1) {
+    static const unsigned int fixed_words[][2] = {
+        { 0x00, 0x27BDFFF0 }, { 0x04, 0xAFBF0008 },
+        { 0x08, 0xAFB00000 }, { 0x0C, 0x00A08021 },
+        { 0x10, 0xAFB10004 }, { 0x14, 0x8CA40000 },
+        { 0x1C, 0x24840010 }, { 0x20, 0x8E040000 },
+        { 0x28, 0x26050004 }, { 0x2C, 0x8E040000 },
+        { 0x34, 0x24840010 }, { 0x3C, 0x8E040004 },
+        { 0x40, 0x8E02000C }, { 0x48, 0x00000000 }
+    };
+    static const unsigned int call_off[4] = { 0x18, 0x24, 0x30, 0x38 };
+    ZeroCtrlBridgeTaintContext context;
+    unsigned int target[4], i, segment, remaining;
+    int a2, a3;
+
+    slide_diag.bridge_livein_validation = 0;
+    slide_diag.bridge_livein_arg[0] = ZERO_BRIDGE_LIVEIN_UNKNOWN;
+    slide_diag.bridge_livein_arg[1] = ZERO_BRIDGE_LIVEIN_UNKNOWN;
+    slide_diag.bridge_livein_arg[2] = ZERO_BRIDGE_LIVEIN_UNKNOWN;
+    slide_diag.bridge_livein_arg[3] = ZERO_BRIDGE_LIVEIN_UNKNOWN;
+    slide_diag.bridge_livein_blocker_call = 0;
+    slide_diag.bridge_livein_blocker_arg = 0;
+    if (!zeroCtrlVshModuleRangeValid(paf, constructed1, 0xBC)) return 0;
+    for (i = 0; i < sizeof(fixed_words) / sizeof(fixed_words[0]); i++)
+        if (_lw(constructed1 + fixed_words[i][0]) != fixed_words[i][1])
+            return 0;
+    for (i = 0; i < 4; i++) {
+        unsigned int word = _lw(constructed1 + call_off[i]);
+        if ((word >> 26) != 3) return 0;
+        target[i] = zeroCtrlMipsJumpTarget(constructed1 + call_off[i], word);
+        if (!zeroCtrlModuleContainingSegment(paf, target[i], &segment,
+                    &remaining) || segment != 0 || remaining < 8)
+            return 0;
+    }
+    if (((_lw(constructed1 + 0x44) >> 26) < 4 ||
+                (_lw(constructed1 + 0x44) >> 26) > 7) ||
+            zeroCtrlMipsBranchTarget(constructed1 + 0x44,
+                _lw(constructed1 + 0x44)) != constructed1 + 0xB4)
+        return 0;
+
+    /* a0 is overwritten by +14 before observation; a1 is copied to s0. */
+    slide_diag.bridge_livein_arg[0] = ZERO_BRIDGE_LIVEIN_OVERWRITTEN;
+    slide_diag.bridge_livein_arg[1] = ZERO_BRIDGE_LIVEIN_REQUIRED;
+    memset(&context, 0, sizeof(context));
+    a2 = zeroCtrlBridgeAnalyzeTaintedFunction(paf, target[0], 1U << 6,
+            1, 2, &context);
+    if (a2 != 0) {
+        slide_diag.bridge_livein_arg[2] = a2 == 1 ?
+                ZERO_BRIDGE_LIVEIN_REQUIRED : ZERO_BRIDGE_LIVEIN_UNKNOWN;
+        slide_diag.bridge_livein_blocker_call = context.blocker_call ?
+                context.blocker_call : constructed1 - paf->text_addr + call_off[0];
+        slide_diag.bridge_livein_blocker_arg = 2;
+        return 0;
+    }
+    slide_diag.bridge_livein_arg[2] = ZERO_BRIDGE_LIVEIN_IGNORED;
+    memset(&context, 0, sizeof(context));
+    a3 = zeroCtrlBridgeAnalyzeTaintedFunction(paf, target[0], 1U << 7,
+            1, 3, &context);
+    if (a3 != 0) {
+        slide_diag.bridge_livein_arg[3] = a3 == 1 ?
+                ZERO_BRIDGE_LIVEIN_REQUIRED : ZERO_BRIDGE_LIVEIN_UNKNOWN;
+        slide_diag.bridge_livein_blocker_call = context.blocker_call ?
+                context.blocker_call : constructed1 - paf->text_addr + call_off[0];
+        slide_diag.bridge_livein_blocker_arg = 3;
+        return 0;
+    }
+    slide_diag.bridge_livein_arg[3] = ZERO_BRIDGE_LIVEIN_IGNORED;
+    slide_diag.bridge_livein_validation = 1;
+    return 1;
 }
 
 static int zeroCtrlPsp1000BridgeImportMatches(SceModule2 *vsh,
@@ -4926,7 +5185,10 @@ static int zeroCtrlResolvePsp1000FunctionalBridge(SceModule2 *vsh,
         return 0;
     for (i = 0; i < sizeof(words) / 4; i++) words[i] = _lw(consumer + i * 4);
     if ((words[0xA8 / 4] >> 26) != 0x0F ||
-            (words[0xAC / 4] >> 26) != 0x23) return 0;
+            ((words[0xA8 / 4] >> 16) & 0x1F) != 2 ||
+            (words[0xAC / 4] >> 26) != 0x23 ||
+            ((words[0xAC / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0xAC / 4] >> 16) & 0x1F) != 4) return 0;
     slot = ((words[0xA8 / 4] & 0xFFFF) << 16) +
             (int)(short)(words[0xAC / 4] & 0xFFFF);
     if (!zeroCtrlModuleContainingSegment(paf, slot, &segment, &remaining) ||
@@ -8216,7 +8478,12 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_functional_bridge_livein[7] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     int clockpath_written = 0;
+    int bridge_livein_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -8361,6 +8628,31 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             }
             if (slide_diag.functional_enabled && slide_diag.bridge_registered) {
                 unsigned int state[12];
+                unsigned int livein[7];
+                livein[0] = slide_diag.bridge_livein_validation;
+                livein[1] = slide_diag.bridge_livein_arg[0];
+                livein[2] = slide_diag.bridge_livein_arg[1];
+                livein[3] = slide_diag.bridge_livein_arg[2];
+                livein[4] = slide_diag.bridge_livein_arg[3];
+                livein[5] = slide_diag.bridge_livein_blocker_call;
+                livein[6] = slide_diag.bridge_livein_blocker_arg;
+                if (!bridge_livein_written &&
+                        memcmp(livein, observed_functional_bridge_livein,
+                            sizeof(livein)) != 0) {
+                    memcpy(observed_functional_bridge_livein, livein,
+                            sizeof(livein));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-314a4-livein] validation=%u "
+                            "a0=%s a1=%s a2=%s a3=%s blocker_call=0x%X "
+                            "blocker_arg=%u\n", livein[0],
+                            zeroCtrlBridgeLiveInClassName(livein[1]),
+                            zeroCtrlBridgeLiveInClassName(livein[2]),
+                            zeroCtrlBridgeLiveInClassName(livein[3]),
+                            zeroCtrlBridgeLiveInClassName(livein[4]),
+                            livein[5], livein[6]);
+                    zeroCtrlDiagnosticsText(line);
+                    bridge_livein_written = 1;
+                }
                 state[0] = slide_diag.bridge_validation;
                 state[1] = slide_diag.bridge_install;
                 state[2] = slide_diag.bridge_cache_sync;

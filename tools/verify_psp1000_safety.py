@@ -2025,9 +2025,64 @@ def check_sources(root):
             fail("functional PAF bridge resolver lacks " + token)
     if '0x089B5978' in bridge_resolver:
         fail("functional bridge hard-codes a boot-specific PAF root")
-    if 'Calls/branches before the proven +44 branch make live-ins ambiguous' \
-            not in kernel:
-        fail("constructed1 unknown live-ins do not fail closed at control flow")
+    livein_start = kernel.find(
+            "static int zeroCtrlPsp1000BridgeLiveInValid(")
+    livein_end = kernel.find("static int zeroCtrlPsp1000BridgeImportMatches(",
+            livein_start)
+    livein = kernel[livein_start:livein_end]
+    taint_start = kernel.find(
+            "static int zeroCtrlBridgeAnalyzeTaintedFunction(")
+    taint = kernel[taint_start:livein_end]
+    for token in ('BRIDGE_TAINT_MAX_DEPTH 3',
+            'BRIDGE_TAINT_MAX_FUNCTIONS 16',
+            'BRIDGE_TAINT_MAX_NODES 128',
+            'BRIDGE_TAINT_MAX_INSTRUCTIONS 512',
+            'call_off[4] = { 0x18, 0x24, 0x30, 0x38 }',
+            'zeroCtrlMipsJumpTarget(constructed1 + call_off[i], word)',
+            'zeroCtrlModuleContainingSegment(paf, target[i]',
+            'ZERO_BRIDGE_LIVEIN_OVERWRITTEN',
+            'ZERO_BRIDGE_LIVEIN_REQUIRED',
+            'ZERO_BRIDGE_LIVEIN_IGNORED',
+            'ZERO_BRIDGE_LIVEIN_UNKNOWN',
+            'zeroCtrlBridgeAnalyzeTaintedFunction(paf, target[0], 1U << 6',
+            'zeroCtrlBridgeAnalyzeTaintedFunction(paf, target[0], 1U << 7',
+            'slide_diag.bridge_livein_validation = 1'):
+        if token not in livein and token not in taint and token not in kernel:
+            fail("constructed1 live-in proof lacks " + token)
+    for known_word in ('0x27BDFFF0', '0xAFBF0008', '0xAFB00000',
+            '0x00A08021', '0xAFB10004', '0x8CA40000', '0x24840010',
+            '0x8E040000', '0x26050004', '0x8E040004', '0x8E02000C'):
+        if known_word not in livein:
+            fail("constructed1 prefix validation lacks " + known_word)
+    if re.search(r'offset\s*<=\s*0x40[\s\S]{0,400}'
+            r'opcode\s*==\s*3[\s\S]{0,80}return\s+0', livein):
+        fail("constructed1 validator still rejects its known direct JALs")
+    for token in ('call_taint = taint & 0xF0',
+            'zeroCtrlBridgeAnalyzeTaintedFunction(paf, target',
+            'depth + 1', 'context->functions >= BRIDGE_TAINT_MAX_FUNCTIONS',
+            'context->instructions >= BRIDGE_TAINT_MAX_INSTRUCTIONS',
+            'opcode == 0 && (function == 8 || function == 9)',
+            'context->blocker_call = pc - paf->text_addr'):
+        if token not in taint:
+            fail("constructed1 bounded callee-taint proof lacks " + token)
+    livein_call = bridge_resolver.find(
+            'zeroCtrlPsp1000BridgeLiveInValid(paf, *constructed1)')
+    root_pair = bridge_resolver.find('words[0xA8 / 4] >> 16')
+    for token in ('((words[0xA8 / 4] >> 16) & 0x1F) != 2',
+            '((words[0xAC / 4] >> 21) & 0x1F) != 2',
+            '((words[0xAC / 4] >> 16) & 0x1F) != 4'):
+        if token not in bridge_resolver:
+            fail("PAF root LUI/LW pair lacks register validation: " + token)
+    if livein_call < 0 or root_pair < 0:
+        fail("functional bridge resolver omits live-in/root validation")
+    resolve_pos = kernel.find("static int zeroCtrlResolvePsp1000FunctionalBridge(")
+    for signature in (
+            "static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,",
+            "static int zeroCtrlModuleContainingSegment(SceModule2 *mod,"):
+        declaration = kernel.find(signature)
+        if declaration < 0 or declaration > resolve_pos:
+            fail("functional bridge uses helper before static declaration: " +
+                    signature)
     register_start = kernel.find("void zeroCtrlRegisterPsp1000FunctionalBridge(")
     register_end = kernel.find("static int zeroCtrlReadVshCtrl314A4Telemetry",
             register_start)
@@ -2079,6 +2134,9 @@ def check_sources(root):
         fail("bridge registration aliases historical trigger counters")
     if '[psp1000-functional-314a4-bridge]' not in writer:
         fail("functional bridge telemetry is missing")
+    if '[psp1000-functional-314a4-livein]' not in writer or \
+            'blocker_call=0x%X' not in writer or 'blocker_arg=%u' not in writer:
+        fail("functional bridge live-in evidence is missing")
     bridge_line = re.search(
             r'"\[psp1000-functional-314a4-bridge\][\s\S]{0,420}?"consumed=%u\\n"',
             writer)
