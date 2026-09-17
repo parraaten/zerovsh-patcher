@@ -962,6 +962,8 @@ def check_sources(root):
             "[paf-a989-constructed1-indirect] validation=1",
             "base_arg_reg=5 target_field_off=0x0C",
             "arg0_field_off=0x04 jalr_off=0xB4",
+            "[paf-a989-callback-adapter] validation=1",
+            "adapter_off=0x34658 base_arg=a1 callback_field=0x0C",
             "constructed[0]", "remaining > 0x30 ? 0x30",
             "constructed0_size == 0x30",
             "zeroCtrlVshModuleRangeValid(paf,\n                    constructed[0], constructed0_size)",
@@ -1022,6 +1024,17 @@ def check_sources(root):
             "path=BRANCH_FREE_SUFFIX",
             "[paf-a989-outer14-base-origin]",
             "load_off=0x%X status=UNKNOWN",
+            "[paf-a989-exact-dispatch]", "same_outer=1",
+            "outer_origin=%s", "HEADER_PLUS_04",
+            "[paf-a989-exact-dispatch-function]",
+            "STACK_FRAME_AND_SAVED_RA", "offset - search <= 0x100",
+            "(prologue >> 26) == 2",
+            "[paf-a989-exact-dispatch-caller]", "caller_reported < 16",
+            "[paf-a989-exact-dispatch-arg]",
+            "[paf-a989-root-slot]", "root_slot - paf->segmentaddr[root_segment]",
+            "[paf-a989-exact-dispatch-root]",
+            "[paf-a989-dispatch-chain] validation=1",
+            "exact_dispatches && adapter_valid && closure",
             "[paf-a989-outer14-dispatch-shape] validation=1",
             "target_field_off=0x14 arg1_field_off=0x04",
             "[paf-a989-constructed1-provenance]",
@@ -1040,6 +1053,10 @@ def check_sources(root):
     if "unsigned int provenance_reg" in constructed_flow or \
             "unsigned int provenance =" in constructed_flow:
         fail("OUTER+0x14 analysis retains sticky a1 provenance")
+    for forbidden in ("_sw(", "Dcache", "Icache", "MAKE_CALL", "MAKE_JUMP",
+            "REDIRECT_FUNCTION", "hook_import"):
+        if forbidden in constructed_flow:
+            fail("exact OUTER dispatch analysis is not read-only: " + forbidden)
     alias_reject = constructed_flow.find("base == target", outer_text_range)
     destination_decode = constructed_flow.find(
             "zeroCtrlMipsGprWriteDestination(word)", alias_reject)

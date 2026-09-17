@@ -5917,7 +5917,8 @@ static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
         unsigned int global_target);
 
 static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
-        const unsigned int constructed[2]);
+        const unsigned int constructed[2], unsigned int root_slot,
+        unsigned int root_segment);
 
 static void zeroCtrlWritePafA989NearbyFlows(SceModule2 *paf);
 static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf);
@@ -6108,7 +6109,7 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
     };
     unsigned int words[0x100 / 4];
     unsigned int call_targets[5];
-    unsigned int slot, slot_segment, slot_remaining;
+    unsigned int slot, slot_segment = 0xFFFFFFFFU, slot_remaining;
     unsigned int i, row;
     char line[256];
 
@@ -6349,16 +6350,19 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
                 slot);
         zeroCtrlDiagnosticsText(line);
     }
-    zeroCtrlWritePafA989ConstructedFlows(paf, constructed);
+    zeroCtrlWritePafA989ConstructedFlows(paf, constructed, slot, slot_segment);
     zeroCtrlWritePafA989Downstream(paf, call_targets[0], call_targets[2],
             call_targets[3]);
 }
 
 static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
-        const unsigned int constructed[2]) {
+        const unsigned int constructed[2], unsigned int root_slot,
+        unsigned int root_segment) {
     unsigned int segment, remaining, offset, look;
     unsigned int constructed0_size;
     unsigned int candidates = 0, reported = 0, closure = 0;
+    unsigned int adapter_valid = 0, exact_dispatches = 0, exact_entry = 0;
+    const char *exact_origin = "UNKNOWN";
     char line[256];
 
     if (!zeroCtrlModuleContainingSegment(paf, constructed[1], &segment,
@@ -6390,12 +6394,17 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 (jalr_delay >> 26) == 0x23 &&
                 ((jalr_delay >> 21) & 0x1F) == 16 &&
                 ((jalr_delay >> 16) & 0x1F) == 4 &&
-                (short)(jalr_delay & 0xFFFF) == 4)
+                (short)(jalr_delay & 0xFFFF) == 4) {
+            adapter_valid = 1;
             zeroCtrlDiagnosticsText(
                     "[paf-a989-constructed1-indirect] validation=1 "
                     "base_arg_reg=5 target_field_off=0x0C "
                     "arg0_field_off=0x04 jalr_off=0xB4\n");
-        else
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-callback-adapter] validation=1 "
+                    "adapter_off=0x34658 base_arg=a1 callback_field=0x0C "
+                    "callback_a0_field=0x04 jalr_off=0xB4\n");
+        } else
             zeroCtrlDiagnosticsText(
                     "[paf-a989-constructed1-indirect] validation=0\n");
     }
@@ -6511,11 +6520,12 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                         (short)(delay & 0xFFFF) == 4))
                     source[base] = 0;
                 candidates++;
-                if (reported < 16) {
+                if (reported < 16 || source[5]) {
                     unsigned int back = offset;
                     unsigned int back_start = offset > 0x40 ?
                             offset - 0x40 : 0;
                     unsigned int definition_found = 0;
+                    const char *outer_origin = "UNKNOWN";
                     snprintf(line, sizeof(line),
                             "[paf-a989-outer14-call-candidate] load_off=0x%X "
                             "jalr_off=0x%X base_reg=%u target_reg=%u\n",
@@ -6589,6 +6599,11 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                                         (int)(short)(definition & 0xFFFF);
                             }
                             if (kind != 0) {
+                                if (definition_opcode == 0x23 &&
+                                        displacement == 4)
+                                    outer_origin = "HEADER_PLUS_04";
+                                else if (definition_opcode == 0x23)
+                                    outer_origin = "LOCAL_LW";
                                 snprintf(line, sizeof(line),
                                         "[paf-a989-outer14-base-origin] "
                                         "load_off=0x%X "
@@ -6611,6 +6626,89 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                                 "load_off=0x%X status=UNKNOWN "
                                 "path=BRANCH_FREE_SUFFIX\n", offset);
                         zeroCtrlDiagnosticsText(line);
+                    }
+                    if (source[5]) {
+                        unsigned int search = offset;
+                        unsigned int function_entry = 0;
+                        while (search >= 4 && offset - search <= 0x100) {
+                            unsigned int prologue = _lw(paf->text_addr + search);
+                            if ((prologue >> 26) == 1 ||
+                                    ((prologue >> 26) >= 4 &&
+                                     (prologue >> 26) <= 7) ||
+                                    ((prologue >> 26) >= 0x14 &&
+                                     (prologue >> 26) <= 0x17) ||
+                                    (prologue >> 26) == 2 ||
+                                    ((prologue >> 26) == 0 &&
+                                     ((prologue & 0x3F) == 8 ||
+                                      (prologue & 0x3F) == 9))) break;
+                            if ((prologue >> 26) == 9 &&
+                                    ((prologue >> 21) & 0x1F) == 29 &&
+                                    ((prologue >> 16) & 0x1F) == 29 &&
+                                    (short)(prologue & 0xFFFF) < 0) {
+                                unsigned int save;
+                                for (save = search + 4; save <= search + 0x20 &&
+                                        save + 4 <= paf->text_size; save += 4) {
+                                    unsigned int save_word = _lw(
+                                            paf->text_addr + save);
+                                    if ((save_word >> 26) == 0x2B &&
+                                            ((save_word >> 21) & 0x1F) == 29 &&
+                                            ((save_word >> 16) & 0x1F) == 31) {
+                                        function_entry = search;
+                                        break;
+                                    }
+                                }
+                                if (function_entry) break;
+                            }
+                            search -= 4;
+                        }
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-exact-dispatch] site=0x%X "
+                                "target_load=0x%X jalr=0x%X outer_reg=%u "
+                                "a1_reg=5 same_outer=1 outer_origin=%s\n",
+                                look, offset, look, base, outer_origin);
+                        zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-exact-dispatch-function] site=0x%X "
+                                "entry=0x%X status=%s evidence=%s\n", look,
+                                function_entry, function_entry ? "VALID" :
+                                "UNKNOWN", function_entry ?
+                                "STACK_FRAME_AND_SAVED_RA" : "NONE");
+                        zeroCtrlDiagnosticsText(line);
+                        exact_dispatches++;
+                        exact_entry = function_entry;
+                        exact_origin = outer_origin;
+                        if (function_entry) {
+                            unsigned int caller_off, caller_reported = 0;
+                            for (caller_off = 0;
+                                    caller_off + 4 <= paf->text_size &&
+                                    caller_reported < 16; caller_off += 4) {
+                                unsigned int caller_word = _lw(
+                                        paf->text_addr + caller_off);
+                                unsigned int caller_opcode = caller_word >> 26;
+                                unsigned int arg;
+                                if ((caller_opcode != 2 && caller_opcode != 3) ||
+                                        zeroCtrlMipsJumpTarget(
+                                            paf->text_addr + caller_off,
+                                            caller_word) !=
+                                        paf->text_addr + function_entry)
+                                    continue;
+                                snprintf(line, sizeof(line),
+                                        "[paf-a989-exact-dispatch-caller] "
+                                        "entry=0x%X caller=0x%X kind=%s\n",
+                                        function_entry, caller_off,
+                                        caller_opcode == 3 ? "JAL" : "J");
+                                zeroCtrlDiagnosticsText(line);
+                                for (arg = 0; arg < 4; arg++) {
+                                    snprintf(line, sizeof(line),
+                                            "[paf-a989-exact-dispatch-arg] "
+                                            "caller=0x%X arg=a%u kind=UNKNOWN "
+                                            "reg=%u disp=0\n", caller_off, arg,
+                                            arg + 4);
+                                    zeroCtrlDiagnosticsText(line);
+                                }
+                                caller_reported++;
+                            }
+                        }
                     }
                     reported++;
                 }
@@ -6649,6 +6747,30 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 "target=0x%08X a1=inner_container execution=NOT_OBSERVED\n",
                 constructed[1]);
         zeroCtrlDiagnosticsText(line);
+    }
+    if (root_segment != 0xFFFFFFFFU && root_segment < paf->nsegment &&
+            root_slot >= paf->segmentaddr[root_segment] &&
+            zeroCtrlVshModuleRangeValid(paf, root_slot, 4)) {
+        unsigned int root_off = root_slot - paf->segmentaddr[root_segment];
+        const char *root_status = exact_dispatches && exact_entry &&
+                strcmp(exact_origin, "HEADER_PLUS_04") == 0 ?
+                "PARTIALLY_LINKED" : "UNKNOWN";
+        snprintf(line, sizeof(line),
+                "[paf-a989-root-slot] segment=%u segment_off=0x%X "
+                "value=0x%08X\n", root_segment, root_off, _lw(root_slot));
+        zeroCtrlDiagnosticsText(line);
+        snprintf(line, sizeof(line),
+                "[paf-a989-exact-dispatch-root] status=%s root_segment=%u "
+                "root_off=0x%X dispatch_entry=0x%X\n", root_status,
+                root_segment, root_off, exact_entry);
+        zeroCtrlDiagnosticsText(line);
+    }
+    if (exact_dispatches && adapter_valid && closure) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-dispatch-chain] validation=1 "
+                "outer_plus_14=constructed_1 outer_plus_04=inner "
+                "constructed1_a1=inner inner_plus_0C=vsh589c "
+                "inner_plus_04=callback_a0_source\n");
     }
     zeroCtrlWritePafA989NearbyFlows(paf);
 }
