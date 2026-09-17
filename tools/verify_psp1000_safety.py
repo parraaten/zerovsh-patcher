@@ -1512,17 +1512,17 @@ def check_sources(root):
             "opcode <= 0x2F) || opcode == 0x38" in destination_decoder:
         fail("SC is incorrectly classified as a no-destination store")
     if kernel.count("zeroCtrlWriteFunctionalVsh3f568Analysis();") != 1 or \
-            "if (!vsh3f568_scan_written && !slide_diag.functional_enabled" \
+            "if (!vsh3f568_scan_written && slide_diag.functional_enabled" \
             not in minimal or "slide_diag.minimal_memory_test" not in minimal or \
             "vsh3f568_scan_written = 1;" not in minimal:
-        fail("VSH +3F568 analysis is not diagnostic-only one-shot output")
+        fail("VSH +3F568 analysis is not a functional diagnostic one-shot")
     a989_gate_start = kernel.find(
             "static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {")
     a989_gate = kernel[a989_gate_start:kernel.find(
             'vsh = sceKernelFindModuleByName("vsh_module")', a989_gate_start)]
-    if "slide_diag.functional_enabled || !slide_diag.minimal_memory_test" \
+    if "!slide_diag.functional_enabled || !slide_diag.minimal_memory_test" \
             not in a989_gate:
-        fail("A989 analysis can still run as a functional checkpoint dependency")
+        fail("A989 analysis does not require functional minimal diagnostics")
     minimal_gate = kernel[kernel.find("slide_diag.minimal_memory_test ="):
         kernel.find("slide_diag.global_predicate_enabled =")]
     for token in ("model == 0", "devkit == 0x06060110",

@@ -7414,7 +7414,7 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     char line[256];
 
     if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
-            slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
             !slide_diag.vsh_module_seen)
         return;
     vsh = sceKernelFindModuleByName("vsh_module");
@@ -7770,7 +7770,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     slide_diag.bsman.activation_hits_addr);
             unsigned int state;
             zeroCtrlRefreshSonyStartTrace();
-            if (!vsh3f568_scan_written && !slide_diag.functional_enabled &&
+            if (!vsh3f568_scan_written && slide_diag.functional_enabled &&
                     slide_diag.minimal_memory_test && slide_diag.vsh_module_seen) {
                 vsh3f568_scan_written = 1;
                 zeroCtrlWriteFunctionalVsh3f568Analysis();
