@@ -2282,6 +2282,28 @@ def check_sources(root):
             'blocker_domain=%u' not in writer or \
             'blocker_off=0x%X' not in writer or 'blocker_arg=%u' not in writer:
         fail("functional bridge live-in evidence is missing")
+    livein_line = writer[writer.find('livein[0] ='):
+            writer.find('state[0] = slide_diag.bridge_validation')]
+    for index, token in enumerate((
+            'slide_diag.bridge_livein_validation',
+            'slide_diag.bridge_livein_arg[0]',
+            'slide_diag.bridge_livein_arg[1]',
+            'slide_diag.bridge_livein_arg[2]',
+            'slide_diag.bridge_livein_arg[3]',
+            'slide_diag.bridge_livein_blocker_domain',
+            'slide_diag.bridge_livein_blocker_call',
+            'slide_diag.bridge_livein_blocker_arg')):
+        if 'livein[' + str(index) + '] = ' + token not in livein_line:
+            fail("functional bridge live-in telemetry omits field " + token)
+    livein_compare = livein_line.find(
+            'memcmp(livein, observed_functional_bridge_livein')
+    livein_copy = livein_line.find(
+            'memcpy(observed_functional_bridge_livein, livein', livein_compare)
+    livein_emit = livein_line.find('zeroCtrlDiagnosticsText(line)', livein_copy)
+    if not 0 <= livein_compare < livein_copy < livein_emit:
+        fail("functional live-in telemetry is not changed-only")
+    if 'bridge_livein_written' in kernel:
+        fail("one-shot live-in telemetry gate suppresses later proof evidence")
     install_line = re.search(
             r'"\[psp1000-functional-314a4-install\][\s\S]{0,360}?'
             r'"validation=%u install=%u cache_sync=%u\\n"', writer)

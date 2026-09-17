@@ -8742,7 +8742,6 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
     int clockpath_written = 0;
-    int bridge_livein_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -8918,8 +8917,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 livein[5] = slide_diag.bridge_livein_blocker_domain;
                 livein[6] = slide_diag.bridge_livein_blocker_call;
                 livein[7] = slide_diag.bridge_livein_blocker_arg;
-                if (!bridge_livein_written &&
-                        memcmp(livein, observed_functional_bridge_livein,
+                if (memcmp(livein, observed_functional_bridge_livein,
                             sizeof(livein)) != 0) {
                     memcpy(observed_functional_bridge_livein, livein,
                             sizeof(livein));
@@ -8933,7 +8931,6 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             zeroCtrlBridgeLiveInClassName(livein[4]),
                             livein[5], livein[6], livein[7]);
                     zeroCtrlDiagnosticsText(line);
-                    bridge_livein_written = 1;
                 }
                 state[0] = slide_diag.bridge_validation;
                 state[1] = slide_diag.bridge_install;
