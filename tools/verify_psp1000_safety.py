@@ -3043,6 +3043,52 @@ def check_sources(root):
     if 'boundary = offset + 8;' not in boundary_search or \
             'if (boundary == 0)' not in boundary_search:
         fail("dependency analysis no longer fails closed without a full return")
+    map_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyMap(')
+    map_end = kernel.find(
+            '\nstatic int zeroCtrlWriteConstructed0DependencyConsumer(void)', map_start)
+    dependency_map = kernel[map_start:map_end]
+    if map_start < 0 or map_end < 0:
+        fail("constructed0 dependency NO_RETURN code map is missing")
+    map_validation = dependency_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, target, 0x200)')
+    map_header = dependency_map.find(
+            '[psp1000-constructed0-dependency-map] validation=1',
+            map_validation)
+    map_loop = dependency_map.find(
+            'for (offset = 0; offset <= 0x1E0; offset += 0x20)', map_header)
+    map_first_read = dependency_map.find('_lw(target + offset + 0x00)', map_loop)
+    map_last_read = dependency_map.find('_lw(target + offset + 0x1C)', map_loop)
+    if not 0 <= map_validation < map_header < map_loop < map_first_read < \
+            map_last_read:
+        fail("dependency map reads before validating its full 0x200-byte range")
+    for token in ('[psp1000-constructed0-dependency-map] validation=0',
+            'target=0x%08X target_off=0x%X size=0x200',
+            '[psp1000-constructed0-dependency-code] off=0x%03X',
+            'w0=%08X w1=%08X w2=%08X w3=%08X',
+            'w4=%08X w5=%08X w6=%08X w7=%08X'):
+        if token not in dependency_map:
+            fail("bounded constructed0 dependency map lacks " + token)
+    if dependency_map.count('_lw(') != 8 or \
+            any(token in dependency_map for token in
+                ('zeroCtrlMipsJumpTarget', 'zeroCtrlMipsBranchTarget',
+                 'a989_target_dependency', 'inner', 'outer', 'node',
+                 '_sw(', 'sceKernelDcache', 'sceKernelIcache')):
+        fail("dependency map scans, follows control flow, uses runtime objects, or writes")
+    no_return_gate = dependency_analysis.find('if (boundary == 0)')
+    no_return_record = dependency_analysis.find(
+            'reason=NO_RETURN off=0x200', no_return_gate)
+    map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyMap(paf, target);',
+            no_return_record)
+    no_return_exit = dependency_analysis.find('return 0;', map_call)
+    if not 0 <= no_return_gate < no_return_record < map_call < no_return_exit or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0DependencyMap(') != 1:
+        fail("dependency map is not gated solely by the existing NO_RETURN path")
+    if 'int constructed0_dependency_written = 0;' not in writer or \
+            'slide_diag.constructed0_dependency' in kernel:
+        fail("dependency map one-shot state is not writer-local")
     apply_start = kernel.find(
             'static int zeroCtrlApplyConstructed0DependencyInstruction(')
     apply_end = dependency_analysis_start

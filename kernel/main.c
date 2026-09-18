@@ -6896,6 +6896,34 @@ static int zeroCtrlApplyConstructed0DependencyInstruction(unsigned int word,
     return 1;
 }
 
+static void zeroCtrlWriteConstructed0DependencyMap(SceModule2 *paf,
+        unsigned int target) {
+    unsigned int offset;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, target, 0x200)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-map] validation=0\n");
+        return;
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-map] validation=1 "
+            "target=0x%08X target_off=0x%X size=0x200\n",
+            target, target - paf->text_addr);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0x1E0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-code] off=0x%03X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(target + offset + 0x00), _lw(target + offset + 0x04),
+                _lw(target + offset + 0x08), _lw(target + offset + 0x0C),
+                _lw(target + offset + 0x10), _lw(target + offset + 0x14),
+                _lw(target + offset + 0x18), _lw(target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
 static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
     SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
     SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
@@ -6985,6 +7013,7 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
         zeroCtrlDiagnosticsText(
                 "[psp1000-constructed0-dependency-analysis] validation=0 "
                 "complete=0 reason=NO_RETURN off=0x200\n");
+        zeroCtrlWriteConstructed0DependencyMap(paf, target);
         return 0;
     }
     memset(provenance, 0, sizeof(provenance));
