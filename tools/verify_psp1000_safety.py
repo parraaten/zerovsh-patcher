@@ -2108,6 +2108,30 @@ def check_sources(root):
             'segment != 0'):
         if token not in livein and token not in taint and token not in kernel:
             fail("callback-aware cross-module proof lacks " + token)
+    for token in ('ZERO_BRIDGE_BLOCK_REASON_RANGE',
+            'ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT',
+            'ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT',
+            'ZERO_BRIDGE_BLOCK_REASON_FUNCTION_LIMIT',
+            'ZERO_BRIDGE_BLOCK_REASON_DEPTH_LIMIT',
+            'ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION',
+            'ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT',
+            'ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_REGIMM',
+            'ZERO_BRIDGE_BLOCK_REASON_INVALID_BRANCH_TARGET',
+            'ZERO_BRIDGE_BLOCK_REASON_INVALID_DIRECT_CALL_TARGET',
+            'ZERO_BRIDGE_BLOCK_REASON_INVALID_DIRECT_JUMP_TARGET',
+            'ZERO_BRIDGE_BLOCK_REASON_TAINTED_INDIRECT_TARGET',
+            'ZERO_BRIDGE_BLOCK_REASON_UNRESOLVED_JALR',
+            'ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN',
+            'context->blocker_taint = taint',
+            'context->blocker_word = _lw(address)',
+            'address - 4, 4)', 'address + 4, 4)'):
+        if token not in kernel:
+            fail("bounded taint blocker evidence lacks " + token)
+    blocker_guard = kernel.find(
+            'if (context->blocker_domain != ZERO_BRIDGE_BLOCKER_NONE) return;')
+    blocker_write = kernel.find('context->blocker_reason = reason;', blocker_guard)
+    if not 0 <= blocker_guard < blocker_write:
+        fail("outer callers can overwrite the first nested taint blocker")
     for known_word in ('0x27BDFFF0', '0xAFBF0008', '0xAFB00000',
             '0x00A08021', '0xAFB10004', '0x8CA40000', '0x24840010',
             '0x8E040000', '0x26050004', '0x8E040004', '0x8E02000C'):
@@ -2121,7 +2145,7 @@ def check_sources(root):
             'depth + 1', 'context->functions >= BRIDGE_TAINT_MAX_FUNCTIONS',
             'context->instructions >= BRIDGE_TAINT_MAX_INSTRUCTIONS',
             'opcode == 0 && (function == 8 || function == 9)',
-            'zeroCtrlBridgeSetBlocker(context, module, pc, original_arg)'):
+            'zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,'):
         if token not in taint:
             fail("constructed1 bounded callee-taint proof lacks " + token)
     delay_apply = taint.find(
@@ -2292,7 +2316,9 @@ def check_sources(root):
             'slide_diag.bridge_livein_arg[3]',
             'slide_diag.bridge_livein_blocker_domain',
             'slide_diag.bridge_livein_blocker_call',
-            'slide_diag.bridge_livein_blocker_arg')):
+            'slide_diag.bridge_livein_blocker_arg',
+            'slide_diag.bridge_livein_blocker_reason',
+            'slide_diag.bridge_livein_blocker_taint')):
         if 'livein[' + str(index) + '] = ' + token not in livein_line:
             fail("functional bridge live-in telemetry omits field " + token)
     livein_compare = livein_line.find(
@@ -2304,6 +2330,25 @@ def check_sources(root):
         fail("functional live-in telemetry is not changed-only")
     if 'bridge_livein_written' in kernel:
         fail("one-shot live-in telemetry gate suppresses later proof evidence")
+    for token in ('enum ZeroCtrlBridgeBlockerReason',
+            'bridge_livein_blocker_prev_word', 'bridge_livein_blocker_word',
+            'bridge_livein_blocker_next_word',
+            '[psp1000-functional-314a4-blocker]',
+            'prev=0x%08X', 'word=0x%08X', 'next=0x%08X',
+            'reason=%u', 'taint=0x%08X', 'arg=%u'):
+        if token not in kernel:
+            fail("functional blocker evidence lacks " + token)
+    blocker_line = writer[writer.find('blocker[0] ='):
+            writer.find('state[0] = slide_diag.bridge_validation')]
+    blocker_compare = blocker_line.find(
+            'memcmp(blocker, observed_functional_bridge_blocker')
+    blocker_copy = blocker_line.find(
+            'memcpy(observed_functional_bridge_blocker, blocker', blocker_compare)
+    blocker_emit = blocker_line.find('zeroCtrlDiagnosticsText(line)', blocker_copy)
+    if not 0 <= blocker_compare < blocker_copy < blocker_emit:
+        fail("functional blocker telemetry is not changed-only")
+    if 'blocker[8]' in blocker_line or 'blocker_code' in blocker_line:
+        fail("functional blocker telemetry exceeds three local code words")
     install_line = re.search(
             r'"\[psp1000-functional-314a4-install\][\s\S]{0,360}?'
             r'"validation=%u install=%u cache_sync=%u\\n"', writer)

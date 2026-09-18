@@ -678,6 +678,11 @@ typedef struct {
     volatile unsigned int bridge_livein_blocker_call;
     volatile unsigned int bridge_livein_blocker_domain;
     volatile unsigned int bridge_livein_blocker_arg;
+    volatile unsigned int bridge_livein_blocker_reason;
+    volatile unsigned int bridge_livein_blocker_taint;
+    volatile unsigned int bridge_livein_blocker_prev_word;
+    volatile unsigned int bridge_livein_blocker_word;
+    volatile unsigned int bridge_livein_blocker_next_word;
     volatile unsigned int bridge_install_attempts;
     volatile unsigned int bridge_resolve_stage;
     volatile unsigned int bridge_resolve_reject;
@@ -4854,6 +4859,11 @@ typedef struct ZeroCtrlBridgeTaintContext {
     unsigned int blocker_call;
     unsigned int blocker_arg;
     unsigned int blocker_domain;
+    unsigned int blocker_reason;
+    unsigned int blocker_taint;
+    unsigned int blocker_prev_word;
+    unsigned int blocker_word;
+    unsigned int blocker_next_word;
     SceModule2 *paf;
     SceModule2 *vsh;
     unsigned int constructed1;
@@ -4873,12 +4883,36 @@ enum ZeroCtrlBridgeBlockerDomain {
     ZERO_BRIDGE_BLOCKER_UNRESOLVED
 };
 
+enum ZeroCtrlBridgeBlockerReason {
+    ZERO_BRIDGE_BLOCK_REASON_NONE = 0,
+    ZERO_BRIDGE_BLOCK_REASON_RANGE,
+    ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT,
+    ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT,
+    ZERO_BRIDGE_BLOCK_REASON_FUNCTION_LIMIT,
+    ZERO_BRIDGE_BLOCK_REASON_DEPTH_LIMIT,
+    ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION,
+    ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT,
+    ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_REGIMM,
+    ZERO_BRIDGE_BLOCK_REASON_INVALID_BRANCH_TARGET,
+    ZERO_BRIDGE_BLOCK_REASON_INVALID_DIRECT_CALL_TARGET,
+    ZERO_BRIDGE_BLOCK_REASON_INVALID_DIRECT_JUMP_TARGET,
+    ZERO_BRIDGE_BLOCK_REASON_TAINTED_INDIRECT_TARGET,
+    ZERO_BRIDGE_BLOCK_REASON_UNRESOLVED_JALR,
+    ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN
+};
+
+static int zeroCtrlBridgeExecutableRange(SceModule2 *module,
+        unsigned int address, unsigned int size);
+
 static void zeroCtrlBridgeSetBlocker(ZeroCtrlBridgeTaintContext *context,
-        SceModule2 *module, unsigned int address, unsigned int argument) {
+        SceModule2 *module, unsigned int address, unsigned int argument,
+        unsigned int reason, unsigned int taint) {
     unsigned int segment, remaining;
 
     if (context->blocker_domain != ZERO_BRIDGE_BLOCKER_NONE) return;
     context->blocker_arg = argument;
+    context->blocker_reason = reason;
+    context->blocker_taint = taint;
     if (!module || !zeroCtrlLoadedModuleMetadataValid(module) ||
             !zeroCtrlModuleContainingSegment(module, address, &segment,
                 &remaining)) {
@@ -4889,6 +4923,13 @@ static void zeroCtrlBridgeSetBlocker(ZeroCtrlBridgeTaintContext *context,
                 ZERO_BRIDGE_BLOCKER_PAF : module == context->vsh ?
                 ZERO_BRIDGE_BLOCKER_VSH : ZERO_BRIDGE_BLOCKER_OTHER_MODULE;
         context->blocker_call = address - module->segmentaddr[segment];
+        context->blocker_word = _lw(address);
+        if (address >= 4 && zeroCtrlBridgeExecutableRange(module,
+                    address - 4, 4))
+            context->blocker_prev_word = _lw(address - 4);
+        if (address <= 0xFFFFFFFFU - 4 &&
+                zeroCtrlBridgeExecutableRange(module, address + 4, 4))
+            context->blocker_next_word = _lw(address + 4);
     }
 }
 
@@ -4983,9 +5024,21 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
     unsigned int seen_taint[BRIDGE_TAINT_MAX_NODES];
     unsigned int head = 0, tail = 1, seen = 0;
 
-    if (depth > BRIDGE_TAINT_MAX_DEPTH ||
-            context->functions >= BRIDGE_TAINT_MAX_FUNCTIONS ||
-            !zeroCtrlBridgeExecutableRange(module, entry, 8)) return 2;
+    if (depth > BRIDGE_TAINT_MAX_DEPTH) {
+        zeroCtrlBridgeSetBlocker(context, module, entry, original_arg,
+                ZERO_BRIDGE_BLOCK_REASON_DEPTH_LIMIT, input_taint);
+        return 2;
+    }
+    if (context->functions >= BRIDGE_TAINT_MAX_FUNCTIONS) {
+        zeroCtrlBridgeSetBlocker(context, module, entry, original_arg,
+                ZERO_BRIDGE_BLOCK_REASON_FUNCTION_LIMIT, input_taint);
+        return 2;
+    }
+    if (!zeroCtrlBridgeExecutableRange(module, entry, 8)) {
+        zeroCtrlBridgeSetBlocker(context, module, entry, original_arg,
+                ZERO_BRIDGE_BLOCK_REASON_RANGE, input_taint);
+        return 2;
+    }
     context->functions++;
     queue[0].address = entry;
     queue[0].taint = input_taint;
@@ -4998,9 +5051,21 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
         for (i = 0; i < seen; i++)
             if (seen_addr[i] == pc && (taint & ~seen_taint[i]) == 0) break;
         if (i < seen) continue;
-        if (seen >= BRIDGE_TAINT_MAX_NODES ||
-                context->instructions >= BRIDGE_TAINT_MAX_INSTRUCTIONS ||
-                !zeroCtrlBridgeExecutableRange(module, pc, 4)) return 2;
+        if (seen >= BRIDGE_TAINT_MAX_NODES) {
+            zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                    ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT, taint);
+            return 2;
+        }
+        if (context->instructions >= BRIDGE_TAINT_MAX_INSTRUCTIONS) {
+            zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                    ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT, taint);
+            return 2;
+        }
+        if (!zeroCtrlBridgeExecutableRange(module, pc, 4)) {
+            zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                    ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
+            return 2;
+        }
         if (i == seen) {
             seen_addr[seen] = pc;
             seen_taint[seen++] = taint;
@@ -5011,13 +5076,22 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
         function = word & 0x3F;
         if (opcode == 3) {
             unsigned int call_taint;
-            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) return 2;
-            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS)
+            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
                 return 2;
+            }
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT, taint);
+                return 2;
+            }
             delay = _lw(pc + 4);
             result = zeroCtrlBridgeApplyTaint(delay, &taint);
             if (result) {
-                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg);
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        result == 1 ? ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION, taint);
                 return result;
             }
             call_taint = taint & 0xF0;
@@ -5028,13 +5102,16 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                 if (!zeroCtrlLoadedModuleMetadataValid(owner) ||
                         !zeroCtrlModuleContainingSegment(owner, target, &segment,
                             &remaining) || segment != 0 || remaining < 8) {
-                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_INVALID_DIRECT_CALL_TARGET,
+                            taint);
                     return 2;
                 }
                 result = zeroCtrlBridgeAnalyzeTaintedFunction(owner, target,
                         call_taint, depth + 1, original_arg, context);
                 if (result) {
-                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
                     return result;
                 }
             }
@@ -5059,55 +5136,93 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                 else if (rt != 0 && rt != 1 && rt != 16 && rt != 17) {
                     if (taint != 0)
                         zeroCtrlBridgeSetBlocker(context, module, pc,
-                                original_arg);
+                                original_arg,
+                                ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_REGIMM,
+                                taint);
                     return taint != 0 ? 2 : 0;
                 }
                 link = rt == 16 || rt == 17 || rt == 18 || rt == 19;
             }
             if (!zeroCtrlBridgeReadMask(word, &reads) || (reads & taint)) {
-                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        (reads & taint) ?
+                        ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION,
+                        taint);
                 return (reads & taint) ? 1 : 2;
             }
             /* Do not guess whether a pre-existing tainted $ra survives link. */
             if (link && (taint & (1U << 31))) {
-                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_TAINTED_INDIRECT_TARGET, taint);
                 return 2;
             }
             if (link) {
                 taken_taint &= ~(1U << 31);
                 fallthrough_taint &= ~(1U << 31);
             }
-            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) return 2;
-            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS)
+            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
                 return 2;
+            }
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT, taint);
+                return 2;
+            }
             delay = _lw(pc + 4);
             result = zeroCtrlBridgeApplyTaint(delay, &taken_taint);
             if (result) {
-                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg);
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        result == 1 ? ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION,
+                        taken_taint);
                 return result;
             }
             if (!likely) fallthrough_taint = taken_taint;
             target = zeroCtrlMipsBranchTarget(pc, word);
-            if (tail + 2 > BRIDGE_TAINT_MAX_NODES ||
-                    !zeroCtrlBridgeExecutableRange(module, target, 4)) return 2;
+            if (tail + 2 > BRIDGE_TAINT_MAX_NODES) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT, taint);
+                return 2;
+            }
+            if (!zeroCtrlBridgeExecutableRange(module, target, 4)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_INVALID_BRANCH_TARGET, taint);
+                return 2;
+            }
             queue[tail].address = target;
             queue[tail++].taint = taken_taint;
             queue[tail].address = pc + 8;
             queue[tail++].taint = fallthrough_taint;
             continue;
         } else if (opcode == 2) {
-            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) return 2;
-            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS)
+            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
                 return 2;
+            }
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT, taint);
+                return 2;
+            }
             delay = _lw(pc + 4);
             result = zeroCtrlBridgeApplyTaint(delay, &taint);
             if (result) {
-                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg);
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        result == 1 ? ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION, taint);
                 return result;
             }
             target = zeroCtrlMipsJumpTarget(pc, word);
             if (zeroCtrlBridgeExecutableRange(module, target, 4)) {
-                if (tail >= BRIDGE_TAINT_MAX_NODES) return 2;
+                if (tail >= BRIDGE_TAINT_MAX_NODES) {
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT, taint);
+                    return 2;
+                }
                 queue[tail].address = target;
                 queue[tail++].taint = taint;
                 continue;
@@ -5117,29 +5232,42 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                 if (!zeroCtrlLoadedModuleMetadataValid(owner) ||
                         !zeroCtrlModuleContainingSegment(owner, target, &segment,
                             &remaining) || segment != 0 || remaining < 8) {
-                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_INVALID_DIRECT_JUMP_TARGET,
+                            taint);
                     return 2;
                 }
                 result = zeroCtrlBridgeAnalyzeTaintedFunction(owner, target,
                         taint, depth + 1, original_arg, context);
                 if (result)
-                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
                 return result;
             }
             return 0;
         } else if (opcode == 0 && (function == 8 || function == 9)) {
             unsigned int rs = (word >> 21) & 0x1F;
             if (taint & (1U << rs)) {
-                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_TAINTED_INDIRECT_TARGET, taint);
                 return 1;
             }
-            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) return 2;
-            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS)
+            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
                 return 2;
+            }
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT, taint);
+                return 2;
+            }
             delay = _lw(pc + 4);
             result = zeroCtrlBridgeApplyTaint(delay, &taint);
             if (result) {
-                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg);
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        result == 1 ? ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION, taint);
                 return result;
             }
             if (function == 9 && (taint & 0xF0) != 0) {
@@ -5160,33 +5288,50 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                         zeroCtrlBridgeExecutableRange(context->vsh,
                             context->expected_callback, 4);
                 if (!known_callback) {
-                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_UNRESOLVED_JALR, taint);
                     return 2;
                 }
                 result = zeroCtrlBridgeAnalyzeTaintedFunction(context->vsh,
                         context->expected_callback, call_taint, depth + 1,
                         original_arg, context);
                 if (result) {
-                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
                     return result;
                 }
                 pc += 8;
-                if (tail >= BRIDGE_TAINT_MAX_NODES) return 2;
+                if (tail >= BRIDGE_TAINT_MAX_NODES) {
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT, taint);
+                    return 2;
+                }
                 queue[tail].address = pc;
                 queue[tail++].taint = taint;
                 continue;
             }
             if (function == 8 && rs == 31) continue;
-            return taint ? 2 : 0;
+            if (taint) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_UNRESOLVED_JALR, taint);
+                return 2;
+            }
+            return 0;
         } else {
             result = zeroCtrlBridgeApplyTaint(word, &taint);
             if (result) {
-                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg);
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        result == 1 ? ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION, taint);
                 return result;
             }
             pc += 4;
         }
-        if (tail >= BRIDGE_TAINT_MAX_NODES) return 2;
+        if (tail >= BRIDGE_TAINT_MAX_NODES) {
+            zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                    ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT, taint);
+            return 2;
+        }
         queue[tail].address = pc;
         queue[tail++].taint = taint;
     }
@@ -5217,6 +5362,11 @@ static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf, SceModule2 *vsh,
     slide_diag.bridge_livein_blocker_call = 0;
     slide_diag.bridge_livein_blocker_domain = ZERO_BRIDGE_BLOCKER_NONE;
     slide_diag.bridge_livein_blocker_arg = 0;
+    slide_diag.bridge_livein_blocker_reason = ZERO_BRIDGE_BLOCK_REASON_NONE;
+    slide_diag.bridge_livein_blocker_taint = 0;
+    slide_diag.bridge_livein_blocker_prev_word = 0;
+    slide_diag.bridge_livein_blocker_word = 0;
+    slide_diag.bridge_livein_blocker_next_word = 0;
     if (!zeroCtrlLoadedModuleMetadataValid(vsh) ||
             expected_callback != vsh->text_addr + 0x589C ||
             !zeroCtrlVshModuleRangeValid(vsh, expected_callback, 4) ||
@@ -5251,10 +5401,16 @@ static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf, SceModule2 *vsh,
     if (a2 != 0) {
         slide_diag.bridge_livein_arg[2] = a2 == 1 ?
                 ZERO_BRIDGE_LIVEIN_REQUIRED : ZERO_BRIDGE_LIVEIN_UNKNOWN;
-        zeroCtrlBridgeSetBlocker(&context, paf, constructed1 + call_off[0], 2);
+        zeroCtrlBridgeSetBlocker(&context, paf, constructed1 + call_off[0], 2,
+                ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, 1U << 6);
         slide_diag.bridge_livein_blocker_call = context.blocker_call;
         slide_diag.bridge_livein_blocker_domain = context.blocker_domain;
         slide_diag.bridge_livein_blocker_arg = 2;
+        slide_diag.bridge_livein_blocker_reason = context.blocker_reason;
+        slide_diag.bridge_livein_blocker_taint = context.blocker_taint;
+        slide_diag.bridge_livein_blocker_prev_word = context.blocker_prev_word;
+        slide_diag.bridge_livein_blocker_word = context.blocker_word;
+        slide_diag.bridge_livein_blocker_next_word = context.blocker_next_word;
         return 0;
     }
     slide_diag.bridge_livein_arg[2] = ZERO_BRIDGE_LIVEIN_IGNORED;
@@ -5268,10 +5424,16 @@ static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf, SceModule2 *vsh,
     if (a3 != 0) {
         slide_diag.bridge_livein_arg[3] = a3 == 1 ?
                 ZERO_BRIDGE_LIVEIN_REQUIRED : ZERO_BRIDGE_LIVEIN_UNKNOWN;
-        zeroCtrlBridgeSetBlocker(&context, paf, constructed1 + call_off[0], 3);
+        zeroCtrlBridgeSetBlocker(&context, paf, constructed1 + call_off[0], 3,
+                ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, 1U << 7);
         slide_diag.bridge_livein_blocker_call = context.blocker_call;
         slide_diag.bridge_livein_blocker_domain = context.blocker_domain;
         slide_diag.bridge_livein_blocker_arg = 3;
+        slide_diag.bridge_livein_blocker_reason = context.blocker_reason;
+        slide_diag.bridge_livein_blocker_taint = context.blocker_taint;
+        slide_diag.bridge_livein_blocker_prev_word = context.blocker_prev_word;
+        slide_diag.bridge_livein_blocker_word = context.blocker_word;
+        slide_diag.bridge_livein_blocker_next_word = context.blocker_next_word;
         return 0;
     }
     slide_diag.bridge_livein_arg[3] = ZERO_BRIDGE_LIVEIN_IGNORED;
@@ -8733,7 +8895,12 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
-    unsigned int observed_functional_bridge_livein[8] = {
+    unsigned int observed_functional_bridge_livein[10] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_bridge_blocker[8] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
@@ -8886,7 +9053,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             }
             if (slide_diag.functional_enabled && slide_diag.bridge_registered) {
                 unsigned int state[12];
-                unsigned int livein[8];
+                unsigned int livein[10];
+                unsigned int blocker[8];
                 unsigned int install_state[8];
                 install_state[0] = slide_diag.bridge_install_attempts;
                 install_state[1] = slide_diag.bridge_resolve_stage;
@@ -8917,6 +9085,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 livein[5] = slide_diag.bridge_livein_blocker_domain;
                 livein[6] = slide_diag.bridge_livein_blocker_call;
                 livein[7] = slide_diag.bridge_livein_blocker_arg;
+                livein[8] = slide_diag.bridge_livein_blocker_reason;
+                livein[9] = slide_diag.bridge_livein_blocker_taint;
                 if (memcmp(livein, observed_functional_bridge_livein,
                             sizeof(livein)) != 0) {
                     memcpy(observed_functional_bridge_livein, livein,
@@ -8924,12 +9094,35 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     snprintf(line, sizeof(line),
                             "[psp1000-functional-314a4-livein] validation=%u "
                             "a0=%s a1=%s a2=%s a3=%s blocker_domain=%u "
-                            "blocker_off=0x%X blocker_arg=%u\n", livein[0],
+                            "blocker_off=0x%X blocker_arg=%u blocker_reason=%u "
+                            "blocker_taint=0x%08X\n", livein[0],
                             zeroCtrlBridgeLiveInClassName(livein[1]),
                             zeroCtrlBridgeLiveInClassName(livein[2]),
                             zeroCtrlBridgeLiveInClassName(livein[3]),
                             zeroCtrlBridgeLiveInClassName(livein[4]),
-                            livein[5], livein[6], livein[7]);
+                            livein[5], livein[6], livein[7], livein[8],
+                            livein[9]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                blocker[0] = slide_diag.bridge_livein_blocker_domain;
+                blocker[1] = slide_diag.bridge_livein_blocker_call;
+                blocker[2] = slide_diag.bridge_livein_blocker_prev_word;
+                blocker[3] = slide_diag.bridge_livein_blocker_word;
+                blocker[4] = slide_diag.bridge_livein_blocker_next_word;
+                blocker[5] = slide_diag.bridge_livein_blocker_reason;
+                blocker[6] = slide_diag.bridge_livein_blocker_taint;
+                blocker[7] = slide_diag.bridge_livein_blocker_arg;
+                if (blocker[0] != ZERO_BRIDGE_BLOCKER_NONE &&
+                        memcmp(blocker, observed_functional_bridge_blocker,
+                            sizeof(blocker)) != 0) {
+                    memcpy(observed_functional_bridge_blocker, blocker,
+                            sizeof(blocker));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-314a4-blocker] domain=%u "
+                            "off=0x%X prev=0x%08X word=0x%08X next=0x%08X "
+                            "reason=%u taint=0x%08X arg=%u\n", blocker[0],
+                            blocker[1], blocker[2], blocker[3], blocker[4],
+                            blocker[5], blocker[6], blocker[7]);
                     zeroCtrlDiagnosticsText(line);
                 }
                 state[0] = slide_diag.bridge_validation;
