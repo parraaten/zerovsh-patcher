@@ -2101,7 +2101,7 @@ def check_sources(root):
             '_lw(context->constructed1 + 0x48) == 0',
             '_lw(context->constructed1 + 0xB8) == 0x8E040004',
             'zeroCtrlBridgeAnalyzeTaintedFunction(context->vsh',
-            'context->expected_callback, call_taint',
+            'context->expected_callback, callback_input_taint',
             'zeroCtrlBridgeExecutableRange(module, pc, 4)',
             'sceKernelFindModuleByAddress(target)',
             'zeroCtrlLoadedModuleMetadataValid(owner)',
@@ -2140,7 +2140,7 @@ def check_sources(root):
     if re.search(r'offset\s*<=\s*0x40[\s\S]{0,400}'
             r'opcode\s*==\s*3[\s\S]{0,80}return\s+0', livein):
         fail("constructed1 validator still rejects its known direct JALs")
-    for token in ('call_taint = taint & 0xF0',
+    for token in ('callee_input_taint = taint',
             'zeroCtrlBridgeAnalyzeTaintedFunction(owner, target',
             'depth + 1', 'context->functions >= BRIDGE_TAINT_MAX_FUNCTIONS',
             'context->instructions >= BRIDGE_TAINT_MAX_INSTRUCTIONS',
@@ -2150,12 +2150,18 @@ def check_sources(root):
             fail("constructed1 bounded callee-taint proof lacks " + token)
     delay_apply = taint.find(
             'result = zeroCtrlBridgeApplyTaint(delay, &taint)')
-    call_classify = taint.find('call_taint = taint & 0xF0', delay_apply)
+    jal_link_kill = taint.rfind('taint &= ~(1U << 31)', 0, delay_apply)
+    call_classify = taint.find('callee_input_taint = taint', delay_apply)
     recursive_call = taint.find(
             'zeroCtrlBridgeAnalyzeTaintedFunction(owner, target', call_classify)
     continuation = taint.find('pc += 8', recursive_call)
-    if not 0 <= delay_apply < call_classify < recursive_call < continuation:
-        fail("direct-call taint/delay-slot ordering regressed")
+    if not 0 <= jal_link_kill < delay_apply < call_classify < recursive_call < \
+            continuation:
+        fail("direct-call link/delay/full-taint ordering regressed")
+    direct_call = taint[jal_link_kill:continuation]
+    if 'taint & 0xF0' in direct_call or \
+            'callee_input_taint, depth + 1' not in direct_call:
+        fail("direct-call recursion is still argument-only")
     forbidden_abi_kills = ('taint &= ~0x8300FFFCU',
             'taint &= ~VSH_CALLER_SAVED_GPR_MASK',
             'caller-saved values cannot carry the old incoming taint',
@@ -2170,19 +2176,21 @@ def check_sources(root):
             'ZeroCtrlBridgeReturnSummary callee_summary',
             'ZeroCtrlBridgeReturnSummary tail_summary',
             'ZeroCtrlBridgeReturnSummary callback_summary',
-            'taint = (taint & ~call_taint) |',
+            'taint = callee_summary.return_taint',
             'callee_summary.return_taint',
             'summary->return_taint |= tail_summary.return_taint',
             'callback_summary.return_taint',
             'summary->return_taint |= taint'):
         if token not in kernel and token not in taint:
             fail("return-taint summary lacks " + token)
-    direct_summary = taint.find('if (callee_summary.saw_return)', recursive_call)
-    direct_replace = taint.find('taint = (taint & ~call_taint) |', direct_summary)
-    if not 0 <= recursive_call < direct_summary < direct_replace < continuation:
+    no_direct_return = taint.find(
+            'if (!callee_summary.saw_return) continue;', recursive_call)
+    direct_replace = taint.find(
+            'taint = callee_summary.return_taint', no_direct_return)
+    if not 0 <= recursive_call < no_direct_return < direct_replace < continuation:
         fail("direct-call return summary does not mechanically update caller taint")
-    if '(taint & ~call_taint)' not in taint[direct_summary:continuation]:
-        fail("callee summary erases caller-local non-argument taint")
+    if '(taint & ~' in direct_call:
+        fail("direct-call summary retains pre-call taint outside an incomplete subset")
     jr_return = taint.find('if (function == 8 && rs == 31)')
     jalr_block = taint.rfind(
             'opcode == 0 && (function == 8 || function == 9)', 0, jr_return)
@@ -2200,12 +2208,44 @@ def check_sources(root):
             'summary->return_taint |= tail_summary.return_taint', tail_recurse)
     if not 0 <= tail_recurse < tail_union:
         fail("direct tail-call return summary is not propagated")
+    tail_continue = taint.find('continue;', tail_union)
+    if tail_continue < tail_union or \
+            'return result;' in taint[tail_union:tail_continue]:
+        fail("successful tail path discards pending sibling CFG nodes")
     callback_recurse_for_summary = taint.find(
             'zeroCtrlBridgeAnalyzeTaintedFunction(context->vsh')
     callback_replace = taint.find(
             'callback_summary.return_taint', callback_recurse_for_summary)
     if not 0 <= callback_recurse_for_summary < callback_replace:
         fail("known callback return summary is not propagated")
+    callback_start = taint.rfind(
+            'if (function == 9 && taint != 0)', 0,
+            callback_recurse_for_summary)
+    callback_no_return = taint.find(
+            'if (!callback_summary.saw_return) continue;',
+            callback_recurse_for_summary)
+    if callback_start < 0 or \
+            'unsigned int callback_input_taint = taint' not in \
+            taint[callback_start:callback_recurse_for_summary] or \
+            'taint & 0xF0' in taint[callback_start:callback_recurse_for_summary] or \
+            not callback_recurse_for_summary < callback_no_return < callback_replace:
+        fail("known callback does not use full live taint/return reachability")
+    jalr_start_for_link = taint.rfind(
+            '} else if (opcode == 0 && (function == 8 || function == 9))',
+            0, callback_start)
+    target_taint_check = taint.find(
+            'if (taint & (1U << rs))', jalr_start_for_link, callback_start)
+    jalr_link_kill = taint.find(
+            'if (function == 9 && rd != 0) taint &= ~(1U << rd)',
+            target_taint_check, callback_start)
+    jalr_delay_apply = taint.find(
+            'zeroCtrlBridgeApplyTaint(delay, &taint)', jalr_link_kill,
+            callback_start)
+    if not 0 <= target_taint_check < jalr_link_kill < jalr_delay_apply:
+        fail("JALR target/link/delay ordering is not architectural")
+    analyzer = kernel[taint_start:livein_start]
+    if analyzer.count('return 0;') != 1 or not analyzer.rstrip().endswith('}'):
+        fail("path-local safe exits can terminate the whole taint traversal")
     if '0x36AB0' in kernel or '0x36A64' in kernel:
         fail("hardware blocker/callee was hard-coded into the taint proof")
     for offset in ('0x18', '0x24', '0x30', '0x38'):
@@ -2220,7 +2260,7 @@ def check_sources(root):
             'unsigned int fallthrough_taint = taint',
             'rt == 2 || rt == 3 || rt == 18 || rt == 19',
             'rt != 0 && rt != 1 && rt != 16 && rt != 17',
-            'return taint != 0 ? 2 : 0',
+            'if (taint != 0) return 2',
             'rt == 16 || rt == 17 || rt == 18 || rt == 19',
             'link && (taint & (1U << 31))',
             'taken_taint &= ~(1U << 31)',

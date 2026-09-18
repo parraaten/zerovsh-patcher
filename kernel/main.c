@@ -5083,8 +5083,10 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
         opcode = word >> 26;
         function = word & 0x3F;
         if (opcode == 3) {
-            unsigned int call_taint;
+            unsigned int callee_input_taint;
             ZeroCtrlBridgeReturnSummary callee_summary;
+            /* JAL defines ra before its architectural delay slot executes. */
+            taint &= ~(1U << 31);
             if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
                 zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
                         ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
@@ -5103,9 +5105,9 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                         ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION, taint);
                 return result;
             }
-            call_taint = taint & 0xF0;
+            callee_input_taint = taint;
             target = zeroCtrlMipsJumpTarget(pc, word);
-            if (call_taint != 0) {
+            if (callee_input_taint != 0) {
                 SceModule2 *owner = sceKernelFindModuleByAddress(target);
                 unsigned int segment, remaining;
                 if (!zeroCtrlLoadedModuleMetadataValid(owner) ||
@@ -5117,16 +5119,18 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                     return 2;
                 }
                 result = zeroCtrlBridgeAnalyzeTaintedFunction(owner, target,
-                        call_taint, depth + 1, original_arg, context,
+                        callee_input_taint, depth + 1, original_arg, context,
                         &callee_summary);
                 if (result) {
                     zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
                             ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
                     return result;
                 }
-                if (callee_summary.saw_return)
-                    taint = (taint & ~call_taint) |
-                            callee_summary.return_taint;
+                if (!callee_summary.saw_return) continue;
+                taint = callee_summary.return_taint;
+            } else {
+                /* This path has lost the tracked value; do not discard siblings. */
+                continue;
             }
             pc += 8;
         } else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
@@ -5147,7 +5151,8 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                                 original_arg,
                                 ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_REGIMM,
                                 taint);
-                    return taint != 0 ? 2 : 0;
+                    if (taint != 0) return 2;
+                    continue;
                 }
                 link = rt == 16 || rt == 17 || rt == 18 || rt == 19;
             }
@@ -5249,23 +5254,28 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                 result = zeroCtrlBridgeAnalyzeTaintedFunction(owner, target,
                         taint, depth + 1, original_arg, context,
                         &tail_summary);
-                if (result)
+                if (result) {
                     zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
                             ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
-                else if (tail_summary.saw_return) {
+                    return result;
+                }
+                if (tail_summary.saw_return) {
                     summary->saw_return = 1;
                     summary->return_taint |= tail_summary.return_taint;
                 }
-                return result;
+                continue;
             }
-            return 0;
+            continue;
         } else if (opcode == 0 && (function == 8 || function == 9)) {
             unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rd = (word >> 11) & 0x1F;
             if (taint & (1U << rs)) {
                 zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
                         ZERO_BRIDGE_BLOCK_REASON_TAINTED_INDIRECT_TARGET, taint);
                 return 1;
             }
+            /* JALR consumes rs, then defines its link destination before delay. */
+            if (function == 9 && rd != 0) taint &= ~(1U << rd);
             if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
                 zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
                         ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
@@ -5284,8 +5294,8 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                         ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION, taint);
                 return result;
             }
-            if (function == 9 && (taint & 0xF0) != 0) {
-                unsigned int call_taint = taint & 0xF0;
+            if (function == 9 && taint != 0) {
+                unsigned int callback_input_taint = taint;
                 ZeroCtrlBridgeReturnSummary callback_summary;
                 int known_callback = module == context->paf &&
                         pc == context->constructed1 + 0xB4 &&
@@ -5308,16 +5318,16 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                     return 2;
                 }
                 result = zeroCtrlBridgeAnalyzeTaintedFunction(context->vsh,
-                        context->expected_callback, call_taint, depth + 1,
+                        context->expected_callback, callback_input_taint,
+                        depth + 1,
                         original_arg, context, &callback_summary);
                 if (result) {
                     zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
                             ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
                     return result;
                 }
-                if (callback_summary.saw_return)
-                    taint = (taint & ~call_taint) |
-                            callback_summary.return_taint;
+                if (!callback_summary.saw_return) continue;
+                taint = callback_summary.return_taint;
                 pc += 8;
                 if (tail >= BRIDGE_TAINT_MAX_NODES) {
                     zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
@@ -5339,7 +5349,7 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                         ZERO_BRIDGE_BLOCK_REASON_UNRESOLVED_JALR, taint);
                 return 2;
             }
-            return 0;
+            continue;
         } else {
             result = zeroCtrlBridgeApplyTaint(word, &taint);
             if (result) {
