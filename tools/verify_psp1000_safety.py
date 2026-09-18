@@ -2406,6 +2406,15 @@ def check_sources(root):
             "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header or \
             "sizeof(ZeroCtrlActivationWideRegistration) == 304" not in bsman_header:
         fail("bridge registration changed a fixed activation ABI")
+    if "sizeof(ZeroCtrlVsh5704TraceRegistration) == 16" not in bsman_header or \
+            "scalar_addr[16]" not in bsman_header:
+        fail("VSH+5704 trace is not a separate fixed diagnostic registration")
+    for source, token in ((kernel_exports,
+                'zeroCtrlRegisterVsh5704Trace, 0x13373582'),
+            (user_imports, '0x13373582, zeroCtrlRegisterVsh5704Trace'),
+            (user_imports, '0x00130005')):
+        if token not in source:
+            fail("VSH+5704 trace registration interface lacks " + token)
     bridge_user_registration = user[user.find(
             'psp1000BridgeRegistration.helper_addr'):user.find(
             'zeroCtrlRegisterPsp1000FunctionalBridge', user.find(
@@ -2418,6 +2427,85 @@ def check_sources(root):
             'zeroCtrlRegisterPsp1000FunctionalBridge', user.find(
                 'psp1000BridgeRegistration.helper_addr'))]:
         fail("bridge registration aliases historical trigger counters")
+    trace_install_start = kernel.find(
+            'static void zeroCtrlInstallVsh5704RegistrationTrace(void) {')
+    trace_register_start = kernel.find('void zeroCtrlRegisterVsh5704Trace(',
+            trace_install_start)
+    trace_register_end = kernel.find(
+            'static int zeroCtrlPsp1000BridgeUserRangeValid(',
+            trace_register_start)
+    trace_install = kernel[trace_install_start:trace_register_start]
+    trace_registration = kernel[trace_register_start:trace_register_end]
+    for token in ('model != 0', 'sceKernelDevkitVersion() != 0x06060110',
+            '!slide_diag.functional_enabled', 'vsh->text_size != 0x556C0',
+            '!slide_diag.vsh_module_seen', 'vsh->modid != slide_diag.vsh_modid',
+            'vsh->text_addr != slide_diag.vsh_text_addr',
+            'vsh->text_size != slide_diag.vsh_text_size',
+            'text + 0x56FC, 0x10', 'text + 0x5700', 'text + 0x589C',
+            'owner = text + 0x5704', 'target = text + 0x3F568',
+            '(_lw(owner) >> 26) != 3',
+            'zeroCtrlMipsJumpTarget(owner, _lw(owner)) != target',
+            'zeroCtrlMipsMove(_lw(text + 0x5708), 4, 29)',
+            '"scePaf", 0xA989A2C4', 'paf->text_addr + 0x35978',
+            '_lw(slide_diag.vsh5704_trace_jump_slot) != 0x08000000',
+            'zeroCtrlMipsJumpTarget(slide_diag.vsh5704_trace_jump_slot,',
+            'zeroCtrlMipsJumpTarget(owner, replacement)',
+            'slide_diag.vsh5704_trace_validation = 1'):
+        if token not in trace_install:
+            fail("VSH+5704 exact installer lacks " + token)
+    helper_patch = trace_install.find(
+            '_sw(helper_jump, slide_diag.vsh5704_trace_jump_slot)')
+    helper_dcache = trace_install.find(
+            'sceKernelDcacheWritebackInvalidateRange(', helper_patch)
+    helper_icache = trace_install.find(
+            'sceKernelIcacheInvalidateRange(', helper_dcache)
+    owner_patch = trace_install.find('_sw(replacement, owner)', helper_icache)
+    owner_dcache = trace_install.find(
+            'sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4)',
+            owner_patch)
+    owner_icache = trace_install.find(
+            'sceKernelIcacheInvalidateRange((const void *)owner, 4)', owner_dcache)
+    if not 0 <= helper_patch < helper_dcache < helper_icache < owner_patch < \
+            owner_dcache < owner_icache:
+        fail("VSH+5704 helper/owner commit and cache ordering regressed")
+    for token in ('ZeroCtrlVsh5704TraceRegistration copied',
+            'copied.helper_end_addr - copied.helper_addr',
+            'copied.jump_slot_addr', 'copied.hit_counter_addr',
+            'slide_diag.vsh5704_trace_registered = 1',
+            'zeroCtrlInstallVsh5704RegistrationTrace();'):
+        if token not in trace_registration:
+            fail("VSH+5704 trace registration lacks " + token)
+    trace_helper_start = assembly.find('zeroCtrlVsh5704RegistrationTrace:')
+    trace_helper_end = assembly.find(
+            'zeroCtrlVsh5704RegistrationTraceEnd:', trace_helper_start)
+    trace_helper = assembly[trace_helper_start:trace_helper_end]
+    for token in ('addiu   $sp, $sp, -8', 'sw      $t0, 0($sp)',
+            'sw      $t1, 4($sp)', 'lw      $t1, 4($sp)',
+            'lw      $t0, 0($sp)', '.word   0x08000000',
+            'addiu   $sp, $sp, 8',
+            'zeroCtrlVsh5704RegistrationTraceHits'):
+        if token not in trace_helper:
+            fail("VSH+5704 transparent helper lacks " + token)
+    if any(token in trace_helper for token in ('jal ', 'jalr', 'sw      $ra',
+            'move    $a', 'zeroCtrlTrigger58D4Request')):
+        fail("VSH+5704 trace calls code or changes Sony argument/return state")
+    if trace_helper.count('sw      $t1, %lo(') != 1:
+        fail("VSH+5704 helper records more than its dedicated hit counter")
+    trace_user_registration = user[user.find(
+            'vsh5704TraceRegistration.helper_addr'):user.find(
+            'zeroCtrlRegisterVsh5704Trace', user.find(
+                'vsh5704TraceRegistration.helper_addr'))]
+    for token in ('zeroCtrlVsh5704RegistrationTrace',
+            'zeroCtrlVsh5704RegistrationTraceEnd',
+            'zeroCtrlVsh5704RegistrationTraceJump',
+            'zeroCtrlVsh5704RegistrationTraceHits'):
+        if token not in trace_user_registration:
+            fail("user VSH+5704 registration lacks " + token)
+    if 'zeroCtrlInstallVsh5704RegistrationTrace' in home_request:
+        fail("HOME installs the VSH+5704 diagnostic trace")
+    if 'vsh5704_trace_registered' not in module_start or \
+            'zeroCtrlInstallVsh5704RegistrationTrace();' not in module_start:
+        fail("OnModuleStart no longer retries the VSH+5704 trace")
     if '[psp1000-functional-314a4-bridge]' not in writer:
         fail("functional bridge telemetry is missing")
     if '[psp1000-functional-314a4-livein]' not in writer or \
@@ -2478,6 +2566,11 @@ def check_sources(root):
             writer)
     if not bridge_line:
         fail("functional bridge telemetry is incomplete or oversized")
+    trace_line = re.search(
+            r'"\[psp1000-vsh5704-registration-trace\][\s\S]{0,280}?'
+            r'"original_target_off=0x3F568\\n"', writer)
+    if not trace_line:
+        fail("VSH+5704 changed-only hit telemetry is missing or oversized")
     reject2_start = writer.find(
             'if (slide_diag.bridge_validation == 1 &&')
     reject2_end = writer.find('\n            }\n', reject2_start)
@@ -2501,6 +2594,27 @@ def check_sources(root):
             fail("reject-2 bounded snapshot lacks " + token)
     if 'for (' in reject2_writer or 'while (' in reject2_writer:
         fail("reject-2 diagnostics add an arbitrary-memory scan")
+    root_marker = writer.find('[psp1000-a989-root-state]')
+    root_start = writer.rfind(
+            'if (slide_diag.bridge_validation == 1 &&', 0, root_marker)
+    root_end = writer.find('\n                }\n', root_marker)
+    root_writer = writer[root_start:root_end]
+    for token in ('zeroCtrlVshModuleRangeValid(paf,',
+            'slide_diag.bridge_root_slot, 4)',
+            'zeroCtrlPsp1000BridgeUserRangeValid(header, 8,',
+            'unsigned int next = _lw(header + 4)', 'next == header',
+            'next != header',
+            'zeroCtrlPsp1000BridgeUserRangeValid(next,',
+            '0x18, lower, upper)', '_lw(next + 0x00)',
+            '_lw(next + 0x14)', 'unsigned int inner = _lw(next + 0x04)',
+            'zeroCtrlPsp1000BridgeUserRangeValid(inner,',
+            '0x10, lower, upper)', '_lw(inner + 0x0C)',
+            'memcmp(root_state, observed_a989_root_state',
+            '[psp1000-a989-root-state]'):
+        if token not in root_writer:
+            fail("bounded A989 root-state classification lacks " + token)
+    if 'for (' in root_writer or 'while (' in root_writer:
+        fail("A989 root-state diagnostic walks or scans the root list")
     clock_start = kernel.find(
             "static int zeroCtrlWriteFunctionalClockPathAnalysis(void)")
     clock_end = kernel.find("static int zeroCtrlMipsMove(", clock_start)

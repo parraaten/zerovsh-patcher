@@ -582,6 +582,7 @@ static void zeroCtrlInstallDispatchEntryTrace(void);
 static void zeroCtrlInstall6F84ConsumerTraces(void);
 static void zeroCtrlInstallCapabilityMaskTraces(void);
 static void zeroCtrlInstallVshCtrl314A4Bridge(void);
+static void zeroCtrlInstallVsh5704RegistrationTrace(void);
 
 enum zeroCtrlBSManStubForm {
     ZERO_BSMAN_STUB_UNKNOWN = 0,
@@ -686,6 +687,15 @@ typedef struct {
     volatile unsigned int bridge_install_attempts;
     volatile unsigned int bridge_resolve_stage;
     volatile unsigned int bridge_resolve_reject;
+    int vsh5704_trace_registered;
+    volatile int vsh5704_trace_validation;
+    volatile int vsh5704_trace_install;
+    volatile int vsh5704_trace_cache_sync;
+    unsigned int vsh5704_trace_helper;
+    unsigned int vsh5704_trace_helper_end;
+    unsigned int vsh5704_trace_jump_slot;
+    unsigned int vsh5704_trace_hit_counter;
+    unsigned int vsh5704_trace_original_target;
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -5778,6 +5788,112 @@ void zeroCtrlRegisterPsp1000FunctionalBridge(
     zeroCtrlInstallVshCtrl314A4Bridge();
 }
 
+static void zeroCtrlInstallVsh5704RegistrationTrace(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int text, owner, target, helper_jump, replacement;
+
+    if (slide_diag.vsh5704_trace_install ||
+            !slide_diag.vsh5704_trace_registered ||
+            !slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            strcmp(paf->modname, "scePaf_Module") != 0 ||
+            !slide_diag.vsh_module_seen ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 || paf->text_size <= 0x35978)
+        return;
+    text = vsh->text_addr;
+    owner = text + 0x5704;
+    target = text + 0x3F568;
+    if (!zeroCtrlVshModuleRangeValid(vsh, text + 0x56FC, 0x10) ||
+            !zeroCtrlVshModuleRangeValid(vsh, target, 8) ||
+            (_lw(text + 0x56FC) >> 26) != 0x0F ||
+            ((_lw(text + 0x56FC) >> 16) & 0x1F) != 5 ||
+            (_lw(text + 0x5700) >> 26) != 9 ||
+            ((_lw(text + 0x5700) >> 21) & 0x1F) != 5 ||
+            ((_lw(text + 0x5700) >> 16) & 0x1F) != 5 ||
+            (((_lw(text + 0x56FC) & 0xFFFF) << 16) +
+             (int)(short)(_lw(text + 0x5700) & 0xFFFF)) != text + 0x589C ||
+            (_lw(owner) >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner, _lw(owner)) != target ||
+            !zeroCtrlMipsMove(_lw(text + 0x5708), 4, 29) ||
+            (_lw(target) >> 26) != 2 || _lw(target + 4) != 0 ||
+            !zeroCtrlPsp1000BridgeImportMatches(vsh, target,
+                "scePaf", 0xA989A2C4) ||
+            zeroCtrlMipsJumpTarget(target, _lw(target)) !=
+                paf->text_addr + 0x35978 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.vsh5704_trace_helper,
+                slide_diag.vsh5704_trace_helper_end -
+                    slide_diag.vsh5704_trace_helper) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.vsh5704_trace_jump_slot, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.vsh5704_trace_hit_counter, 4) ||
+            _lw(slide_diag.vsh5704_trace_jump_slot) != 0x08000000)
+        return;
+    helper_jump = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
+    replacement = 0x0C000000 |
+            ((slide_diag.vsh5704_trace_helper >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(slide_diag.vsh5704_trace_jump_slot,
+                helper_jump) != target ||
+            zeroCtrlMipsJumpTarget(owner, replacement) !=
+                slide_diag.vsh5704_trace_helper)
+        return;
+    slide_diag.vsh5704_trace_original_target = target;
+    slide_diag.vsh5704_trace_validation = 1;
+    _sw(0, slide_diag.vsh5704_trace_hit_counter);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.vsh5704_trace_hit_counter, 4);
+    _sw(helper_jump, slide_diag.vsh5704_trace_jump_slot);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.vsh5704_trace_jump_slot, 4);
+    sceKernelIcacheInvalidateRange(
+            (const void *)slide_diag.vsh5704_trace_jump_slot, 4);
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    slide_diag.vsh5704_trace_install = 1;
+    slide_diag.vsh5704_trace_cache_sync = 1;
+}
+
+void zeroCtrlRegisterVsh5704Trace(
+        const ZeroCtrlVsh5704TraceRegistration *registration) {
+    ZeroCtrlVsh5704TraceRegistration copied;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+
+    if (!registration || !slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            ((unsigned int)registration & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, (unsigned int)registration,
+                sizeof(copied)))
+        return;
+    memcpy(&copied, registration, sizeof(copied));
+    if ((copied.helper_addr & 3) != 0 ||
+            copied.helper_end_addr <= copied.helper_addr ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.helper_addr,
+                copied.helper_end_addr - copied.helper_addr) ||
+            (copied.jump_slot_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.jump_slot_addr, 4) ||
+            (copied.hit_counter_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.hit_counter_addr, 4))
+        return;
+    slide_diag.vsh5704_trace_helper = copied.helper_addr;
+    slide_diag.vsh5704_trace_helper_end = copied.helper_end_addr;
+    slide_diag.vsh5704_trace_jump_slot = copied.jump_slot_addr;
+    slide_diag.vsh5704_trace_hit_counter = copied.hit_counter_addr;
+    slide_diag.vsh5704_trace_registered = 1;
+    zeroCtrlInstallVsh5704RegistrationTrace();
+}
+
 static int zeroCtrlPsp1000BridgeUserRangeValid(unsigned int address,
         unsigned int size, unsigned int lower, unsigned int upper) {
     return size != 0 && (address & 3) == 0 && lower <= address &&
@@ -8942,6 +9058,12 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_vsh5704_trace[4] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_a989_root_state[4] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     unsigned int observed_functional_bridge_livein[10] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
@@ -9260,6 +9382,73 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 reject2[13]);
                         zeroCtrlDiagnosticsText(line);
                     }
+                }
+                if (slide_diag.bridge_validation == 1 &&
+                        slide_diag.bridge_install == 1) {
+                    SceModule2 *paf = sceKernelFindModuleByName(
+                            "scePaf_Module");
+                    unsigned int root_state[4] = { 0, 0, 0, 0 };
+                    unsigned int lower = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_scalar[5]);
+                    unsigned int upper = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_scalar[6]);
+
+                    if (zeroCtrlLoadedModuleMetadataValid(paf) &&
+                            zeroCtrlVshModuleRangeValid(paf,
+                                slide_diag.bridge_root_slot, 4)) {
+                        unsigned int header = _lw(slide_diag.bridge_root_slot);
+                        root_state[0] = header;
+                        if (zeroCtrlPsp1000BridgeUserRangeValid(header, 8,
+                                    lower, upper)) {
+                            unsigned int next = _lw(header + 4);
+                            root_state[1] = next;
+                            root_state[2] = next == header;
+                            if (next != header &&
+                                    zeroCtrlPsp1000BridgeUserRangeValid(next,
+                                        0x18, lower, upper) &&
+                                    _lw(next + 0x00) ==
+                                        slide_diag.bridge_constructed0 &&
+                                    _lw(next + 0x14) ==
+                                        slide_diag.bridge_constructed1) {
+                                unsigned int inner = _lw(next + 0x04);
+                                if (zeroCtrlPsp1000BridgeUserRangeValid(inner,
+                                            0x10, lower, upper) &&
+                                        _lw(inner + 0x0C) ==
+                                            slide_diag.bridge_callback)
+                                    root_state[3] = 1;
+                            }
+                        }
+                    }
+                    if (memcmp(root_state, observed_a989_root_state,
+                                sizeof(root_state)) != 0) {
+                        memcpy(observed_a989_root_state, root_state,
+                                sizeof(root_state));
+                        snprintf(line, sizeof(line),
+                                "[psp1000-a989-root-state] slot_value=0x%08X "
+                                "next=0x%08X self_link=%u "
+                                "expected_outer_present=%u\n", root_state[0],
+                                root_state[1], root_state[2], root_state[3]);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                }
+            }
+            if (slide_diag.functional_enabled &&
+                    slide_diag.vsh5704_trace_registered) {
+                unsigned int trace[4];
+                trace[0] = slide_diag.vsh5704_trace_validation;
+                trace[1] = slide_diag.vsh5704_trace_install;
+                trace[2] = slide_diag.vsh5704_trace_cache_sync;
+                trace[3] = zeroCtrlReadHelperCounter(
+                        slide_diag.vsh5704_trace_hit_counter);
+                if (memcmp(trace, observed_vsh5704_trace,
+                            sizeof(trace)) != 0) {
+                    memcpy(observed_vsh5704_trace, trace, sizeof(trace));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-vsh5704-registration-trace] "
+                            "validation=%u install=%u cache_sync=%u hits=%u "
+                            "original_target_off=0x3F568\n", trace[0], trace[1],
+                            trace[2], trace[3]);
+                    zeroCtrlDiagnosticsText(line);
                 }
             }
             if (slide_diag.functional_enabled) {
@@ -14144,6 +14333,10 @@ int OnModuleStart(SceModule2 *mod) {
         if (slide_diag.functional_enabled && slide_diag.bridge_registered &&
                 !slide_diag.bridge_install)
                 zeroCtrlInstallVshCtrl314A4Bridge();
+        if (slide_diag.functional_enabled &&
+                slide_diag.vsh5704_trace_registered &&
+                !slide_diag.vsh5704_trace_install)
+                zeroCtrlInstallVsh5704RegistrationTrace();
 
         if (zeroCtrlIsPsp1000SlideExperimentEnabled() &&
                 strcmp(mod->modname, "slide_plugin_module") == 0) {

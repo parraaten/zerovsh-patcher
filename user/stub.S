@@ -286,6 +286,28 @@ zeroCtrlVsh314A4FunctionalBridge:
 zeroCtrlVsh314A4FunctionalBridgeEnd:
 .end zeroCtrlVsh314A4FunctionalBridge
 
+/* Transparent VSH+0x5704 execution trace; Sony's JAL owns the original ra. */
+.globl zeroCtrlVsh5704RegistrationTrace
+.type zeroCtrlVsh5704RegistrationTrace @function
+.ent zeroCtrlVsh5704RegistrationTrace, 0
+zeroCtrlVsh5704RegistrationTrace:
+    addiu   $sp, $sp, -8
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    lui     $t0, %hi(zeroCtrlVsh5704RegistrationTraceHits)
+    lw      $t1, %lo(zeroCtrlVsh5704RegistrationTraceHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlVsh5704RegistrationTraceHits)($t0)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+.globl zeroCtrlVsh5704RegistrationTraceJump
+zeroCtrlVsh5704RegistrationTraceJump:
+    .word   0x08000000
+    addiu   $sp, $sp, 8
+.globl zeroCtrlVsh5704RegistrationTraceEnd
+zeroCtrlVsh5704RegistrationTraceEnd:
+.end zeroCtrlVsh5704RegistrationTrace
+
 CREATE_TRIGGER_STUB zeroCtrlGlobalPredicate6F84True, zeroCtrlGlobalPredicate6F84Hits
 
 .section .bss
@@ -334,6 +356,8 @@ zeroCtrlVsh314A4Stage1Calls: .space 4
 zeroCtrlVsh314A4Reject: .space 4
 .globl zeroCtrlVsh314A4RejectObject
 zeroCtrlVsh314A4RejectObject: .space 4
+.globl zeroCtrlVsh5704RegistrationTraceHits
+zeroCtrlVsh5704RegistrationTraceHits: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 

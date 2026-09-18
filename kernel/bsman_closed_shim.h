@@ -281,4 +281,15 @@ typedef struct {
 typedef char ZeroCtrlPsp1000BridgeRegistration_size[
     sizeof(ZeroCtrlPsp1000BridgeRegistration) == 72 ? 1 : -1];
 
+/* Diagnostic-only VSH+0x5704 execution trace; separate from functional ABIs. */
+typedef struct {
+    u32 helper_addr;
+    u32 helper_end_addr;
+    u32 jump_slot_addr;
+    u32 hit_counter_addr;
+} ZeroCtrlVsh5704TraceRegistration;
+
+typedef char ZeroCtrlVsh5704TraceRegistration_size[
+    sizeof(ZeroCtrlVsh5704TraceRegistration) == 16 ? 1 : -1];
+
 #endif

@@ -109,6 +109,8 @@ int zeroCtrlRegisterActivationWide(
         const ZeroCtrlActivationWideRegistration *registration);
 void zeroCtrlRegisterPsp1000FunctionalBridge(
         const ZeroCtrlPsp1000BridgeRegistration *registration);
+void zeroCtrlRegisterVsh5704Trace(
+        const ZeroCtrlVsh5704TraceRegistration *registration);
 void zeroCtrlRegisterActivationReturn(
         const ZeroCtrlActivationReturnRegistration *registration);
 void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
@@ -123,6 +125,7 @@ static ZeroCtrlBSManClosedRegistration bsmanClosedRegistration;
 static ZeroCtrlActivationWideRegistration activationWideRegistration;
 static ZeroCtrlActivationReturnRegistration activationReturnRegistration;
 static ZeroCtrlPsp1000BridgeRegistration psp1000BridgeRegistration;
+static ZeroCtrlVsh5704TraceRegistration vsh5704TraceRegistration;
 static volatile unsigned int psp1000RuntimeRequest;
 static volatile unsigned int psp1000RuntimeRequestValid;
 static volatile unsigned int psp1000RuntimeRequestCalled;
@@ -321,6 +324,10 @@ extern volatile unsigned int zeroCtrlVsh314A4Stage0Calls;
 extern volatile unsigned int zeroCtrlVsh314A4Stage1Calls;
 extern volatile unsigned int zeroCtrlVsh314A4Reject;
 extern volatile unsigned int zeroCtrlVsh314A4RejectObject;
+extern void zeroCtrlVsh5704RegistrationTrace(void);
+extern void zeroCtrlVsh5704RegistrationTraceEnd(void);
+extern unsigned int zeroCtrlVsh5704RegistrationTraceJump;
+extern volatile unsigned int zeroCtrlVsh5704RegistrationTraceHits;
 extern int zeroCtrlGlobalPredicate6F84True(void);
 extern volatile unsigned int zeroCtrlGlobalPredicate6F84Hits;
 extern void zeroCtrlSonyModuleStartEntryTrace(void);
@@ -697,6 +704,15 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	psp1000BridgeRegistration.scalar_addr[15] =
 			(u32)&zeroCtrlVsh314A4RejectObject;
 	zeroCtrlRegisterPsp1000FunctionalBridge(&psp1000BridgeRegistration);
+	vsh5704TraceRegistration.helper_addr =
+			(u32)zeroCtrlVsh5704RegistrationTrace;
+	vsh5704TraceRegistration.helper_end_addr =
+			(u32)zeroCtrlVsh5704RegistrationTraceEnd;
+	vsh5704TraceRegistration.jump_slot_addr =
+			(u32)&zeroCtrlVsh5704RegistrationTraceJump;
+	vsh5704TraceRegistration.hit_counter_addr =
+			(u32)&zeroCtrlVsh5704RegistrationTraceHits;
+	zeroCtrlRegisterVsh5704Trace(&vsh5704TraceRegistration);
 	if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&
 			model == 0 && devkit == 0x06060110 &&
 			zeroCtrlIsPsp1000SlideFunctionalEnabled())
