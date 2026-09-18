@@ -3210,10 +3210,12 @@ def check_sources(root):
     if initial_implementation_map.count(
                 '_lw(implementation_target + offset + ') != 8 or \
             dependency_impl_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            dependency_impl_map.count(
+                'sceKernelFindModuleByAddress(implementation_target)') != 1 or \
             'copy_target + 0x008' in dependency_impl_map or \
             any(token in dependency_impl_map for token in
                 ('0x08820140', '0x35A24', '0x148CDC', '0x15B9C4',
-                 'scePaf_Module', 'zeroCtrlMipsBranchTarget',
+                 'scePaf_Module',
                  'a989_target_dependency', 'a989_target_node',
                  'a989_target_outer', 'a989_target_inner', '_sw(',
                  'sceKernelDcache', 'sceKernelIcache')):
@@ -3252,17 +3254,79 @@ def check_sources(root):
             continuation_range_args < continuation_header < continuation_loop < \
             continuation_first_read < continuation_last_read:
         fail("copy continuation reads before prefix/full-range validation")
-    if continuation_map.count(
+    continuation2_start = continuation_map.find(
+            'unsigned int boundary_branch =')
+    continuation1_map = continuation_map[:continuation2_start]
+    continuation2_map = continuation_map[continuation2_start:]
+    if continuation2_start < 0:
+        fail("copy implementation second continuation is missing")
+    if continuation1_map.count(
                 '_lw(implementation_target + offset + ') != 8 or \
-            'offset <= 0x280' in continuation_map or \
-            'implementation_target + 0x280' in continuation_map or \
-            any(token in continuation_map for token in
+            'offset <= 0x280' in continuation1_map or \
+            'implementation_target + 0x280' in continuation1_map or \
+            any(token in continuation1_map for token in
                 ('0x08820340', 'sceKernelLibrary', '0x540',
                  'zeroCtrlMipsJumpTarget', 'zeroCtrlMipsBranchTarget',
                  'a989_target_dependency', 'a989_target_node',
                  'a989_target_outer', 'a989_target_inner', '_sw(',
                  'sceKernelDcache', 'sceKernelIcache')):
         fail("copy continuation exceeds bounds, follows code, uses runtime state, or writes")
+    for token in ('_lw(implementation_target + 0x278) != 0x2CC70008',
+            'boundary_branch != 0x10E00008',
+            '(boundary_branch >> 26) != 4',
+            'zeroCtrlMipsBranchTarget(implementation_target + 0x27C,',
+            'boundary_branch) != implementation_target + 0x2A0',
+            'implementation_target + 0x280, 0x100',
+            '[psp1000-constructed0-dependency-copy-cont2] ',
+            'validation=0\\n',
+            '[psp1000-constructed0-dependency-copy-cont2] validation=1',
+            'start_off=0x280 size=0x100',
+            '[psp1000-constructed0-dependency-copy-cont2-code]'):
+        if token not in continuation2_map:
+            fail("copy implementation second continuation proof lacks " + token)
+    cont2_boundary_278 = continuation2_map.find(
+            '_lw(implementation_target + 0x278) != 0x2CC70008')
+    cont2_boundary_27c = continuation2_map.find(
+            'boundary_branch != 0x10E00008', cont2_boundary_278)
+    cont2_opcode = continuation2_map.find(
+            '(boundary_branch >> 26) != 4', cont2_boundary_27c)
+    cont2_target = continuation2_map.find(
+            'zeroCtrlMipsBranchTarget(implementation_target + 0x27C,',
+            cont2_opcode)
+    cont2_target_exact = continuation2_map.find(
+            'boundary_branch) != implementation_target + 0x2A0', cont2_target)
+    cont2_range = continuation2_map.find(
+            'zeroCtrlBridgeExecutableRange(owner,', cont2_target_exact)
+    cont2_range_args = continuation2_map.find(
+            'implementation_target + 0x280, 0x100', cont2_range)
+    cont2_header = continuation2_map.find(
+            '[psp1000-constructed0-dependency-copy-cont2] validation=1',
+            cont2_range_args)
+    cont2_loop = continuation2_map.find(
+            'for (offset = 0x280; offset <= 0x360; offset += 0x20)',
+            cont2_header)
+    cont2_first_read = continuation2_map.find(
+            '_lw(implementation_target + offset + 0x00)', cont2_loop)
+    cont2_last_read = continuation2_map.find(
+            '_lw(implementation_target + offset + 0x1C)', cont2_loop)
+    if not 0 <= cont2_boundary_278 < cont2_boundary_27c < cont2_opcode < \
+            cont2_target < cont2_target_exact < cont2_range < \
+            cont2_range_args < cont2_header < cont2_loop < cont2_first_read < \
+            cont2_last_read:
+        fail("copy second continuation reads before boundary/full-range validation")
+    if continuation2_map.count(
+                '_lw(implementation_target + offset + ') != 8 or \
+            continuation2_map.count('zeroCtrlMipsBranchTarget(') != 1 or \
+            continuation2_map.count('for (offset = 0x280; offset <= 0x360; '
+                'offset += 0x20)') != 1 or \
+            'implementation_target + offset + 0x20' in continuation2_map or \
+            'implementation_target + 0x380' in continuation2_map or \
+            any(token in continuation2_map for token in
+                ('0x08820340', 'sceKernelLibrary', '0x540',
+                 'zeroCtrlMipsJumpTarget', 'a989_target_dependency',
+                 'a989_target_node', 'a989_target_outer', 'a989_target_inner',
+                 '_sw(', 'sceKernelDcache', 'sceKernelIcache')):
+        fail("copy second continuation exceeds bounds, follows code, uses runtime state, or writes")
     copy_map_start = impl_map_end + 1
     copy_map_end = kernel.find(
             '\nstatic int zeroCtrlWriteConstructed0DependencyConsumer(void)',

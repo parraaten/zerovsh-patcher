@@ -7070,6 +7070,40 @@ static void zeroCtrlWriteConstructed0DependencyCopyImplementationMap(
                 _lw(implementation_target + offset + 0x1C));
         zeroCtrlDiagnosticsText(line);
     }
+    {
+        unsigned int boundary_branch =
+                _lw(implementation_target + 0x27C);
+        if (_lw(implementation_target + 0x278) != 0x2CC70008 ||
+                boundary_branch != 0x10E00008 ||
+                (boundary_branch >> 26) != 4 ||
+                zeroCtrlMipsBranchTarget(implementation_target + 0x27C,
+                    boundary_branch) != implementation_target + 0x2A0 ||
+                !zeroCtrlBridgeExecutableRange(owner,
+                    implementation_target + 0x280, 0x100)) {
+            zeroCtrlDiagnosticsText(
+                    "[psp1000-constructed0-dependency-copy-cont2] "
+                    "validation=0\n");
+            return;
+        }
+    }
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-copy-cont2] validation=1 "
+            "start_off=0x280 size=0x100\n");
+    for (offset = 0x280; offset <= 0x360; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-copy-cont2-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(implementation_target + offset + 0x00),
+                _lw(implementation_target + offset + 0x04),
+                _lw(implementation_target + offset + 0x08),
+                _lw(implementation_target + offset + 0x0C),
+                _lw(implementation_target + offset + 0x10),
+                _lw(implementation_target + offset + 0x14),
+                _lw(implementation_target + offset + 0x18),
+                _lw(implementation_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
 }
 
 static void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(SceModule2 *paf,
