@@ -2611,6 +2611,9 @@ def check_sources(root):
     target_helper_end = assembly.find(
             'zeroCtrlPafA989TargetTraceEnd:', target_helper_start)
     target_helper = assembly[target_helper_start:target_helper_end]
+    if hashlib.sha256(target_helper.encode()).hexdigest() != \
+            'ad108a9734f05df40e5d50817114d30bd77576617e8822f090f63bb748c8f9f7':
+        fail("synchronous A989 target helper changed during writer-only work")
     for reg, offset in zip(('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7'),
             range(0, 32, 4)):
         if 'sw      $' + reg + ', ' + str(offset) + '($sp)' not in target_helper or \
@@ -2805,6 +2808,8 @@ def check_sources(root):
     if 'a989_target_node = node' in root_writer or \
             '[psp1000-a989-target-latch]' in root_writer:
         fail("asynchronous root polling can still create the A989 target")
+    if 'a989_target_dependency =' in root_writer:
+        fail("asynchronous root polling can create the A989 dependency")
     capture_marker = writer.find('[psp1000-a989-target-capture]')
     capture_start = writer.rfind(
             'if (slide_diag.paf_a989_target_trace_registered)', 0,
@@ -2822,6 +2827,58 @@ def check_sources(root):
         if token not in capture_writer:
             fail("writer target is not seeded solely by synchronous capture: " +
                     token)
+    if 'unsigned int a989_target_dependency = 0;' not in writer or \
+            'a989_target_dependency' in kernel[:writer_start] or \
+            'slide_diag.a989_target_dependency' in kernel:
+        fail("A989 dependency is not writer-local diagnostic state")
+    for token in ('a989_target_inner, 0x10, lower, upper)',
+            '_lw(a989_target_inner + 0x0C)',
+            'slide_diag.bridge_callback',
+            'a989_target_dependency =',
+            '_lw(a989_target_inner + 0x08)',
+            'a989_target_dependency, 0x10,',
+            '[psp1000-a989-dependency-capture]',
+            '[psp1000-a989-dependency-capture-missed]'):
+        if token not in capture_writer:
+            fail("synchronous dependency capture lacks " + token)
+    capture_gate = capture_writer.find(
+            'if (capture[5] != 0 && a989_target_node == 0)')
+    inner_range = capture_writer.find(
+            'a989_target_inner, 0x10, lower, upper)', capture_gate)
+    callback_read = capture_writer.find(
+            '_lw(a989_target_inner + 0x0C)', inner_range)
+    callback_match = capture_writer.find(
+            'slide_diag.bridge_callback', callback_read)
+    dependency_assign = capture_writer.find(
+            'a989_target_dependency =', callback_match)
+    dependency_read = capture_writer.find(
+            '_lw(a989_target_inner + 0x08)', dependency_assign)
+    if not 0 <= capture_gate < inner_range < callback_read < callback_match < \
+            dependency_assign < dependency_read:
+        fail("dependency is read before bounded captured-inner callback proof")
+    if len(re.findall(r'(?<!unsigned int )a989_target_dependency\s*=',
+            writer)) != 1:
+        fail("captured A989 dependency can be assigned more than once")
+    dependency_marker = writer.find('[psp1000-a989-dependency-life]')
+    dependency_start = writer.rfind(
+            'if (a989_target_dependency != 0)', 0, dependency_marker)
+    dependency_end = writer.find('\n                    }', dependency_marker)
+    dependency_writer = writer[dependency_start:dependency_end]
+    for token in ('a989_target_dependency, 0x10, lower, upper)',
+            '_lw(a989_target_dependency + 0x00)',
+            '_lw(a989_target_dependency + 0x04)',
+            '_lw(a989_target_dependency + 0x08)',
+            '_lw(a989_target_dependency + 0x0C)',
+            'memcmp(dependency,', 'observed_a989_target_dependency',
+            'memcpy(observed_a989_target_dependency, dependency',
+            '[psp1000-a989-dependency-life]'):
+        if token not in dependency_writer:
+            fail("bounded changed-only A989 dependency lifetime lacks " + token)
+    if dependency_writer.count('_lw(a989_target_dependency + ') != 4 or \
+            'for (' in dependency_writer or 'while (' in dependency_writer or \
+            'current_node' in dependency_writer or \
+            'current_header_valid' in dependency_writer:
+        fail("A989 dependency observation scans, chases, or depends on linkage")
     clock_start = kernel.find(
             "static int zeroCtrlWriteFunctionalClockPathAnalysis(void)")
     clock_end = kernel.find("static int zeroCtrlMipsMove(", clock_start)

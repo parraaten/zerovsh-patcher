@@ -9270,6 +9270,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int a989_target_node = 0;
     unsigned int a989_target_outer = 0;
     unsigned int a989_target_inner = 0;
+    unsigned int a989_target_dependency = 0;
+    unsigned int observed_a989_target_dependency[5] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     unsigned int observed_functional_bridge_livein[10] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
@@ -9612,6 +9616,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         zeroCtrlDiagnosticsText(line);
                     }
                     if (capture[5] != 0 && a989_target_node == 0) {
+                        unsigned int lower = zeroCtrlReadHelperCounter(
+                                slide_diag.bridge_scalar[5]);
+                        unsigned int upper = zeroCtrlReadHelperCounter(
+                                slide_diag.bridge_scalar[6]);
+                        unsigned int dependency_valid = 0;
                         a989_target_node = zeroCtrlReadHelperCounter(
                                 slide_diag.paf_a989_target_trace_scalar[2]);
                         a989_target_outer = zeroCtrlReadHelperCounter(
@@ -9624,6 +9633,26 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 "inner=0x%08X exact=1\n", capture[4], capture[5],
                                 a989_target_node, a989_target_outer,
                                 a989_target_inner);
+                        zeroCtrlDiagnosticsText(line);
+                        if (zeroCtrlPsp1000BridgeUserRangeValid(
+                                    a989_target_inner, 0x10, lower, upper) &&
+                                _lw(a989_target_inner + 0x0C) ==
+                                    slide_diag.bridge_callback) {
+                            a989_target_dependency =
+                                    _lw(a989_target_inner + 0x08);
+                            dependency_valid =
+                                    zeroCtrlPsp1000BridgeUserRangeValid(
+                                        a989_target_dependency, 0x10,
+                                        lower, upper);
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-capture] "
+                                    "inner08=0x%08X valid=%u\n",
+                                    a989_target_dependency, dependency_valid);
+                        } else {
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-capture-missed] "
+                                    "inner=0x%08X\n", a989_target_inner);
+                        }
                         zeroCtrlDiagnosticsText(line);
                     }
                 }
@@ -9730,6 +9759,30 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                     "[psp1000-a989-target-life-inner] valid=%u "
                                     "inner04=0x%08X inner0c=0x%08X\n",
                                     life[10], life[11], life[12]);
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                    }
+                    if (a989_target_dependency != 0) {
+                        unsigned int dependency[5] = { 0, 0, 0, 0, 0 };
+                        dependency[0] = zeroCtrlPsp1000BridgeUserRangeValid(
+                                a989_target_dependency, 0x10, lower, upper);
+                        if (dependency[0]) {
+                            dependency[1] = _lw(a989_target_dependency + 0x00);
+                            dependency[2] = _lw(a989_target_dependency + 0x04);
+                            dependency[3] = _lw(a989_target_dependency + 0x08);
+                            dependency[4] = _lw(a989_target_dependency + 0x0C);
+                        }
+                        if (memcmp(dependency,
+                                    observed_a989_target_dependency,
+                                    sizeof(dependency)) != 0) {
+                            memcpy(observed_a989_target_dependency, dependency,
+                                    sizeof(dependency));
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-life] valid=%u "
+                                    "w00=0x%08X w04=0x%08X w08=0x%08X "
+                                    "w0c=0x%08X\n", dependency[0],
+                                    dependency[1], dependency[2], dependency[3],
+                                    dependency[4]);
                             zeroCtrlDiagnosticsText(line);
                         }
                     }
