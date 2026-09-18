@@ -9064,6 +9064,15 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_a989_root_state[4] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_a989_target_life[13] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF
+    };
+    unsigned int a989_target_node = 0;
+    unsigned int a989_target_outer = 0;
+    unsigned int a989_target_inner = 0;
     unsigned int observed_functional_bridge_livein[10] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
@@ -9392,6 +9401,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             slide_diag.bridge_scalar[5]);
                     unsigned int upper = zeroCtrlReadHelperCounter(
                             slide_diag.bridge_scalar[6]);
+                    unsigned int current_header_valid = 0;
+                    unsigned int current_node = 0;
 
                     if (zeroCtrlLoadedModuleMetadataValid(paf) &&
                             zeroCtrlVshModuleRangeValid(paf,
@@ -9400,22 +9411,56 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         root_state[0] = header;
                         if (zeroCtrlPsp1000BridgeUserRangeValid(header, 8,
                                     lower, upper)) {
-                            unsigned int next = _lw(header + 4);
-                            root_state[1] = next;
-                            root_state[2] = next == header;
-                            if (next != header &&
-                                    zeroCtrlPsp1000BridgeUserRangeValid(next,
-                                        0x18, lower, upper) &&
-                                    _lw(next + 0x00) ==
-                                        slide_diag.bridge_constructed0 &&
-                                    _lw(next + 0x14) ==
-                                        slide_diag.bridge_constructed1) {
-                                unsigned int inner = _lw(next + 0x04);
-                                if (zeroCtrlPsp1000BridgeUserRangeValid(inner,
-                                            0x10, lower, upper) &&
-                                        _lw(inner + 0x0C) ==
-                                            slide_diag.bridge_callback)
-                                    root_state[3] = 1;
+                            unsigned int node = _lw(header + 4);
+                            current_header_valid = 1;
+                            current_node = node;
+                            root_state[1] = node;
+                            root_state[2] = node == header;
+                            if (node != header &&
+                                    zeroCtrlPsp1000BridgeUserRangeValid(node, 8,
+                                        lower, upper)) {
+                                unsigned int outer = _lw(node + 0x04);
+                                if (zeroCtrlPsp1000BridgeUserRangeValid(outer,
+                                            0x1C, lower, upper)) {
+                                    unsigned int f00 = _lw(outer + 0x00);
+                                    unsigned int inner = _lw(outer + 0x04);
+                                    unsigned int f08 = _lw(outer + 0x08);
+                                    unsigned int f0c = _lw(outer + 0x0C);
+                                    unsigned int f14 = _lw(outer + 0x14);
+                                    unsigned int f18 = _lw(outer + 0x18);
+                                    unsigned int inner_valid =
+                                            zeroCtrlPsp1000BridgeUserRangeValid(
+                                                inner, 0x10, lower, upper);
+                                    if (f00 == slide_diag.bridge_constructed0 &&
+                                            f08 == 0xFFFFFFFF &&
+                                            f0c == 0xFFFFFFFF &&
+                                            f14 ==
+                                                slide_diag.bridge_constructed1 &&
+                                            f18 == 0 && inner_valid &&
+                                            _lw(inner + 0x0C) ==
+                                                slide_diag.bridge_callback) {
+                                        unsigned int trace_hits =
+                                                zeroCtrlReadHelperCounter(
+                                                    slide_diag.vsh5704_trace_hit_counter);
+                                        root_state[3] = 1;
+                                        if (a989_target_node == 0 &&
+                                                slide_diag.vsh5704_trace_validation == 1 &&
+                                                slide_diag.vsh5704_trace_install == 1 &&
+                                                trace_hits != 0) {
+                                            a989_target_node = node;
+                                            a989_target_outer = outer;
+                                            a989_target_inner = inner;
+                                            snprintf(line, sizeof(line),
+                                                    "[psp1000-a989-target-latch] "
+                                                    "node=0x%08X outer=0x%08X "
+                                                    "inner=0x%08X exact=1\n",
+                                                    a989_target_node,
+                                                    a989_target_outer,
+                                                    a989_target_inner);
+                                            zeroCtrlDiagnosticsText(line);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -9429,6 +9474,48 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 "expected_outer_present=%u\n", root_state[0],
                                 root_state[1], root_state[2], root_state[3]);
                         zeroCtrlDiagnosticsText(line);
+                    }
+                    if (a989_target_node != 0) {
+                        unsigned int life[13] = { 0 };
+                        life[0] = current_header_valid &&
+                                current_node == a989_target_node;
+                        life[1] = zeroCtrlPsp1000BridgeUserRangeValid(
+                                a989_target_node, 8, lower, upper);
+                        if (life[1]) life[2] = _lw(a989_target_node + 0x04);
+                        life[3] = zeroCtrlPsp1000BridgeUserRangeValid(
+                                a989_target_outer, 0x1C, lower, upper);
+                        if (life[3]) {
+                            life[4] = _lw(a989_target_outer + 0x00);
+                            life[5] = _lw(a989_target_outer + 0x04);
+                            life[6] = _lw(a989_target_outer + 0x08);
+                            life[7] = _lw(a989_target_outer + 0x0C);
+                            life[8] = _lw(a989_target_outer + 0x14);
+                            life[9] = _lw(a989_target_outer + 0x18);
+                        }
+                        life[10] = zeroCtrlPsp1000BridgeUserRangeValid(
+                                a989_target_inner, 0x10, lower, upper);
+                        if (life[10]) {
+                            life[11] = _lw(a989_target_inner + 0x04);
+                            life[12] = _lw(a989_target_inner + 0x0C);
+                        }
+                        if (memcmp(life, observed_a989_target_life,
+                                    sizeof(life)) != 0) {
+                            memcpy(observed_a989_target_life, life,
+                                    sizeof(life));
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-target-life] linked=%u "
+                                    "node_valid=%u node04=0x%08X outer_valid=%u "
+                                    "f00=0x%08X f04=0x%08X f08=0x%08X "
+                                    "f0c=0x%08X f14=0x%08X f18=0x%08X\n",
+                                    life[0], life[1], life[2], life[3], life[4],
+                                    life[5], life[6], life[7], life[8], life[9]);
+                            zeroCtrlDiagnosticsText(line);
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-target-life-inner] valid=%u "
+                                    "inner04=0x%08X inner0c=0x%08X\n",
+                                    life[10], life[11], life[12]);
+                            zeroCtrlDiagnosticsText(line);
+                        }
                     }
                 }
             }

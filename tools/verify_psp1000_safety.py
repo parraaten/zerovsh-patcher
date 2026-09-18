@@ -2602,19 +2602,52 @@ def check_sources(root):
     for token in ('zeroCtrlVshModuleRangeValid(paf,',
             'slide_diag.bridge_root_slot, 4)',
             'zeroCtrlPsp1000BridgeUserRangeValid(header, 8,',
-            'unsigned int next = _lw(header + 4)', 'next == header',
-            'next != header',
-            'zeroCtrlPsp1000BridgeUserRangeValid(next,',
-            '0x18, lower, upper)', '_lw(next + 0x00)',
-            '_lw(next + 0x14)', 'unsigned int inner = _lw(next + 0x04)',
-            'zeroCtrlPsp1000BridgeUserRangeValid(inner,',
-            '0x10, lower, upper)', '_lw(inner + 0x0C)',
+            'unsigned int node = _lw(header + 4)', 'node == header',
+            'node != header',
+            'zeroCtrlPsp1000BridgeUserRangeValid(node, 8,',
+            'unsigned int outer = _lw(node + 0x04)',
+            'zeroCtrlPsp1000BridgeUserRangeValid(outer,',
+            '0x1C, lower, upper)', '_lw(outer + 0x00)',
+            '_lw(outer + 0x04)', '_lw(outer + 0x08)',
+            '_lw(outer + 0x0C)', '_lw(outer + 0x14)',
+            '_lw(outer + 0x18)',
+            'inner, 0x10, lower, upper)', '_lw(inner + 0x0C)',
+            'f08 == 0xFFFFFFFF', 'f0c == 0xFFFFFFFF', 'f18 == 0',
+            'slide_diag.vsh5704_trace_validation == 1',
+            'slide_diag.vsh5704_trace_install == 1', 'trace_hits != 0',
+            'if (a989_target_node == 0',
+            'a989_target_node = node', 'a989_target_outer = outer',
+            'a989_target_inner = inner',
+            '[psp1000-a989-target-latch]',
             'memcmp(root_state, observed_a989_root_state',
             '[psp1000-a989-root-state]'):
         if token not in root_writer:
             fail("bounded A989 root-state classification lacks " + token)
     if 'for (' in root_writer or 'while (' in root_writer:
         fail("A989 root-state diagnostic walks or scans the root list")
+    for token in ('if (a989_target_node != 0)',
+            'current_node == a989_target_node',
+            'zeroCtrlPsp1000BridgeUserRangeValid(',
+            'a989_target_node, 8, lower, upper)',
+            '_lw(a989_target_node + 0x04)',
+            'a989_target_outer, 0x1C, lower, upper)',
+            '_lw(a989_target_outer + 0x00)',
+            '_lw(a989_target_outer + 0x04)',
+            '_lw(a989_target_outer + 0x08)',
+            '_lw(a989_target_outer + 0x0C)',
+            '_lw(a989_target_outer + 0x14)',
+            '_lw(a989_target_outer + 0x18)',
+            'a989_target_inner, 0x10, lower, upper)',
+            '_lw(a989_target_inner + 0x04)',
+            '_lw(a989_target_inner + 0x0C)',
+            'memcmp(life, observed_a989_target_life',
+            '[psp1000-a989-target-life]',
+            '[psp1000-a989-target-life-inner]'):
+        if token not in root_writer:
+            fail("latched A989 target lifetime evidence lacks " + token)
+    if root_writer.count('a989_target_node = node') != 1 or \
+            'a989_target_node = current_node' in root_writer:
+        fail("A989 target latch can be replaced after its exact first match")
     clock_start = kernel.find(
             "static int zeroCtrlWriteFunctionalClockPathAnalysis(void)")
     clock_end = kernel.find("static int zeroCtrlMipsMove(", clock_start)
