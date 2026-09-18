@@ -6992,6 +6992,7 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
         unsigned int pc = target + offset;
         unsigned int word = _lw(pc);
         unsigned int opcode = word >> 26;
+        unsigned int rt = (word >> 16) & 0x1F;
         unsigned int function = word & 0x3F;
         unsigned int delay, arg;
 
@@ -7005,7 +7006,34 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
             reason = "BRANCH_LIKELY";
             goto incomplete;
         }
-        if (opcode == 3 || opcode == 2 || opcode == 1 ||
+        if (opcode == 1) {
+            if (rt == 2 || rt == 3 || rt == 0x12 || rt == 0x13) {
+                if (!zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)) {
+                    reason = "DELAY_SLOT";
+                    goto incomplete;
+                }
+                delay = _lw(pc + 4);
+                (void)delay;
+                reason = "BRANCH_LIKELY";
+                goto incomplete;
+            }
+            if (rt == 0x10 || rt == 0x11) {
+                if (!zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)) {
+                    reason = "DELAY_SLOT";
+                    goto incomplete;
+                }
+                delay = _lw(pc + 4);
+                (void)delay;
+                reason = "REGIMM_LINK";
+                goto incomplete;
+            }
+            if (rt != 0 && rt != 1) {
+                reason = "UNSUPPORTED_REGIMM";
+                goto incomplete;
+            }
+        }
+        if (opcode == 3 || opcode == 2 ||
+                (opcode == 1 && (rt == 0 || rt == 1)) ||
                 (opcode >= 4 && opcode <= 7) ||
                 (opcode == 0 && (function == 8 || function == 9))) {
             unsigned int target_register = (word >> 21) & 0x1F;

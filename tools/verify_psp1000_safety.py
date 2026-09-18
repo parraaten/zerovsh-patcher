@@ -2932,14 +2932,17 @@ def check_sources(root):
             fail("dependency control-flow analysis is not fail-closed: " + token)
     likely_start = dependency_analysis.find(
             'if (opcode >= 0x14 && opcode <= 0x17) {')
+    regimm_start = dependency_analysis.find(
+            'if (opcode == 1) {', likely_start)
     generic_start = dependency_analysis.find(
-            'if (opcode == 3 || opcode == 2 || opcode == 1 ||', likely_start)
-    likely_block = dependency_analysis[likely_start:generic_start]
+            'if (opcode == 3 || opcode == 2 ||', regimm_start)
+    likely_block = dependency_analysis[likely_start:regimm_start]
+    regimm_block = dependency_analysis[regimm_start:generic_start]
     generic_end = dependency_analysis.find(
             'if (!zeroCtrlApplyConstructed0DependencyInstruction(word, offset,',
             generic_start)
     generic_control = dependency_analysis[generic_start:generic_end]
-    if not 0 <= likely_start < generic_start < generic_end:
+    if not 0 <= likely_start < regimm_start < generic_start < generic_end:
         fail("branch-likely is not separated before normal delay handling")
     for token in ('zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)',
             'delay = _lw(pc + 4)', 'reason = "BRANCH_LIKELY"',
@@ -2950,6 +2953,42 @@ def check_sources(root):
             any(token in likely_block for token in
                 ('accesses++', 'chases++', 'forwards++')):
         fail("branch-likely delay slot mutates or reports provenance")
+    regimm_decode = dependency_analysis.find(
+            'unsigned int rt = (word >> 16) & 0x1F;')
+    regimm_likely = dependency_analysis.find(
+            'rt == 2 || rt == 3 || rt == 0x12 || rt == 0x13', regimm_start)
+    regimm_likely_reason = dependency_analysis.find(
+            'reason = "BRANCH_LIKELY"', regimm_likely)
+    regimm_link = dependency_analysis.find(
+            'rt == 0x10 || rt == 0x11', regimm_likely_reason)
+    regimm_link_reason = dependency_analysis.find(
+            'reason = "REGIMM_LINK"', regimm_link)
+    regimm_unsupported = dependency_analysis.find(
+            'if (rt != 0 && rt != 1)', regimm_link_reason)
+    regimm_unsupported_reason = dependency_analysis.find(
+            'reason = "UNSUPPORTED_REGIMM"', regimm_unsupported)
+    if not 0 <= regimm_decode < likely_start < regimm_start <= regimm_likely < \
+            regimm_likely_reason < regimm_link < regimm_link_reason < \
+            regimm_unsupported < regimm_unsupported_reason < generic_start:
+        fail("REGIMM classification/order is incomplete or ambiguous")
+    for token in ('zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)',
+            'delay = _lw(pc + 4)', '(void)delay'):
+        if regimm_block.count(token) < 2:
+            fail("REGIMM likely/link evidence validation lacks " + token)
+    if 'zeroCtrlApplyConstructed0DependencyInstruction' in regimm_block or \
+            any(token in regimm_block for token in
+                ('accesses++', 'chases++', 'forwards++')):
+        fail("REGIMM likely/link/unsupported handling applies delay provenance")
+    unsupported_regimm_block = dependency_analysis[
+            regimm_unsupported:generic_start]
+    if '_lw(pc + 4)' in unsupported_regimm_block or \
+            'delay =' in unsupported_regimm_block:
+        fail("unsupported REGIMM incorrectly treats pc+4 as a delay slot")
+    ordinary_regimm = '(opcode == 1 && (rt == 0 || rt == 1))'
+    if ordinary_regimm not in generic_control or \
+            'opcode == 3 || opcode == 2 || opcode == 1 ||' in \
+                dependency_analysis:
+        fail("REGIMM can bypass explicit rt classification into normal delay")
     ordinary_membership = generic_control.find('(opcode >= 4 && opcode <= 7)')
     generic_delay = generic_control.find('delay = _lw(pc + 4)')
     generic_apply = generic_control.find(
@@ -2959,7 +2998,7 @@ def check_sources(root):
     if not 0 <= ordinary_membership < generic_delay < generic_apply < \
             branch_reason or not generic_apply < forward_loop:
         fail("ordinary branches/calls no longer apply delay slots before use")
-    for token in ('opcode == 3', 'opcode == 2', 'opcode == 1',
+    for token in ('opcode == 3', 'opcode == 2', ordinary_regimm,
             'function == 8', 'function == 9'):
         if token not in generic_control:
             fail("J/JAL/JR/JALR or ordinary REGIMM delay handling regressed")
