@@ -334,6 +334,8 @@ zeroCtrlPafA989TargetTrace:
     lw      $t1, %lo(zeroCtrlPafA989TargetNode)($t0)
     bnez    $t1, 1f
     nop
+    BRIDGE_VALIDATE $a0, 8, 1f
+    BRIDGE_VALIDATE $a1, 0x1C, 1f
     addiu   $t2, $a0, 8
     bne     $t2, $a1, 1f
     nop
@@ -360,6 +362,7 @@ zeroCtrlPafA989TargetTrace:
     lw      $t6, 0x04($a1)
     bne     $t6, $s5, 1f
     nop
+    BRIDGE_VALIDATE $t6, 0x10, 1f
     lw      $t4, 0x0C($t6)
     lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
     lw      $t3, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)

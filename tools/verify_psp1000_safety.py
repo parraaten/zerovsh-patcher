@@ -2342,6 +2342,9 @@ def check_sources(root):
     helper_start = assembly.find("zeroCtrlVsh314A4FunctionalBridge:")
     helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
     helper = assembly[helper_start:helper_end]
+    if hashlib.sha256(helper.encode()).hexdigest() != \
+            '2bde3c548d4bb66261023f965325196f448578e35cda2dee76c0872ff995446c':
+        fail("functional +314A4 bridge assembly changed during diagnostic work")
     controller_call = helper.find("jalr    $t9")
     result_save = helper.find("sw      $v0, 32($sp)", controller_call)
     request_read = helper.find("%lo(zeroCtrlTrigger58D4Request)", result_save)
@@ -2459,6 +2462,12 @@ def check_sources(root):
             'slide_diag.vsh5704_trace_validation = 1'):
         if token not in trace_install:
             fail("VSH+5704 exact installer lacks " + token)
+    for token in ('!slide_diag.paf_a989_target_trace_registered',
+            'slide_diag.paf_a989_target_trace_validation != 1',
+            'slide_diag.paf_a989_target_trace_install != 1',
+            'slide_diag.paf_a989_target_trace_cache_sync != 1'):
+        if token not in trace_install:
+            fail("VSH+5704 can install before synchronous A989 capture: " + token)
     helper_patch = trace_install.find(
             '_sw(helper_jump, slide_diag.vsh5704_trace_jump_slot)')
     helper_dcache = trace_install.find(
@@ -2485,6 +2494,9 @@ def check_sources(root):
     trace_helper_end = assembly.find(
             'zeroCtrlVsh5704RegistrationTraceEnd:', trace_helper_start)
     trace_helper = assembly[trace_helper_start:trace_helper_end]
+    if hashlib.sha256(trace_helper.encode()).hexdigest() != \
+            '32cbbf3a61999e8a3fa9f37a54f96fbb428c7b70bd229e1afdaaa496e3a16dfb':
+        fail("VSH+5704 trace helper assembly changed during diagnostic work")
     for token in ('addiu   $sp, $sp, -8', 'sw      $t0, 0($sp)',
             'sw      $t1, 4($sp)', 'lw      $t1, 4($sp)',
             'lw      $t0, 0($sp)', '.word   0x08000000',
@@ -2533,6 +2545,12 @@ def check_sources(root):
             '_lw(consumer + 0x68) != 0x24040028',
             '_lw(consumer + 0x74)', '_lw(consumer + 0x78) != 0x24500008',
             '_lw(consumer + 0x7C)', '_lw(consumer + 0x88) != 0xAC520008',
+            '(_lw(consumer + 0x80) >> 26) != 4',
+            '((_lw(consumer + 0x80) >> 21) & 0x1F) != 2',
+            '((_lw(consumer + 0x80) >> 16) & 0x1F) != 0',
+            'zeroCtrlMipsBranchTarget(consumer + 0x80,',
+            'consumer + 0xD0',
+            'zeroCtrlMipsMove(_lw(consumer + 0x84), 3, 0)',
             '_lw(consumer + 0x8C)', '_lw(consumer + 0x90) != 0xAE150004',
             '_lw(consumer + 0x94) != 0xAE130008',
             '_lw(consumer + 0x98) != 0xAE16000C',
@@ -2545,6 +2563,14 @@ def check_sources(root):
             fail("synchronous A989 consumer derivation lacks " + token)
     if '!= vtext + 0x3F568' not in target_install:
         fail("A989 consumer trace is not installed before the VSH+5704 owner")
+    for token in ('PspSysmemPartitionInfo info',
+            'sceKernelQueryMemoryPartitionInfo(2, &info)',
+            '0xFFFFFFFFU - (unsigned int)info.memsize',
+            '_sw((unsigned int)info.startaddr, slide_diag.bridge_scalar[5])',
+            '_sw((unsigned int)info.startaddr + (unsigned int)info.memsize,',
+            'slide_diag.bridge_scalar[6]', 'for (i = 2; i <= 6; i++)'):
+        if token not in target_install:
+            fail("A989 consumer trace lacks fail-closed user bounds: " + token)
     target_helper_patch = target_install.find(
             '_sw(helper_jump, slide_diag.paf_a989_target_trace_jump_slot)')
     target_helper_dcache = target_install.find(
@@ -2563,6 +2589,16 @@ def check_sources(root):
             target_helper_icache < target_owner_patch < target_owner_dcache < \
             target_owner_icache:
         fail("A989 target helper is not committed before its consumer owner")
+    bounds_query = target_install.find('sceKernelQueryMemoryPartitionInfo(2, &info)')
+    bounds_lower = target_install.find(
+            '_sw((unsigned int)info.startaddr, slide_diag.bridge_scalar[5])',
+            bounds_query)
+    bounds_upper = target_install.find(
+            'slide_diag.bridge_scalar[6]', bounds_lower)
+    bounds_sync = target_install.find('for (i = 2; i <= 6; i++)', bounds_upper)
+    if not 0 <= bounds_query < bounds_lower < bounds_upper < bounds_sync < \
+            target_helper_patch:
+        fail("A989 user bounds are not synchronized before helper/owner commit")
     for token in ('ZeroCtrlPafA989TargetTraceRegistration copied',
             'copied.entry_hits_addr', 'copied.exact_hits_addr',
             'copied.target_node_addr', 'copied.target_outer_addr',
@@ -2596,6 +2632,16 @@ def check_sources(root):
             'addiu   $sp, $sp, 32'):
         if token not in target_helper:
             fail("A989 synchronous helper contract lacks " + token)
+    a0_range = target_helper.find('BRIDGE_VALIDATE $a0, 8, 1f')
+    a1_range = target_helper.find('BRIDGE_VALIDATE $a1, 0x1C, 1f', a0_range)
+    outer_first_read = target_helper.find('lw      $t4, 0x00($a1)')
+    inner_load = target_helper.find('lw      $t6, 0x04($a1)', outer_first_read)
+    inner_equal = target_helper.find('bne     $t6, $s5, 1f', inner_load)
+    inner_range = target_helper.find('BRIDGE_VALIDATE $t6, 0x10, 1f', inner_equal)
+    inner_callback = target_helper.find('lw      $t4, 0x0C($t6)', inner_range)
+    if not 0 <= a0_range < a1_range < outer_first_read < inner_load < \
+            inner_equal < inner_range < inner_callback:
+        fail("A989 helper dereferences node/outer/inner before range validation")
     if any(token in target_helper for token in ('jal ', 'jalr', 'sw      $ra',
             'sw      $a2', 'sw      $a3', 'move    $a')):
         fail("A989 synchronous helper calls code or changes Sony-visible state")

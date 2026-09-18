@@ -5805,6 +5805,10 @@ static void zeroCtrlInstallVsh5704RegistrationTrace(void) {
 
     if (slide_diag.vsh5704_trace_install ||
             !slide_diag.vsh5704_trace_registered ||
+            !slide_diag.paf_a989_target_trace_registered ||
+            slide_diag.paf_a989_target_trace_validation != 1 ||
+            slide_diag.paf_a989_target_trace_install != 1 ||
+            slide_diag.paf_a989_target_trace_cache_sync != 1 ||
             !slide_diag.functional_enabled || model != 0 ||
             sceKernelDevkitVersion() != 0x06060110 ||
             !zeroCtrlLoadedModuleMetadataValid(vsh) ||
@@ -5907,6 +5911,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
     SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
     SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    PspSysmemPartitionInfo info;
     unsigned int vtext, ptext, thunk, wrapper, inner, consumer;
     unsigned int owner, target, helper_jump, replacement, i;
 
@@ -5972,6 +5977,12 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
             !zeroCtrlMipsMove(_lw(consumer + 0x74), 17, 2) ||
             _lw(consumer + 0x78) != 0x24500008 ||
             !zeroCtrlMipsMove(_lw(consumer + 0x7C), 4, 2) ||
+            (_lw(consumer + 0x80) >> 26) != 4 ||
+            ((_lw(consumer + 0x80) >> 21) & 0x1F) != 2 ||
+            ((_lw(consumer + 0x80) >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(consumer + 0x80,
+                _lw(consumer + 0x80)) != consumer + 0xD0 ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x84), 3, 0) ||
             _lw(consumer + 0x88) != 0xAC520008 ||
             !zeroCtrlMipsMove(_lw(consumer + 0x8C), 5, 16) ||
             _lw(consumer + 0x90) != 0xAE150004 ||
@@ -6005,11 +6016,20 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
             zeroCtrlMipsJumpTarget(owner, replacement) !=
                 slide_diag.paf_a989_target_trace_helper)
         return;
+    memset(&info, 0, sizeof(info));
+    info.size = sizeof(info);
+    if (sceKernelQueryMemoryPartitionInfo(2, &info) < 0 ||
+            (unsigned int)info.startaddr >
+                0xFFFFFFFFU - (unsigned int)info.memsize)
+        return;
     slide_diag.paf_a989_target_trace_validation = 1;
     _sw(ptext + 0x34610, slide_diag.bridge_scalar[2]);
     _sw(ptext + 0x34658, slide_diag.bridge_scalar[3]);
     _sw(vtext + 0x589C, slide_diag.bridge_scalar[4]);
-    for (i = 2; i <= 4; i++)
+    _sw((unsigned int)info.startaddr, slide_diag.bridge_scalar[5]);
+    _sw((unsigned int)info.startaddr + (unsigned int)info.memsize,
+            slide_diag.bridge_scalar[6]);
+    for (i = 2; i <= 6; i++)
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)slide_diag.bridge_scalar[i], 4);
     for (i = 0; i < 5; i++) {
