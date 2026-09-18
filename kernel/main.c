@@ -6924,6 +6924,65 @@ static void zeroCtrlWriteConstructed0DependencyMap(SceModule2 *paf,
     }
 }
 
+static void zeroCtrlWriteConstructed0DependencyHelperMap(SceModule2 *paf,
+        unsigned int dependency_consumer_target) {
+    unsigned int call0, call1, helper_target, segment, remaining, offset;
+    unsigned int addiu;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,
+                0x200) ||
+            !zeroCtrlMipsMove(_lw(dependency_consumer_target + 0x034), 19, 5) ||
+            (_lw(dependency_consumer_target + 0x038) >> 26) != 3 ||
+            (_lw(dependency_consumer_target + 0x050) >> 26) != 3) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-helper] validation=0\n");
+        return;
+    }
+    addiu = _lw(dependency_consumer_target + 0x04C);
+    if ((addiu >> 26) != 9 || ((addiu >> 21) & 0x1F) != 19 ||
+            ((addiu >> 16) & 0x1F) != 5 ||
+            (short)(addiu & 0xFFFF) != 0x0C) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-helper] validation=0\n");
+        return;
+    }
+    call0 = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x038,
+            _lw(dependency_consumer_target + 0x038));
+    call1 = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x050,
+            _lw(dependency_consumer_target + 0x050));
+    if (call0 != call1 ||
+            !zeroCtrlModuleContainingSegment(paf, call0, &segment,
+                &remaining) || !zeroCtrlBridgeExecutableRange(paf, call0,
+                    0x100)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-helper] validation=0\n");
+        return;
+    }
+    helper_target = call0;
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-helper] validation=1 "
+            "call0_off=0x038 call1_off=0x050 target=0x%08X "
+            "segment=%u segment_off=0x%X size=0x100\n", helper_target,
+            segment, helper_target - paf->segmentaddr[segment]);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0xE0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-helper-code] off=0x%03X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(helper_target + offset + 0x00),
+                _lw(helper_target + offset + 0x04),
+                _lw(helper_target + offset + 0x08),
+                _lw(helper_target + offset + 0x0C),
+                _lw(helper_target + offset + 0x10),
+                _lw(helper_target + offset + 0x14),
+                _lw(helper_target + offset + 0x18),
+                _lw(helper_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
 static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
     SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
     SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
@@ -7014,6 +7073,7 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
                 "[psp1000-constructed0-dependency-analysis] validation=0 "
                 "complete=0 reason=NO_RETURN off=0x200\n");
         zeroCtrlWriteConstructed0DependencyMap(paf, target);
+        zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);
         return 0;
     }
     memset(provenance, 0, sizeof(provenance));

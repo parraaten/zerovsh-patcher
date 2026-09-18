@@ -3046,7 +3046,7 @@ def check_sources(root):
     map_start = kernel.find(
             'static void zeroCtrlWriteConstructed0DependencyMap(')
     map_end = kernel.find(
-            '\nstatic int zeroCtrlWriteConstructed0DependencyConsumer(void)', map_start)
+            '\nstatic void zeroCtrlWriteConstructed0DependencyHelperMap(', map_start)
     dependency_map = kernel[map_start:map_end]
     if map_start < 0 or map_end < 0:
         fail("constructed0 dependency NO_RETURN code map is missing")
@@ -3089,6 +3089,66 @@ def check_sources(root):
     if 'int constructed0_dependency_written = 0;' not in writer or \
             'slide_diag.constructed0_dependency' in kernel:
         fail("dependency map one-shot state is not writer-local")
+    helper_map_start = map_end + 1
+    helper_map_end = kernel.find(
+            '\nstatic int zeroCtrlWriteConstructed0DependencyConsumer(void)',
+            helper_map_start)
+    dependency_helper_map = kernel[helper_map_start:helper_map_end]
+    if helper_map_start <= 0 or helper_map_end < 0:
+        fail("constructed0 dependency common-helper map is missing")
+    for token in ('dependency_consumer_target + 0x034',
+            'zeroCtrlMipsMove(', '19, 5',
+            'dependency_consumer_target + 0x038',
+            'dependency_consumer_target + 0x04C',
+            '(addiu >> 26) != 9', '((addiu >> 21) & 0x1F) != 19',
+            '((addiu >> 16) & 0x1F) != 5',
+            '(short)(addiu & 0xFFFF) != 0x0C',
+            'dependency_consumer_target + 0x050',
+            'call0 = zeroCtrlMipsJumpTarget(',
+            'call1 = zeroCtrlMipsJumpTarget(', 'call0 != call1',
+            'zeroCtrlModuleContainingSegment(paf, call0, &segment,',
+            '[psp1000-constructed0-dependency-helper] validation=0',
+            'call0_off=0x038 call1_off=0x050 target=0x%08X',
+            'segment=%u segment_off=0x%X size=0x100',
+            '[psp1000-constructed0-dependency-helper-code] off=0x%03X'):
+        if token not in dependency_helper_map:
+            fail("constructed0 dependency common-helper proof lacks " + token)
+    consumer_map_range = dependency_helper_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,')
+    consumer_map_size = dependency_helper_map.find('0x200)', consumer_map_range)
+    consumer_structure_read = dependency_helper_map.find(
+            '_lw(dependency_consumer_target + 0x034)', consumer_map_size)
+    if not 0 <= consumer_map_range < consumer_map_size < consumer_structure_read:
+        fail("helper-call proof does not reuse the validated 0x200 consumer map")
+    helper_range = dependency_helper_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, call0,')
+    helper_range_size = dependency_helper_map.find('0x100)', helper_range)
+    helper_header = dependency_helper_map.find(
+            '[psp1000-constructed0-dependency-helper] validation=1',
+            helper_range_size)
+    helper_loop = dependency_helper_map.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)', helper_header)
+    helper_first_read = dependency_helper_map.find(
+            '_lw(helper_target + offset + 0x00)', helper_loop)
+    helper_last_read = dependency_helper_map.find(
+            '_lw(helper_target + offset + 0x1C)', helper_loop)
+    if not 0 <= helper_range < helper_range_size < helper_header < \
+            helper_loop < helper_first_read < helper_last_read:
+        fail("dependency helper map reads before full 0x100 executable proof")
+    if dependency_helper_map.count('_lw(helper_target + offset + ') != 8 or \
+            dependency_helper_map.count('zeroCtrlMipsJumpTarget(') != 2 or \
+            any(token in dependency_helper_map for token in
+                ('0x35A24', 'zeroCtrlMipsBranchTarget',
+                 'a989_target_dependency', '_sw(', 'sceKernelDcache',
+                 'sceKernelIcache', 'zeroCtrlWriteConstructed0DependencyConsumer(')):
+        fail("dependency helper map scans, recurses, uses runtime state, or writes")
+    helper_map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);',
+            map_call)
+    if not map_call < helper_map_call < no_return_exit or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0DependencyHelperMap(') != 1:
+        fail("dependency helper map is not one-shot under the NO_RETURN gate")
     apply_start = kernel.find(
             'static int zeroCtrlApplyConstructed0DependencyInstruction(')
     apply_end = dependency_analysis_start
