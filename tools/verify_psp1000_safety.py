@@ -3016,6 +3016,33 @@ def check_sources(root):
             '#define CONSTRUCTED0_DEPENDENCY_MAX_CHASE 16' not in kernel or \
             '#define CONSTRUCTED0_DEPENDENCY_MAX_FORWARD 16' not in kernel:
         fail("constructed0 dependency analysis bounds changed")
+    boundary_loop = dependency_analysis.find('for (offset = 0;')
+    boundary_limit = dependency_analysis.find(
+            'offset <= CONSTRUCTED0_DEPENDENCY_MAX_RANGE - 8;', boundary_loop)
+    boundary_range = dependency_analysis.find(
+            'zeroCtrlBridgeExecutableRange(paf, target + offset, 8)',
+            boundary_limit)
+    boundary_read = dependency_analysis.find(
+            '_lw(target + offset) == 0x03E00008', boundary_range)
+    boundary_set = dependency_analysis.find(
+            'boundary = offset + 8;', boundary_read)
+    no_return = dependency_analysis.find(
+            'reason=NO_RETURN off=0x200', boundary_set)
+    analysis_loop = dependency_analysis.find(
+            'for (offset = 0; offset < boundary; offset += 4)', no_return)
+    if not 0 <= boundary_loop < boundary_limit < boundary_range < \
+            boundary_read < boundary_set < no_return < analysis_loop:
+        fail("dependency return boundary does not keep jr/delay within 0x200")
+    boundary_search = dependency_analysis[boundary_loop:no_return]
+    provenance_pass = dependency_analysis[analysis_loop:]
+    if 'offset < CONSTRUCTED0_DEPENDENCY_MAX_RANGE' in boundary_search or \
+            'offset <= boundary' in provenance_pass or \
+            'target + CONSTRUCTED0_DEPENDENCY_MAX_RANGE' in \
+                dependency_analysis:
+        fail("dependency analysis can read or process offset 0x200")
+    if 'boundary = offset + 8;' not in boundary_search or \
+            'if (boundary == 0)' not in boundary_search:
+        fail("dependency analysis no longer fails closed without a full return")
     apply_start = kernel.find(
             'static int zeroCtrlApplyConstructed0DependencyInstruction(')
     apply_end = dependency_analysis_start

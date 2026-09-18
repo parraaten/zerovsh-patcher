@@ -6972,7 +6972,8 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
         return 0;
     }
 
-    for (offset = 0; offset < CONSTRUCTED0_DEPENDENCY_MAX_RANGE;
+    for (offset = 0;
+            offset <= CONSTRUCTED0_DEPENDENCY_MAX_RANGE - 8;
             offset += 4) {
         if (!zeroCtrlBridgeExecutableRange(paf, target + offset, 8)) break;
         if (_lw(target + offset) == 0x03E00008) {
