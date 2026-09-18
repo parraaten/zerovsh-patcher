@@ -6983,6 +6983,102 @@ static void zeroCtrlWriteConstructed0DependencyHelperMap(SceModule2 *paf,
     }
 }
 
+static void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(SceModule2 *paf,
+        unsigned int dependency_consumer_target) {
+    unsigned int common0, common1, common_helper_target, copy_target;
+    unsigned int segment, remaining, offset, word, load_reg = 0;
+    unsigned int source_moves = 0, source_loads = 0, source_branches = 0;
+    unsigned int setup_store = 0, setup_a0 = 0, setup_a1 = 0, setup_a2 = 0;
+    unsigned int setup_invalid = 0;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,
+                0x200) ||
+            !zeroCtrlMipsMove(_lw(dependency_consumer_target + 0x034), 19, 5) ||
+            (_lw(dependency_consumer_target + 0x038) >> 26) != 3 ||
+            (_lw(dependency_consumer_target + 0x050) >> 26) != 3) goto invalid;
+    word = _lw(dependency_consumer_target + 0x04C);
+    if ((word >> 26) != 9 || ((word >> 21) & 0x1F) != 19 ||
+            ((word >> 16) & 0x1F) != 5 || (short)(word & 0xFFFF) != 0x0C)
+        goto invalid;
+    common0 = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x038,
+            _lw(dependency_consumer_target + 0x038));
+    common1 = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x050,
+            _lw(dependency_consumer_target + 0x050));
+    if (common0 != common1 ||
+            !zeroCtrlBridgeExecutableRange(paf, common0, 0x100)) goto invalid;
+    common_helper_target = common0;
+    for (offset = 0; offset <= 0x64; offset += 4) {
+        word = _lw(common_helper_target + offset);
+        if (zeroCtrlMipsMove(word, 16, 5)) source_moves++;
+        if ((word >> 26) == 0x23 && ((word >> 21) & 0x1F) == 16 &&
+                (short)(word & 0xFFFF) == 4) {
+            load_reg = (word >> 16) & 0x1F;
+            source_loads++;
+        } else if (((word >> 26) == 4 || (word >> 26) == 5) &&
+                load_reg != 0 &&
+                ((((word >> 21) & 0x1F) == load_reg &&
+                  ((word >> 16) & 0x1F) == 0) ||
+                 (((word >> 16) & 0x1F) == load_reg &&
+                  ((word >> 21) & 0x1F) == 0)))
+            source_branches++;
+    }
+    word = _lw(common_helper_target + 0x06C);
+    if (source_moves != 1 || source_loads != 1 || source_branches != 1 ||
+            (_lw(common_helper_target + 0x068) >> 26) != 3 ||
+            (word >> 26) != 9 || ((word >> 21) & 0x1F) != load_reg ||
+            ((word >> 16) & 0x1F) != 4 || (short)(word & 0xFFFF) != 1 ||
+            _lw(common_helper_target + 0x070) != 0xAE220000)
+        goto invalid;
+    for (offset = 0x074; offset <= 0x080; offset += 4) {
+        int destination;
+        word = _lw(common_helper_target + offset);
+        if (word == 0x8E240000) setup_a0++;
+        else if (word == 0x8E050000) setup_a1++;
+        else if (word == 0x8E060004) setup_a2++;
+        else if (word == 0xAE220000) setup_store++;
+        else {
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination >= 4 && destination <= 6) setup_invalid = 1;
+        }
+    }
+    if (setup_invalid || setup_store != 0 || setup_a0 != 1 ||
+            setup_a1 != 1 || setup_a2 != 1 ||
+            (_lw(common_helper_target + 0x084) >> 26) != 3 ||
+            _lw(common_helper_target + 0x088) != 0x24C60001)
+        goto invalid;
+    copy_target = zeroCtrlMipsJumpTarget(common_helper_target + 0x084,
+            _lw(common_helper_target + 0x084));
+    if (!zeroCtrlModuleContainingSegment(paf, copy_target, &segment,
+                &remaining) || segment != 0 ||
+            !zeroCtrlBridgeExecutableRange(paf, copy_target, 0x100))
+        goto invalid;
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-copy-callee] validation=1 "
+            "call_off=0x084 target=0x%08X target_off=0x%X size=0x100\n",
+            copy_target, copy_target - paf->text_addr);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0xE0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-copy-code] off=0x%03X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(copy_target + offset + 0x00),
+                _lw(copy_target + offset + 0x04),
+                _lw(copy_target + offset + 0x08),
+                _lw(copy_target + offset + 0x0C),
+                _lw(copy_target + offset + 0x10),
+                _lw(copy_target + offset + 0x14),
+                _lw(copy_target + offset + 0x18),
+                _lw(copy_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+    return;
+invalid:
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-copy-callee] validation=0\n");
+}
+
 static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
     SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
     SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
@@ -7074,6 +7170,7 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
                 "complete=0 reason=NO_RETURN off=0x200\n");
         zeroCtrlWriteConstructed0DependencyMap(paf, target);
         zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);
+        zeroCtrlWriteConstructed0DependencyCopyCalleeMap(paf, target);
         return 0;
     }
     memset(provenance, 0, sizeof(provenance));

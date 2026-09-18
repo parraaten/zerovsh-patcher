@@ -3091,7 +3091,7 @@ def check_sources(root):
         fail("dependency map one-shot state is not writer-local")
     helper_map_start = map_end + 1
     helper_map_end = kernel.find(
-            '\nstatic int zeroCtrlWriteConstructed0DependencyConsumer(void)',
+            '\nstatic void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(',
             helper_map_start)
     dependency_helper_map = kernel[helper_map_start:helper_map_end]
     if helper_map_start <= 0 or helper_map_end < 0:
@@ -3149,6 +3149,83 @@ def check_sources(root):
             dependency_analysis.count(
                 'zeroCtrlWriteConstructed0DependencyHelperMap(') != 1:
         fail("dependency helper map is not one-shot under the NO_RETURN gate")
+    copy_map_start = helper_map_end + 1
+    copy_map_end = kernel.find(
+            '\nstatic int zeroCtrlWriteConstructed0DependencyConsumer(void)',
+            copy_map_start)
+    dependency_copy_map = kernel[copy_map_start:copy_map_end]
+    if copy_map_start <= 0 or copy_map_end < 0:
+        fail("constructed0 dependency copy-callee map is missing")
+    for token in ('dependency_consumer_target + 0x034',
+            'zeroCtrlMipsMove(', '19, 5',
+            'dependency_consumer_target + 0x038',
+            'dependency_consumer_target + 0x04C',
+            'dependency_consumer_target + 0x050',
+            'common0 = zeroCtrlMipsJumpTarget(',
+            'common1 = zeroCtrlMipsJumpTarget(', 'common0 != common1',
+            'zeroCtrlBridgeExecutableRange(paf, common0, 0x100)',
+            'zeroCtrlMipsMove(word, 16, 5)',
+            '((word >> 21) & 0x1F) == 16',
+            '(short)(word & 0xFFFF) == 4',
+            'source_moves != 1', 'source_loads != 1',
+            'source_branches != 1',
+            'common_helper_target + 0x068',
+            'common_helper_target + 0x06C',
+            '((word >> 16) & 0x1F) != 4',
+            '(short)(word & 0xFFFF) != 1',
+            'common_helper_target + 0x070', '0xAE220000',
+            'word == 0x8E240000', 'word == 0x8E050000',
+            'word == 0x8E060004',
+            'destination = zeroCtrlMipsGprWriteDestination(word)',
+            'destination >= 4 && destination <= 6', 'setup_invalid',
+            'common_helper_target + 0x084',
+            'common_helper_target + 0x088', '0x24C60001',
+            'copy_target = zeroCtrlMipsJumpTarget(',
+            'zeroCtrlModuleContainingSegment(paf, copy_target, &segment,',
+            'segment != 0',
+            '[psp1000-constructed0-dependency-copy-callee] validation=0',
+            'call_off=0x084 target=0x%08X target_off=0x%X size=0x100',
+            '[psp1000-constructed0-dependency-copy-code] off=0x%03X'):
+        if token not in dependency_copy_map:
+            fail("constructed0 dependency copy-callee proof lacks " + token)
+    copy_consumer_range = dependency_copy_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,')
+    copy_consumer_size = dependency_copy_map.find(
+            '0x200)', copy_consumer_range)
+    copy_consumer_read = dependency_copy_map.find(
+            '_lw(dependency_consumer_target + 0x034)', copy_consumer_size)
+    copy_range = dependency_copy_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, copy_target, 0x100)',
+            copy_consumer_read)
+    copy_header = dependency_copy_map.find(
+            '[psp1000-constructed0-dependency-copy-callee] validation=1',
+            copy_range)
+    copy_loop = dependency_copy_map.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)', copy_header)
+    copy_first_read = dependency_copy_map.find(
+            '_lw(copy_target + offset + 0x00)', copy_loop)
+    copy_last_read = dependency_copy_map.find(
+            '_lw(copy_target + offset + 0x1C)', copy_loop)
+    if not 0 <= copy_consumer_range < copy_consumer_size < \
+            copy_consumer_read < copy_range < copy_header < copy_loop < \
+            copy_first_read < copy_last_read:
+        fail("copy-callee map reads before validated derivation/full range")
+    if dependency_copy_map.count('_lw(copy_target + offset + ') != 8 or \
+            dependency_copy_map.count('zeroCtrlMipsJumpTarget(') != 3 or \
+            any(token in dependency_copy_map for token in
+                ('0x35A24', '0x148CDC', '0x15B9C4',
+                 'zeroCtrlMipsBranchTarget', 'a989_target_dependency',
+                 'a989_target_node', 'a989_target_outer', 'a989_target_inner',
+                 '_sw(', 'sceKernelDcache', 'sceKernelIcache',
+                 'zeroCtrlWriteConstructed0DependencyConsumer(')):
+        fail("copy-callee map follows code, uses runtime state, recurses, or writes")
+    copy_map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyCopyCalleeMap(paf, target);',
+            helper_map_call)
+    if not helper_map_call < copy_map_call < no_return_exit or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0DependencyCopyCalleeMap(') != 1:
+        fail("copy-callee map is not one-shot under the NO_RETURN chain")
     apply_start = kernel.find(
             'static int zeroCtrlApplyConstructed0DependencyInstruction(')
     apply_end = dependency_analysis_start
