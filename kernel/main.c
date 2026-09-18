@@ -5732,8 +5732,8 @@ static void zeroCtrlInstallVshCtrl314A4Bridge(void) {
     _sw((unsigned int)info.startaddr, slide_diag.bridge_scalar[5]);
     _sw((unsigned int)info.startaddr + (unsigned int)info.memsize,
             slide_diag.bridge_scalar[6]);
-    for (i = 7; i <= 14; i++) _sw(0, slide_diag.bridge_scalar[i]);
-    for (i = 0; i <= 14; i++)
+    for (i = 7; i <= 15; i++) _sw(0, slide_diag.bridge_scalar[i]);
+    for (i = 0; i <= 15; i++)
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)slide_diag.bridge_scalar[i], 4);
     slide_diag.bridge_root_slot = root;
@@ -5766,7 +5766,7 @@ void zeroCtrlRegisterPsp1000FunctionalBridge(
             copied.helper_addr || !zeroCtrlVshModuleRangeValid(helper,
                 copied.helper_addr, copied.helper_end_addr - copied.helper_addr))
         return;
-    for (i = 0; i < 15; i++)
+    for (i = 0; i < 16; i++)
         if (copied.scalar_addr[i] == 0 || (copied.scalar_addr[i] & 3) != 0 ||
                 !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[i], 4))
             return;
@@ -5776,6 +5776,12 @@ void zeroCtrlRegisterPsp1000FunctionalBridge(
             sizeof(slide_diag.bridge_scalar));
     slide_diag.bridge_registered = 1;
     zeroCtrlInstallVshCtrl314A4Bridge();
+}
+
+static int zeroCtrlPsp1000BridgeUserRangeValid(unsigned int address,
+        unsigned int size, unsigned int lower, unsigned int upper) {
+    return size != 0 && (address & 3) == 0 && lower <= address &&
+            address <= upper && upper >= lower && size <= upper - address;
 }
 
 static int zeroCtrlReadVshCtrl314A4Telemetry(unsigned int state[4]) {
@@ -8924,10 +8930,17 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
-    unsigned int observed_functional_bridge[12] = {
+    unsigned int observed_functional_bridge[13] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
-        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF
+    };
+    unsigned int observed_functional_bridge_reject2[14] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF
     };
     unsigned int observed_functional_bridge_livein[10] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
@@ -9086,10 +9099,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 }
             }
             if (slide_diag.functional_enabled && slide_diag.bridge_registered) {
-                unsigned int state[12];
+                unsigned int state[13];
                 unsigned int livein[10];
                 unsigned int blocker[8];
                 unsigned int install_state[8];
+                unsigned int reject2[14] = { 0 };
                 install_state[0] = slide_diag.bridge_install_attempts;
                 install_state[1] = slide_diag.bridge_resolve_stage;
                 install_state[2] = slide_diag.bridge_resolve_reject;
@@ -9179,6 +9193,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 state[10] = zeroCtrlReadHelperCounter(
                         slide_diag.triggers[0].request_addr);
                 state[11] = slide_diag.functional_trigger_consumed;
+                state[12] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[15]);
                 if (memcmp(state, observed_functional_bridge,
                             sizeof(state)) != 0) {
                     memcpy(observed_functional_bridge, state, sizeof(state));
@@ -9187,10 +9203,63 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             "validation=%u install=%u cache_sync=%u hits=%u "
                             "request_seen=%u attempts=%u stage0_calls=%u "
                             "stage1_calls=%u busy=%u reject=%u request=%u "
-                            "consumed=%u\n", state[0], state[1], state[2],
+                            "consumed=%u reject_object=0x%08X\n", state[0],
+                            state[1], state[2],
                             state[3], state[4], state[5], state[6], state[7],
-                            state[8], state[9], state[10], state[11]);
+                            state[8], state[9], state[10], state[11], state[12]);
                     zeroCtrlDiagnosticsText(line);
+                }
+                if (slide_diag.bridge_validation == 1 &&
+                        slide_diag.bridge_install == 1 && state[9] == 2 &&
+                        state[12] != 0) {
+                    unsigned int lower = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_scalar[5]);
+                    unsigned int upper = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_scalar[6]);
+                    unsigned int object = state[12];
+                    unsigned int inner = 0;
+
+                    reject2[0] = object;
+                    reject2[1] = zeroCtrlPsp1000BridgeUserRangeValid(object,
+                            0x1C, lower, upper);
+                    if (reject2[1]) {
+                        reject2[2] = _lw(object + 0x00);
+                        reject2[3] = _lw(object + 0x04);
+                        reject2[4] = _lw(object + 0x08);
+                        reject2[5] = _lw(object + 0x0C);
+                        reject2[6] = _lw(object + 0x14);
+                        reject2[7] = _lw(object + 0x18);
+                        inner = reject2[3];
+                        reject2[8] = zeroCtrlPsp1000BridgeUserRangeValid(inner,
+                                0x10, lower, upper);
+                        if (reject2[8]) {
+                            reject2[9] = _lw(inner + 0x04);
+                            reject2[10] = _lw(inner + 0x0C);
+                        }
+                    }
+                    reject2[11] = slide_diag.bridge_constructed0;
+                    reject2[12] = slide_diag.bridge_constructed1;
+                    reject2[13] = slide_diag.bridge_callback;
+                    if (memcmp(reject2, observed_functional_bridge_reject2,
+                                sizeof(reject2)) != 0) {
+                        memcpy(observed_functional_bridge_reject2, reject2,
+                                sizeof(reject2));
+                        snprintf(line, sizeof(line),
+                                "[psp1000-functional-314a4-reject2-object] "
+                                "object=0x%08X valid=%u f00=0x%08X f04=0x%08X "
+                                "f08=0x%08X f0c=0x%08X f14=0x%08X f18=0x%08X\n",
+                                reject2[0], reject2[1], reject2[2], reject2[3],
+                                reject2[4], reject2[5], reject2[6], reject2[7]);
+                        zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[psp1000-functional-314a4-reject2-inner] "
+                                "valid=%u inner04=0x%08X inner0c=0x%08X "
+                                "expected0=0x%08X expected14=0x%08X "
+                                "expected_cb=0x%08X\n", reject2[8], reject2[9],
+                                reject2[10], reject2[11], reject2[12],
+                                reject2[13]);
+                        zeroCtrlDiagnosticsText(line);
+                    }
                 }
             }
             if (slide_diag.functional_enabled) {

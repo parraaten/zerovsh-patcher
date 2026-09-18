@@ -2007,6 +2007,8 @@ def check_sources(root):
             '_sw(c0, slide_diag.bridge_scalar[2])',
             '_sw(c1, slide_diag.bridge_scalar[3])',
             '_sw(callback, slide_diag.bridge_scalar[4])',
+            'for (i = 7; i <= 15; i++)',
+            'for (i = 0; i <= 15; i++)',
             '_sw(replacement, owner)', 'slide_diag.bridge_install = 1'):
         if token not in bridge:
             fail("functional +314A4 bridge installer lacks " + token)
@@ -2329,6 +2331,8 @@ def check_sources(root):
             'zeroCtrlInstallVshCtrl314A4Bridge();'):
         if token not in registration:
             fail("functional bridge registration lacks " + token)
+    if 'for (i = 0; i < 16; i++)' not in registration:
+        fail("functional bridge registration does not validate all 16 scalars")
     module_start = kernel[kernel.find("int OnModuleStart(SceModule2 *mod)"):
             kernel.find("int zeroCtrlLoadStartModule(")]
     if 'slide_diag.bridge_registered &&' not in module_start or \
@@ -2358,6 +2362,31 @@ def check_sources(root):
             'move    $a3, $zero'):
         if token not in helper:
             fail("functional assembly bridge lacks " + token)
+    reject_object_clear = helper.find(
+            'sw      $zero, %lo(zeroCtrlVsh314A4RejectObject)($t0)')
+    root_slot_read = helper.find('%lo(zeroCtrlVsh314A4RootSlot)',
+            reject_object_clear)
+    outer_actual = helper.find('lw      $t3, 0($s2)', root_slot_read)
+    outer_expected = helper.find(
+            'lw      $t0, %lo(zeroCtrlVsh314A4Constructed0)($t0)', outer_actual)
+    outer_compare = helper.find('bne     $t3, $t0, 2f', outer_expected)
+    reject2_label = helper.find('2:', outer_compare)
+    reject_object_capture = helper.find(
+            'sw      $s2, %lo(zeroCtrlVsh314A4RejectObject)($t0)', reject2_label)
+    reject2_value = helper.find('addiu   $t1, $zero, 2', reject_object_capture)
+    busy_set = helper.find('sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)')
+    attempt_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Attempts')
+    stage0_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls')
+    if not 0 <= reject_object_clear < root_slot_read < outer_actual < \
+            outer_expected < outer_compare < reject2_label < \
+            reject_object_capture < reject2_value:
+        fail("reject 2 does not capture its exact mismatching outer object")
+    reject2_block = helper[reject2_label:helper.find('3:', reject2_label)]
+    if not outer_compare < busy_set < attempt_inc < stage0_inc or any(
+            token in reject2_block for token in (
+                'zeroCtrlVsh314A4Busy', 'zeroCtrlVsh314A4Attempted',
+                'zeroCtrlVsh314A4Attempts', 'zeroCtrlVsh314A4Stage0Calls')):
+        fail("reject-object evidence changes pre-validation attempt ordering")
     callback_load = helper.rfind('lw      $t3, 0x0C($s3)', 0,
             helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage1Calls'))
     expected_load = helper.find(
@@ -2377,6 +2406,13 @@ def check_sources(root):
             "sizeof(ZeroCtrlBSManClosedRegistration) == 1012" not in bsman_header or \
             "sizeof(ZeroCtrlActivationWideRegistration) == 304" not in bsman_header:
         fail("bridge registration changed a fixed activation ABI")
+    bridge_user_registration = user[user.find(
+            'psp1000BridgeRegistration.helper_addr'):user.find(
+            'zeroCtrlRegisterPsp1000FunctionalBridge', user.find(
+                'psp1000BridgeRegistration.helper_addr'))]
+    if 'scalar_addr[15]' not in bridge_user_registration or \
+            '&zeroCtrlVsh314A4RejectObject' not in bridge_user_registration:
+        fail("bridge scalar 15 does not register exact reject-object evidence")
     if 'zeroCtrlTrigger13F6CHits' in user[user.find(
             'psp1000BridgeRegistration.helper_addr'):user.find(
             'zeroCtrlRegisterPsp1000FunctionalBridge', user.find(
@@ -2437,10 +2473,34 @@ def check_sources(root):
     if not install_line:
         fail("functional bridge install-stage telemetry is missing or oversized")
     bridge_line = re.search(
-            r'"\[psp1000-functional-314a4-bridge\][\s\S]{0,420}?"consumed=%u\\n"',
+            r'"\[psp1000-functional-314a4-bridge\][\s\S]{0,460}?'
+            r'"consumed=%u reject_object=0x%08X\\n"',
             writer)
     if not bridge_line:
         fail("functional bridge telemetry is incomplete or oversized")
+    reject2_start = writer.find(
+            'if (slide_diag.bridge_validation == 1 &&')
+    reject2_end = writer.find('\n            }\n', reject2_start)
+    reject2_writer = writer[reject2_start:reject2_end]
+    for token in ('slide_diag.bridge_install == 1', 'state[9] == 2',
+            'state[12] != 0',
+            'zeroCtrlPsp1000BridgeUserRangeValid(object,',
+            '0x1C, lower, upper)',
+            'zeroCtrlPsp1000BridgeUserRangeValid(inner,',
+            '0x10, lower, upper)',
+            '_lw(object + 0x00)', '_lw(object + 0x04)',
+            '_lw(object + 0x08)', '_lw(object + 0x0C)',
+            '_lw(object + 0x14)', '_lw(object + 0x18)',
+            '_lw(inner + 0x04)', '_lw(inner + 0x0C)',
+            'slide_diag.bridge_constructed0',
+            'slide_diag.bridge_constructed1', 'slide_diag.bridge_callback',
+            'memcmp(reject2, observed_functional_bridge_reject2',
+            '[psp1000-functional-314a4-reject2-object]',
+            '[psp1000-functional-314a4-reject2-inner]'):
+        if token not in reject2_writer:
+            fail("reject-2 bounded snapshot lacks " + token)
+    if 'for (' in reject2_writer or 'while (' in reject2_writer:
+        fail("reject-2 diagnostics add an arbitrary-memory scan")
     clock_start = kernel.find(
             "static int zeroCtrlWriteFunctionalClockPathAnalysis(void)")
     clock_end = kernel.find("static int zeroCtrlMipsMove(", clock_start)

@@ -320,6 +320,7 @@ extern volatile unsigned int zeroCtrlVsh314A4Attempts;
 extern volatile unsigned int zeroCtrlVsh314A4Stage0Calls;
 extern volatile unsigned int zeroCtrlVsh314A4Stage1Calls;
 extern volatile unsigned int zeroCtrlVsh314A4Reject;
+extern volatile unsigned int zeroCtrlVsh314A4RejectObject;
 extern int zeroCtrlGlobalPredicate6F84True(void);
 extern volatile unsigned int zeroCtrlGlobalPredicate6F84Hits;
 extern void zeroCtrlSonyModuleStartEntryTrace(void);
@@ -693,6 +694,8 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			(u32)&zeroCtrlVsh314A4Stage1Calls;
 	psp1000BridgeRegistration.scalar_addr[14] =
 			(u32)&zeroCtrlVsh314A4Reject;
+	psp1000BridgeRegistration.scalar_addr[15] =
+			(u32)&zeroCtrlVsh314A4RejectObject;
 	zeroCtrlRegisterPsp1000FunctionalBridge(&psp1000BridgeRegistration);
 	if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&
 			model == 0 && devkit == 0x06060110 &&

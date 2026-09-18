@@ -177,6 +177,10 @@ zeroCtrlVsh314A4FunctionalBridge:
     bnez    $t1, 9f
     nop
 
+    /* Reject-object evidence belongs only to this gated request attempt. */
+    lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
+    sw      $zero, %lo(zeroCtrlVsh314A4RejectObject)($t0)
+
     /* No PAF pointer is read before the request, busy, and attempted gates. */
     lui     $t0, %hi(zeroCtrlVsh314A4RootSlot)
     lw      $s5, %lo(zeroCtrlVsh314A4RootSlot)($t0)
@@ -248,7 +252,9 @@ zeroCtrlVsh314A4FunctionalBridge:
 1:  addiu   $t1, $zero, 1
     b       7f
     nop
-2:  addiu   $t1, $zero, 2
+2:  lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
+    sw      $s2, %lo(zeroCtrlVsh314A4RejectObject)($t0)
+    addiu   $t1, $zero, 2
     b       7f
     nop
 3:  addiu   $t1, $zero, 3
@@ -326,6 +332,8 @@ zeroCtrlVsh314A4Stage0Calls: .space 4
 zeroCtrlVsh314A4Stage1Calls: .space 4
 .globl zeroCtrlVsh314A4Reject
 zeroCtrlVsh314A4Reject: .space 4
+.globl zeroCtrlVsh314A4RejectObject
+zeroCtrlVsh314A4RejectObject: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 
