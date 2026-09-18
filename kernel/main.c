@@ -6995,9 +6995,18 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
         unsigned int function = word & 0x3F;
         unsigned int delay, arg;
 
+        if (opcode >= 0x14 && opcode <= 0x17) {
+            if (!zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)) {
+                reason = "DELAY_SLOT";
+                goto incomplete;
+            }
+            delay = _lw(pc + 4);
+            (void)delay;
+            reason = "BRANCH_LIKELY";
+            goto incomplete;
+        }
         if (opcode == 3 || opcode == 2 || opcode == 1 ||
                 (opcode >= 4 && opcode <= 7) ||
-                (opcode >= 0x14 && opcode <= 0x17) ||
                 (opcode == 0 && (function == 8 || function == 9))) {
             unsigned int target_register = (word >> 21) & 0x1F;
             unsigned int link_register = (word >> 11) & 0x1F;
@@ -7055,8 +7064,7 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
                 zeroCtrlDiagnosticsText(line);
                 return 1;
             }
-            reason = (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
-                    (opcode >= 0x14 && opcode <= 0x17)) ?
+            reason = (opcode == 1 || (opcode >= 4 && opcode <= 7)) ?
                     "BRANCH" : "CONTROL_FLOW";
             goto incomplete;
         }

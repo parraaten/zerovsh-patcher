@@ -2924,11 +2924,50 @@ def check_sources(root):
         if token not in dependency_analysis:
             fail("constructed0 dependency prefix proof lacks " + token)
     for token in ('delay = _lw(pc + 4)', 'offset + 4, provenance',
-            '"BRANCH"', 'reason = "INDIRECT_CALL"',
+            '"BRANCH"', 'reason = "BRANCH_LIKELY"',
+            'reason = "INDIRECT_CALL"',
             'reason = call_forwarded ? "FORWARDED" : "DIRECT_CALL"',
             '"CONTROL_FLOW"', 'reason = "NO_RETURN"'):
         if token not in dependency_analysis:
             fail("dependency control-flow analysis is not fail-closed: " + token)
+    likely_start = dependency_analysis.find(
+            'if (opcode >= 0x14 && opcode <= 0x17) {')
+    generic_start = dependency_analysis.find(
+            'if (opcode == 3 || opcode == 2 || opcode == 1 ||', likely_start)
+    likely_block = dependency_analysis[likely_start:generic_start]
+    generic_end = dependency_analysis.find(
+            'if (!zeroCtrlApplyConstructed0DependencyInstruction(word, offset,',
+            generic_start)
+    generic_control = dependency_analysis[generic_start:generic_end]
+    if not 0 <= likely_start < generic_start < generic_end:
+        fail("branch-likely is not separated before normal delay handling")
+    for token in ('zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)',
+            'delay = _lw(pc + 4)', 'reason = "BRANCH_LIKELY"',
+            'goto incomplete'):
+        if token not in likely_block:
+            fail("branch-likely fail-closed handling lacks " + token)
+    if 'zeroCtrlApplyConstructed0DependencyInstruction' in likely_block or \
+            any(token in likely_block for token in
+                ('accesses++', 'chases++', 'forwards++')):
+        fail("branch-likely delay slot mutates or reports provenance")
+    ordinary_membership = generic_control.find('(opcode >= 4 && opcode <= 7)')
+    generic_delay = generic_control.find('delay = _lw(pc + 4)')
+    generic_apply = generic_control.find(
+            'zeroCtrlApplyConstructed0DependencyInstruction(delay,')
+    branch_reason = generic_control.find('"BRANCH"', generic_apply)
+    forward_loop = generic_control.find('for (arg = 4; arg <= 7; arg++)')
+    if not 0 <= ordinary_membership < generic_delay < generic_apply < \
+            branch_reason or not generic_apply < forward_loop:
+        fail("ordinary branches/calls no longer apply delay slots before use")
+    for token in ('opcode == 3', 'opcode == 2', 'opcode == 1',
+            'function == 8', 'function == 9'):
+        if token not in generic_control:
+            fail("J/JAL/JR/JALR or ordinary REGIMM delay handling regressed")
+    if 'zeroCtrlMipsBranchTarget' in dependency_analysis or \
+            'QUEUE' in dependency_analysis or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0DependencyConsumer(') != 1:
+        fail("dependency analyzer introduced dual-path or recursive CFG traversal")
     if any(token in dependency_analysis for token in
             ('_sw(', '_sb(', 'sceKernelDcache', 'sceKernelIcache',
              'a989_target_dependency', 'bridge_scalar[', 'for (candidate')):
