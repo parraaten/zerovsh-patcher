@@ -292,4 +292,18 @@ typedef struct {
 typedef char ZeroCtrlVsh5704TraceRegistration_size[
     sizeof(ZeroCtrlVsh5704TraceRegistration) == 16 ? 1 : -1];
 
+typedef struct {
+    u32 helper_addr;
+    u32 helper_end_addr;
+    u32 jump_slot_addr;
+    u32 entry_hits_addr;
+    u32 exact_hits_addr;
+    u32 target_node_addr;
+    u32 target_outer_addr;
+    u32 target_inner_addr;
+} ZeroCtrlPafA989TargetTraceRegistration;
+
+typedef char ZeroCtrlPafA989TargetTraceRegistration_size[
+    sizeof(ZeroCtrlPafA989TargetTraceRegistration) == 32 ? 1 : -1];
+
 #endif

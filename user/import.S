@@ -6,7 +6,7 @@
 	STUB_FUNC 0x1C90BECB, sctrlHENSetStartModuleHandler	
 	STUB_END
 
-	STUB_START "ZeroCtrlForUser" 0x40090000, 0x00130005
+	STUB_START "ZeroCtrlForUser" 0x40090000, 0x00140005
 	STUB_FUNC 0x13373570, zeroCtrlGetSlideState
 	STUB_FUNC 0x13373571, zeroCtrlSetSlideState
 	STUB_FUNC 0x13373572, zeroCtrlGetSlideConfig
@@ -24,6 +24,7 @@
 	STUB_FUNC 0x13373580, zeroCtrlRegisterActivationReturn
 	STUB_FUNC 0x13373581, zeroCtrlRegisterPsp1000FunctionalBridge
 	STUB_FUNC 0x13373582, zeroCtrlRegisterVsh5704Trace
+	STUB_FUNC 0x13373583, zeroCtrlRegisterPafA989TargetTrace
 	STUB_FUNC 0x1337357E, zeroCtrlRegisterActivationCallerRA
 	STUB_FUNC 0x1337357F, zeroCtrlIsPsp1000SlideFunctionalEnabled
 	STUB_END

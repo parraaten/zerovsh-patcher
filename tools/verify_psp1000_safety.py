@@ -2409,10 +2409,16 @@ def check_sources(root):
     if "sizeof(ZeroCtrlVsh5704TraceRegistration) == 16" not in bsman_header or \
             "scalar_addr[16]" not in bsman_header:
         fail("VSH+5704 trace is not a separate fixed diagnostic registration")
+    if "sizeof(ZeroCtrlPafA989TargetTraceRegistration) == 32" not in \
+            bsman_header:
+        fail("A989 target trace is not a separate 32-byte registration")
     for source, token in ((kernel_exports,
                 'zeroCtrlRegisterVsh5704Trace, 0x13373582'),
             (user_imports, '0x13373582, zeroCtrlRegisterVsh5704Trace'),
-            (user_imports, '0x00130005')):
+            (user_imports, '0x00140005'),
+            (kernel_exports,
+                'zeroCtrlRegisterPafA989TargetTrace, 0x13373583'),
+            (user_imports, '0x13373583, zeroCtrlRegisterPafA989TargetTrace')):
         if token not in source:
             fail("VSH+5704 trace registration interface lacks " + token)
     bridge_user_registration = user[user.find(
@@ -2506,6 +2512,117 @@ def check_sources(root):
     if 'vsh5704_trace_registered' not in module_start or \
             'zeroCtrlInstallVsh5704RegistrationTrace();' not in module_start:
         fail("OnModuleStart no longer retries the VSH+5704 trace")
+    target_install_start = kernel.find(
+            'static void zeroCtrlInstallPafA989TargetTrace(void) {')
+    target_register_start = kernel.find(
+            'void zeroCtrlRegisterPafA989TargetTrace(', target_install_start)
+    target_register_end = kernel.find(
+            'static int zeroCtrlPsp1000BridgeUserRangeValid(',
+            target_register_start)
+    target_install = kernel[target_install_start:target_register_start]
+    target_registration = kernel[target_register_start:target_register_end]
+    for token in ('vtext + 0x5704', 'vtext + 0x3F568',
+            '"scePaf", 0xA989A2C4', 'ptext + 0x35978',
+            'wrapper + 0x18', 'inner != ptext + 0x34A24',
+            'inner + 0x90', 'consumer = zeroCtrlMipsJumpTarget(',
+            '_lw(consumer + 0x10), 22, 8',
+            '_lw(consumer + 0x18), 21, 6',
+            '_lw(consumer + 0x20), 20, 9',
+            '_lw(consumer + 0x28), 19, 7',
+            '_lw(consumer + 0x30), 18, 5',
+            '_lw(consumer + 0x68) != 0x24040028',
+            '_lw(consumer + 0x74)', '_lw(consumer + 0x78) != 0x24500008',
+            '_lw(consumer + 0x7C)', '_lw(consumer + 0x88) != 0xAC520008',
+            '_lw(consumer + 0x8C)', '_lw(consumer + 0x90) != 0xAE150004',
+            '_lw(consumer + 0x94) != 0xAE130008',
+            '_lw(consumer + 0x98) != 0xAE16000C',
+            '_lw(consumer + 0x9C) != 0xAE140014',
+            'owner = consumer + 0xA0', '(_lw(consumer + 0xA0) >> 26) != 3',
+            '_lw(consumer + 0xA4) != 0xAE000018',
+            '_lw(target) != 0x03E00008', '_lw(target + 4) != 0xAC850004',
+            '_lw(slide_diag.paf_a989_target_trace_jump_slot) != 0x08000000'):
+        if token not in target_install:
+            fail("synchronous A989 consumer derivation lacks " + token)
+    if '!= vtext + 0x3F568' not in target_install:
+        fail("A989 consumer trace is not installed before the VSH+5704 owner")
+    target_helper_patch = target_install.find(
+            '_sw(helper_jump, slide_diag.paf_a989_target_trace_jump_slot)')
+    target_helper_dcache = target_install.find(
+            'sceKernelDcacheWritebackInvalidateRange(', target_helper_patch)
+    target_helper_icache = target_install.find(
+            'sceKernelIcacheInvalidateRange(', target_helper_dcache)
+    target_owner_patch = target_install.find(
+            '_sw(replacement, owner)', target_helper_icache)
+    target_owner_dcache = target_install.find(
+            'sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4)',
+            target_owner_patch)
+    target_owner_icache = target_install.find(
+            'sceKernelIcacheInvalidateRange((const void *)owner, 4)',
+            target_owner_dcache)
+    if not 0 <= target_helper_patch < target_helper_dcache < \
+            target_helper_icache < target_owner_patch < target_owner_dcache < \
+            target_owner_icache:
+        fail("A989 target helper is not committed before its consumer owner")
+    for token in ('ZeroCtrlPafA989TargetTraceRegistration copied',
+            'copied.entry_hits_addr', 'copied.exact_hits_addr',
+            'copied.target_node_addr', 'copied.target_outer_addr',
+            'copied.target_inner_addr',
+            'slide_diag.paf_a989_target_trace_registered = 1',
+            'zeroCtrlInstallPafA989TargetTrace();'):
+        if token not in target_registration:
+            fail("A989 target trace registration lacks " + token)
+    target_helper_start = assembly.find('zeroCtrlPafA989TargetTrace:')
+    target_helper_end = assembly.find(
+            'zeroCtrlPafA989TargetTraceEnd:', target_helper_start)
+    target_helper = assembly[target_helper_start:target_helper_end]
+    for reg, offset in zip(('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7'),
+            range(0, 32, 4)):
+        if 'sw      $' + reg + ', ' + str(offset) + '($sp)' not in target_helper or \
+                'lw      $' + reg + ', ' + str(offset) + '($sp)' not in target_helper:
+            fail("A989 synchronous helper does not preserve $" + reg)
+    for token in ('zeroCtrlVsh5704RegistrationTraceHits',
+            'bnez    $t1, 1f', 'addiu   $t2, $a0, 8',
+            'bne     $t2, $a1, 1f', 'lw      $t4, 0x00($a1)',
+            'zeroCtrlVsh314A4Constructed0', 'lw      $t4, 0x08($a1)',
+            'lw      $t4, 0x0C($a1)', 'addiu   $t5, $zero, -1',
+            'lw      $t4, 0x14($a1)', 'zeroCtrlVsh314A4Constructed1',
+            'lw      $t4, 0x18($a1)', 'bnez    $t4, 1f',
+            'lw      $t6, 0x04($a1)', 'bne     $t6, $s5, 1f',
+            'lw      $t4, 0x0C($t6)', 'zeroCtrlVsh314A4ExpectedCallback',
+            'sw      $a0, %lo(zeroCtrlPafA989TargetNode)',
+            'sw      $a1, %lo(zeroCtrlPafA989TargetOuter)',
+            'sw      $t6, %lo(zeroCtrlPafA989TargetInner)',
+            'zeroCtrlPafA989TargetTraceExactHits', '.word   0x08000000',
+            'addiu   $sp, $sp, 32'):
+        if token not in target_helper:
+            fail("A989 synchronous helper contract lacks " + token)
+    if any(token in target_helper for token in ('jal ', 'jalr', 'sw      $ra',
+            'sw      $a2', 'sw      $a3', 'move    $a')):
+        fail("A989 synchronous helper calls code or changes Sony-visible state")
+    trace_hit_load = target_helper.find(
+            'lw      $t1, %lo(zeroCtrlVsh5704RegistrationTraceHits)')
+    trace_hit_gate = target_helper.find('beqz    $t1, 1f', trace_hit_load)
+    node_guard = target_helper.find('bnez    $t1, 1f')
+    node_store = target_helper.find('sw      $a0, %lo(zeroCtrlPafA989TargetNode)')
+    exact_publish = target_helper.rfind(
+            'sw      $t1, %lo(zeroCtrlPafA989TargetTraceExactHits)')
+    if not 0 <= trace_hit_load < trace_hit_gate < node_guard < node_store < \
+            exact_publish or target_helper.count('bne     $t4, $t5, 1f') != 2:
+        fail("A989 target tuple is not first-match-only and publication ordered")
+    if 'zeroCtrlInstallPafA989TargetTrace' in home_request:
+        fail("HOME installs the synchronous A989 target trace")
+    if 'paf_a989_target_trace_registered' not in module_start or \
+            'zeroCtrlInstallPafA989TargetTrace();' not in module_start:
+        fail("OnModuleStart no longer retries the synchronous A989 trace")
+    if module_start.find('zeroCtrlInstallPafA989TargetTrace();') > \
+            module_start.find('zeroCtrlInstallVsh5704RegistrationTrace();'):
+        fail("OnModuleStart can install VSH+5704 before its consumer capture")
+    user_target_register = user.find(
+            'zeroCtrlRegisterPafA989TargetTrace(&pafA989TargetTraceRegistration)')
+    user_vsh_register = user.find(
+            'zeroCtrlRegisterVsh5704Trace(&vsh5704TraceRegistration)')
+    if not 0 <= user_target_register < user_vsh_register:
+        fail("user registration can expose VSH+5704 before consumer capture")
     if '[psp1000-functional-314a4-bridge]' not in writer:
         fail("functional bridge telemetry is missing")
     if '[psp1000-functional-314a4-livein]' not in writer or \
@@ -2613,12 +2730,6 @@ def check_sources(root):
             '_lw(outer + 0x18)',
             'inner, 0x10, lower, upper)', '_lw(inner + 0x0C)',
             'f08 == 0xFFFFFFFF', 'f0c == 0xFFFFFFFF', 'f18 == 0',
-            'slide_diag.vsh5704_trace_validation == 1',
-            'slide_diag.vsh5704_trace_install == 1', 'trace_hits != 0',
-            'if (a989_target_node == 0',
-            'a989_target_node = node', 'a989_target_outer = outer',
-            'a989_target_inner = inner',
-            '[psp1000-a989-target-latch]',
             'memcmp(root_state, observed_a989_root_state',
             '[psp1000-a989-root-state]'):
         if token not in root_writer:
@@ -2645,9 +2756,26 @@ def check_sources(root):
             '[psp1000-a989-target-life-inner]'):
         if token not in root_writer:
             fail("latched A989 target lifetime evidence lacks " + token)
-    if root_writer.count('a989_target_node = node') != 1 or \
-            'a989_target_node = current_node' in root_writer:
-        fail("A989 target latch can be replaced after its exact first match")
+    if 'a989_target_node = node' in root_writer or \
+            '[psp1000-a989-target-latch]' in root_writer:
+        fail("asynchronous root polling can still create the A989 target")
+    capture_marker = writer.find('[psp1000-a989-target-capture]')
+    capture_start = writer.rfind(
+            'if (slide_diag.paf_a989_target_trace_registered)', 0,
+            capture_marker)
+    capture_end = writer.find('\n                }\n', capture_marker)
+    capture_writer = writer[capture_start:capture_end]
+    for token in ('paf_a989_target_trace_scalar[0]',
+            'paf_a989_target_trace_scalar[1]', 'capture[5] != 0',
+            'a989_target_node == 0',
+            'paf_a989_target_trace_scalar[2]',
+            'paf_a989_target_trace_scalar[3]',
+            'paf_a989_target_trace_scalar[4]',
+            '[psp1000-paf-a989-target-trace]',
+            '[psp1000-a989-target-capture]'):
+        if token not in capture_writer:
+            fail("writer target is not seeded solely by synchronous capture: " +
+                    token)
     clock_start = kernel.find(
             "static int zeroCtrlWriteFunctionalClockPathAnalysis(void)")
     clock_end = kernel.find("static int zeroCtrlMipsMove(", clock_start)

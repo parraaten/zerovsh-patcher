@@ -111,6 +111,8 @@ void zeroCtrlRegisterPsp1000FunctionalBridge(
         const ZeroCtrlPsp1000BridgeRegistration *registration);
 void zeroCtrlRegisterVsh5704Trace(
         const ZeroCtrlVsh5704TraceRegistration *registration);
+void zeroCtrlRegisterPafA989TargetTrace(
+        const ZeroCtrlPafA989TargetTraceRegistration *registration);
 void zeroCtrlRegisterActivationReturn(
         const ZeroCtrlActivationReturnRegistration *registration);
 void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
@@ -126,6 +128,7 @@ static ZeroCtrlActivationWideRegistration activationWideRegistration;
 static ZeroCtrlActivationReturnRegistration activationReturnRegistration;
 static ZeroCtrlPsp1000BridgeRegistration psp1000BridgeRegistration;
 static ZeroCtrlVsh5704TraceRegistration vsh5704TraceRegistration;
+static ZeroCtrlPafA989TargetTraceRegistration pafA989TargetTraceRegistration;
 static volatile unsigned int psp1000RuntimeRequest;
 static volatile unsigned int psp1000RuntimeRequestValid;
 static volatile unsigned int psp1000RuntimeRequestCalled;
@@ -328,6 +331,14 @@ extern void zeroCtrlVsh5704RegistrationTrace(void);
 extern void zeroCtrlVsh5704RegistrationTraceEnd(void);
 extern unsigned int zeroCtrlVsh5704RegistrationTraceJump;
 extern volatile unsigned int zeroCtrlVsh5704RegistrationTraceHits;
+extern void zeroCtrlPafA989TargetTrace(void);
+extern void zeroCtrlPafA989TargetTraceEnd(void);
+extern unsigned int zeroCtrlPafA989TargetTraceJump;
+extern volatile unsigned int zeroCtrlPafA989TargetTraceEntryHits;
+extern volatile unsigned int zeroCtrlPafA989TargetTraceExactHits;
+extern volatile unsigned int zeroCtrlPafA989TargetNode;
+extern volatile unsigned int zeroCtrlPafA989TargetOuter;
+extern volatile unsigned int zeroCtrlPafA989TargetInner;
 extern int zeroCtrlGlobalPredicate6F84True(void);
 extern volatile unsigned int zeroCtrlGlobalPredicate6F84Hits;
 extern void zeroCtrlSonyModuleStartEntryTrace(void);
@@ -704,6 +715,22 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	psp1000BridgeRegistration.scalar_addr[15] =
 			(u32)&zeroCtrlVsh314A4RejectObject;
 	zeroCtrlRegisterPsp1000FunctionalBridge(&psp1000BridgeRegistration);
+	pafA989TargetTraceRegistration.helper_addr = (u32)zeroCtrlPafA989TargetTrace;
+	pafA989TargetTraceRegistration.helper_end_addr =
+			(u32)zeroCtrlPafA989TargetTraceEnd;
+	pafA989TargetTraceRegistration.jump_slot_addr =
+			(u32)&zeroCtrlPafA989TargetTraceJump;
+	pafA989TargetTraceRegistration.entry_hits_addr =
+			(u32)&zeroCtrlPafA989TargetTraceEntryHits;
+	pafA989TargetTraceRegistration.exact_hits_addr =
+			(u32)&zeroCtrlPafA989TargetTraceExactHits;
+	pafA989TargetTraceRegistration.target_node_addr =
+			(u32)&zeroCtrlPafA989TargetNode;
+	pafA989TargetTraceRegistration.target_outer_addr =
+			(u32)&zeroCtrlPafA989TargetOuter;
+	pafA989TargetTraceRegistration.target_inner_addr =
+			(u32)&zeroCtrlPafA989TargetInner;
+	zeroCtrlRegisterPafA989TargetTrace(&pafA989TargetTraceRegistration);
 	vsh5704TraceRegistration.helper_addr =
 			(u32)zeroCtrlVsh5704RegistrationTrace;
 	vsh5704TraceRegistration.helper_end_addr =

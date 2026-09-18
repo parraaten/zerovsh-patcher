@@ -308,6 +308,90 @@ zeroCtrlVsh5704RegistrationTraceJump:
 zeroCtrlVsh5704RegistrationTraceEnd:
 .end zeroCtrlVsh5704RegistrationTrace
 
+/* Synchronous capture at the validated A989 consumer+0xA0 JAL. */
+.globl zeroCtrlPafA989TargetTrace
+.type zeroCtrlPafA989TargetTrace @function
+.ent zeroCtrlPafA989TargetTrace, 0
+zeroCtrlPafA989TargetTrace:
+    addiu   $sp, $sp, -32
+    sw      $t0, 0($sp)
+    sw      $t1, 4($sp)
+    sw      $t2, 8($sp)
+    sw      $t3, 12($sp)
+    sw      $t4, 16($sp)
+    sw      $t5, 20($sp)
+    sw      $t6, 24($sp)
+    sw      $t7, 28($sp)
+    lui     $t0, %hi(zeroCtrlPafA989TargetTraceEntryHits)
+    lw      $t1, %lo(zeroCtrlPafA989TargetTraceEntryHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPafA989TargetTraceEntryHits)($t0)
+    lui     $t0, %hi(zeroCtrlVsh5704RegistrationTraceHits)
+    lw      $t1, %lo(zeroCtrlVsh5704RegistrationTraceHits)($t0)
+    beqz    $t1, 1f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989TargetNode)
+    lw      $t1, %lo(zeroCtrlPafA989TargetNode)($t0)
+    bnez    $t1, 1f
+    nop
+    addiu   $t2, $a0, 8
+    bne     $t2, $a1, 1f
+    nop
+    lw      $t4, 0x00($a1)
+    lui     $t0, %hi(zeroCtrlVsh314A4Constructed0)
+    lw      $t3, %lo(zeroCtrlVsh314A4Constructed0)($t0)
+    bne     $t4, $t3, 1f
+    nop
+    addiu   $t5, $zero, -1
+    lw      $t4, 0x08($a1)
+    bne     $t4, $t5, 1f
+    nop
+    lw      $t4, 0x0C($a1)
+    bne     $t4, $t5, 1f
+    nop
+    lw      $t4, 0x14($a1)
+    lui     $t0, %hi(zeroCtrlVsh314A4Constructed1)
+    lw      $t3, %lo(zeroCtrlVsh314A4Constructed1)($t0)
+    bne     $t4, $t3, 1f
+    nop
+    lw      $t4, 0x18($a1)
+    bnez    $t4, 1f
+    nop
+    lw      $t6, 0x04($a1)
+    bne     $t6, $s5, 1f
+    nop
+    lw      $t4, 0x0C($t6)
+    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
+    lw      $t3, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
+    bne     $t4, $t3, 1f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989TargetNode)
+    sw      $a0, %lo(zeroCtrlPafA989TargetNode)($t0)
+    lui     $t0, %hi(zeroCtrlPafA989TargetOuter)
+    sw      $a1, %lo(zeroCtrlPafA989TargetOuter)($t0)
+    lui     $t0, %hi(zeroCtrlPafA989TargetInner)
+    sw      $t6, %lo(zeroCtrlPafA989TargetInner)($t0)
+    lui     $t0, %hi(zeroCtrlPafA989TargetTraceExactHits)
+    lw      $t1, %lo(zeroCtrlPafA989TargetTraceExactHits)($t0)
+    addiu   $t1, $t1, 1
+    sw      $t1, %lo(zeroCtrlPafA989TargetTraceExactHits)($t0)
+1:
+    lw      $t7, 28($sp)
+    lw      $t6, 24($sp)
+    lw      $t5, 20($sp)
+    lw      $t4, 16($sp)
+    lw      $t3, 12($sp)
+    lw      $t2, 8($sp)
+    lw      $t1, 4($sp)
+    lw      $t0, 0($sp)
+.globl zeroCtrlPafA989TargetTraceJump
+zeroCtrlPafA989TargetTraceJump:
+    .word   0x08000000
+    addiu   $sp, $sp, 32
+.globl zeroCtrlPafA989TargetTraceEnd
+zeroCtrlPafA989TargetTraceEnd:
+.end zeroCtrlPafA989TargetTrace
+
 CREATE_TRIGGER_STUB zeroCtrlGlobalPredicate6F84True, zeroCtrlGlobalPredicate6F84Hits
 
 .section .bss
@@ -358,6 +442,16 @@ zeroCtrlVsh314A4Reject: .space 4
 zeroCtrlVsh314A4RejectObject: .space 4
 .globl zeroCtrlVsh5704RegistrationTraceHits
 zeroCtrlVsh5704RegistrationTraceHits: .space 4
+.globl zeroCtrlPafA989TargetTraceEntryHits
+zeroCtrlPafA989TargetTraceEntryHits: .space 4
+.globl zeroCtrlPafA989TargetTraceExactHits
+zeroCtrlPafA989TargetTraceExactHits: .space 4
+.globl zeroCtrlPafA989TargetNode
+zeroCtrlPafA989TargetNode: .space 4
+.globl zeroCtrlPafA989TargetOuter
+zeroCtrlPafA989TargetOuter: .space 4
+.globl zeroCtrlPafA989TargetInner
+zeroCtrlPafA989TargetInner: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 

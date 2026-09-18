@@ -583,6 +583,7 @@ static void zeroCtrlInstall6F84ConsumerTraces(void);
 static void zeroCtrlInstallCapabilityMaskTraces(void);
 static void zeroCtrlInstallVshCtrl314A4Bridge(void);
 static void zeroCtrlInstallVsh5704RegistrationTrace(void);
+static void zeroCtrlInstallPafA989TargetTrace(void);
 
 enum zeroCtrlBSManStubForm {
     ZERO_BSMAN_STUB_UNKNOWN = 0,
@@ -696,6 +697,14 @@ typedef struct {
     unsigned int vsh5704_trace_jump_slot;
     unsigned int vsh5704_trace_hit_counter;
     unsigned int vsh5704_trace_original_target;
+    int paf_a989_target_trace_registered;
+    volatile int paf_a989_target_trace_validation;
+    volatile int paf_a989_target_trace_install;
+    volatile int paf_a989_target_trace_cache_sync;
+    unsigned int paf_a989_target_trace_helper;
+    unsigned int paf_a989_target_trace_helper_end;
+    unsigned int paf_a989_target_trace_jump_slot;
+    unsigned int paf_a989_target_trace_scalar[5];
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -5894,6 +5903,170 @@ void zeroCtrlRegisterVsh5704Trace(
     zeroCtrlInstallVsh5704RegistrationTrace();
 }
 
+static void zeroCtrlInstallPafA989TargetTrace(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int vtext, ptext, thunk, wrapper, inner, consumer;
+    unsigned int owner, target, helper_jump, replacement, i;
+
+    if (slide_diag.paf_a989_target_trace_install ||
+            !slide_diag.paf_a989_target_trace_registered ||
+            !slide_diag.bridge_registered ||
+            !slide_diag.functional_enabled ||
+            model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            strcmp(paf->modname, "scePaf_Module") != 0)
+        return;
+    vtext = vsh->text_addr;
+    ptext = paf->text_addr;
+    if (!zeroCtrlVshModuleRangeValid(vsh, vtext + 0x5704, 8) ||
+            (_lw(vtext + 0x5704) >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(vtext + 0x5704,
+                _lw(vtext + 0x5704)) != vtext + 0x3F568 ||
+            !zeroCtrlMipsMove(_lw(vtext + 0x5708), 4, 29) ||
+            !zeroCtrlVshModuleRangeValid(vsh, vtext + 0x3F568, 8) ||
+            (_lw(vtext + 0x3F568) >> 26) != 2 ||
+            _lw(vtext + 0x3F56C) != 0 ||
+            !zeroCtrlPsp1000BridgeImportMatches(vsh, vtext + 0x3F568,
+                "scePaf", 0xA989A2C4))
+        return;
+    thunk = _lw(vtext + 0x3F568);
+    wrapper = zeroCtrlMipsJumpTarget(vtext + 0x3F568, thunk);
+    if (wrapper != ptext + 0x35978 ||
+            !zeroCtrlVshModuleRangeValid(paf, wrapper, 0x2C) ||
+            (_lw(wrapper + 0x18) >> 26) != 3)
+        return;
+    inner = zeroCtrlMipsJumpTarget(wrapper + 0x18, _lw(wrapper + 0x18));
+    if (inner != ptext + 0x34A24 ||
+            !zeroCtrlVshModuleRangeValid(paf, inner, 0x94) ||
+            (_lw(inner + 0x70) >> 26) != 0x0F ||
+            ((_lw(inner + 0x70) >> 16) & 0x1F) != 5 ||
+            (_lw(inner + 0x74) >> 26) != 0x0F ||
+            ((_lw(inner + 0x74) >> 16) & 0x1F) != 9 ||
+            (_lw(inner + 0x80) >> 26) != 9 ||
+            ((_lw(inner + 0x80) >> 21) & 0x1F) != 5 ||
+            ((_lw(inner + 0x80) >> 16) & 0x1F) != 5 ||
+            (_lw(inner + 0x84) >> 26) != 9 ||
+            ((_lw(inner + 0x84) >> 21) & 0x1F) != 9 ||
+            ((_lw(inner + 0x84) >> 16) & 0x1F) != 9 ||
+            (((_lw(inner + 0x70) & 0xFFFF) << 16) +
+                (int)(short)(_lw(inner + 0x80) & 0xFFFF)) != ptext + 0x34610 ||
+            (((_lw(inner + 0x74) & 0xFFFF) << 16) +
+                (int)(short)(_lw(inner + 0x84) & 0xFFFF)) != ptext + 0x34658 ||
+            (_lw(inner + 0x90) >> 26) != 3)
+        return;
+    consumer = zeroCtrlMipsJumpTarget(inner + 0x90, _lw(inner + 0x90));
+    if (!zeroCtrlVshModuleRangeValid(paf, consumer, 0xA8) ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x10), 22, 8) ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x18), 21, 6) ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x20), 20, 9) ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x28), 19, 7) ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x30), 18, 5) ||
+            _lw(consumer + 0x68) != 0x24040028 ||
+            (_lw(consumer + 0x6C) >> 26) != 3 ||
+            _lw(consumer + 0x70) != 0 ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x74), 17, 2) ||
+            _lw(consumer + 0x78) != 0x24500008 ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x7C), 4, 2) ||
+            _lw(consumer + 0x88) != 0xAC520008 ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x8C), 5, 16) ||
+            _lw(consumer + 0x90) != 0xAE150004 ||
+            _lw(consumer + 0x94) != 0xAE130008 ||
+            _lw(consumer + 0x98) != 0xAE16000C ||
+            _lw(consumer + 0x9C) != 0xAE140014 ||
+            (_lw(consumer + 0xA0) >> 26) != 3 ||
+            _lw(consumer + 0xA4) != 0xAE000018)
+        return;
+    owner = consumer + 0xA0;
+    target = zeroCtrlMipsJumpTarget(owner, _lw(owner));
+    if (!zeroCtrlVshModuleRangeValid(paf, target, 8) ||
+            _lw(target) != 0x03E00008 || _lw(target + 4) != 0xAC850004 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.paf_a989_target_trace_helper,
+                slide_diag.paf_a989_target_trace_helper_end -
+                    slide_diag.paf_a989_target_trace_helper) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.paf_a989_target_trace_jump_slot, 4) ||
+            _lw(slide_diag.paf_a989_target_trace_jump_slot) != 0x08000000)
+        return;
+    for (i = 0; i < 5; i++)
+        if (!zeroCtrlVshModuleRangeValid(helper,
+                    slide_diag.paf_a989_target_trace_scalar[i], 4))
+            return;
+    helper_jump = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
+    replacement = 0x0C000000 |
+            ((slide_diag.paf_a989_target_trace_helper >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(slide_diag.paf_a989_target_trace_jump_slot,
+                helper_jump) != target ||
+            zeroCtrlMipsJumpTarget(owner, replacement) !=
+                slide_diag.paf_a989_target_trace_helper)
+        return;
+    slide_diag.paf_a989_target_trace_validation = 1;
+    _sw(ptext + 0x34610, slide_diag.bridge_scalar[2]);
+    _sw(ptext + 0x34658, slide_diag.bridge_scalar[3]);
+    _sw(vtext + 0x589C, slide_diag.bridge_scalar[4]);
+    for (i = 2; i <= 4; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)slide_diag.bridge_scalar[i], 4);
+    for (i = 0; i < 5; i++) {
+        _sw(0, slide_diag.paf_a989_target_trace_scalar[i]);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)slide_diag.paf_a989_target_trace_scalar[i], 4);
+    }
+    _sw(helper_jump, slide_diag.paf_a989_target_trace_jump_slot);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.paf_a989_target_trace_jump_slot, 4);
+    sceKernelIcacheInvalidateRange(
+            (const void *)slide_diag.paf_a989_target_trace_jump_slot, 4);
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    slide_diag.paf_a989_target_trace_install = 1;
+    slide_diag.paf_a989_target_trace_cache_sync = 1;
+}
+
+void zeroCtrlRegisterPafA989TargetTrace(
+        const ZeroCtrlPafA989TargetTraceRegistration *registration) {
+    ZeroCtrlPafA989TargetTraceRegistration copied;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int scalar[5], i;
+
+    if (!registration || !slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            ((unsigned int)registration & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, (unsigned int)registration,
+                sizeof(copied)))
+        return;
+    memcpy(&copied, registration, sizeof(copied));
+    scalar[0] = copied.entry_hits_addr;
+    scalar[1] = copied.exact_hits_addr;
+    scalar[2] = copied.target_node_addr;
+    scalar[3] = copied.target_outer_addr;
+    scalar[4] = copied.target_inner_addr;
+    if ((copied.helper_addr & 3) != 0 ||
+            copied.helper_end_addr <= copied.helper_addr ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.helper_addr,
+                copied.helper_end_addr - copied.helper_addr) ||
+            (copied.jump_slot_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.jump_slot_addr, 4))
+        return;
+    for (i = 0; i < 5; i++)
+        if (scalar[i] == 0 || (scalar[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
+            return;
+    slide_diag.paf_a989_target_trace_helper = copied.helper_addr;
+    slide_diag.paf_a989_target_trace_helper_end = copied.helper_end_addr;
+    slide_diag.paf_a989_target_trace_jump_slot = copied.jump_slot_addr;
+    memcpy(slide_diag.paf_a989_target_trace_scalar, scalar, sizeof(scalar));
+    slide_diag.paf_a989_target_trace_registered = 1;
+    zeroCtrlInstallPafA989TargetTrace();
+}
+
 static int zeroCtrlPsp1000BridgeUserRangeValid(unsigned int address,
         unsigned int size, unsigned int lower, unsigned int upper) {
     return size != 0 && (address & 3) == 0 && lower <= address &&
@@ -9061,6 +9234,10 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     unsigned int observed_vsh5704_trace[4] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_paf_a989_target_trace[6] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
     unsigned int observed_a989_root_state[4] = {
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
@@ -9392,6 +9569,44 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         zeroCtrlDiagnosticsText(line);
                     }
                 }
+                if (slide_diag.paf_a989_target_trace_registered) {
+                    unsigned int capture[6];
+                    capture[0] = slide_diag.paf_a989_target_trace_registered;
+                    capture[1] = slide_diag.paf_a989_target_trace_validation;
+                    capture[2] = slide_diag.paf_a989_target_trace_install;
+                    capture[3] = slide_diag.paf_a989_target_trace_cache_sync;
+                    capture[4] = zeroCtrlReadHelperCounter(
+                            slide_diag.paf_a989_target_trace_scalar[0]);
+                    capture[5] = zeroCtrlReadHelperCounter(
+                            slide_diag.paf_a989_target_trace_scalar[1]);
+                    if (memcmp(capture, observed_paf_a989_target_trace,
+                                sizeof(capture)) != 0) {
+                        memcpy(observed_paf_a989_target_trace, capture,
+                                sizeof(capture));
+                        snprintf(line, sizeof(line),
+                                "[psp1000-paf-a989-target-trace] registered=%u "
+                                "validation=%u install=%u cache_sync=%u "
+                                "entry_hits=%u exact_hits=%u\n", capture[0],
+                                capture[1], capture[2], capture[3], capture[4],
+                                capture[5]);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                    if (capture[5] != 0 && a989_target_node == 0) {
+                        a989_target_node = zeroCtrlReadHelperCounter(
+                                slide_diag.paf_a989_target_trace_scalar[2]);
+                        a989_target_outer = zeroCtrlReadHelperCounter(
+                                slide_diag.paf_a989_target_trace_scalar[3]);
+                        a989_target_inner = zeroCtrlReadHelperCounter(
+                                slide_diag.paf_a989_target_trace_scalar[4]);
+                        snprintf(line, sizeof(line),
+                                "[psp1000-a989-target-capture] entry_hits=%u "
+                                "exact_hits=%u node=0x%08X outer=0x%08X "
+                                "inner=0x%08X exact=1\n", capture[4], capture[5],
+                                a989_target_node, a989_target_outer,
+                                a989_target_inner);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                }
                 if (slide_diag.bridge_validation == 1 &&
                         slide_diag.bridge_install == 1) {
                     SceModule2 *paf = sceKernelFindModuleByName(
@@ -9439,26 +9654,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                             f18 == 0 && inner_valid &&
                                             _lw(inner + 0x0C) ==
                                                 slide_diag.bridge_callback) {
-                                        unsigned int trace_hits =
-                                                zeroCtrlReadHelperCounter(
-                                                    slide_diag.vsh5704_trace_hit_counter);
                                         root_state[3] = 1;
-                                        if (a989_target_node == 0 &&
-                                                slide_diag.vsh5704_trace_validation == 1 &&
-                                                slide_diag.vsh5704_trace_install == 1 &&
-                                                trace_hits != 0) {
-                                            a989_target_node = node;
-                                            a989_target_outer = outer;
-                                            a989_target_inner = inner;
-                                            snprintf(line, sizeof(line),
-                                                    "[psp1000-a989-target-latch] "
-                                                    "node=0x%08X outer=0x%08X "
-                                                    "inner=0x%08X exact=1\n",
-                                                    a989_target_node,
-                                                    a989_target_outer,
-                                                    a989_target_inner);
-                                            zeroCtrlDiagnosticsText(line);
-                                        }
                                     }
                                 }
                             }
@@ -14420,6 +14616,10 @@ int OnModuleStart(SceModule2 *mod) {
         if (slide_diag.functional_enabled && slide_diag.bridge_registered &&
                 !slide_diag.bridge_install)
                 zeroCtrlInstallVshCtrl314A4Bridge();
+        if (slide_diag.functional_enabled &&
+                slide_diag.paf_a989_target_trace_registered &&
+                !slide_diag.paf_a989_target_trace_install)
+                zeroCtrlInstallPafA989TargetTrace();
         if (slide_diag.functional_enabled &&
                 slide_diag.vsh5704_trace_registered &&
                 !slide_diag.vsh5704_trace_install)
