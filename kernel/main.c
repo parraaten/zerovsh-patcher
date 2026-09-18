@@ -6983,6 +6983,55 @@ static void zeroCtrlWriteConstructed0DependencyHelperMap(SceModule2 *paf,
     }
 }
 
+static void zeroCtrlWriteConstructed0DependencyCopyImplementationMap(
+        SceModule2 *paf, unsigned int copy_target) {
+    SceModule2 *owner;
+    unsigned int implementation_target, segment, remaining, offset;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, copy_target, 8) ||
+            (_lw(copy_target) >> 26) != 2 ||
+            _lw(copy_target + 0x004) != 0) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-copy-impl] validation=0\n");
+        return;
+    }
+    implementation_target = zeroCtrlMipsJumpTarget(copy_target,
+            _lw(copy_target));
+    owner = sceKernelFindModuleByAddress(implementation_target);
+    if (!owner || !zeroCtrlLoadedModuleMetadataValid(owner) ||
+            !zeroCtrlModuleContainingSegment(owner, implementation_target,
+                &segment, &remaining) || segment != 0 || remaining < 0x100 ||
+            !zeroCtrlBridgeExecutableRange(owner, implementation_target,
+                0x100)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-copy-impl] validation=0\n");
+        return;
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-copy-impl] validation=1 "
+            "stub=0x%08X target=0x%08X module=%.27s segment=%u "
+            "segment_off=0x%X size=0x100\n", copy_target,
+            implementation_target, owner->modname, segment,
+            implementation_target - owner->segmentaddr[segment]);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0xE0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-copy-impl-code] off=0x%03X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(implementation_target + offset + 0x00),
+                _lw(implementation_target + offset + 0x04),
+                _lw(implementation_target + offset + 0x08),
+                _lw(implementation_target + offset + 0x0C),
+                _lw(implementation_target + offset + 0x10),
+                _lw(implementation_target + offset + 0x14),
+                _lw(implementation_target + offset + 0x18),
+                _lw(implementation_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
 static void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(SceModule2 *paf,
         unsigned int dependency_consumer_target) {
     unsigned int common0, common1, common_helper_target, copy_target;
@@ -7049,6 +7098,7 @@ static void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(SceModule2 *paf,
                 _lw(copy_target + offset + 0x1C));
         zeroCtrlDiagnosticsText(line);
     }
+    zeroCtrlWriteConstructed0DependencyCopyImplementationMap(paf, copy_target);
     return;
 invalid:
     zeroCtrlDiagnosticsText(

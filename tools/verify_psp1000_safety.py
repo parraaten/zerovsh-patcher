@@ -3091,7 +3091,7 @@ def check_sources(root):
         fail("dependency map one-shot state is not writer-local")
     helper_map_start = map_end + 1
     helper_map_end = kernel.find(
-            '\nstatic void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(',
+            '\nstatic void zeroCtrlWriteConstructed0DependencyCopyImplementationMap(',
             helper_map_start)
     dependency_helper_map = kernel[helper_map_start:helper_map_end]
     if helper_map_start <= 0 or helper_map_end < 0:
@@ -3149,7 +3149,71 @@ def check_sources(root):
             dependency_analysis.count(
                 'zeroCtrlWriteConstructed0DependencyHelperMap(') != 1:
         fail("dependency helper map is not one-shot under the NO_RETURN gate")
-    copy_map_start = helper_map_end + 1
+    impl_map_start = helper_map_end + 1
+    impl_map_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(',
+            impl_map_start)
+    dependency_impl_map = kernel[impl_map_start:impl_map_end]
+    if impl_map_start <= 0 or impl_map_end < 0:
+        fail("constructed0 dependency copy implementation map is missing")
+    for token in ('zeroCtrlBridgeExecutableRange(paf, copy_target, 8)',
+            '(_lw(copy_target) >> 26) != 2',
+            '_lw(copy_target + 0x004) != 0',
+            'implementation_target = zeroCtrlMipsJumpTarget(copy_target,',
+            'owner = sceKernelFindModuleByAddress(implementation_target)',
+            '!zeroCtrlLoadedModuleMetadataValid(owner)',
+            'zeroCtrlModuleContainingSegment(owner, implementation_target,',
+            'segment != 0', 'remaining < 0x100',
+            'zeroCtrlBridgeExecutableRange(owner, implementation_target,',
+            '[psp1000-constructed0-dependency-copy-impl] validation=0',
+            'stub=0x%08X target=0x%08X module=%.27s segment=%u',
+            'segment_off=0x%X size=0x100',
+            '[psp1000-constructed0-dependency-copy-impl-code] off=0x%03X'):
+        if token not in dependency_impl_map:
+            fail("constructed0 dependency copy implementation lacks " + token)
+    stub_range = dependency_impl_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, copy_target, 8)')
+    stub_word = dependency_impl_map.find('_lw(copy_target)', stub_range)
+    stub_delay = dependency_impl_map.find(
+            '_lw(copy_target + 0x004)', stub_word)
+    implementation_decode = dependency_impl_map.find(
+            'zeroCtrlMipsJumpTarget(copy_target,', stub_delay)
+    implementation_owner = dependency_impl_map.find(
+            'sceKernelFindModuleByAddress(implementation_target)',
+            implementation_decode)
+    implementation_range = dependency_impl_map.find(
+            'zeroCtrlBridgeExecutableRange(owner, implementation_target,',
+            implementation_owner)
+    implementation_range_size = dependency_impl_map.find(
+            '0x100)', implementation_range)
+    implementation_header = dependency_impl_map.find(
+            '[psp1000-constructed0-dependency-copy-impl] validation=1',
+            implementation_range_size)
+    implementation_loop = dependency_impl_map.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)',
+            implementation_header)
+    implementation_first_read = dependency_impl_map.find(
+            '_lw(implementation_target + offset + 0x00)', implementation_loop)
+    implementation_last_read = dependency_impl_map.find(
+            '_lw(implementation_target + offset + 0x1C)', implementation_loop)
+    if not 0 <= stub_range < stub_word < stub_delay < implementation_decode < \
+            implementation_owner < implementation_range < \
+            implementation_range_size < implementation_header < \
+            implementation_loop < implementation_first_read < \
+            implementation_last_read:
+        fail("copy implementation derivation/range validation is out of order")
+    if dependency_impl_map.count(
+                '_lw(implementation_target + offset + ') != 8 or \
+            dependency_impl_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            'copy_target + 0x008' in dependency_impl_map or \
+            any(token in dependency_impl_map for token in
+                ('0x08820140', '0x35A24', '0x148CDC', '0x15B9C4',
+                 'scePaf_Module', 'zeroCtrlMipsBranchTarget',
+                 'a989_target_dependency', 'a989_target_node',
+                 'a989_target_outer', 'a989_target_inner', '_sw(',
+                 'sceKernelDcache', 'sceKernelIcache')):
+        fail("copy implementation map uses fixed/runtime state, follows code, or writes")
+    copy_map_start = impl_map_end + 1
     copy_map_end = kernel.find(
             '\nstatic int zeroCtrlWriteConstructed0DependencyConsumer(void)',
             copy_map_start)
@@ -3183,7 +3247,9 @@ def check_sources(root):
             'segment != 0',
             '[psp1000-constructed0-dependency-copy-callee] validation=0',
             'call_off=0x084 target=0x%08X target_off=0x%X size=0x100',
-            '[psp1000-constructed0-dependency-copy-code] off=0x%03X'):
+            '[psp1000-constructed0-dependency-copy-code] off=0x%03X',
+            'zeroCtrlWriteConstructed0DependencyCopyImplementationMap('
+            'paf, copy_target)'):
         if token not in dependency_copy_map:
             fail("constructed0 dependency copy-callee proof lacks " + token)
     exact_helper_words = (
@@ -3238,6 +3304,15 @@ def check_sources(root):
                  '_sw(', 'sceKernelDcache', 'sceKernelIcache',
                  'zeroCtrlWriteConstructed0DependencyConsumer(')):
         fail("copy-callee map follows code, uses runtime state, recurses, or writes")
+    implementation_map_call = dependency_copy_map.find(
+            'zeroCtrlWriteConstructed0DependencyCopyImplementationMap('
+            'paf, copy_target)', copy_last_read)
+    copy_success_return = dependency_copy_map.find(
+            'return;', implementation_map_call)
+    if not copy_last_read < implementation_map_call < copy_success_return or \
+            dependency_copy_map.count(
+                'zeroCtrlWriteConstructed0DependencyCopyImplementationMap(') != 1:
+        fail("copy implementation map is not ordered after the existing stub map")
     copy_map_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0DependencyCopyCalleeMap(paf, target);',
             helper_map_call)
