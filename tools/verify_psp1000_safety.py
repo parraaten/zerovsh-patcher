@@ -2879,6 +2879,91 @@ def check_sources(root):
             'current_node' in dependency_writer or \
             'current_header_valid' in dependency_writer:
         fail("A989 dependency observation scans, chases, or depends on linkage")
+    dependency_analysis_start = kernel.find(
+            'static int zeroCtrlWriteConstructed0DependencyConsumer(void) {')
+    dependency_analysis_end = kernel.find(
+            '\nstatic ', dependency_analysis_start + 1)
+    dependency_analysis = kernel[
+            dependency_analysis_start:dependency_analysis_end]
+    if dependency_analysis_start < 0 or dependency_analysis_end < 0:
+        fail("constructed0 dependency loaded-code analysis is missing")
+    for token in ('model != 0',
+            'sceKernelDevkitVersion() != 0x06060110',
+            '!slide_diag.functional_enabled',
+            'slide_diag.bridge_validation != 1',
+            'slide_diag.bridge_install != 1',
+            '!zeroCtrlLoadedModuleMetadataValid(vsh)',
+            '!zeroCtrlLoadedModuleMetadataValid(paf)',
+            'slide_diag.bridge_callback != vsh->text_addr + 0x589C',
+            'slide_diag.bridge_constructed1 != paf->text_addr + 0x34658',
+            'slide_diag.bridge_constructed0 != paf->text_addr + 0x34610',
+            'constructed0 = slide_diag.bridge_constructed0',
+            '_lw(constructed0 + 0x14)',
+            'allocation_target = zeroCtrlMipsJumpTarget(',
+            '_lw(constructed0 + 0x24)',
+            'target = zeroCtrlMipsJumpTarget(',
+            'CONSTRUCTED0_DEPENDENCY_MAX_RANGE',
+            'provenance[5].kind = ZERO_DEPENDENCY_BASE',
+            '[psp1000-constructed0-dependency-consumer]',
+            '[psp1000-constructed0-dependency-forward]',
+            '[psp1000-constructed0-dependency-analysis]'):
+        if token not in dependency_analysis:
+            fail("constructed0 dependency analysis lacks " + token)
+    for token in ('_lw(constructed0) != 0x27BDFFF0',
+            '_lw(constructed0 + 0x04) != 0xAFB10004',
+            '_lw(constructed0 + 0x08)',
+            '_lw(constructed0 + 0x0C) != 0x240401D8',
+            '_lw(constructed0 + 0x10) != 0xAFBF0008',
+            '(_lw(constructed0 + 0x14) >> 26) != 3',
+            '_lw(constructed0 + 0x18) != 0xAFB00000',
+            '_lw(constructed0 + 0x1C)',
+            '_lw(constructed0 + 0x20) != 0x8E250008',
+            '(_lw(constructed0 + 0x24) >> 26) != 3',
+            '_lw(constructed0 + 0x28)',
+            '_lw(constructed0 + 0x2C) != 0xAE300004'):
+        if token not in dependency_analysis:
+            fail("constructed0 dependency prefix proof lacks " + token)
+    for token in ('delay = _lw(pc + 4)', 'offset + 4, provenance',
+            '"BRANCH"', 'reason = "INDIRECT_CALL"',
+            'reason = call_forwarded ? "FORWARDED" : "DIRECT_CALL"',
+            '"CONTROL_FLOW"', 'reason = "NO_RETURN"'):
+        if token not in dependency_analysis:
+            fail("dependency control-flow analysis is not fail-closed: " + token)
+    if any(token in dependency_analysis for token in
+            ('_sw(', '_sb(', 'sceKernelDcache', 'sceKernelIcache',
+             'a989_target_dependency', 'bridge_scalar[', 'for (candidate')):
+        fail("constructed0 dependency analysis writes code/data or uses runtime objects")
+    if '#define CONSTRUCTED0_DEPENDENCY_MAX_RANGE 0x200' not in kernel or \
+            '#define CONSTRUCTED0_DEPENDENCY_MAX_ACCESS 32' not in kernel or \
+            '#define CONSTRUCTED0_DEPENDENCY_MAX_CHASE 16' not in kernel or \
+            '#define CONSTRUCTED0_DEPENDENCY_MAX_FORWARD 16' not in kernel:
+        fail("constructed0 dependency analysis bounds changed")
+    apply_start = kernel.find(
+            'static int zeroCtrlApplyConstructed0DependencyInstruction(')
+    apply_end = dependency_analysis_start
+    dependency_apply = kernel[apply_start:apply_end]
+    for token in ('zeroCtrlMipsMove(', 'opcode == 9',
+            'ZERO_DEPENDENCY_BASE_PLUS', 'ZERO_DEPENDENCY_LOADED',
+            'zeroCtrlDependencyMemoryKind(opcode)',
+            'CONSTRUCTED0_DEPENDENCY_MAX_ACCESS',
+            'CONSTRUCTED0_DEPENDENCY_MAX_CHASE',
+            '[psp1000-constructed0-dependency-access]',
+            '[psp1000-constructed0-dependency-chase]',
+            '*reason = "UNSUPPORTED_MEMORY"',
+            '*reason = "UNSUPPORTED_WRITE"'):
+        if token not in dependency_apply:
+            fail("dependency provenance engine lacks " + token)
+    analysis_gate = writer.find('if (!constructed0_dependency_written &&')
+    analysis_call = writer.find(
+            'zeroCtrlWriteConstructed0DependencyConsumer();', analysis_gate)
+    if not 0 <= analysis_gate < analysis_call or \
+            'slide_diag.bridge_validation == 1' not in \
+                writer[analysis_gate:analysis_call] or \
+            'slide_diag.bridge_install == 1' not in \
+                writer[analysis_gate:analysis_call] or \
+            'zeroCtrlLoadedModuleMetadataValid(dependency_paf)' not in \
+                writer[analysis_gate:analysis_call]:
+        fail("constructed0 dependency analysis is not a one-shot post-install writer")
     clock_start = kernel.find(
             "static int zeroCtrlWriteFunctionalClockPathAnalysis(void)")
     clock_end = kernel.find("static int zeroCtrlMipsMove(", clock_start)

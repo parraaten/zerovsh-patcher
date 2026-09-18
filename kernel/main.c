@@ -6735,6 +6735,345 @@ static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
             ((rs == source && rt == 0) || (rs == 0 && rt == source));
 }
 
+#define CONSTRUCTED0_DEPENDENCY_MAX_RANGE 0x200
+#define CONSTRUCTED0_DEPENDENCY_MAX_ACCESS 32
+#define CONSTRUCTED0_DEPENDENCY_MAX_CHASE 16
+#define CONSTRUCTED0_DEPENDENCY_MAX_FORWARD 16
+
+enum ZeroCtrlDependencyProvenanceKind {
+    ZERO_DEPENDENCY_NONE = 0,
+    ZERO_DEPENDENCY_BASE,
+    ZERO_DEPENDENCY_BASE_PLUS,
+    ZERO_DEPENDENCY_LOADED
+};
+
+typedef struct ZeroCtrlDependencyProvenance {
+    unsigned int kind;
+    int offset;
+} ZeroCtrlDependencyProvenance;
+
+static const char *zeroCtrlDependencyMemoryKind(unsigned int opcode) {
+    static const char *name[] = {
+        "LB", "LH", "LWL", "LW", "LBU", "LHU", "LWR", 0,
+        "SB", "SH", "SWL", "SW", 0, 0, "SWR"
+    };
+
+    if (opcode < 0x20 || opcode > 0x2E) return 0;
+    return name[opcode - 0x20];
+}
+
+static const char *zeroCtrlDependencyProvenanceName(unsigned int kind) {
+    if (kind == ZERO_DEPENDENCY_BASE) return "BASE";
+    if (kind == ZERO_DEPENDENCY_BASE_PLUS) return "BASE_PLUS_OFFSET";
+    if (kind == ZERO_DEPENDENCY_LOADED)
+        return "LOADED_FROM_DEPENDENCY";
+    return "UNKNOWN";
+}
+
+/* Returns 1 on a supported instruction and 0 on ambiguous provenance use. */
+static int zeroCtrlApplyConstructed0DependencyInstruction(unsigned int word,
+        unsigned int offset, ZeroCtrlDependencyProvenance provenance[32],
+        unsigned int *accesses, unsigned int *chases,
+        unsigned int *max_direct_offset, unsigned int *pointer_chase,
+        const char **reason) {
+    unsigned int opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int rd = (word >> 11) & 0x1F;
+    unsigned int reads = 0, tracked = 0, i;
+    int destination = zeroCtrlMipsGprWriteDestination(word);
+    const char *memory_kind = zeroCtrlDependencyMemoryKind(opcode);
+    char line[192];
+
+    for (i = 1; i < 32; i++)
+        if (provenance[i].kind != ZERO_DEPENDENCY_NONE)
+            tracked |= 1U << i;
+    if ((zeroCtrlMipsMove(word, rd, rs) ||
+                zeroCtrlMipsMove(word, rd, rt)) && rd != 0) {
+        provenance[rd] = provenance[rs == 0 ? rt : rs];
+        return 1;
+    }
+    if (opcode == 9 && rt != 0) {
+        int immediate = (int)(short)(word & 0xFFFF);
+        if (provenance[rs].kind == ZERO_DEPENDENCY_BASE ||
+                provenance[rs].kind == ZERO_DEPENDENCY_BASE_PLUS) {
+            provenance[rt] = provenance[rs];
+            provenance[rt].offset += immediate;
+            provenance[rt].kind = provenance[rt].offset == 0 ?
+                    ZERO_DEPENDENCY_BASE : ZERO_DEPENDENCY_BASE_PLUS;
+            return 1;
+        }
+        if (provenance[rs].kind == ZERO_DEPENDENCY_LOADED && immediate == 0) {
+            provenance[rt] = provenance[rs];
+            return 1;
+        }
+        if (provenance[rs].kind != ZERO_DEPENDENCY_NONE) {
+            *reason = "UNSUPPORTED_WRITE";
+            return 0;
+        }
+        provenance[rt].kind = ZERO_DEPENDENCY_NONE;
+        provenance[rt].offset = 0;
+        return 1;
+    }
+    if (memory_kind) {
+        int displacement = (int)(short)(word & 0xFFFF);
+        int effective = provenance[rs].offset + displacement;
+        int is_load = opcode >= 0x20 && opcode <= 0x26;
+        int unsupported_width = opcode == 0x22 || opcode == 0x26 ||
+                opcode == 0x2A || opcode == 0x2E;
+        if (unsupported_width &&
+                provenance[rs].kind != ZERO_DEPENDENCY_NONE) {
+            *reason = "UNSUPPORTED_MEMORY";
+            return 0;
+        }
+        if (provenance[rs].kind == ZERO_DEPENDENCY_BASE ||
+                provenance[rs].kind == ZERO_DEPENDENCY_BASE_PLUS) {
+            if (*accesses >= CONSTRUCTED0_DEPENDENCY_MAX_ACCESS) {
+                *reason = "ACCESS_LIMIT";
+                return 0;
+            }
+            snprintf(line, sizeof(line),
+                    "[psp1000-constructed0-dependency-access] off=0x%X "
+                    "kind=%s base_off=0x%X field_off=0x%X "
+                    "effective_off=0x%X\n", offset, memory_kind,
+                    (unsigned int)provenance[rs].offset,
+                    (unsigned int)displacement, (unsigned int)effective);
+            zeroCtrlDiagnosticsText(line);
+            (*accesses)++;
+            if (effective >= 0 &&
+                    (unsigned int)effective > *max_direct_offset)
+                *max_direct_offset = (unsigned int)effective;
+            if (is_load && rt != 0) {
+                provenance[rt].kind = ZERO_DEPENDENCY_LOADED;
+                provenance[rt].offset = effective;
+            }
+            return 1;
+        }
+        if (provenance[rs].kind == ZERO_DEPENDENCY_LOADED) {
+            if (*chases >= CONSTRUCTED0_DEPENDENCY_MAX_CHASE) {
+                *reason = "CHASE_LIMIT";
+                return 0;
+            }
+            snprintf(line, sizeof(line),
+                    "[psp1000-constructed0-dependency-chase] "
+                    "source_off=0x%X use_off=0x%X kind=%s disp=0x%X\n",
+                    (unsigned int)provenance[rs].offset, offset, memory_kind,
+                    (unsigned int)displacement);
+            zeroCtrlDiagnosticsText(line);
+            (*chases)++;
+            *pointer_chase = 1;
+            if (is_load && rt != 0) {
+                provenance[rt].kind = ZERO_DEPENDENCY_NONE;
+                provenance[rt].offset = 0;
+            }
+            return 1;
+        }
+        if (is_load && rt != 0) {
+            provenance[rt].kind = ZERO_DEPENDENCY_NONE;
+            provenance[rt].offset = 0;
+        } else if (!is_load && provenance[rt].kind != ZERO_DEPENDENCY_NONE) {
+            *reason = "UNSUPPORTED_WRITE";
+            return 0;
+        }
+        return 1;
+    }
+    if (!zeroCtrlBridgeReadMask(word, &reads)) {
+        if (tracked || (destination > 0 &&
+                    provenance[destination].kind != ZERO_DEPENDENCY_NONE)) {
+            *reason = "UNSUPPORTED_WRITE";
+            return 0;
+        }
+        return 1;
+    }
+    if (reads & tracked) {
+        *reason = "UNSUPPORTED_WRITE";
+        return 0;
+    }
+    if (destination > 0) {
+        provenance[destination].kind = ZERO_DEPENDENCY_NONE;
+        provenance[destination].offset = 0;
+    }
+    return 1;
+}
+
+static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    ZeroCtrlDependencyProvenance provenance[32];
+    unsigned int constructed0, allocation_target, target, segment, remaining;
+    unsigned int boundary = 0, offset, accesses = 0, chases = 0, forwards = 0;
+    unsigned int max_direct_offset = 0, pointer_chase = 0, forwarded = 0;
+    const char *reason = "NO_RETURN";
+    char line[256];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            slide_diag.bridge_validation != 1 ||
+            slide_diag.bridge_install != 1 ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            strcmp(paf->modname, "scePaf_Module") != 0 ||
+            slide_diag.bridge_callback != vsh->text_addr + 0x589C ||
+            slide_diag.bridge_constructed1 != paf->text_addr + 0x34658 ||
+            slide_diag.bridge_constructed0 != paf->text_addr + 0x34610) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-analysis] validation=0 "
+                "complete=0 reason=DERIVATION off=0x0\n");
+        return 0;
+    }
+    constructed0 = slide_diag.bridge_constructed0;
+    if (!zeroCtrlBridgeExecutableRange(paf, constructed0, 0x30) ||
+            _lw(constructed0) != 0x27BDFFF0 ||
+            _lw(constructed0 + 0x04) != 0xAFB10004 ||
+            !zeroCtrlMipsMove(_lw(constructed0 + 0x08), 17, 4) ||
+            _lw(constructed0 + 0x0C) != 0x240401D8 ||
+            _lw(constructed0 + 0x10) != 0xAFBF0008 ||
+            (_lw(constructed0 + 0x14) >> 26) != 3 ||
+            _lw(constructed0 + 0x18) != 0xAFB00000 ||
+            !zeroCtrlMipsMove(_lw(constructed0 + 0x1C), 16, 2) ||
+            _lw(constructed0 + 0x20) != 0x8E250008 ||
+            (_lw(constructed0 + 0x24) >> 26) != 3 ||
+            !zeroCtrlMipsMove(_lw(constructed0 + 0x28), 4, 2) ||
+            _lw(constructed0 + 0x2C) != 0xAE300004) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-analysis] validation=0 "
+                "complete=0 reason=PREFIX off=0x0\n");
+        return 0;
+    }
+    allocation_target = zeroCtrlMipsJumpTarget(constructed0 + 0x14,
+            _lw(constructed0 + 0x14));
+    target = zeroCtrlMipsJumpTarget(constructed0 + 0x24,
+            _lw(constructed0 + 0x24));
+    if (!zeroCtrlModuleContainingSegment(paf, target, &segment, &remaining)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-analysis] validation=0 "
+                "complete=0 reason=TARGET off=0x24\n");
+        return 0;
+    }
+    if (segment == 0)
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-consumer] validation=1 "
+                "constructed0_off=0x34610 allocation=0x%08X call_off=0x24 "
+                "target=0x%08X target_off=0x%X\n", allocation_target,
+                target, target - paf->text_addr);
+    else
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-consumer] validation=1 "
+                "constructed0_off=0x34610 allocation=0x%08X call_off=0x24 "
+                "target=0x%08X segment=%u segment_off=0x%X\n",
+                allocation_target, target, segment,
+                target - paf->segmentaddr[segment]);
+    zeroCtrlDiagnosticsText(line);
+    if (!zeroCtrlBridgeExecutableRange(paf, target, 4)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-analysis] validation=0 "
+                "complete=0 reason=NON_EXECUTABLE off=0x24\n");
+        return 0;
+    }
+
+    for (offset = 0; offset < CONSTRUCTED0_DEPENDENCY_MAX_RANGE;
+            offset += 4) {
+        if (!zeroCtrlBridgeExecutableRange(paf, target + offset, 8)) break;
+        if (_lw(target + offset) == 0x03E00008) {
+            boundary = offset + 8;
+            break;
+        }
+    }
+    if (boundary == 0) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-analysis] validation=0 "
+                "complete=0 reason=NO_RETURN off=0x200\n");
+        return 0;
+    }
+    memset(provenance, 0, sizeof(provenance));
+    provenance[5].kind = ZERO_DEPENDENCY_BASE;
+    for (offset = 0; offset < boundary; offset += 4) {
+        unsigned int pc = target + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int function = word & 0x3F;
+        unsigned int delay, arg;
+
+        if (opcode == 3 || opcode == 2 || opcode == 1 ||
+                (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && (function == 8 || function == 9))) {
+            unsigned int target_register = (word >> 21) & 0x1F;
+            unsigned int link_register = (word >> 11) & 0x1F;
+            if (!zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)) {
+                reason = "DELAY_SLOT";
+                goto incomplete;
+            }
+            if (opcode == 3) {
+                provenance[31].kind = ZERO_DEPENDENCY_NONE;
+                provenance[31].offset = 0;
+            } else if (opcode == 0 && function == 9 && link_register != 0) {
+                provenance[link_register].kind = ZERO_DEPENDENCY_NONE;
+                provenance[link_register].offset = 0;
+            }
+            delay = _lw(pc + 4);
+            if (!zeroCtrlApplyConstructed0DependencyInstruction(delay,
+                        offset + 4, provenance, &accesses, &chases,
+                        &max_direct_offset, &pointer_chase, &reason))
+                goto incomplete;
+            if (opcode == 3 || (opcode == 0 && function == 9)) {
+                unsigned int call_target = opcode == 3 ?
+                        zeroCtrlMipsJumpTarget(pc, word) : 0;
+                unsigned int call_forwarded = 0;
+                for (arg = 4; arg <= 7; arg++)
+                    if (provenance[arg].kind != ZERO_DEPENDENCY_NONE) {
+                        if (forwards >= CONSTRUCTED0_DEPENDENCY_MAX_FORWARD) {
+                            reason = "FORWARD_LIMIT";
+                            goto incomplete;
+                        }
+                        snprintf(line, sizeof(line),
+                                "[psp1000-constructed0-dependency-forward] "
+                                "call_off=0x%X arg=a%u provenance=%s "
+                                "target=0x%08X\n", offset, arg - 4,
+                                zeroCtrlDependencyProvenanceName(
+                                    provenance[arg].kind), call_target);
+                        zeroCtrlDiagnosticsText(line);
+                        forwards++;
+                        forwarded = 1;
+                        call_forwarded = 1;
+                    }
+                if (opcode == 0) {
+                    (void)target_register;
+                    reason = "INDIRECT_CALL";
+                    goto incomplete;
+                }
+                reason = call_forwarded ? "FORWARDED" : "DIRECT_CALL";
+                goto incomplete;
+            }
+            if (opcode == 0 && function == 8 && target_register == 31) {
+                snprintf(line, sizeof(line),
+                        "[psp1000-constructed0-dependency-analysis] "
+                        "validation=1 complete=1 max_direct_offset=0x%X "
+                        "pointer_chase=%u forwarded=%u\n", max_direct_offset,
+                        pointer_chase, forwarded);
+                zeroCtrlDiagnosticsText(line);
+                return 1;
+            }
+            reason = (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17)) ?
+                    "BRANCH" : "CONTROL_FLOW";
+            goto incomplete;
+        }
+        if (!zeroCtrlApplyConstructed0DependencyInstruction(word, offset,
+                    provenance, &accesses, &chases, &max_direct_offset,
+                    &pointer_chase, &reason))
+            goto incomplete;
+    }
+    reason = "NO_RETURN";
+incomplete:
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-analysis] validation=1 "
+            "complete=0 reason=%s off=0x%X\n", reason, offset);
+    zeroCtrlDiagnosticsText(line);
+    return 0;
+}
+
 enum ZeroCtrlPafA989NearbyOrigin {
     ZERO_PAF_NEARBY_UNKNOWN = 0,
     ZERO_PAF_NEARBY_ENTRY_ARG,
@@ -9288,6 +9627,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
     };
     int clockpath_written = 0;
+    int constructed0_dependency_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -9456,6 +9796,16 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             install_state[3], install_state[4], install_state[5],
                             install_state[6], install_state[7]);
                     zeroCtrlDiagnosticsText(line);
+                }
+                if (!constructed0_dependency_written &&
+                        slide_diag.bridge_validation == 1 &&
+                        slide_diag.bridge_install == 1) {
+                    SceModule2 *dependency_paf = sceKernelFindModuleByName(
+                            "scePaf_Module");
+                    if (zeroCtrlLoadedModuleMetadataValid(dependency_paf)) {
+                        constructed0_dependency_written = 1;
+                        zeroCtrlWriteConstructed0DependencyConsumer();
+                    }
                 }
                 livein[0] = slide_diag.bridge_livein_validation;
                 livein[1] = slide_diag.bridge_livein_arg[0];
