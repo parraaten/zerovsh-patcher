@@ -6896,6 +6896,56 @@ static int zeroCtrlApplyConstructed0DependencyInstruction(unsigned int word,
     return 1;
 }
 
+static void zeroCtrlWriteConstructed0DependencyConsumerContinuation(
+        SceModule2 *paf, unsigned int dependency_consumer_target) {
+    unsigned int offset;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,
+                0x200) ||
+            _lw(dependency_consumer_target + 0x1A8) != 0x262401A0 ||
+            _lw(dependency_consumer_target + 0x1AC) != 0x26650044) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-consumer-cont] "
+                "validation=0\n");
+        return;
+    }
+    for (offset = 0x1B0; offset <= 0x1FC; offset += 4) {
+        if (zeroCtrlMipsGprWriteDestination(
+                    _lw(dependency_consumer_target + offset)) == 5) {
+            zeroCtrlDiagnosticsText(
+                    "[psp1000-constructed0-dependency-consumer-cont] "
+                    "validation=0\n");
+            return;
+        }
+    }
+    if (!zeroCtrlBridgeExecutableRange(paf,
+                dependency_consumer_target + 0x200, 0x100)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-consumer-cont] "
+                "validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-consumer-cont] validation=1 "
+            "start_off=0x200 size=0x100\n");
+    for (offset = 0x200; offset <= 0x2E0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-consumer-cont-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(dependency_consumer_target + offset + 0x00),
+                _lw(dependency_consumer_target + offset + 0x04),
+                _lw(dependency_consumer_target + offset + 0x08),
+                _lw(dependency_consumer_target + offset + 0x0C),
+                _lw(dependency_consumer_target + offset + 0x10),
+                _lw(dependency_consumer_target + offset + 0x14),
+                _lw(dependency_consumer_target + offset + 0x18),
+                _lw(dependency_consumer_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
 static void zeroCtrlWriteConstructed0DependencyMap(SceModule2 *paf,
         unsigned int target) {
     unsigned int offset;
@@ -7269,6 +7319,7 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
                 "[psp1000-constructed0-dependency-analysis] validation=0 "
                 "complete=0 reason=NO_RETURN off=0x200\n");
         zeroCtrlWriteConstructed0DependencyMap(paf, target);
+        zeroCtrlWriteConstructed0DependencyConsumerContinuation(paf, target);
         zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);
         zeroCtrlWriteConstructed0DependencyCopyCalleeMap(paf, target);
         return 0;

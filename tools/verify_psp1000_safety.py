@@ -3043,6 +3043,78 @@ def check_sources(root):
     if 'boundary = offset + 8;' not in boundary_search or \
             'if (boundary == 0)' not in boundary_search:
         fail("dependency analysis no longer fails closed without a full return")
+    consumer_cont_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyConsumerContinuation(')
+    consumer_cont_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0DependencyMap(',
+            consumer_cont_start)
+    consumer_cont = kernel[consumer_cont_start:consumer_cont_end]
+    if consumer_cont_start < 0 or consumer_cont_end < 0:
+        fail("constructed0 dependency consumer continuation is missing")
+    for token in ('dependency_consumer_target + 0x1A8) != 0x262401A0',
+            'dependency_consumer_target + 0x1AC) != 0x26650044',
+            'for (offset = 0x1B0; offset <= 0x1FC; offset += 4)',
+            'zeroCtrlMipsGprWriteDestination(',
+            '_lw(dependency_consumer_target + offset)) == 5',
+            'dependency_consumer_target + 0x200, 0x100',
+            '[psp1000-constructed0-dependency-consumer-cont] ',
+            'validation=0\\n',
+            '[psp1000-constructed0-dependency-consumer-cont] validation=1',
+            'start_off=0x200 size=0x100',
+            '[psp1000-constructed0-dependency-consumer-cont-code]'):
+        if token not in consumer_cont:
+            fail("dependency consumer continuation proof lacks " + token)
+    cont_prefix_range = consumer_cont.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,')
+    cont_prefix_size = consumer_cont.find('0x200)', cont_prefix_range)
+    cont_setup_a0 = consumer_cont.find(
+            'dependency_consumer_target + 0x1A8) != 0x262401A0',
+            cont_prefix_size)
+    cont_setup_a1 = consumer_cont.find(
+            'dependency_consumer_target + 0x1AC) != 0x26650044',
+            cont_setup_a0)
+    cont_liveness_loop = consumer_cont.find(
+            'for (offset = 0x1B0; offset <= 0x1FC; offset += 4)',
+            cont_setup_a1)
+    cont_liveness_decode = consumer_cont.find(
+            'zeroCtrlMipsGprWriteDestination(', cont_liveness_loop)
+    cont_liveness_read = consumer_cont.find(
+            '_lw(dependency_consumer_target + offset)', cont_liveness_decode)
+    cont_liveness_a1 = consumer_cont.find('== 5', cont_liveness_read)
+    cont_range = consumer_cont.find(
+            'zeroCtrlBridgeExecutableRange(paf,', cont_liveness_a1)
+    cont_range_args = consumer_cont.find(
+            'dependency_consumer_target + 0x200, 0x100', cont_range)
+    cont_header = consumer_cont.find(
+            '[psp1000-constructed0-dependency-consumer-cont] validation=1',
+            cont_range_args)
+    cont_loop = consumer_cont.find(
+            'for (offset = 0x200; offset <= 0x2E0; offset += 0x20)',
+            cont_header)
+    cont_first_read = consumer_cont.find(
+            '_lw(dependency_consumer_target + offset + 0x00)', cont_loop)
+    cont_last_read = consumer_cont.find(
+            '_lw(dependency_consumer_target + offset + 0x1C)', cont_loop)
+    if not 0 <= cont_prefix_range < cont_prefix_size < cont_setup_a0 < \
+            cont_setup_a1 < cont_liveness_loop < cont_liveness_decode < \
+            cont_liveness_read < cont_liveness_a1 < cont_range < \
+            cont_range_args < cont_header < cont_loop < cont_first_read < \
+            cont_last_read:
+        fail("dependency consumer continuation validation/read order regressed")
+    cont_rows = consumer_cont[cont_loop:]
+    if cont_rows.count('_lw(dependency_consumer_target + offset + ') != 8 or \
+            consumer_cont.count(
+                'for (offset = 0x200; offset <= 0x2E0; offset += 0x20)') != 1 or \
+            'dependency_consumer_target + offset + 0x20' in cont_rows or \
+            'dependency_consumer_target + 0x300' in consumer_cont or \
+            any(token in consumer_cont for token in
+                ('0x35A24', 'zeroCtrlMipsJumpTarget',
+                 'zeroCtrlMipsBranchTarget',
+                 'zeroCtrlWriteConstructed0DependencyConsumerContinuation('
+                 'paf,', 'a989_target_dependency', 'a989_target_node',
+                 'a989_target_outer', 'a989_target_inner', '_sw(', '_sb(',
+                 'sceKernelDcache', 'sceKernelIcache')):
+        fail("dependency consumer continuation exceeds bounds, follows code, uses runtime state, or writes")
     map_start = kernel.find(
             'static void zeroCtrlWriteConstructed0DependencyMap(')
     map_end = kernel.find(
@@ -3081,10 +3153,19 @@ def check_sources(root):
     map_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0DependencyMap(paf, target);',
             no_return_record)
+    consumer_cont_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyConsumerContinuation(paf, target);',
+            map_call)
+    helper_map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);',
+            consumer_cont_call)
     no_return_exit = dependency_analysis.find('return 0;', map_call)
-    if not 0 <= no_return_gate < no_return_record < map_call < no_return_exit or \
+    if not 0 <= no_return_gate < no_return_record < map_call < \
+            consumer_cont_call < helper_map_call < no_return_exit or \
             dependency_analysis.count(
-                'zeroCtrlWriteConstructed0DependencyMap(') != 1:
+                'zeroCtrlWriteConstructed0DependencyMap(') != 1 or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0DependencyConsumerContinuation(') != 1:
         fail("dependency map is not gated solely by the existing NO_RETURN path")
     if 'int constructed0_dependency_written = 0;' not in writer or \
             'slide_diag.constructed0_dependency' in kernel:
