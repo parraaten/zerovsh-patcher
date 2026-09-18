@@ -7030,6 +7030,46 @@ static void zeroCtrlWriteConstructed0DependencyCopyImplementationMap(
                 _lw(implementation_target + offset + 0x1C));
         zeroCtrlDiagnosticsText(line);
     }
+    {
+        unsigned int load = _lw(implementation_target + 0x024);
+        unsigned int store = _lw(implementation_target + 0x028);
+        if (!zeroCtrlMipsMove(_lw(implementation_target + 0x000), 10, 5) ||
+                !zeroCtrlMipsMove(_lw(implementation_target + 0x004), 3, 4) ||
+                _lw(implementation_target + 0x00C) != 0x00865821 ||
+                (load >> 26) != 0x24 || ((load >> 21) & 0x1F) != 10 ||
+                (short)(load & 0xFFFF) != 0 ||
+                (store >> 26) != 0x28 || ((store >> 21) & 0x1F) != 3 ||
+                ((store >> 16) & 0x1F) != ((load >> 16) & 0x1F) ||
+                (short)(store & 0xFFFF) != 0 ||
+                _lw(implementation_target + 0x034) != 0x254A0001 ||
+                _lw(implementation_target + 0x038) != 0x03E00008 ||
+                _lw(implementation_target + 0x03C) != 0x00801021 ||
+                !zeroCtrlBridgeExecutableRange(owner,
+                    implementation_target + 0x100, 0x180)) {
+            zeroCtrlDiagnosticsText(
+                    "[psp1000-constructed0-dependency-copy-cont] "
+                    "validation=0\n");
+            return;
+        }
+    }
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-copy-cont] validation=1 "
+            "start_off=0x100 size=0x180\n");
+    for (offset = 0x100; offset <= 0x260; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-copy-cont-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(implementation_target + offset + 0x00),
+                _lw(implementation_target + offset + 0x04),
+                _lw(implementation_target + offset + 0x08),
+                _lw(implementation_target + offset + 0x0C),
+                _lw(implementation_target + offset + 0x10),
+                _lw(implementation_target + offset + 0x14),
+                _lw(implementation_target + offset + 0x18),
+                _lw(implementation_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
 }
 
 static void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(SceModule2 *paf,

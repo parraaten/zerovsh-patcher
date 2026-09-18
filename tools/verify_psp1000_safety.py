@@ -3202,7 +3202,12 @@ def check_sources(root):
             implementation_loop < implementation_first_read < \
             implementation_last_read:
         fail("copy implementation derivation/range validation is out of order")
-    if dependency_impl_map.count(
+    continuation_start = dependency_impl_map.find(
+            'unsigned int load = _lw(implementation_target + 0x024);',
+            implementation_last_read)
+    initial_implementation_map = dependency_impl_map[:continuation_start]
+    continuation_map = dependency_impl_map[continuation_start:]
+    if initial_implementation_map.count(
                 '_lw(implementation_target + offset + ') != 8 or \
             dependency_impl_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
             'copy_target + 0x008' in dependency_impl_map or \
@@ -3213,6 +3218,51 @@ def check_sources(root):
                  'a989_target_outer', 'a989_target_inner', '_sw(',
                  'sceKernelDcache', 'sceKernelIcache')):
         fail("copy implementation map uses fixed/runtime state, follows code, or writes")
+    for token in ('zeroCtrlMipsMove(_lw(implementation_target + 0x000), 10, 5)',
+            'zeroCtrlMipsMove(_lw(implementation_target + 0x004), 3, 4)',
+            '_lw(implementation_target + 0x00C) != 0x00865821',
+            '(load >> 26) != 0x24', '((load >> 21) & 0x1F) != 10',
+            '(store >> 26) != 0x28', '((store >> 21) & 0x1F) != 3',
+            '((store >> 16) & 0x1F) != ((load >> 16) & 0x1F)',
+            '_lw(implementation_target + 0x034) != 0x254A0001',
+            '_lw(implementation_target + 0x038) != 0x03E00008',
+            '_lw(implementation_target + 0x03C) != 0x00801021',
+            'implementation_target + 0x100, 0x180',
+            '[psp1000-constructed0-dependency-copy-cont] ',
+            'validation=0\\n',
+            'start_off=0x100 size=0x180',
+            '[psp1000-constructed0-dependency-copy-cont-code]'):
+        if token not in continuation_map:
+            fail("copy implementation continuation proof lacks " + token)
+    continuation_range = continuation_map.find(
+            'zeroCtrlBridgeExecutableRange(owner,')
+    continuation_range_args = continuation_map.find(
+            'implementation_target + 0x100, 0x180', continuation_range)
+    continuation_header = continuation_map.find(
+            '[psp1000-constructed0-dependency-copy-cont] validation=1',
+            continuation_range_args)
+    continuation_loop = continuation_map.find(
+            'for (offset = 0x100; offset <= 0x260; offset += 0x20)',
+            continuation_header)
+    continuation_first_read = continuation_map.find(
+            '_lw(implementation_target + offset + 0x00)', continuation_loop)
+    continuation_last_read = continuation_map.find(
+            '_lw(implementation_target + offset + 0x1C)', continuation_loop)
+    if not 0 <= continuation_start or not 0 <= continuation_range < \
+            continuation_range_args < continuation_header < continuation_loop < \
+            continuation_first_read < continuation_last_read:
+        fail("copy continuation reads before prefix/full-range validation")
+    if continuation_map.count(
+                '_lw(implementation_target + offset + ') != 8 or \
+            'offset <= 0x280' in continuation_map or \
+            'implementation_target + 0x280' in continuation_map or \
+            any(token in continuation_map for token in
+                ('0x08820340', 'sceKernelLibrary', '0x540',
+                 'zeroCtrlMipsJumpTarget', 'zeroCtrlMipsBranchTarget',
+                 'a989_target_dependency', 'a989_target_node',
+                 'a989_target_outer', 'a989_target_inner', '_sw(',
+                 'sceKernelDcache', 'sceKernelIcache')):
+        fail("copy continuation exceeds bounds, follows code, uses runtime state, or writes")
     copy_map_start = impl_map_end + 1
     copy_map_end = kernel.find(
             '\nstatic int zeroCtrlWriteConstructed0DependencyConsumer(void)',
