@@ -107,6 +107,12 @@ void zeroCtrlRegisterBSManClosedShim(
         const ZeroCtrlBSManClosedRegistration *registration);
 int zeroCtrlRegisterActivationWide(
         const ZeroCtrlActivationWideRegistration *registration);
+void zeroCtrlRegisterPsp1000FunctionalBridge(
+        const ZeroCtrlPsp1000BridgeRegistration *registration);
+void zeroCtrlRegisterVsh5704Trace(
+        const ZeroCtrlVsh5704TraceRegistration *registration);
+void zeroCtrlRegisterPafA989TargetTrace(
+        const ZeroCtrlPafA989TargetTraceRegistration *registration);
 void zeroCtrlRegisterActivationReturn(
         const ZeroCtrlActivationReturnRegistration *registration);
 void zeroCtrlRegisterActivationCallerRA(unsigned int first_addr,
@@ -120,6 +126,9 @@ static ZeroCtrlSonyStartTraceRegistration sonyStartTraceRegistration;
 static ZeroCtrlBSManClosedRegistration bsmanClosedRegistration;
 static ZeroCtrlActivationWideRegistration activationWideRegistration;
 static ZeroCtrlActivationReturnRegistration activationReturnRegistration;
+static ZeroCtrlPsp1000BridgeRegistration psp1000BridgeRegistration;
+static ZeroCtrlVsh5704TraceRegistration vsh5704TraceRegistration;
+static ZeroCtrlPafA989TargetTraceRegistration pafA989TargetTraceRegistration;
 static volatile unsigned int psp1000RuntimeRequest;
 static volatile unsigned int psp1000RuntimeRequestValid;
 static volatile unsigned int psp1000RuntimeRequestCalled;
@@ -300,6 +309,36 @@ extern volatile unsigned int zeroCtrlTrigger58D4OriginalTarget;
 extern volatile unsigned int zeroCtrlTrigger58D4FunctionalMode;
 extern volatile unsigned int zeroCtrlTrigger13F6CHits;
 extern volatile unsigned int zeroCtrlTrigger14020Hits;
+extern void zeroCtrlVsh314A4FunctionalBridge(void);
+extern void zeroCtrlVsh314A4FunctionalBridgeEnd(void);
+extern volatile unsigned int zeroCtrlVsh314A4OriginalController;
+extern volatile unsigned int zeroCtrlVsh314A4RootSlot;
+extern volatile unsigned int zeroCtrlVsh314A4Constructed0;
+extern volatile unsigned int zeroCtrlVsh314A4Constructed1;
+extern volatile unsigned int zeroCtrlVsh314A4ExpectedCallback;
+extern volatile unsigned int zeroCtrlVsh314A4UserLower;
+extern volatile unsigned int zeroCtrlVsh314A4UserUpper;
+extern volatile unsigned int zeroCtrlVsh314A4Attempted;
+extern volatile unsigned int zeroCtrlVsh314A4Busy;
+extern volatile unsigned int zeroCtrlVsh314A4Hits;
+extern volatile unsigned int zeroCtrlVsh314A4RequestSeen;
+extern volatile unsigned int zeroCtrlVsh314A4Attempts;
+extern volatile unsigned int zeroCtrlVsh314A4Stage0Calls;
+extern volatile unsigned int zeroCtrlVsh314A4Stage1Calls;
+extern volatile unsigned int zeroCtrlVsh314A4Reject;
+extern volatile unsigned int zeroCtrlVsh314A4RejectObject;
+extern void zeroCtrlVsh5704RegistrationTrace(void);
+extern void zeroCtrlVsh5704RegistrationTraceEnd(void);
+extern unsigned int zeroCtrlVsh5704RegistrationTraceJump;
+extern volatile unsigned int zeroCtrlVsh5704RegistrationTraceHits;
+extern void zeroCtrlPafA989TargetTrace(void);
+extern void zeroCtrlPafA989TargetTraceEnd(void);
+extern unsigned int zeroCtrlPafA989TargetTraceJump;
+extern volatile unsigned int zeroCtrlPafA989TargetTraceEntryHits;
+extern volatile unsigned int zeroCtrlPafA989TargetTraceExactHits;
+extern volatile unsigned int zeroCtrlPafA989TargetNode;
+extern volatile unsigned int zeroCtrlPafA989TargetOuter;
+extern volatile unsigned int zeroCtrlPafA989TargetInner;
 extern int zeroCtrlGlobalPredicate6F84True(void);
 extern volatile unsigned int zeroCtrlGlobalPredicate6F84Hits;
 extern void zeroCtrlSonyModuleStartEntryTrace(void);
@@ -639,6 +678,68 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 	psp1000RuntimeRequestCalled = 0;
 	psp1000RuntimeRequestResult = 0xFFFFFFFF;
 	psp1000RuntimeRequestTarget = 0;
+	psp1000BridgeRegistration.helper_addr =
+			(u32)zeroCtrlVsh314A4FunctionalBridge;
+	psp1000BridgeRegistration.helper_end_addr =
+			(u32)zeroCtrlVsh314A4FunctionalBridgeEnd;
+	psp1000BridgeRegistration.scalar_addr[0] =
+			(u32)&zeroCtrlVsh314A4OriginalController;
+	psp1000BridgeRegistration.scalar_addr[1] =
+			(u32)&zeroCtrlVsh314A4RootSlot;
+	psp1000BridgeRegistration.scalar_addr[2] =
+			(u32)&zeroCtrlVsh314A4Constructed0;
+	psp1000BridgeRegistration.scalar_addr[3] =
+			(u32)&zeroCtrlVsh314A4Constructed1;
+	psp1000BridgeRegistration.scalar_addr[4] =
+			(u32)&zeroCtrlVsh314A4ExpectedCallback;
+	psp1000BridgeRegistration.scalar_addr[5] =
+			(u32)&zeroCtrlVsh314A4UserLower;
+	psp1000BridgeRegistration.scalar_addr[6] =
+			(u32)&zeroCtrlVsh314A4UserUpper;
+	psp1000BridgeRegistration.scalar_addr[7] =
+			(u32)&zeroCtrlVsh314A4Attempted;
+	psp1000BridgeRegistration.scalar_addr[8] =
+			(u32)&zeroCtrlVsh314A4Busy;
+	psp1000BridgeRegistration.scalar_addr[9] =
+			(u32)&zeroCtrlVsh314A4Hits;
+	psp1000BridgeRegistration.scalar_addr[10] =
+			(u32)&zeroCtrlVsh314A4RequestSeen;
+	psp1000BridgeRegistration.scalar_addr[11] =
+			(u32)&zeroCtrlVsh314A4Attempts;
+	psp1000BridgeRegistration.scalar_addr[12] =
+			(u32)&zeroCtrlVsh314A4Stage0Calls;
+	psp1000BridgeRegistration.scalar_addr[13] =
+			(u32)&zeroCtrlVsh314A4Stage1Calls;
+	psp1000BridgeRegistration.scalar_addr[14] =
+			(u32)&zeroCtrlVsh314A4Reject;
+	psp1000BridgeRegistration.scalar_addr[15] =
+			(u32)&zeroCtrlVsh314A4RejectObject;
+	zeroCtrlRegisterPsp1000FunctionalBridge(&psp1000BridgeRegistration);
+	pafA989TargetTraceRegistration.helper_addr = (u32)zeroCtrlPafA989TargetTrace;
+	pafA989TargetTraceRegistration.helper_end_addr =
+			(u32)zeroCtrlPafA989TargetTraceEnd;
+	pafA989TargetTraceRegistration.jump_slot_addr =
+			(u32)&zeroCtrlPafA989TargetTraceJump;
+	pafA989TargetTraceRegistration.entry_hits_addr =
+			(u32)&zeroCtrlPafA989TargetTraceEntryHits;
+	pafA989TargetTraceRegistration.exact_hits_addr =
+			(u32)&zeroCtrlPafA989TargetTraceExactHits;
+	pafA989TargetTraceRegistration.target_node_addr =
+			(u32)&zeroCtrlPafA989TargetNode;
+	pafA989TargetTraceRegistration.target_outer_addr =
+			(u32)&zeroCtrlPafA989TargetOuter;
+	pafA989TargetTraceRegistration.target_inner_addr =
+			(u32)&zeroCtrlPafA989TargetInner;
+	zeroCtrlRegisterPafA989TargetTrace(&pafA989TargetTraceRegistration);
+	vsh5704TraceRegistration.helper_addr =
+			(u32)zeroCtrlVsh5704RegistrationTrace;
+	vsh5704TraceRegistration.helper_end_addr =
+			(u32)zeroCtrlVsh5704RegistrationTraceEnd;
+	vsh5704TraceRegistration.jump_slot_addr =
+			(u32)&zeroCtrlVsh5704RegistrationTraceJump;
+	vsh5704TraceRegistration.hit_counter_addr =
+			(u32)&zeroCtrlVsh5704RegistrationTraceHits;
+	zeroCtrlRegisterVsh5704Trace(&vsh5704TraceRegistration);
 	if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&
 			model == 0 && devkit == 0x06060110 &&
 			zeroCtrlIsPsp1000SlideFunctionalEnabled())

@@ -150,6 +150,26 @@ enum zeroCtrlTriggerMode {
     ZERO_TRIGGER_14020 = 4
 };
 
+enum zeroCtrlFunctionalHomeRejectReason {
+    ZERO_HOME_REJECT_NONE = 0,
+    ZERO_HOME_REJECT_PLATFORM = 1,
+    ZERO_HOME_REJECT_COMPAT_INSTALLED = 2,
+    ZERO_HOME_REJECT_TRIGGER_MODE = 3,
+    ZERO_HOME_REJECT_TRIGGER_VALIDATION = 4,
+    ZERO_HOME_REJECT_TRIGGER_PATCH = 5,
+    ZERO_HOME_REJECT_TRIGGER_CACHE = 6,
+    ZERO_HOME_REJECT_HELPER = 7,
+    ZERO_HOME_REJECT_REQUEST_ADDRESS = 8,
+    ZERO_HOME_REJECT_MODE_ADDRESS = 9,
+    ZERO_HOME_REJECT_TARGET_ADDRESS = 10,
+    ZERO_HOME_REJECT_MODE_VALUE = 11,
+    ZERO_HOME_REJECT_REQUEST_VALUE = 12,
+    ZERO_HOME_REJECT_CONSUMED = 13,
+    ZERO_HOME_REJECT_PENDING = 14,
+    ZERO_HOME_REJECT_BRIDGE = 15,
+    ZERO_HOME_REJECT_BRIDGE_BUSY = 16
+};
+
 static const unsigned int vsh_trigger_offsets[VSH_TRIGGER_COUNT] = {
     0x58D4, 0x13F6C, 0x14020
 };
@@ -561,6 +581,9 @@ static const char *zeroCtrlConsumerGuardReasonName(int reason) {
 static void zeroCtrlInstallDispatchEntryTrace(void);
 static void zeroCtrlInstall6F84ConsumerTraces(void);
 static void zeroCtrlInstallCapabilityMaskTraces(void);
+static void zeroCtrlInstallVshCtrl314A4Bridge(void);
+static void zeroCtrlInstallVsh5704RegistrationTrace(void);
+static void zeroCtrlInstallPafA989TargetTrace(void);
 
 enum zeroCtrlBSManStubForm {
     ZERO_BSMAN_STUB_UNKNOWN = 0,
@@ -613,6 +636,75 @@ typedef struct {
     int functional_enabled;
     volatile int functional_request_armed;
     volatile int functional_trigger_consumed;
+    volatile int functional_home_open_pending;
+    volatile unsigned int functional_home_press_hits;
+    volatile unsigned int functional_home_first_load_attempts;
+    volatile unsigned int functional_home_first_load_published;
+    volatile unsigned int functional_home_first_load_reject_reason;
+    volatile int vsh589c_validation;
+    volatile int vsh589c_install;
+    volatile int vsh589c_cache_sync;
+    unsigned int vsh589c_owner;
+    unsigned int vsh589c_original;
+    unsigned int vsh589c_replacement;
+    unsigned int vsh589c_resume;
+    unsigned int vsh589c_helper;
+    unsigned int vsh589c_tail;
+    unsigned int vsh589c_tail_original;
+    unsigned int vsh589c_tail_replacement;
+    volatile int vshctrl314a4_attempted;
+    volatile int vshctrl314a4_validation;
+    volatile int vshctrl314a4_install;
+    volatile int vshctrl314a4_cache_sync;
+    unsigned int vshctrl314a4_owner;
+    unsigned int vshctrl314a4_helper;
+    unsigned int vshctrl314a4_target;
+    volatile int vshctrl314a4_home_baseline_captured;
+    volatile int vshctrl314a4_home_baseline_valid;
+    unsigned int vshctrl314a4_total_baseline;
+    unsigned int vshctrl314a4_pending_baseline;
+    unsigned int vshctrl314a4_consumed_hits_baseline;
+    int bridge_registered;
+    volatile int bridge_validation;
+    volatile int bridge_install;
+    volatile int bridge_cache_sync;
+    unsigned int bridge_helper;
+    unsigned int bridge_helper_end;
+    unsigned int bridge_scalar[16];
+    unsigned int bridge_root_slot;
+    unsigned int bridge_constructed0;
+    unsigned int bridge_constructed1;
+    unsigned int bridge_callback;
+    volatile unsigned int bridge_livein_validation;
+    volatile unsigned int bridge_livein_arg[4];
+    volatile unsigned int bridge_livein_blocker_call;
+    volatile unsigned int bridge_livein_blocker_domain;
+    volatile unsigned int bridge_livein_blocker_arg;
+    volatile unsigned int bridge_livein_blocker_reason;
+    volatile unsigned int bridge_livein_blocker_taint;
+    volatile unsigned int bridge_livein_blocker_prev_word;
+    volatile unsigned int bridge_livein_blocker_word;
+    volatile unsigned int bridge_livein_blocker_next_word;
+    volatile unsigned int bridge_install_attempts;
+    volatile unsigned int bridge_resolve_stage;
+    volatile unsigned int bridge_resolve_reject;
+    int vsh5704_trace_registered;
+    volatile int vsh5704_trace_validation;
+    volatile int vsh5704_trace_install;
+    volatile int vsh5704_trace_cache_sync;
+    unsigned int vsh5704_trace_helper;
+    unsigned int vsh5704_trace_helper_end;
+    unsigned int vsh5704_trace_jump_slot;
+    unsigned int vsh5704_trace_hit_counter;
+    unsigned int vsh5704_trace_original_target;
+    int paf_a989_target_trace_registered;
+    volatile int paf_a989_target_trace_validation;
+    volatile int paf_a989_target_trace_install;
+    volatile int paf_a989_target_trace_cache_sync;
+    unsigned int paf_a989_target_trace_helper;
+    unsigned int paf_a989_target_trace_helper_end;
+    unsigned int paf_a989_target_trace_jump_slot;
+    unsigned int paf_a989_target_trace_scalar[5];
     volatile int functional_runtime_request_blocked;
     volatile int functional_button_thread;
     int functional_runtime_registration_valid;
@@ -2341,6 +2433,11 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                     all_selected_valid = 0;
                 }
             }
+            if (slide_diag.functional_enabled &&
+                    (((counters[1] | counters[2]) & 3) != 0 ||
+                    !zeroCtrlVshModuleRangeValid(helper, counters[1], 4) ||
+                    !zeroCtrlVshModuleRangeValid(helper, counters[2], 4)))
+                all_selected_valid = 0;
 
             /* Commit pass: selected callsites are all valid or none are written. */
             if (all_selected_valid) {
@@ -2355,12 +2452,17 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                             (const void *)request_evidence->original_target_addr, 4);
                     sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->functional_mode_addr, 4);
-                    if (slide_diag.functional_enabled)
-                        _sw(1, request_evidence->request_addr);
-                    else
-                        _sw(0, request_evidence->request_addr);
+                    _sw(0, request_evidence->request_addr);
                     sceKernelDcacheWritebackInvalidateRange(
                             (const void *)request_evidence->request_addr, 4);
+                    if (slide_diag.functional_enabled) {
+                        _sw(0, counters[1]);
+                        _sw(0, counters[2]);
+                        sceKernelDcacheWritebackInvalidateRange(
+                                (const void *)counters[1], 4);
+                        sceKernelDcacheWritebackInvalidateRange(
+                                (const void *)counters[2], 4);
+                    }
                 }
                 for (i = 0; i < VSH_TRIGGER_COUNT; i++) {
                     ZeroCtrlVshTriggerEvidence *evidence =
@@ -2379,8 +2481,12 @@ void zeroCtrlRecordVshSlideTarget(int modid, unsigned int text_addr,
                 if (slide_diag.functional_enabled &&
                         (slide_diag.trigger_mode & ZERO_TRIGGER_58D4) &&
                         request_evidence->patch_applied == 1 &&
-                        request_evidence->cache_sync == 1)
+                        request_evidence->cache_sync == 1) {
                     slide_diag.functional_request_armed = 1;
+                    if (slide_diag.bridge_registered &&
+                            !slide_diag.bridge_install)
+                        zeroCtrlInstallVshCtrl314A4Bridge();
+                }
             }
 
             /* Dangerous global predicate block: never edits direct callers. */
@@ -3472,6 +3578,522 @@ typedef struct {
 #define VSH589C_WINDOW_BEFORE 0x50
 #define VSH589C_WINDOW_AFTER  0x30
 
+static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod);
+static int zeroCtrlMipsGprWriteDestination(unsigned int word);
+static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
+        unsigned int source);
+static int zeroCtrlModuleContainingSegment(SceModule2 *mod,
+        unsigned int address, unsigned int *segment, unsigned int *remaining);
+
+#define VSHCTRL_LIBRARY_LIMIT 8
+#define VSHCTRL_IMPORT_LIMIT 32
+#define VSHCTRL_CALLER_LIMIT 64
+#define VSHCTRL_FALLBACK_LIMIT 32
+#define VSHCTRL_NAME_CAPACITY 32
+#define VSHCTRL_CONTEXT_INSTRUCTIONS 6
+
+typedef struct {
+    char name[VSHCTRL_NAME_CAPACITY];
+    unsigned int index, functions;
+} ZeroCtrlVshControllerLibrary;
+
+typedef struct {
+    unsigned int library, function, nid, stub, word[2];
+} ZeroCtrlVshControllerImport;
+
+typedef struct {
+    unsigned int import, offset, word, kind;
+} ZeroCtrlVshControllerCaller;
+
+static int zeroCtrlAsciiContainsInputWord(const char *name) {
+    static const char *needle[3] = { "ctrl", "controller", "input" };
+    unsigned int start, which;
+
+    for (start = 0; name[start] != '\0'; start++) {
+        for (which = 0; which < 3; which++) {
+            unsigned int i;
+            for (i = 0; needle[which][i] != '\0'; i++) {
+                unsigned char value = (unsigned char)name[start + i];
+                if (value == '\0') break;
+                if (value >= 'A' && value <= 'Z') value += 'a' - 'A';
+                if (value != (unsigned char)needle[which][i]) break;
+            }
+            if (needle[which][i] == '\0') return 1;
+        }
+    }
+    return 0;
+}
+
+/* Writer-thread-only import/callsite map; loaded module memory is read-only. */
+static int zeroCtrlWriteFunctionalVshControllerMap(void) {
+    ZeroCtrlVshControllerLibrary libraries[VSHCTRL_LIBRARY_LIMIT];
+    ZeroCtrlVshControllerLibrary fallback[VSHCTRL_FALLBACK_LIMIT];
+    ZeroCtrlVshControllerImport imports[VSHCTRL_IMPORT_LIMIT];
+    ZeroCtrlVshControllerCaller callers[VSHCTRL_CALLER_LIMIT];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int table, size, cursor = 0, library_total = 0, library_stored = 0;
+    unsigned int import_total = 0, import_stored = 0, caller_total = 0;
+    unsigned int caller_stored = 0, jal = 0, jump = 0, fallback_stored = 0;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
+                vsh->text_size))
+        return 0;
+    table = (unsigned int)vsh->stub_top;
+    size = vsh->stub_size;
+    if (table == 0 || (table & 3) != 0 || size < 12 ||
+            table > 0xFFFFFFFFU - size ||
+            !zeroCtrlVshModuleRangeValid(vsh, table, size))
+        return 0;
+
+    while (cursor < size) {
+        SceLibraryStubTable *entry;
+        unsigned int address, entry_size, functions_size, nids_size;
+        unsigned int stubtable, nidtable, function, library_index;
+        char name[VSHCTRL_NAME_CAPACITY];
+        int controller;
+        if (size - cursor < 12 || table + cursor < table) return 0;
+        address = table + cursor;
+        if (!zeroCtrlVshModuleRangeValid(vsh, address, 12)) return 0;
+        entry = (SceLibraryStubTable *)address;
+        if (entry->len == 0) return 0;
+        entry_size = (unsigned int)entry->len * 4;
+        if (entry_size < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                entry_size > size - cursor ||
+                !zeroCtrlVshModuleRangeValid(vsh, address, entry_size) ||
+                entry->stubcount > 0xFFFFFFFFU / 8)
+            return 0;
+        functions_size = (unsigned int)entry->stubcount * 8;
+        nids_size = (unsigned int)entry->stubcount * 4;
+        stubtable = (unsigned int)entry->stubtable;
+        nidtable = (unsigned int)entry->nidtable;
+        if ((stubtable & 3) != 0 || (nidtable & 3) != 0 ||
+                (entry->stubcount != 0 &&
+                (!zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size) ||
+                 !zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size))))
+            return 0;
+        if (!zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name,
+                    sizeof(name)))
+            return 0;
+        if (fallback_stored < VSHCTRL_FALLBACK_LIMIT) {
+            ZeroCtrlVshControllerLibrary *saved = &fallback[fallback_stored++];
+            strcpy(saved->name, name);
+            saved->index = fallback_stored - 1;
+            saved->functions = entry->stubcount;
+        }
+        controller = zeroCtrlAsciiContainsInputWord(name);
+        library_index = library_total;
+        if (controller) {
+            library_total++;
+            if (library_stored < VSHCTRL_LIBRARY_LIMIT) {
+                ZeroCtrlVshControllerLibrary *saved = &libraries[library_stored++];
+                strcpy(saved->name, name);
+                saved->index = library_index;
+                saved->functions = entry->stubcount;
+            }
+        }
+        for (function = 0; controller && function < entry->stubcount; function++) {
+            unsigned int stub, nid, word0, word1, text_offset;
+            if (function > (0xFFFFFFFFU - stubtable) / 8 ||
+                    function > (0xFFFFFFFFU - nidtable) / 4)
+                return 0;
+            stub = stubtable + function * 8;
+            if (!zeroCtrlVshModuleRangeValid(vsh, stub, 8) ||
+                    !zeroCtrlVshModuleRangeValid(vsh,
+                        nidtable + function * 4, 4))
+                return 0;
+            nid = _lw(nidtable + function * 4);
+            word0 = _lw(stub);
+            word1 = _lw(stub + 4);
+            if (import_stored < VSHCTRL_IMPORT_LIMIT) {
+                ZeroCtrlVshControllerImport *saved = &imports[import_stored++];
+                saved->library = library_index;
+                saved->function = function;
+                saved->nid = nid;
+                saved->stub = stub;
+                saved->word[0] = word0;
+                saved->word[1] = word1;
+            }
+            for (text_offset = 0; text_offset <= vsh->text_size - 4;
+                    text_offset += 4) {
+                unsigned int pc = vsh->text_addr + text_offset;
+                unsigned int word = _lw(pc);
+                unsigned int opcode = word >> 26;
+                if ((opcode != 2 && opcode != 3) ||
+                        zeroCtrlMipsJumpTarget(pc, word) != stub)
+                    continue;
+                caller_total++;
+                if (opcode == 3) jal++;
+                else jump++;
+                if (caller_stored < VSHCTRL_CALLER_LIMIT) {
+                    ZeroCtrlVshControllerCaller *saved = &callers[caller_stored++];
+                    saved->import = import_total;
+                    saved->offset = text_offset;
+                    saved->word = word;
+                    saved->kind = opcode;
+                }
+            }
+            import_total++;
+        }
+        if (cursor > 0xFFFFFFFFU - entry_size) return 0;
+        cursor += entry_size;
+    }
+
+    snprintf(line, sizeof(line),
+            "[psp1000-vshctrl-map] controller_libs=%u imports=%u callers=%u "
+            "jal=%u jump=%u lib_overflow=%u import_overflow=%u "
+            "caller_overflow=%u\n", library_total, import_total, caller_total,
+            jal, jump, library_total - library_stored,
+            import_total - import_stored, caller_total - caller_stored);
+    zeroCtrlDiagnosticsText(line);
+    if (library_total == 0) {
+        unsigned int i;
+        for (i = 0; i < fallback_stored; i++) {
+            snprintf(line, sizeof(line),
+                    "[psp1000-vsh-import-lib] index=%u name=%s funcs=%u\n",
+                    fallback[i].index, fallback[i].name, fallback[i].functions);
+            zeroCtrlDiagnosticsText(line);
+        }
+        return 1;
+    }
+    for (cursor = 0; cursor < library_stored; cursor++) {
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-lib] index=%u name=%s funcs=%u\n",
+                libraries[cursor].index, libraries[cursor].name,
+                libraries[cursor].functions);
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (cursor = 0; cursor < import_stored; cursor++) {
+        ZeroCtrlVshControllerImport *entry = &imports[cursor];
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-import] lib=%u func=%u nid=0x%08X "
+                "stub=0x%08X w0=0x%08X w1=0x%08X\n", entry->library,
+                entry->function, entry->nid, entry->stub, entry->word[0],
+                entry->word[1]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (cursor = 0; cursor < caller_stored; cursor++) {
+        ZeroCtrlVshControllerCaller *caller = &callers[cursor];
+        unsigned int start = caller->offset >= VSHCTRL_CONTEXT_INSTRUCTIONS * 4 ?
+                caller->offset - VSHCTRL_CONTEXT_INSTRUCTIONS * 4 : 0;
+        unsigned int end = caller->offset <= vsh->text_size -
+                (VSHCTRL_CONTEXT_INSTRUCTIONS + 1) * 4 ? caller->offset +
+                (VSHCTRL_CONTEXT_INSTRUCTIONS + 1) * 4 : vsh->text_size;
+        unsigned int words = (end - start) / 4;
+        unsigned int context;
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-caller] import=%u source=0x%08X "
+                "offset=0x%05X word=0x%08X kind=%s\n", caller->import,
+                vsh->text_addr + caller->offset, caller->offset, caller->word,
+                caller->kind == 3 ? "JAL" : "J");
+        zeroCtrlDiagnosticsText(line);
+        if (!zeroCtrlVshModuleRangeValid(vsh,
+                    vsh->text_addr + start, end - start))
+            continue;
+        snprintf(line, sizeof(line),
+                "[psp1000-vshctrl-window] caller=%u start=0x%05X words=%u\n",
+                cursor, start, words);
+        zeroCtrlDiagnosticsText(line);
+        for (context = 0; context < words; context++) {
+            unsigned int code_offset = start + context * 4;
+            snprintf(line, sizeof(line),
+                    "[psp1000-vshctrl-code] caller=%u offset=0x%05X "
+                    "word=0x%08X\n", cursor, code_offset,
+                    _lw(vsh->text_addr + code_offset));
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+    return 1;
+}
+
+#define VSH57B0_INDIRECT_LIMIT 16
+#define VSH57B0_SEARCH_INSTRUCTIONS 8
+
+typedef struct {
+    unsigned int lui_offset, low_offset, reg, form;
+} ZeroCtrlVsh57b0Materialization;
+
+typedef struct {
+    unsigned int segment, address;
+} ZeroCtrlVsh57b0Pointer;
+
+/* Writer-thread-only reconnaissance; all target/module memory is read-only. */
+static int zeroCtrlWriteFunctionalVsh57b0IndirectMap(void) {
+    ZeroCtrlVsh57b0Materialization materialized[VSH57B0_INDIRECT_LIMIT];
+    ZeroCtrlVsh57b0Pointer pointers[VSH57B0_INDIRECT_LIMIT];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int target, offset, material_total = 0, material_stored = 0;
+    unsigned int pointer_total = 0, pointer_stored = 0, segment;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x57B0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
+                vsh->text_size))
+        return 0;
+    target = vsh->text_addr + 0x57B0;
+    if (!zeroCtrlVshModuleRangeValid(vsh, target, 4)) return 0;
+
+    for (offset = 0; offset <= vsh->text_size - 4; offset += 4) {
+        unsigned int lui = _lw(vsh->text_addr + offset);
+        unsigned int reg = (lui >> 16) & 0x1F;
+        unsigned int look;
+        if ((lui >> 26) != 0x0F || ((lui >> 21) & 0x1F) != 0 || reg == 0)
+            continue;
+        for (look = 1; look <= VSH57B0_SEARCH_INSTRUCTIONS &&
+                offset <= vsh->text_size - (look + 1) * 4; look++) {
+            unsigned int low_offset = offset + look * 4;
+            unsigned int word = _lw(vsh->text_addr + low_offset);
+            unsigned int opcode = word >> 26;
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int function = word & 0x3F;
+            unsigned int resolved = 0;
+            unsigned int form = 0;
+            int destination;
+            if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                    (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17) ||
+                    (opcode == 0 && (function == 8 || function == 9)))
+                break;
+            if (rs == reg && rt == reg && opcode == 9) {
+                resolved = ((lui & 0xFFFF) << 16) +
+                        (unsigned int)(int)(short)(word & 0xFFFF);
+                form = 9;
+            } else if (rs == reg && rt == reg && opcode == 0x0D) {
+                resolved = ((lui & 0xFFFF) << 16) | (word & 0xFFFF);
+                form = 0x0D;
+            }
+            if (form) {
+                if (resolved == target) {
+                    material_total++;
+                    if (material_stored < VSH57B0_INDIRECT_LIMIT) {
+                        ZeroCtrlVsh57b0Materialization *entry =
+                                &materialized[material_stored++];
+                        entry->lui_offset = offset;
+                        entry->low_offset = low_offset;
+                        entry->reg = reg;
+                        entry->form = form;
+                    }
+                }
+                break;
+            }
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0 || (unsigned int)destination == reg) break;
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-vsh57b0-materialize-map] total=%u stored=%u overflow=%u\n",
+            material_total, material_stored, material_total - material_stored);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset < material_stored; offset++) {
+        ZeroCtrlVsh57b0Materialization *entry = &materialized[offset];
+        unsigned int provenance = 1U << entry->reg;
+        unsigned int look;
+        const char *use = "NONE_IN_BOUNDED_FLOW";
+        unsigned int use_offset = entry->low_offset;
+        unsigned int use_reg = entry->reg;
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-materialize] index=%u lui_off=0x%05X "
+                "low_off=0x%05X reg=%u form=%s resolved=0x%08X\n",
+                offset, entry->lui_offset, entry->low_offset, entry->reg,
+                entry->form == 9 ? "ADDIU" : "ORI", target);
+        zeroCtrlDiagnosticsText(line);
+        for (look = 1; look <= VSH57B0_SEARCH_INSTRUCTIONS &&
+                entry->low_offset <= vsh->text_size - (look + 1) * 4; look++) {
+            unsigned int current = entry->low_offset + look * 4;
+            unsigned int word = _lw(vsh->text_addr + current);
+            unsigned int opcode = word >> 26;
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int rd = (word >> 11) & 0x1F;
+            unsigned int function = word & 0x3F;
+            unsigned int copy_source = 0, copy_destination = 0;
+            int copy_source_live = 0;
+            int destination;
+            if (opcode == 0 && (function == 8 || function == 9)) {
+                if (provenance & (1U << rs)) {
+                    use = function == 9 ? "JALR" : "JR";
+                    use_offset = current;
+                    use_reg = rs;
+                }
+                break;
+            }
+            if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                    (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17))
+                break;
+            if (opcode == 0x2B && (provenance & (1U << rt))) {
+                use = "SW_POINTER";
+                use_offset = current;
+                use_reg = rt;
+                break;
+            }
+            if (opcode == 0 && (function == 0x21 || function == 0x25)) {
+                if (rt == 0) { copy_source = rs; copy_destination = rd; }
+                else if (rs == 0) { copy_source = rt; copy_destination = rd; }
+            } else if (opcode == 9 && (word & 0xFFFF) == 0) {
+                copy_source = rs;
+                copy_destination = rt;
+            }
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0) break;
+            copy_source_live = copy_destination != 0 &&
+                    (provenance & (1U << copy_source));
+            if (destination > 0) provenance &= ~(1U << destination);
+            if (copy_source_live)
+                provenance |= 1U << copy_destination;
+            if (provenance == 0) break;
+        }
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-use] materialize=%u off=0x%05X "
+                "class=%s reg=%u\n", offset, use_offset, use, use_reg);
+        zeroCtrlDiagnosticsText(line);
+    }
+
+    for (segment = 0; segment < vsh->nsegment && segment < 4; segment++) {
+        unsigned int start = vsh->segmentaddr[segment];
+        unsigned int size = vsh->segmentsize[segment];
+        unsigned int address;
+        if (start == 0 || size < 4 || start > 0xFFFFFFFFU - size ||
+                !zeroCtrlVshModuleRangeValid(vsh, start, size))
+            continue;
+        address = (start + 3) & ~3U;
+        if (address < start) continue;
+        for (; address <= start + size - 4; address += 4) {
+            if (_lw(address) != target) continue;
+            pointer_total++;
+            if (pointer_stored < VSH57B0_INDIRECT_LIMIT) {
+                pointers[pointer_stored].segment = segment;
+                pointers[pointer_stored].address = address;
+                pointer_stored++;
+            }
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-vsh57b0-pointer-map] total=%u stored=%u overflow=%u\n",
+            pointer_total, pointer_stored, pointer_total - pointer_stored);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset < pointer_stored; offset++) {
+        unsigned int address = pointers[offset].address;
+        char text_offset[16];
+        if (address >= vsh->text_addr &&
+                address - vsh->text_addr < vsh->text_size)
+            snprintf(text_offset, sizeof(text_offset), "0x%05X",
+                    address - vsh->text_addr);
+        else
+            strcpy(text_offset, "NON_TEXT");
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-pointer] index=%u segment=%u "
+                "addr=0x%08X segment_off=0x%08X text_off=%s\n",
+                offset, pointers[offset].segment, address,
+                address - vsh->segmentaddr[pointers[offset].segment],
+                text_offset);
+        zeroCtrlDiagnosticsText(line);
+    }
+    return 1;
+}
+
+#define VSH57B0_REFERENCE_LIMIT 16
+#define VSH57B0_CONTEXT_INSTRUCTIONS 6
+
+/* Writer-thread-only loaded-code map; this routine performs no mutation. */
+static int zeroCtrlWriteFunctionalVsh57b0Map(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int source[VSH57B0_REFERENCE_LIMIT];
+    unsigned int instruction[VSH57B0_REFERENCE_LIMIT];
+    unsigned int kind[VSH57B0_REFERENCE_LIMIT];
+    unsigned int target, offset, total = 0, jal = 0, jump = 0, stored = 0;
+    unsigned int expected_58f0 = 0;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x57B0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr,
+                vsh->text_size))
+        return 0;
+    target = vsh->text_addr + 0x57B0;
+    if (!zeroCtrlVshModuleRangeValid(vsh, target, 4)) return 0;
+
+    for (offset = 0; offset <= vsh->text_size - 4; offset += 4) {
+        unsigned int pc = vsh->text_addr + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        if ((opcode != 2 && opcode != 3) ||
+                zeroCtrlMipsJumpTarget(pc, word) != target)
+            continue;
+        total++;
+        if (opcode == 3) jal++;
+        else jump++;
+        if (offset == 0x58F0 && opcode == 3) expected_58f0 = 1;
+        if (stored < VSH57B0_REFERENCE_LIMIT) {
+            source[stored] = offset;
+            instruction[stored] = word;
+            kind[stored++] = opcode;
+        }
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-vsh57b0-map] target=0x%08X total=%u jal=%u "
+            "jump=%u stored=%u overflow=%u expected58f0=%u\n",
+            target, total, jal, jump, stored, total - stored, expected_58f0);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset < stored; offset++) {
+        unsigned int start = source[offset] >=
+                VSH57B0_CONTEXT_INSTRUCTIONS * 4 ?
+                source[offset] - VSH57B0_CONTEXT_INSTRUCTIONS * 4 : 0;
+        unsigned int end = source[offset] <= vsh->text_size -
+                (VSH57B0_CONTEXT_INSTRUCTIONS + 1) * 4 ?
+                source[offset] + (VSH57B0_CONTEXT_INSTRUCTIONS + 1) * 4 :
+                vsh->text_size;
+        unsigned int words = (end - start) / 4;
+        unsigned int context;
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-ref] index=%u source=0x%08X "
+                "offset=0x%05X word=0x%08X kind=%s\n",
+                offset, vsh->text_addr + source[offset], source[offset],
+                instruction[offset], kind[offset] == 3 ? "JAL" : "J");
+        zeroCtrlDiagnosticsText(line);
+        if (!zeroCtrlVshModuleRangeValid(vsh,
+                    vsh->text_addr + start, end - start))
+            continue;
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh57b0-window] index=%u start=0x%05X words=%u\n",
+                offset, start, words);
+        zeroCtrlDiagnosticsText(line);
+        for (context = 0; context < words; context++) {
+            unsigned int code_offset = start + context * 4;
+            snprintf(line, sizeof(line),
+                    "[psp1000-vsh57b0-code] index=%u offset=0x%05X "
+                    "word=0x%08X\n", offset, code_offset,
+                    _lw(vsh->text_addr + code_offset));
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+    return 1;
+}
+
 static void zeroCtrlWriteVsh589cWindow(SceModule2 *vsh,
         const char *kind, unsigned int index, unsigned int center) {
     unsigned int start;
@@ -3493,6 +4115,64 @@ static void zeroCtrlWriteVsh589cWindow(SceModule2 *vsh,
                 _lw(address), _lw(address + 4), _lw(address + 8),
                 _lw(address + 12), _lw(address + 16), _lw(address + 20),
                 _lw(address + 24), _lw(address + 28));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
+/* Writer-thread-only structural capture; this never installs a VSH owner. */
+static void zeroCtrlWriteFunctionalCallbackStructure(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int offset;
+    char line[192];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x5894 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x5894,
+                0x5C)) {
+        zeroCtrlDiagnosticsText("[psp1000-vsh589c-structure] validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[psp1000-vsh589c-structure] validation=1 start=0x05894 words=23\n");
+    for (offset = 0x5894; offset <= 0x58EC; offset += 4) {
+        unsigned int pc = vsh->text_addr + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int target = 0;
+        const char *class_name = "IMMEDIATE";
+        if (opcode == 0 && (word & 63) == 8) class_name = "JR";
+        else if (opcode == 0 && (word & 63) == 9) class_name = "JALR";
+        else if (opcode == 0) class_name = "SPECIAL";
+        else if (opcode == 1) class_name = "REGIMM";
+        else if (opcode == 2) class_name = "J";
+        else if (opcode == 3) class_name = "JAL";
+        else if (opcode == 4) class_name = "BEQ";
+        else if (opcode == 5) class_name = "BNE";
+        else if (opcode == 6) class_name = "BLEZ";
+        else if (opcode == 7) class_name = "BGTZ";
+        else if (opcode == 0x14) class_name = "BEQL";
+        else if (opcode == 0x15) class_name = "BNEL";
+        else if (opcode == 0x16) class_name = "BLEZL";
+        else if (opcode == 0x17) class_name = "BGTZL";
+        if (opcode == 2 || opcode == 3)
+            target = zeroCtrlMipsJumpTarget(pc, word) - vsh->text_addr;
+        else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
+            int displacement = (short)(word & 0xFFFF);
+            target = pc + 4 + displacement * 4 - vsh->text_addr;
+        }
+        snprintf(line, sizeof(line),
+                "[psp1000-vsh589c-word] off=0x%05X word=0x%08X "
+                "class=%s op=%u rs=%u rt=%u rd=%u sa=%u fn=%u "
+                "target=0x%05X\n", offset, word, class_name, opcode,
+                (word >> 21) & 31, (word >> 16) & 31, (word >> 11) & 31,
+                (word >> 6) & 31, word & 63, target);
         zeroCtrlDiagnosticsText(line);
     }
 }
@@ -3995,6 +4675,2056 @@ static int zeroCtrlLoadedModuleMetadataValid(SceModule2 *mod) {
             mod->text_size != 0 && mod->nsegment != 0 && mod->nsegment <= 4;
 }
 
+static void zeroCtrlInstallVsh589CCallTrace(void) {
+    ZeroCtrlVshTriggerEvidence *storage_total = &slide_diag.triggers[1];
+    ZeroCtrlVshTriggerEvidence *storage_pending = &slide_diag.triggers[2];
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int text, owner, original, original_target;
+    unsigned int trace_helper, trace_tail, tail_original;
+    unsigned int replacement, tail_replacement;
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            !slide_diag.vsh_module_seen || !slide_diag.functional_request_armed ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_addr > 0xFFFFFFFFU - 0x58B0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x589C, 0x18))
+        return;
+    text = vsh->text_addr;
+    owner = text + 0x58AC;
+    if ((_lw(text + 0x589C) & 0xFFFF0000) != 0x3C020000 ||
+            _lw(text + 0x58A0) != 0x27BDFFF0 ||
+            (_lw(text + 0x58A4) & 0xFFFF0000) != 0xAC440000 ||
+            _lw(text + 0x58A8) != 0xAFBF0000 ||
+            _lw(text + 0x58B0) != 0) return;
+    original = _lw(owner);
+    if ((original >> 26) != 3) return;
+    original_target = zeroCtrlMipsJumpTarget(owner, original);
+    if (original_target != text + 0x5C98 ||
+            !zeroCtrlVshModuleRangeValid(vsh, original_target, 4) ||
+            storage_total->patch_applied || storage_total->cache_sync ||
+            storage_pending->patch_applied || storage_pending->cache_sync ||
+            storage_pending->stub_addr > 0xFFFFFFFFU - 24) return;
+    trace_helper = storage_pending->stub_addr + 24;
+    if ((storage_pending->stub_addr & 3) != 0 || (trace_helper & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_pending->stub_addr, 24) ||
+            !zeroCtrlVshModuleRangeValid(helper, trace_helper, 80) ||
+            trace_helper > 0xFFFFFFFFU - 72 ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_total->counter_addr, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, storage_pending->counter_addr, 4))
+        return;
+    trace_tail = trace_helper + 72;
+    tail_original = _lw(trace_tail);
+    if ((tail_original >> 26) != 2 || _lw(trace_tail + 4) != 0) return;
+    replacement = 0x0C000000 | ((trace_helper >> 2) & 0x03FFFFFF);
+    tail_replacement = 0x08000000 | ((original_target >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(owner, replacement) != trace_helper ||
+            zeroCtrlMipsJumpTarget(trace_tail, tail_replacement) != original_target)
+        return;
+    slide_diag.vsh589c_owner = owner;
+    slide_diag.vsh589c_original = original;
+    slide_diag.vsh589c_replacement = replacement;
+    slide_diag.vsh589c_resume = owner + 8;
+    slide_diag.vsh589c_helper = trace_helper;
+    slide_diag.vsh589c_tail = trace_tail;
+    slide_diag.vsh589c_tail_original = tail_original;
+    slide_diag.vsh589c_tail_replacement = tail_replacement;
+    slide_diag.vsh589c_validation = 1;
+    _sw(0, storage_total->counter_addr);
+    _sw(0, storage_pending->counter_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)storage_total->counter_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)storage_pending->counter_addr, 4);
+    _sw(tail_replacement, trace_tail);
+    sceKernelDcacheWritebackInvalidateRange((const void *)trace_tail, 4);
+    sceKernelIcacheInvalidateRange((const void *)trace_tail, 4);
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    slide_diag.vsh589c_install = 1;
+    slide_diag.vsh589c_cache_sync = 1;
+}
+
+static int zeroCtrlResolveVshCtrlPeekImport(SceModule2 *vsh,
+        unsigned int *resolved_stub) {
+    unsigned int table = (unsigned int)vsh->stub_top;
+    unsigned int size = vsh->stub_size;
+    unsigned int cursor = 0;
+    unsigned int matches = 0;
+    unsigned int match = 0;
+
+    if (table == 0 || (table & 3) != 0 || size < 12 ||
+            table > 0xFFFFFFFFU - size ||
+            !zeroCtrlVshModuleRangeValid(vsh, table, size))
+        return 0;
+    while (cursor < size) {
+        SceLibraryStubTable *entry;
+        unsigned int address, entry_size, functions_size, nids_size;
+        unsigned int stubtable, nidtable, function;
+        char name[32];
+
+        if (size - cursor < 12 || table + cursor < table) return 0;
+        address = table + cursor;
+        if (!zeroCtrlVshModuleRangeValid(vsh, address, 12)) return 0;
+        entry = (SceLibraryStubTable *)address;
+        if (entry->len == 0) return 0;
+        entry_size = (unsigned int)entry->len * 4;
+        if (entry_size < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                entry_size > size - cursor ||
+                !zeroCtrlVshModuleRangeValid(vsh, address, entry_size) ||
+                entry->stubcount > 0xFFFFFFFFU / 8)
+            return 0;
+        functions_size = (unsigned int)entry->stubcount * 8;
+        nids_size = (unsigned int)entry->stubcount * 4;
+        stubtable = (unsigned int)entry->stubtable;
+        nidtable = (unsigned int)entry->nidtable;
+        if ((stubtable & 3) != 0 || (nidtable & 3) != 0 ||
+                (entry->stubcount != 0 &&
+                (!zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size) ||
+                 !zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size))) ||
+                !zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name,
+                    sizeof(name)))
+            return 0;
+        if (strcmp(name, "sceCtrl") == 0) {
+            for (function = 0; function < entry->stubcount; function++) {
+                unsigned int stub;
+                if (function > (0xFFFFFFFFU - stubtable) / 8 ||
+                        function > (0xFFFFFFFFU - nidtable) / 4)
+                    return 0;
+                stub = stubtable + function * 8;
+                if (!zeroCtrlVshModuleRangeValid(vsh, stub, 8) ||
+                        !zeroCtrlVshModuleRangeValid(vsh,
+                            nidtable + function * 4, 4))
+                    return 0;
+                if (_lw(nidtable + function * 4) == 0x3A622550) {
+                    if (_lw(stub) != 0x03E00008 ||
+                            (_lw(stub + 4) & 0xFC00003F) != 0x0000000C)
+                        return 0;
+                    match = stub;
+                    matches++;
+                }
+            }
+        }
+        if (cursor > 0xFFFFFFFFU - entry_size) return 0;
+        cursor += entry_size;
+    }
+    if (matches != 1) return 0;
+    *resolved_stub = match;
+    return 1;
+}
+
+enum ZeroCtrlBridgeLiveInClass {
+    ZERO_BRIDGE_LIVEIN_UNKNOWN = 0,
+    ZERO_BRIDGE_LIVEIN_OVERWRITTEN,
+    ZERO_BRIDGE_LIVEIN_REQUIRED,
+    ZERO_BRIDGE_LIVEIN_IGNORED
+};
+
+enum ZeroCtrlBridgeResolveStage {
+    ZERO_BRIDGE_STAGE_NONE = 0,
+    ZERO_BRIDGE_STAGE_INSTALL_PRECONDITIONS,
+    ZERO_BRIDGE_STAGE_CTRL_IMPORT,
+    ZERO_BRIDGE_STAGE_VSH_PAF_METADATA,
+    ZERO_BRIDGE_STAGE_VSH_CALLBACK_REGISTRATION,
+    ZERO_BRIDGE_STAGE_PAF_A989_IMPORT,
+    ZERO_BRIDGE_STAGE_WRAPPER,
+    ZERO_BRIDGE_STAGE_INNER_CONSUMER,
+    ZERO_BRIDGE_STAGE_ROOT_SLOT,
+    ZERO_BRIDGE_STAGE_CONSTRUCTED0,
+    ZERO_BRIDGE_STAGE_CONSTRUCTED1,
+    ZERO_BRIDGE_STAGE_LIVEIN_ENTERED,
+    ZERO_BRIDGE_STAGE_LIVEIN_PASSED,
+    ZERO_BRIDGE_STAGE_CALLSITE_314A4,
+    ZERO_BRIDGE_STAGE_READY
+};
+
+enum ZeroCtrlBridgeResolveReject {
+    ZERO_BRIDGE_REJECT_NONE = 0,
+    ZERO_BRIDGE_REJECT_CTRL_IMPORT,
+    ZERO_BRIDGE_REJECT_VSH_PAF_METADATA,
+    ZERO_BRIDGE_REJECT_VSH_CALLBACK_REGISTRATION,
+    ZERO_BRIDGE_REJECT_PAF_A989_IMPORT,
+    ZERO_BRIDGE_REJECT_WRAPPER,
+    ZERO_BRIDGE_REJECT_INNER_CONSUMER,
+    ZERO_BRIDGE_REJECT_ROOT_SLOT,
+    ZERO_BRIDGE_REJECT_CONSTRUCTED0,
+    ZERO_BRIDGE_REJECT_CONSTRUCTED1,
+    ZERO_BRIDGE_REJECT_LIVEIN,
+    ZERO_BRIDGE_REJECT_CALLSITE_314A4
+};
+
+static const char *zeroCtrlBridgeLiveInClassName(unsigned int value) {
+    static const char *name[] = {
+        "UNKNOWN", "OVERWRITTEN", "REQUIRED", "IGNORED"
+    };
+    if (value >= sizeof(name) / sizeof(name[0])) return "UNKNOWN";
+    return name[value];
+}
+
+#define BRIDGE_TAINT_MAX_DEPTH 3
+#define BRIDGE_TAINT_MAX_FUNCTIONS 16
+#define BRIDGE_TAINT_MAX_NODES 128
+#define BRIDGE_TAINT_MAX_INSTRUCTIONS 512
+
+typedef struct ZeroCtrlBridgeTaintContext {
+    unsigned int functions;
+    unsigned int instructions;
+    unsigned int blocker_call;
+    unsigned int blocker_arg;
+    unsigned int blocker_domain;
+    unsigned int blocker_reason;
+    unsigned int blocker_taint;
+    unsigned int blocker_prev_word;
+    unsigned int blocker_word;
+    unsigned int blocker_next_word;
+    SceModule2 *paf;
+    SceModule2 *vsh;
+    unsigned int constructed1;
+    unsigned int expected_callback;
+} ZeroCtrlBridgeTaintContext;
+
+typedef struct ZeroCtrlBridgeTaintNode {
+    unsigned int address;
+    unsigned int taint;
+} ZeroCtrlBridgeTaintNode;
+
+typedef struct ZeroCtrlBridgeReturnSummary {
+    unsigned int saw_return;
+    unsigned int return_taint;
+} ZeroCtrlBridgeReturnSummary;
+
+enum ZeroCtrlBridgeBlockerDomain {
+    ZERO_BRIDGE_BLOCKER_NONE = 0,
+    ZERO_BRIDGE_BLOCKER_PAF,
+    ZERO_BRIDGE_BLOCKER_VSH,
+    ZERO_BRIDGE_BLOCKER_OTHER_MODULE,
+    ZERO_BRIDGE_BLOCKER_UNRESOLVED
+};
+
+enum ZeroCtrlBridgeBlockerReason {
+    ZERO_BRIDGE_BLOCK_REASON_NONE = 0,
+    ZERO_BRIDGE_BLOCK_REASON_RANGE,
+    ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT,
+    ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT,
+    ZERO_BRIDGE_BLOCK_REASON_FUNCTION_LIMIT,
+    ZERO_BRIDGE_BLOCK_REASON_DEPTH_LIMIT,
+    ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION,
+    ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT,
+    ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_REGIMM,
+    ZERO_BRIDGE_BLOCK_REASON_INVALID_BRANCH_TARGET,
+    ZERO_BRIDGE_BLOCK_REASON_INVALID_DIRECT_CALL_TARGET,
+    ZERO_BRIDGE_BLOCK_REASON_INVALID_DIRECT_JUMP_TARGET,
+    ZERO_BRIDGE_BLOCK_REASON_TAINTED_INDIRECT_TARGET,
+    ZERO_BRIDGE_BLOCK_REASON_UNRESOLVED_JALR,
+    ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN
+};
+
+static int zeroCtrlBridgeExecutableRange(SceModule2 *module,
+        unsigned int address, unsigned int size);
+
+static void zeroCtrlBridgeSetBlocker(ZeroCtrlBridgeTaintContext *context,
+        SceModule2 *module, unsigned int address, unsigned int argument,
+        unsigned int reason, unsigned int taint) {
+    unsigned int segment, remaining;
+
+    if (context->blocker_domain != ZERO_BRIDGE_BLOCKER_NONE) return;
+    context->blocker_arg = argument;
+    context->blocker_reason = reason;
+    context->blocker_taint = taint;
+    if (!module || !zeroCtrlLoadedModuleMetadataValid(module) ||
+            !zeroCtrlModuleContainingSegment(module, address, &segment,
+                &remaining)) {
+        context->blocker_domain = ZERO_BRIDGE_BLOCKER_UNRESOLVED;
+        context->blocker_call = 0;
+    } else {
+        context->blocker_domain = module == context->paf ?
+                ZERO_BRIDGE_BLOCKER_PAF : module == context->vsh ?
+                ZERO_BRIDGE_BLOCKER_VSH : ZERO_BRIDGE_BLOCKER_OTHER_MODULE;
+        context->blocker_call = address - module->segmentaddr[segment];
+        context->blocker_word = _lw(address);
+        if (address >= 4 && zeroCtrlBridgeExecutableRange(module,
+                    address - 4, 4))
+            context->blocker_prev_word = _lw(address - 4);
+        if (address <= 0xFFFFFFFFU - 4 &&
+                zeroCtrlBridgeExecutableRange(module, address + 4, 4))
+            context->blocker_next_word = _lw(address + 4);
+    }
+}
+
+static int zeroCtrlBridgeExecutableRange(SceModule2 *module,
+        unsigned int address, unsigned int size) {
+    unsigned int segment, remaining;
+
+    return size != 0 && zeroCtrlLoadedModuleMetadataValid(module) &&
+            zeroCtrlModuleContainingSegment(module, address, &segment,
+                &remaining) && segment == 0 && remaining >= size;
+}
+
+/* Return the GPRs read by the integer instructions used by the bounded proof. */
+static int zeroCtrlBridgeReadMask(unsigned int word, unsigned int *mask) {
+    unsigned int opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int function = word & 0x3F;
+
+    *mask = 0;
+    if (word == 0) return 1;
+    if (opcode == 0) {
+        if (function == 0 || function == 2 || function == 3)
+            *mask = 1U << rt;
+        else if (function == 8 || function == 9 || function == 0x11 ||
+                function == 0x13)
+            *mask = 1U << rs;
+        else if (function == 0x10 || function == 0x12 || function == 0x0C)
+            *mask = 0;
+        else if ((function >= 4 && function <= 7) ||
+                (function >= 0x18 && function <= 0x1B) ||
+                (function >= 0x20 && function <= 0x2B))
+            *mask = (1U << rs) | (1U << rt);
+        else
+            return 0;
+        return 1;
+    }
+    if (opcode == 2 || opcode == 3 || opcode == 0x0F) return 1;
+    if (opcode == 1 || opcode == 6 || opcode == 7 || opcode == 0x16 ||
+            opcode == 0x17)
+        *mask = 1U << rs;
+    else if (opcode == 4 || opcode == 5 || opcode == 0x14 || opcode == 0x15)
+        *mask = (1U << rs) | (1U << rt);
+    else if (opcode >= 8 && opcode <= 0x0E)
+        *mask = 1U << rs;
+    else if ((opcode >= 0x20 && opcode <= 0x26) || opcode == 0x30)
+        *mask = 1U << rs;
+    else if (opcode >= 0x28 && opcode <= 0x2F)
+        *mask = (1U << rs) | (1U << rt);
+    else
+        return 0;
+    return 1;
+}
+
+/* 0 is safe, 1 observes taint, and 2 is an unsupported tainted operation. */
+static int zeroCtrlBridgeApplyTaint(unsigned int word, unsigned int *taint) {
+    unsigned int reads, opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int rd = (word >> 11) & 0x1F;
+    unsigned int function = word & 0x3F;
+    unsigned int source = 0;
+    unsigned int source_tainted = 0;
+    int destination = zeroCtrlMipsGprWriteDestination(word);
+
+    if (!zeroCtrlBridgeReadMask(word, &reads))
+        return *taint ? 2 : 0;
+    if (reads & *taint) {
+        if (zeroCtrlMipsMove(word, rd, rs)) source = rs;
+        else if (zeroCtrlMipsMove(word, rd, rt)) source = rt;
+        else if (opcode == 9 && (short)(word & 0xFFFF) == 0) source = rs;
+        else return 1;
+    }
+    if (source != 0) source_tainted = *taint & (1U << source);
+    if (destination > 0) {
+        *taint &= ~(1U << destination);
+        if (source_tainted)
+            *taint |= 1U << destination;
+    }
+    /* Stores have no decoded destination and any tainted operand is visible. */
+    if (opcode >= 0x28 && opcode <= 0x2F && (reads & *taint)) return 1;
+    if (opcode == 0 && (function == 8 || function == 9) &&
+            (reads & *taint)) return 1;
+    return 0;
+}
+
+static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
+        unsigned int entry, unsigned int input_taint, unsigned int depth,
+        unsigned int original_arg, ZeroCtrlBridgeTaintContext *context,
+        ZeroCtrlBridgeReturnSummary *summary) {
+    ZeroCtrlBridgeTaintNode queue[BRIDGE_TAINT_MAX_NODES];
+    unsigned int seen_addr[BRIDGE_TAINT_MAX_NODES];
+    unsigned int seen_taint[BRIDGE_TAINT_MAX_NODES];
+    unsigned int head = 0, tail = 1, seen = 0;
+
+    summary->saw_return = 0;
+    summary->return_taint = 0;
+    if (depth > BRIDGE_TAINT_MAX_DEPTH) {
+        zeroCtrlBridgeSetBlocker(context, module, entry, original_arg,
+                ZERO_BRIDGE_BLOCK_REASON_DEPTH_LIMIT, input_taint);
+        return 2;
+    }
+    if (context->functions >= BRIDGE_TAINT_MAX_FUNCTIONS) {
+        zeroCtrlBridgeSetBlocker(context, module, entry, original_arg,
+                ZERO_BRIDGE_BLOCK_REASON_FUNCTION_LIMIT, input_taint);
+        return 2;
+    }
+    if (!zeroCtrlBridgeExecutableRange(module, entry, 8)) {
+        zeroCtrlBridgeSetBlocker(context, module, entry, original_arg,
+                ZERO_BRIDGE_BLOCK_REASON_RANGE, input_taint);
+        return 2;
+    }
+    context->functions++;
+    queue[0].address = entry;
+    queue[0].taint = input_taint;
+    while (head < tail) {
+        unsigned int pc = queue[head].address;
+        unsigned int taint = queue[head++].taint;
+        unsigned int word, opcode, function, delay, target, i;
+        int result;
+
+        for (i = 0; i < seen; i++)
+            if (seen_addr[i] == pc && (taint & ~seen_taint[i]) == 0) break;
+        if (i < seen) continue;
+        if (seen >= BRIDGE_TAINT_MAX_NODES) {
+            zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                    ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT, taint);
+            return 2;
+        }
+        if (context->instructions >= BRIDGE_TAINT_MAX_INSTRUCTIONS) {
+            zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                    ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT, taint);
+            return 2;
+        }
+        if (!zeroCtrlBridgeExecutableRange(module, pc, 4)) {
+            zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                    ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
+            return 2;
+        }
+        if (i == seen) {
+            seen_addr[seen] = pc;
+            seen_taint[seen++] = taint;
+        }
+        context->instructions++;
+        word = _lw(pc);
+        opcode = word >> 26;
+        function = word & 0x3F;
+        if (opcode == 3) {
+            unsigned int callee_input_taint;
+            ZeroCtrlBridgeReturnSummary callee_summary;
+            /* JAL defines ra before its architectural delay slot executes. */
+            taint &= ~(1U << 31);
+            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
+                return 2;
+            }
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT, taint);
+                return 2;
+            }
+            delay = _lw(pc + 4);
+            result = zeroCtrlBridgeApplyTaint(delay, &taint);
+            if (result) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        result == 1 ? ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION, taint);
+                return result;
+            }
+            callee_input_taint = taint;
+            target = zeroCtrlMipsJumpTarget(pc, word);
+            if (callee_input_taint != 0) {
+                SceModule2 *owner = sceKernelFindModuleByAddress(target);
+                unsigned int segment, remaining;
+                if (!zeroCtrlLoadedModuleMetadataValid(owner) ||
+                        !zeroCtrlModuleContainingSegment(owner, target, &segment,
+                            &remaining) || segment != 0 || remaining < 8) {
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_INVALID_DIRECT_CALL_TARGET,
+                            taint);
+                    return 2;
+                }
+                result = zeroCtrlBridgeAnalyzeTaintedFunction(owner, target,
+                        callee_input_taint, depth + 1, original_arg, context,
+                        &callee_summary);
+                if (result) {
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
+                    return result;
+                }
+                if (!callee_summary.saw_return) continue;
+                taint = callee_summary.return_taint;
+            } else {
+                /* This path has lost the tracked value; do not discard siblings. */
+                continue;
+            }
+            pc += 8;
+        } else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int taken_taint = taint;
+            unsigned int fallthrough_taint = taint;
+            unsigned int reads = 0;
+            int likely = opcode >= 0x14 && opcode <= 0x17;
+            int link = 0;
+
+            if (opcode == 1) {
+                if (rt == 2 || rt == 3 || rt == 18 || rt == 19)
+                    likely = 1;
+                else if (rt != 0 && rt != 1 && rt != 16 && rt != 17) {
+                    if (taint != 0)
+                        zeroCtrlBridgeSetBlocker(context, module, pc,
+                                original_arg,
+                                ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_REGIMM,
+                                taint);
+                    if (taint != 0) return 2;
+                    continue;
+                }
+                link = rt == 16 || rt == 17 || rt == 18 || rt == 19;
+            }
+            if (!zeroCtrlBridgeReadMask(word, &reads) || (reads & taint)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        (reads & taint) ?
+                        ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION,
+                        taint);
+                return (reads & taint) ? 1 : 2;
+            }
+            /* Do not guess whether a pre-existing tainted $ra survives link. */
+            if (link && (taint & (1U << 31))) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_TAINTED_INDIRECT_TARGET, taint);
+                return 2;
+            }
+            if (link) {
+                taken_taint &= ~(1U << 31);
+                fallthrough_taint &= ~(1U << 31);
+            }
+            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
+                return 2;
+            }
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT, taint);
+                return 2;
+            }
+            delay = _lw(pc + 4);
+            result = zeroCtrlBridgeApplyTaint(delay, &taken_taint);
+            if (result) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        result == 1 ? ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION,
+                        taken_taint);
+                return result;
+            }
+            if (!likely) fallthrough_taint = taken_taint;
+            target = zeroCtrlMipsBranchTarget(pc, word);
+            if (tail + 2 > BRIDGE_TAINT_MAX_NODES) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT, taint);
+                return 2;
+            }
+            if (!zeroCtrlBridgeExecutableRange(module, target, 4)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_INVALID_BRANCH_TARGET, taint);
+                return 2;
+            }
+            queue[tail].address = target;
+            queue[tail++].taint = taken_taint;
+            queue[tail].address = pc + 8;
+            queue[tail++].taint = fallthrough_taint;
+            continue;
+        } else if (opcode == 2) {
+            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
+                return 2;
+            }
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT, taint);
+                return 2;
+            }
+            delay = _lw(pc + 4);
+            result = zeroCtrlBridgeApplyTaint(delay, &taint);
+            if (result) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        result == 1 ? ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION, taint);
+                return result;
+            }
+            target = zeroCtrlMipsJumpTarget(pc, word);
+            if (zeroCtrlBridgeExecutableRange(module, target, 4)) {
+                if (tail >= BRIDGE_TAINT_MAX_NODES) {
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT, taint);
+                    return 2;
+                }
+                queue[tail].address = target;
+                queue[tail++].taint = taint;
+                continue;
+            } else if (taint != 0) {
+                SceModule2 *owner = sceKernelFindModuleByAddress(target);
+                unsigned int segment, remaining;
+                ZeroCtrlBridgeReturnSummary tail_summary;
+                if (!zeroCtrlLoadedModuleMetadataValid(owner) ||
+                        !zeroCtrlModuleContainingSegment(owner, target, &segment,
+                            &remaining) || segment != 0 || remaining < 8) {
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_INVALID_DIRECT_JUMP_TARGET,
+                            taint);
+                    return 2;
+                }
+                result = zeroCtrlBridgeAnalyzeTaintedFunction(owner, target,
+                        taint, depth + 1, original_arg, context,
+                        &tail_summary);
+                if (result) {
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
+                    return result;
+                }
+                if (tail_summary.saw_return) {
+                    summary->saw_return = 1;
+                    summary->return_taint |= tail_summary.return_taint;
+                }
+                continue;
+            }
+            continue;
+        } else if (opcode == 0 && (function == 8 || function == 9)) {
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rd = (word >> 11) & 0x1F;
+            if (taint & (1U << rs)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_TAINTED_INDIRECT_TARGET, taint);
+                return 1;
+            }
+            /* JALR consumes rs, then defines its link destination before delay. */
+            if (function == 9 && rd != 0) taint &= ~(1U << rd);
+            if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
+                return 2;
+            }
+            if (++context->instructions > BRIDGE_TAINT_MAX_INSTRUCTIONS) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_INSTRUCTION_LIMIT, taint);
+                return 2;
+            }
+            delay = _lw(pc + 4);
+            result = zeroCtrlBridgeApplyTaint(delay, &taint);
+            if (result) {
+                zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
+                        result == 1 ? ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION, taint);
+                return result;
+            }
+            if (function == 9 && taint != 0) {
+                unsigned int callback_input_taint = taint;
+                ZeroCtrlBridgeReturnSummary callback_summary;
+                int known_callback = module == context->paf &&
+                        pc == context->constructed1 + 0xB4 &&
+                        word == 0x0040F809 &&
+                        _lw(context->constructed1 + 0x40) == 0x8E02000C &&
+                        (_lw(context->constructed1 + 0x44) >> 26) >= 4 &&
+                        (_lw(context->constructed1 + 0x44) >> 26) <= 7 &&
+                        zeroCtrlMipsBranchTarget(context->constructed1 + 0x44,
+                            _lw(context->constructed1 + 0x44)) ==
+                                context->constructed1 + 0xB4 &&
+                        _lw(context->constructed1 + 0x48) == 0 &&
+                        _lw(context->constructed1 + 0xB8) == 0x8E040004 &&
+                        context->expected_callback ==
+                            context->vsh->text_addr + 0x589C &&
+                        zeroCtrlBridgeExecutableRange(context->vsh,
+                            context->expected_callback, 4);
+                if (!known_callback) {
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_UNRESOLVED_JALR, taint);
+                    return 2;
+                }
+                result = zeroCtrlBridgeAnalyzeTaintedFunction(context->vsh,
+                        context->expected_callback, callback_input_taint,
+                        depth + 1,
+                        original_arg, context, &callback_summary);
+                if (result) {
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
+                    return result;
+                }
+                if (!callback_summary.saw_return) continue;
+                taint = callback_summary.return_taint;
+                pc += 8;
+                if (tail >= BRIDGE_TAINT_MAX_NODES) {
+                    zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                            ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT, taint);
+                    return 2;
+                }
+                queue[tail].address = pc;
+                queue[tail++].taint = taint;
+                continue;
+            }
+            if (function == 8 && rs == 31) {
+                /* JR ra's delay slot has already produced this MAY-return state. */
+                summary->saw_return = 1;
+                summary->return_taint |= taint;
+                continue;
+            }
+            if (taint) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        ZERO_BRIDGE_BLOCK_REASON_UNRESOLVED_JALR, taint);
+                return 2;
+            }
+            continue;
+        } else {
+            result = zeroCtrlBridgeApplyTaint(word, &taint);
+            if (result) {
+                zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                        result == 1 ? ZERO_BRIDGE_BLOCK_REASON_OBSERVED_TAINT :
+                        ZERO_BRIDGE_BLOCK_REASON_UNSUPPORTED_INSTRUCTION, taint);
+                return result;
+            }
+            pc += 4;
+        }
+        if (tail >= BRIDGE_TAINT_MAX_NODES) {
+            zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
+                    ZERO_BRIDGE_BLOCK_REASON_NODE_LIMIT, taint);
+            return 2;
+        }
+        queue[tail].address = pc;
+        queue[tail++].taint = taint;
+    }
+    return 0;
+}
+
+static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf, SceModule2 *vsh,
+        unsigned int constructed1, unsigned int expected_callback) {
+    static const unsigned int fixed_words[][2] = {
+        { 0x00, 0x27BDFFF0 }, { 0x04, 0xAFBF0008 },
+        { 0x08, 0xAFB00000 }, { 0x0C, 0x00A08021 },
+        { 0x10, 0xAFB10004 }, { 0x14, 0x8CA40000 },
+        { 0x1C, 0x24840010 }, { 0x20, 0x8E040000 },
+        { 0x28, 0x26050004 }, { 0x2C, 0x8E040000 },
+        { 0x34, 0x24840010 }, { 0x3C, 0x8E040004 },
+        { 0x40, 0x8E02000C }, { 0x48, 0x00000000 }
+    };
+    static const unsigned int call_off[4] = { 0x18, 0x24, 0x30, 0x38 };
+    ZeroCtrlBridgeTaintContext context;
+    ZeroCtrlBridgeReturnSummary return_summary;
+    unsigned int target[4], i, segment, remaining;
+    int a2, a3;
+
+    slide_diag.bridge_livein_validation = 0;
+    slide_diag.bridge_livein_arg[0] = ZERO_BRIDGE_LIVEIN_UNKNOWN;
+    slide_diag.bridge_livein_arg[1] = ZERO_BRIDGE_LIVEIN_UNKNOWN;
+    slide_diag.bridge_livein_arg[2] = ZERO_BRIDGE_LIVEIN_UNKNOWN;
+    slide_diag.bridge_livein_arg[3] = ZERO_BRIDGE_LIVEIN_UNKNOWN;
+    slide_diag.bridge_livein_blocker_call = 0;
+    slide_diag.bridge_livein_blocker_domain = ZERO_BRIDGE_BLOCKER_NONE;
+    slide_diag.bridge_livein_blocker_arg = 0;
+    slide_diag.bridge_livein_blocker_reason = ZERO_BRIDGE_BLOCK_REASON_NONE;
+    slide_diag.bridge_livein_blocker_taint = 0;
+    slide_diag.bridge_livein_blocker_prev_word = 0;
+    slide_diag.bridge_livein_blocker_word = 0;
+    slide_diag.bridge_livein_blocker_next_word = 0;
+    if (!zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            expected_callback != vsh->text_addr + 0x589C ||
+            !zeroCtrlVshModuleRangeValid(vsh, expected_callback, 4) ||
+            !zeroCtrlVshModuleRangeValid(paf, constructed1, 0xBC)) return 0;
+    for (i = 0; i < sizeof(fixed_words) / sizeof(fixed_words[0]); i++)
+        if (_lw(constructed1 + fixed_words[i][0]) != fixed_words[i][1])
+            return 0;
+    for (i = 0; i < 4; i++) {
+        unsigned int word = _lw(constructed1 + call_off[i]);
+        if ((word >> 26) != 3) return 0;
+        target[i] = zeroCtrlMipsJumpTarget(constructed1 + call_off[i], word);
+        if (!zeroCtrlModuleContainingSegment(paf, target[i], &segment,
+                    &remaining) || segment != 0 || remaining < 8)
+            return 0;
+    }
+    if (((_lw(constructed1 + 0x44) >> 26) < 4 ||
+                (_lw(constructed1 + 0x44) >> 26) > 7) ||
+            zeroCtrlMipsBranchTarget(constructed1 + 0x44,
+                _lw(constructed1 + 0x44)) != constructed1 + 0xB4)
+        return 0;
+
+    /* a0 is overwritten by +14 before observation; a1 is copied to s0. */
+    slide_diag.bridge_livein_arg[0] = ZERO_BRIDGE_LIVEIN_OVERWRITTEN;
+    slide_diag.bridge_livein_arg[1] = ZERO_BRIDGE_LIVEIN_REQUIRED;
+    memset(&context, 0, sizeof(context));
+    context.paf = paf;
+    context.vsh = vsh;
+    context.constructed1 = constructed1;
+    context.expected_callback = expected_callback;
+    a2 = zeroCtrlBridgeAnalyzeTaintedFunction(paf, constructed1, 1U << 6,
+            0, 2, &context, &return_summary);
+    if (a2 != 0) {
+        slide_diag.bridge_livein_arg[2] = a2 == 1 ?
+                ZERO_BRIDGE_LIVEIN_REQUIRED : ZERO_BRIDGE_LIVEIN_UNKNOWN;
+        zeroCtrlBridgeSetBlocker(&context, paf, constructed1 + call_off[0], 2,
+                ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, 1U << 6);
+        slide_diag.bridge_livein_blocker_call = context.blocker_call;
+        slide_diag.bridge_livein_blocker_domain = context.blocker_domain;
+        slide_diag.bridge_livein_blocker_arg = 2;
+        slide_diag.bridge_livein_blocker_reason = context.blocker_reason;
+        slide_diag.bridge_livein_blocker_taint = context.blocker_taint;
+        slide_diag.bridge_livein_blocker_prev_word = context.blocker_prev_word;
+        slide_diag.bridge_livein_blocker_word = context.blocker_word;
+        slide_diag.bridge_livein_blocker_next_word = context.blocker_next_word;
+        return 0;
+    }
+    slide_diag.bridge_livein_arg[2] = ZERO_BRIDGE_LIVEIN_IGNORED;
+    memset(&context, 0, sizeof(context));
+    context.paf = paf;
+    context.vsh = vsh;
+    context.constructed1 = constructed1;
+    context.expected_callback = expected_callback;
+    a3 = zeroCtrlBridgeAnalyzeTaintedFunction(paf, constructed1, 1U << 7,
+            0, 3, &context, &return_summary);
+    if (a3 != 0) {
+        slide_diag.bridge_livein_arg[3] = a3 == 1 ?
+                ZERO_BRIDGE_LIVEIN_REQUIRED : ZERO_BRIDGE_LIVEIN_UNKNOWN;
+        zeroCtrlBridgeSetBlocker(&context, paf, constructed1 + call_off[0], 3,
+                ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, 1U << 7);
+        slide_diag.bridge_livein_blocker_call = context.blocker_call;
+        slide_diag.bridge_livein_blocker_domain = context.blocker_domain;
+        slide_diag.bridge_livein_blocker_arg = 3;
+        slide_diag.bridge_livein_blocker_reason = context.blocker_reason;
+        slide_diag.bridge_livein_blocker_taint = context.blocker_taint;
+        slide_diag.bridge_livein_blocker_prev_word = context.blocker_prev_word;
+        slide_diag.bridge_livein_blocker_word = context.blocker_word;
+        slide_diag.bridge_livein_blocker_next_word = context.blocker_next_word;
+        return 0;
+    }
+    slide_diag.bridge_livein_arg[3] = ZERO_BRIDGE_LIVEIN_IGNORED;
+    slide_diag.bridge_livein_validation = 1;
+    return 1;
+}
+
+static int zeroCtrlPsp1000BridgeImportMatches(SceModule2 *vsh,
+        unsigned int wanted_stub, const char *wanted_library,
+        unsigned int wanted_nid) {
+    unsigned int table = (unsigned int)vsh->stub_top;
+    unsigned int size = vsh->stub_size, cursor = 0, matches = 0;
+
+    if (table == 0 || (table & 3) != 0 || size < 12 ||
+            table > 0xFFFFFFFFU - size ||
+            !zeroCtrlVshModuleRangeValid(vsh, table, size)) return 0;
+    while (cursor < size) {
+        SceLibraryStubTable *entry;
+        unsigned int address, entry_size, functions_size, nids_size;
+        unsigned int stubtable, nidtable, function;
+        char name[32];
+        if (size - cursor < 12 || table + cursor < table) return 0;
+        address = table + cursor;
+        if (!zeroCtrlVshModuleRangeValid(vsh, address, 12)) return 0;
+        entry = (SceLibraryStubTable *)address;
+        if (entry->len == 0) return 0;
+        entry_size = (unsigned int)entry->len * 4;
+        if (entry_size < __builtin_offsetof(SceLibraryStubTable, stubtable) + 4 ||
+                entry_size > size - cursor ||
+                !zeroCtrlVshModuleRangeValid(vsh, address, entry_size) ||
+                entry->stubcount > 0xFFFFFFFFU / 8) return 0;
+        functions_size = (unsigned int)entry->stubcount * 8;
+        nids_size = (unsigned int)entry->stubcount * 4;
+        stubtable = (unsigned int)entry->stubtable;
+        nidtable = (unsigned int)entry->nidtable;
+        if ((stubtable & 3) != 0 || (nidtable & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(vsh, stubtable, functions_size) ||
+                !zeroCtrlVshModuleRangeValid(vsh, nidtable, nids_size) ||
+                !zeroCtrlCopyVshImportLibrary(vsh, entry->libname, name,
+                    sizeof(name))) return 0;
+        if (strcmp(name, wanted_library) == 0)
+            for (function = 0; function < entry->stubcount; function++)
+                if (stubtable + function * 8 == wanted_stub &&
+                        _lw(nidtable + function * 4) == wanted_nid)
+                    matches++;
+        cursor += entry_size;
+    }
+    return matches == 1;
+}
+
+static int zeroCtrlResolvePsp1000FunctionalBridge(SceModule2 *vsh,
+        SceModule2 *paf, unsigned int *root_slot,
+        unsigned int *constructed0, unsigned int *constructed1,
+        unsigned int *callback) {
+    unsigned int vtext, ptext, thunk, resolved, inner, consumer;
+    unsigned int wrapper[11], words[0xB0 / 4];
+    unsigned int i, slot, segment, remaining;
+
+    if (!zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            strcmp(paf->modname, "scePaf_Module") != 0 ||
+            vsh->text_size != 0x556C0 || paf->text_size <= 0x359A4 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x56FC, 0x10) ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x3F568, 8)) {
+        slide_diag.bridge_resolve_reject =
+                ZERO_BRIDGE_REJECT_VSH_PAF_METADATA;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_VSH_PAF_METADATA;
+    vtext = vsh->text_addr;
+    ptext = paf->text_addr;
+    if ((_lw(vtext + 0x56FC) >> 26) != 0x0F ||
+            ((_lw(vtext + 0x56FC) >> 16) & 0x1F) != 5 ||
+            (_lw(vtext + 0x5700) >> 26) != 9 ||
+            (((_lw(vtext + 0x56FC) & 0xFFFF) << 16) +
+             (int)(short)(_lw(vtext + 0x5700) & 0xFFFF)) != vtext + 0x589C ||
+            (_lw(vtext + 0x5704) >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(vtext + 0x5704, _lw(vtext + 0x5704)) !=
+                vtext + 0x3F568 || !zeroCtrlMipsMove(_lw(vtext + 0x5708), 4, 29)) {
+        slide_diag.bridge_resolve_reject =
+                ZERO_BRIDGE_REJECT_VSH_CALLBACK_REGISTRATION;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage =
+            ZERO_BRIDGE_STAGE_VSH_CALLBACK_REGISTRATION;
+    thunk = _lw(vtext + 0x3F568);
+    if ((thunk >> 26) != 2 || _lw(vtext + 0x3F56C) != 0 ||
+            !zeroCtrlPsp1000BridgeImportMatches(vsh, vtext + 0x3F568,
+                "scePaf", 0xA989A2C4)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_PAF_A989_IMPORT;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_PAF_A989_IMPORT;
+    resolved = zeroCtrlMipsJumpTarget(vtext + 0x3F568, thunk);
+    if (resolved != ptext + 0x35978 ||
+            !zeroCtrlVshModuleRangeValid(paf, resolved, sizeof(wrapper))) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_WRAPPER;
+        return 0;
+    }
+    for (i = 0; i < 11; i++) wrapper[i] = _lw(resolved + i * 4);
+    if ((wrapper[0] >> 26) != 0x0F || !zeroCtrlMipsMove(wrapper[1], 2, 4) ||
+            (wrapper[2] >> 26) != 0x23 || wrapper[3] != 0x27BDFFF0 ||
+            !zeroCtrlMipsMove(wrapper[4], 6, 5) ||
+            wrapper[5] != 0xAFBF0000 || (wrapper[6] >> 26) != 3 ||
+            !zeroCtrlMipsMove(wrapper[7], 5, 2) ||
+            wrapper[8] != 0x8FBF0000 || wrapper[9] != 0x03E00008 ||
+            wrapper[10] != 0x27BD0010) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_WRAPPER;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_WRAPPER;
+    inner = zeroCtrlMipsJumpTarget(resolved + 0x18, wrapper[6]);
+    if (inner != ptext + 0x34A24 ||
+            !zeroCtrlVshModuleRangeValid(paf, inner, 0x98)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_INNER_CONSUMER;
+        return 0;
+    }
+    consumer = zeroCtrlMipsJumpTarget(inner + 0x90, _lw(inner + 0x90));
+    if ((_lw(inner + 0x90) >> 26) != 3 ||
+            !zeroCtrlVshModuleRangeValid(paf, consumer, sizeof(words))) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_INNER_CONSUMER;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_INNER_CONSUMER;
+    for (i = 0; i < sizeof(words) / 4; i++) words[i] = _lw(consumer + i * 4);
+    if ((words[0xA8 / 4] >> 26) != 0x0F ||
+            ((words[0xA8 / 4] >> 16) & 0x1F) != 2 ||
+            (words[0xAC / 4] >> 26) != 0x23 ||
+            ((words[0xAC / 4] >> 21) & 0x1F) != 2 ||
+            ((words[0xAC / 4] >> 16) & 0x1F) != 4) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_ROOT_SLOT;
+        return 0;
+    }
+    slot = ((words[0xA8 / 4] & 0xFFFF) << 16) +
+            (int)(short)(words[0xAC / 4] & 0xFFFF);
+    if (!zeroCtrlModuleContainingSegment(paf, slot, &segment, &remaining) ||
+            segment != 1 || slot - paf->segmentaddr[1] != 0x1338 ||
+            !zeroCtrlVshModuleRangeValid(paf, slot, 4)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_ROOT_SLOT;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_ROOT_SLOT;
+    *constructed0 = ptext + 0x34610;
+    *constructed1 = ptext + 0x34658;
+    *callback = vtext + 0x589C;
+    if (!zeroCtrlVshModuleRangeValid(paf, *constructed0, 0x30) ||
+            _lw(*constructed0) != 0x27BDFFF0 ||
+            _lw(*constructed0 + 0x04) != 0xAFB10004 ||
+            !zeroCtrlMipsMove(_lw(*constructed0 + 0x08), 17, 4) ||
+            _lw(*constructed0 + 0x0C) != 0x240401D8 ||
+            _lw(*constructed0 + 0x10) != 0xAFBF0008 ||
+            (_lw(*constructed0 + 0x14) >> 26) != 3 ||
+            _lw(*constructed0 + 0x18) != 0xAFB00000 ||
+            !zeroCtrlMipsMove(_lw(*constructed0 + 0x1C), 16, 2) ||
+            _lw(*constructed0 + 0x20) != 0x8E250008 ||
+            (_lw(*constructed0 + 0x24) >> 26) != 3 ||
+            !zeroCtrlMipsMove(_lw(*constructed0 + 0x28), 4, 2) ||
+            _lw(*constructed0 + 0x2C) != 0xAE300004) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_CONSTRUCTED0;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_CONSTRUCTED0;
+    if (!zeroCtrlVshModuleRangeValid(paf, *constructed1, 0xBC) ||
+            _lw(*constructed1) != 0x27BDFFF0 ||
+            _lw(*constructed1 + 4) != 0xAFBF0008 ||
+            _lw(*constructed1 + 8) != 0xAFB00000 ||
+            !zeroCtrlMipsMove(_lw(*constructed1 + 0x0C), 16, 5) ||
+            (_lw(*constructed1 + 0x40) >> 26) != 0x23 ||
+            ((_lw(*constructed1 + 0x40) >> 21) & 0x1F) != 16 ||
+            ((_lw(*constructed1 + 0x40) >> 16) & 0x1F) != 2 ||
+            (short)(_lw(*constructed1 + 0x40) & 0xFFFF) != 12 ||
+            zeroCtrlMipsBranchTarget(*constructed1 + 0x44,
+                _lw(*constructed1 + 0x44)) != *constructed1 + 0xB4 ||
+            _lw(*constructed1 + 0x48) != 0 ||
+            (_lw(*constructed1 + 0xB4) & 0x3F) != 9 ||
+            ((_lw(*constructed1 + 0xB4) >> 21) & 0x1F) != 2 ||
+            (_lw(*constructed1 + 0xB8) >> 26) != 0x23 ||
+            ((_lw(*constructed1 + 0xB8) >> 21) & 0x1F) != 16 ||
+            ((_lw(*constructed1 + 0xB8) >> 16) & 0x1F) != 4 ||
+            (short)(_lw(*constructed1 + 0xB8) & 0xFFFF) != 4) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_CONSTRUCTED1;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_CONSTRUCTED1;
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_LIVEIN_ENTERED;
+    if (!zeroCtrlPsp1000BridgeLiveInValid(paf, vsh, *constructed1,
+                *callback)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_LIVEIN;
+        return 0;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_LIVEIN_PASSED;
+    *root_slot = slot;
+    return 1;
+}
+
+static void zeroCtrlInstallVshCtrl314A4Bridge(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    PspSysmemPartitionInfo info;
+    unsigned int target, root, c0, c1, callback, owner, replacement;
+    unsigned int i;
+
+    if (slide_diag.bridge_install || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled || !slide_diag.functional_request_armed ||
+            !slide_diag.bridge_registered)
+        return;
+    slide_diag.bridge_install_attempts++;
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_INSTALL_PRECONDITIONS;
+    slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_NONE;
+    if (!zeroCtrlLoadedModuleMetadataValid(helper)) {
+        slide_diag.bridge_resolve_reject =
+                ZERO_BRIDGE_REJECT_VSH_PAF_METADATA;
+        return;
+    }
+    if (!zeroCtrlResolveVshCtrlPeekImport(vsh, &target)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_CTRL_IMPORT;
+        return;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_CTRL_IMPORT;
+    if (!zeroCtrlResolvePsp1000FunctionalBridge(vsh, paf, &root, &c0,
+                &c1, &callback))
+        return;
+    owner = vsh->text_addr + 0x314A4;
+    if (!zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr + 0x31494, 0x18) ||
+            _lw(vsh->text_addr + 0x31494) != 0x27BDFFE0 ||
+            _lw(vsh->text_addr + 0x31498) != 0x03A02021 ||
+            _lw(vsh->text_addr + 0x3149C) != 0x24050001 ||
+            _lw(vsh->text_addr + 0x314A0) != 0xAFBF0014 ||
+            (_lw(owner) >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner, _lw(owner)) != target ||
+            _lw(vsh->text_addr + 0x314A8) != 0xAFB00010 ||
+            !zeroCtrlVshModuleRangeValid(helper, slide_diag.bridge_helper,
+                slide_diag.bridge_helper_end - slide_diag.bridge_helper)) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_CALLSITE_314A4;
+        return;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_CALLSITE_314A4;
+    memset(&info, 0, sizeof(info));
+    info.size = sizeof(info);
+    if (sceKernelQueryMemoryPartitionInfo(2, &info) < 0 ||
+            (unsigned int)info.startaddr >
+                0xFFFFFFFFU - (unsigned int)info.memsize) {
+        slide_diag.bridge_resolve_reject =
+                ZERO_BRIDGE_REJECT_CALLSITE_314A4;
+        return;
+    }
+    replacement = 0x0C000000 |
+            ((slide_diag.bridge_helper >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(owner, replacement) != slide_diag.bridge_helper) {
+        slide_diag.bridge_resolve_reject = ZERO_BRIDGE_REJECT_CALLSITE_314A4;
+        return;
+    }
+    slide_diag.bridge_resolve_stage = ZERO_BRIDGE_STAGE_READY;
+    _sw(target, slide_diag.bridge_scalar[0]);
+    _sw(root, slide_diag.bridge_scalar[1]);
+    _sw(c0, slide_diag.bridge_scalar[2]);
+    _sw(c1, slide_diag.bridge_scalar[3]);
+    _sw(callback, slide_diag.bridge_scalar[4]);
+    _sw((unsigned int)info.startaddr, slide_diag.bridge_scalar[5]);
+    _sw((unsigned int)info.startaddr + (unsigned int)info.memsize,
+            slide_diag.bridge_scalar[6]);
+    for (i = 7; i <= 15; i++) _sw(0, slide_diag.bridge_scalar[i]);
+    for (i = 0; i <= 15; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)slide_diag.bridge_scalar[i], 4);
+    slide_diag.bridge_root_slot = root;
+    slide_diag.bridge_constructed0 = c0;
+    slide_diag.bridge_constructed1 = c1;
+    slide_diag.bridge_callback = callback;
+    slide_diag.bridge_validation = 1;
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    slide_diag.bridge_install = 1;
+    slide_diag.bridge_cache_sync = 1;
+}
+
+void zeroCtrlRegisterPsp1000FunctionalBridge(
+        const ZeroCtrlPsp1000BridgeRegistration *registration) {
+    ZeroCtrlPsp1000BridgeRegistration copied;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int i;
+
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 || !registration ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            ((unsigned int)registration & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, (unsigned int)registration,
+                sizeof(copied)))
+        return;
+    memcpy(&copied, registration, sizeof(copied));
+    if ((copied.helper_addr & 3) != 0 || copied.helper_end_addr <=
+            copied.helper_addr || !zeroCtrlVshModuleRangeValid(helper,
+                copied.helper_addr, copied.helper_end_addr - copied.helper_addr))
+        return;
+    for (i = 0; i < 16; i++)
+        if (copied.scalar_addr[i] == 0 || (copied.scalar_addr[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[i], 4))
+            return;
+    slide_diag.bridge_helper = copied.helper_addr;
+    slide_diag.bridge_helper_end = copied.helper_end_addr;
+    memcpy(slide_diag.bridge_scalar, copied.scalar_addr,
+            sizeof(slide_diag.bridge_scalar));
+    slide_diag.bridge_registered = 1;
+    zeroCtrlInstallVshCtrl314A4Bridge();
+}
+
+static void zeroCtrlInstallVsh5704RegistrationTrace(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int text, owner, target, helper_jump, replacement;
+
+    if (slide_diag.vsh5704_trace_install ||
+            !slide_diag.vsh5704_trace_registered ||
+            !slide_diag.paf_a989_target_trace_registered ||
+            slide_diag.paf_a989_target_trace_validation != 1 ||
+            slide_diag.paf_a989_target_trace_install != 1 ||
+            slide_diag.paf_a989_target_trace_cache_sync != 1 ||
+            !slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            strcmp(paf->modname, "scePaf_Module") != 0 ||
+            !slide_diag.vsh_module_seen ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 || paf->text_size <= 0x35978)
+        return;
+    text = vsh->text_addr;
+    owner = text + 0x5704;
+    target = text + 0x3F568;
+    if (!zeroCtrlVshModuleRangeValid(vsh, text + 0x56FC, 0x10) ||
+            !zeroCtrlVshModuleRangeValid(vsh, target, 8) ||
+            (_lw(text + 0x56FC) >> 26) != 0x0F ||
+            ((_lw(text + 0x56FC) >> 16) & 0x1F) != 5 ||
+            (_lw(text + 0x5700) >> 26) != 9 ||
+            ((_lw(text + 0x5700) >> 21) & 0x1F) != 5 ||
+            ((_lw(text + 0x5700) >> 16) & 0x1F) != 5 ||
+            (((_lw(text + 0x56FC) & 0xFFFF) << 16) +
+             (int)(short)(_lw(text + 0x5700) & 0xFFFF)) != text + 0x589C ||
+            (_lw(owner) >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(owner, _lw(owner)) != target ||
+            !zeroCtrlMipsMove(_lw(text + 0x5708), 4, 29) ||
+            (_lw(target) >> 26) != 2 || _lw(target + 4) != 0 ||
+            !zeroCtrlPsp1000BridgeImportMatches(vsh, target,
+                "scePaf", 0xA989A2C4) ||
+            zeroCtrlMipsJumpTarget(target, _lw(target)) !=
+                paf->text_addr + 0x35978 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.vsh5704_trace_helper,
+                slide_diag.vsh5704_trace_helper_end -
+                    slide_diag.vsh5704_trace_helper) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.vsh5704_trace_jump_slot, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.vsh5704_trace_hit_counter, 4) ||
+            _lw(slide_diag.vsh5704_trace_jump_slot) != 0x08000000)
+        return;
+    helper_jump = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
+    replacement = 0x0C000000 |
+            ((slide_diag.vsh5704_trace_helper >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(slide_diag.vsh5704_trace_jump_slot,
+                helper_jump) != target ||
+            zeroCtrlMipsJumpTarget(owner, replacement) !=
+                slide_diag.vsh5704_trace_helper)
+        return;
+    slide_diag.vsh5704_trace_original_target = target;
+    slide_diag.vsh5704_trace_validation = 1;
+    _sw(0, slide_diag.vsh5704_trace_hit_counter);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.vsh5704_trace_hit_counter, 4);
+    _sw(helper_jump, slide_diag.vsh5704_trace_jump_slot);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.vsh5704_trace_jump_slot, 4);
+    sceKernelIcacheInvalidateRange(
+            (const void *)slide_diag.vsh5704_trace_jump_slot, 4);
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    slide_diag.vsh5704_trace_install = 1;
+    slide_diag.vsh5704_trace_cache_sync = 1;
+}
+
+void zeroCtrlRegisterVsh5704Trace(
+        const ZeroCtrlVsh5704TraceRegistration *registration) {
+    ZeroCtrlVsh5704TraceRegistration copied;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+
+    if (!registration || !slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            ((unsigned int)registration & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, (unsigned int)registration,
+                sizeof(copied)))
+        return;
+    memcpy(&copied, registration, sizeof(copied));
+    if ((copied.helper_addr & 3) != 0 ||
+            copied.helper_end_addr <= copied.helper_addr ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.helper_addr,
+                copied.helper_end_addr - copied.helper_addr) ||
+            (copied.jump_slot_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.jump_slot_addr, 4) ||
+            (copied.hit_counter_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.hit_counter_addr, 4))
+        return;
+    slide_diag.vsh5704_trace_helper = copied.helper_addr;
+    slide_diag.vsh5704_trace_helper_end = copied.helper_end_addr;
+    slide_diag.vsh5704_trace_jump_slot = copied.jump_slot_addr;
+    slide_diag.vsh5704_trace_hit_counter = copied.hit_counter_addr;
+    slide_diag.vsh5704_trace_registered = 1;
+    zeroCtrlInstallVsh5704RegistrationTrace();
+}
+
+static void zeroCtrlInstallPafA989TargetTrace(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    PspSysmemPartitionInfo info;
+    unsigned int vtext, ptext, thunk, wrapper, inner, consumer;
+    unsigned int owner, target, helper_jump, replacement, i;
+
+    if (slide_diag.paf_a989_target_trace_install ||
+            !slide_diag.paf_a989_target_trace_registered ||
+            !slide_diag.bridge_registered ||
+            !slide_diag.functional_enabled ||
+            model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            strcmp(paf->modname, "scePaf_Module") != 0)
+        return;
+    vtext = vsh->text_addr;
+    ptext = paf->text_addr;
+    if (!zeroCtrlVshModuleRangeValid(vsh, vtext + 0x5704, 8) ||
+            (_lw(vtext + 0x5704) >> 26) != 3 ||
+            zeroCtrlMipsJumpTarget(vtext + 0x5704,
+                _lw(vtext + 0x5704)) != vtext + 0x3F568 ||
+            !zeroCtrlMipsMove(_lw(vtext + 0x5708), 4, 29) ||
+            !zeroCtrlVshModuleRangeValid(vsh, vtext + 0x3F568, 8) ||
+            (_lw(vtext + 0x3F568) >> 26) != 2 ||
+            _lw(vtext + 0x3F56C) != 0 ||
+            !zeroCtrlPsp1000BridgeImportMatches(vsh, vtext + 0x3F568,
+                "scePaf", 0xA989A2C4))
+        return;
+    thunk = _lw(vtext + 0x3F568);
+    wrapper = zeroCtrlMipsJumpTarget(vtext + 0x3F568, thunk);
+    if (wrapper != ptext + 0x35978 ||
+            !zeroCtrlVshModuleRangeValid(paf, wrapper, 0x2C) ||
+            (_lw(wrapper + 0x18) >> 26) != 3)
+        return;
+    inner = zeroCtrlMipsJumpTarget(wrapper + 0x18, _lw(wrapper + 0x18));
+    if (inner != ptext + 0x34A24 ||
+            !zeroCtrlVshModuleRangeValid(paf, inner, 0x94) ||
+            (_lw(inner + 0x70) >> 26) != 0x0F ||
+            ((_lw(inner + 0x70) >> 16) & 0x1F) != 5 ||
+            (_lw(inner + 0x74) >> 26) != 0x0F ||
+            ((_lw(inner + 0x74) >> 16) & 0x1F) != 9 ||
+            (_lw(inner + 0x80) >> 26) != 9 ||
+            ((_lw(inner + 0x80) >> 21) & 0x1F) != 5 ||
+            ((_lw(inner + 0x80) >> 16) & 0x1F) != 5 ||
+            (_lw(inner + 0x84) >> 26) != 9 ||
+            ((_lw(inner + 0x84) >> 21) & 0x1F) != 9 ||
+            ((_lw(inner + 0x84) >> 16) & 0x1F) != 9 ||
+            (((_lw(inner + 0x70) & 0xFFFF) << 16) +
+                (int)(short)(_lw(inner + 0x80) & 0xFFFF)) != ptext + 0x34610 ||
+            (((_lw(inner + 0x74) & 0xFFFF) << 16) +
+                (int)(short)(_lw(inner + 0x84) & 0xFFFF)) != ptext + 0x34658 ||
+            (_lw(inner + 0x90) >> 26) != 3)
+        return;
+    consumer = zeroCtrlMipsJumpTarget(inner + 0x90, _lw(inner + 0x90));
+    if (!zeroCtrlVshModuleRangeValid(paf, consumer, 0xA8) ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x10), 22, 8) ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x18), 21, 6) ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x20), 20, 9) ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x28), 19, 7) ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x30), 18, 5) ||
+            _lw(consumer + 0x68) != 0x24040028 ||
+            (_lw(consumer + 0x6C) >> 26) != 3 ||
+            _lw(consumer + 0x70) != 0 ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x74), 17, 2) ||
+            _lw(consumer + 0x78) != 0x24500008 ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x7C), 4, 2) ||
+            (_lw(consumer + 0x80) >> 26) != 4 ||
+            ((_lw(consumer + 0x80) >> 21) & 0x1F) != 2 ||
+            ((_lw(consumer + 0x80) >> 16) & 0x1F) != 0 ||
+            zeroCtrlMipsBranchTarget(consumer + 0x80,
+                _lw(consumer + 0x80)) != consumer + 0xD0 ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x84), 3, 0) ||
+            _lw(consumer + 0x88) != 0xAC520008 ||
+            !zeroCtrlMipsMove(_lw(consumer + 0x8C), 5, 16) ||
+            _lw(consumer + 0x90) != 0xAE150004 ||
+            _lw(consumer + 0x94) != 0xAE130008 ||
+            _lw(consumer + 0x98) != 0xAE16000C ||
+            _lw(consumer + 0x9C) != 0xAE140014 ||
+            (_lw(consumer + 0xA0) >> 26) != 3 ||
+            _lw(consumer + 0xA4) != 0xAE000018)
+        return;
+    owner = consumer + 0xA0;
+    target = zeroCtrlMipsJumpTarget(owner, _lw(owner));
+    if (!zeroCtrlVshModuleRangeValid(paf, target, 8) ||
+            _lw(target) != 0x03E00008 || _lw(target + 4) != 0xAC850004 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.paf_a989_target_trace_helper,
+                slide_diag.paf_a989_target_trace_helper_end -
+                    slide_diag.paf_a989_target_trace_helper) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.paf_a989_target_trace_jump_slot, 4) ||
+            _lw(slide_diag.paf_a989_target_trace_jump_slot) != 0x08000000)
+        return;
+    for (i = 0; i < 5; i++)
+        if (!zeroCtrlVshModuleRangeValid(helper,
+                    slide_diag.paf_a989_target_trace_scalar[i], 4))
+            return;
+    helper_jump = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
+    replacement = 0x0C000000 |
+            ((slide_diag.paf_a989_target_trace_helper >> 2) & 0x03FFFFFF);
+    if (zeroCtrlMipsJumpTarget(slide_diag.paf_a989_target_trace_jump_slot,
+                helper_jump) != target ||
+            zeroCtrlMipsJumpTarget(owner, replacement) !=
+                slide_diag.paf_a989_target_trace_helper)
+        return;
+    memset(&info, 0, sizeof(info));
+    info.size = sizeof(info);
+    if (sceKernelQueryMemoryPartitionInfo(2, &info) < 0 ||
+            (unsigned int)info.startaddr >
+                0xFFFFFFFFU - (unsigned int)info.memsize)
+        return;
+    slide_diag.paf_a989_target_trace_validation = 1;
+    _sw(ptext + 0x34610, slide_diag.bridge_scalar[2]);
+    _sw(ptext + 0x34658, slide_diag.bridge_scalar[3]);
+    _sw(vtext + 0x589C, slide_diag.bridge_scalar[4]);
+    _sw((unsigned int)info.startaddr, slide_diag.bridge_scalar[5]);
+    _sw((unsigned int)info.startaddr + (unsigned int)info.memsize,
+            slide_diag.bridge_scalar[6]);
+    for (i = 2; i <= 6; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)slide_diag.bridge_scalar[i], 4);
+    for (i = 0; i < 5; i++) {
+        _sw(0, slide_diag.paf_a989_target_trace_scalar[i]);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)slide_diag.paf_a989_target_trace_scalar[i], 4);
+    }
+    _sw(helper_jump, slide_diag.paf_a989_target_trace_jump_slot);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.paf_a989_target_trace_jump_slot, 4);
+    sceKernelIcacheInvalidateRange(
+            (const void *)slide_diag.paf_a989_target_trace_jump_slot, 4);
+    _sw(replacement, owner);
+    sceKernelDcacheWritebackInvalidateRange((const void *)owner, 4);
+    sceKernelIcacheInvalidateRange((const void *)owner, 4);
+    slide_diag.paf_a989_target_trace_install = 1;
+    slide_diag.paf_a989_target_trace_cache_sync = 1;
+}
+
+void zeroCtrlRegisterPafA989TargetTrace(
+        const ZeroCtrlPafA989TargetTraceRegistration *registration) {
+    ZeroCtrlPafA989TargetTraceRegistration copied;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int scalar[5], i;
+
+    if (!registration || !slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            ((unsigned int)registration & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, (unsigned int)registration,
+                sizeof(copied)))
+        return;
+    memcpy(&copied, registration, sizeof(copied));
+    scalar[0] = copied.entry_hits_addr;
+    scalar[1] = copied.exact_hits_addr;
+    scalar[2] = copied.target_node_addr;
+    scalar[3] = copied.target_outer_addr;
+    scalar[4] = copied.target_inner_addr;
+    if ((copied.helper_addr & 3) != 0 ||
+            copied.helper_end_addr <= copied.helper_addr ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.helper_addr,
+                copied.helper_end_addr - copied.helper_addr) ||
+            (copied.jump_slot_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.jump_slot_addr, 4))
+        return;
+    for (i = 0; i < 5; i++)
+        if (scalar[i] == 0 || (scalar[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, scalar[i], 4))
+            return;
+    slide_diag.paf_a989_target_trace_helper = copied.helper_addr;
+    slide_diag.paf_a989_target_trace_helper_end = copied.helper_end_addr;
+    slide_diag.paf_a989_target_trace_jump_slot = copied.jump_slot_addr;
+    memcpy(slide_diag.paf_a989_target_trace_scalar, scalar, sizeof(scalar));
+    slide_diag.paf_a989_target_trace_registered = 1;
+    zeroCtrlInstallPafA989TargetTrace();
+}
+
+static int zeroCtrlPsp1000BridgeUserRangeValid(unsigned int address,
+        unsigned int size, unsigned int lower, unsigned int upper) {
+    return size != 0 && (address & 3) == 0 && lower <= address &&
+            address <= upper && upper >= lower && size <= upper - address;
+}
+
+static int zeroCtrlReadVshCtrl314A4Telemetry(unsigned int state[4]) {
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int address[4];
+    unsigned int i;
+
+    address[0] = slide_diag.triggers[1].counter_addr;
+    address[1] = slide_diag.triggers[2].counter_addr;
+    address[2] = slide_diag.triggers[0].request_addr;
+    address[3] = slide_diag.triggers[0].counter_addr;
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(helper))
+        return 0;
+    for (i = 0; i < 4; i++)
+        if (address[i] == 0 || (address[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, address[i], 4))
+            return 0;
+    for (i = 0; i < 4; i++) state[i] = _lw(address[i]);
+    return 1;
+}
+
+#define CLOCKPATH_CFG_LIMIT 128
+#define CLOCKPATH_NEAR_START 0x589C
+#define CLOCKPATH_NEAR_END 0x5A9C
+#define CLOCKPATH_XREF_LOOKAHEAD 8
+
+static int zeroCtrlClockPathNodeIndex(unsigned int *node, unsigned int count,
+        unsigned int offset) {
+    unsigned int i;
+    for (i = 0; i < count; i++) if (node[i] == offset) return (int)i;
+    return -1;
+}
+
+static int zeroCtrlClockPathAddNode(unsigned int *node, unsigned int *count,
+        unsigned int offset) {
+    if (zeroCtrlClockPathNodeIndex(node, *count, offset) >= 0) return 1;
+    if (*count >= CLOCKPATH_CFG_LIMIT) return 0;
+    node[(*count)++] = offset;
+    return 1;
+}
+
+static int zeroCtrlClockPathControl(unsigned int word) {
+    unsigned int opcode = word >> 26;
+    unsigned int function = word & 0x3F;
+    return opcode == 1 || opcode == 2 || opcode == 3 ||
+            (opcode >= 4 && opcode <= 7) ||
+            (opcode >= 0x14 && opcode <= 0x17) ||
+            (opcode == 0 && (function == 8 || function == 9));
+}
+
+static unsigned int zeroCtrlClockPathBranchTarget(unsigned int pc,
+        unsigned int word) {
+    return pc + 4 + ((int)(short)(word & 0xFFFF) << 2);
+}
+
+static void zeroCtrlWriteClockPathXrefs(SceModule2 *vsh, unsigned int target,
+        unsigned int pointer) {
+    unsigned int text = vsh->text_addr;
+    unsigned int offset;
+    char line[192];
+
+    for (offset = 0; offset <= vsh->text_size - 4; offset += 4) {
+        unsigned int lui = _lw(text + offset);
+        unsigned int reg, look;
+        if ((lui >> 26) != 0x0F) continue;
+        reg = (lui >> 16) & 0x1F;
+        if (reg == 0) continue;
+        for (look = 1; look <= CLOCKPATH_XREF_LOOKAHEAD &&
+                offset <= vsh->text_size - (look + 1) * 4; look++) {
+            unsigned int source = offset + look * 4;
+            unsigned int word = _lw(text + source);
+            unsigned int opcode = word >> 26;
+            unsigned int rs = (word >> 21) & 0x1F;
+            unsigned int rt = (word >> 16) & 0x1F;
+            unsigned int effective = 0;
+            const char *access = 0;
+            int destination;
+            if (zeroCtrlClockPathControl(word)) break;
+            if ((opcode == 0x23 || opcode == 0x2B) && rs == reg) {
+                effective = ((lui & 0xFFFF) << 16) +
+                        (unsigned int)(int)(short)(word & 0xFFFF);
+                access = opcode == 0x23 ? "LOAD" : "STORE";
+            } else if (opcode == 9 && rs == reg && rt == reg) {
+                effective = ((lui & 0xFFFF) << 16) +
+                        (unsigned int)(int)(short)(word & 0xFFFF);
+                access = "ADDRESS";
+            } else if (opcode == 0x0D && rs == reg && rt == reg) {
+                effective = ((lui & 0xFFFF) << 16) | (word & 0xFFFF);
+                access = "ADDRESS";
+            }
+            if (access && effective == target) {
+                if (pointer)
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-pointer-xref] pointer=0x%08X "
+                            "source=0x%05X access=%s\n", pointer, source, access);
+                else
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-global-xref] global=0x%05X "
+                            "source=0x%05X access=%s word=0x%08X\n",
+                            target - text, source, access, word);
+                zeroCtrlDiagnosticsText(line);
+            }
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0 || (unsigned int)destination == reg) break;
+        }
+    }
+}
+
+static void zeroCtrlDescribeRegistrationArgument(SceModule2 *vsh,
+        unsigned int call_offset, unsigned int reg, char *description,
+        unsigned int capacity) {
+    unsigned int step;
+
+    strcpy(description, "UNKNOWN");
+    for (step = 0; step <= 12; step++) {
+        unsigned int offset = step == 0 ? call_offset + 4 :
+                call_offset - step * 4;
+        unsigned int word, opcode, rs, rt, function;
+        int destination;
+        if ((step == 0 && call_offset > vsh->text_size - 8) ||
+                (step != 0 && call_offset < step * 4) ||
+                !zeroCtrlVshModuleRangeValid(vsh,
+                    vsh->text_addr + offset, 4))
+            return;
+        word = _lw(vsh->text_addr + offset);
+        opcode = word >> 26;
+        rs = (word >> 21) & 0x1F;
+        rt = (word >> 16) & 0x1F;
+        function = word & 0x3F;
+        if (opcode == 1 || opcode == 2 || opcode == 3 ||
+                (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17) ||
+                (opcode == 0 && (function == 8 || function == 9)))
+            return;
+        destination = zeroCtrlMipsGprWriteDestination(word);
+        if (destination < 0) return;
+        if ((unsigned int)destination != reg) continue;
+        if (opcode == 9) {
+            int value = (short)(word & 0xFFFF);
+            if (rs == 0 && value == 0) strcpy(description, "CONST_0");
+            else if (rs == 0 && value == 1) strcpy(description, "CONST_1");
+            else if (rs == 29)
+                snprintf(description, capacity, "STACK_%04X", word & 0xFFFF);
+            else if (value == 0)
+                snprintf(description, capacity, "REG_R%u", rs);
+            return;
+        }
+        if (opcode == 0x0D && rs == 0) {
+            snprintf(description, capacity, "CONST_%08X", word & 0xFFFF);
+            return;
+        }
+        if (opcode == 0x0F) {
+            snprintf(description, capacity, "TEXT_HI_%04X", word & 0xFFFF);
+            return;
+        }
+        if (opcode == 0x23) {
+            snprintf(description, capacity, "LW_R%u_%04X", rs, word & 0xFFFF);
+            return;
+        }
+        if (opcode == 0 && (function == 0x21 || function == 0x25)) {
+            if (rs == 0 && rt != 0)
+                snprintf(description, capacity, "REG_R%u", rt);
+            else if (rt == 0 && rs != 0)
+                snprintf(description, capacity, "REG_R%u", rs);
+            return;
+        }
+        return;
+    }
+}
+
+static unsigned int zeroCtrlClockPathPropagateCallback(unsigned int word,
+        unsigned int provenance, int *ambiguous) {
+    unsigned int opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int rd = (word >> 11) & 0x1F;
+    unsigned int function = word & 0x3F;
+    int destination = zeroCtrlMipsGprWriteDestination(word);
+    unsigned int source = 0, copy = 0;
+
+    if (opcode == 0 && (function == 0x21 || function == 0x25) &&
+            ((rs == 0) != (rt == 0))) {
+        source = rs == 0 ? rt : rs;
+        copy = 1;
+    } else if (opcode == 9 && (short)(word & 0xFFFF) == 0) {
+        source = rs;
+        copy = 1;
+    }
+    if (destination < 0) {
+        *ambiguous = 1;
+        return provenance;
+    }
+    if (destination != 0) {
+        int source_live = copy && (provenance & (1U << source));
+        provenance &= ~(1U << destination);
+        if (source_live) provenance |= 1U << destination;
+    }
+    (void)rd;
+    return provenance;
+}
+
+/* Writer-thread-only loaded-code archaeology; this routine performs no mutation. */
+static int zeroCtrlWriteFunctionalClockPathAnalysis(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    unsigned int node[CLOCKPATH_CFG_LIMIT], queue[CLOCKPATH_CFG_LIMIT];
+    unsigned int exit_offset[CLOCKPATH_CFG_LIMIT];
+    unsigned int exit_target[CLOCKPATH_CFG_LIMIT];
+    unsigned char exit_kind[CLOCKPATH_CFG_LIMIT];
+    unsigned int count = 0, queued = 0, cursor = 0, exits = 0;
+    unsigned int returns = 0, branches = 0, calls = 0, indirect = 0;
+    unsigned int text, i, word58cc, target58cc;
+    char line[256];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            vsh->modid != slide_diag.vsh_modid ||
+            vsh->text_addr != slide_diag.vsh_text_addr ||
+            vsh->text_size != slide_diag.vsh_text_size ||
+            vsh->text_size != 0x556C0 ||
+            !zeroCtrlVshModuleRangeValid(vsh, vsh->text_addr, vsh->text_size))
+        return 0;
+    text = vsh->text_addr;
+    if (!zeroCtrlVshModuleRangeValid(vsh, text + CLOCKPATH_NEAR_START,
+                CLOCKPATH_NEAR_END - CLOCKPATH_NEAR_START + 4) ||
+            !zeroCtrlVshModuleRangeValid(vsh, text + 0x5894, 8))
+        return 0;
+    if (_lw(text + 0x5894) != 0x03E00008 ||
+            _lw(text + 0x5898) != 0x27BD0080 ||
+            (_lw(text + 0x589C) >> 26) != 0x0F ||
+            _lw(text + 0x58A0) != 0x27BDFFF0 ||
+            _lw(text + 0x58A8) != 0xAFBF0000)
+        return 0;
+    word58cc = _lw(text + 0x58CC);
+    target58cc = zeroCtrlClockPathBranchTarget(text + 0x58CC, word58cc);
+    if ((word58cc >> 26) != 4 || target58cc != text + 0x5900)
+        return 0;
+
+#define CLOCKPATH_QUEUE(off) do { \
+    unsigned int queue_offset = (off); \
+    if (queue_offset < CLOCKPATH_NEAR_START || queue_offset > CLOCKPATH_NEAR_END || \
+            !zeroCtrlVshModuleRangeValid(vsh, text + queue_offset, 4) || \
+            !zeroCtrlClockPathAddNode(node, &count, queue_offset)) return 0; \
+    if (zeroCtrlClockPathNodeIndex(queue, queued, queue_offset) < 0) { \
+        if (queued >= CLOCKPATH_CFG_LIMIT) return 0; \
+        queue[queued++] = queue_offset; \
+    } \
+} while (0)
+#define CLOCKPATH_DELAY(off) do { \
+    unsigned int delay_offset = (off) + 4; \
+    if (delay_offset > CLOCKPATH_NEAR_END || \
+            !zeroCtrlVshModuleRangeValid(vsh, text + delay_offset, 4) || \
+            !zeroCtrlClockPathAddNode(node, &count, delay_offset)) return 0; \
+} while (0)
+#define CLOCKPATH_EXIT(off, kind_value, target_value) do { \
+    if (exits >= CLOCKPATH_CFG_LIMIT) return 0; \
+    exit_offset[exits] = (off); exit_kind[exits] = (kind_value); \
+    exit_target[exits++] = (target_value); \
+} while (0)
+
+    CLOCKPATH_QUEUE(0x589C);
+    while (cursor < queued) {
+        unsigned int offset = queue[cursor++];
+        unsigned int pc = text + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int function = word & 0x3F;
+        if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                (opcode >= 0x14 && opcode <= 0x17)) {
+            unsigned int target = zeroCtrlClockPathBranchTarget(pc, word);
+            branches++;
+            CLOCKPATH_DELAY(offset);
+            CLOCKPATH_QUEUE(target - text);
+            CLOCKPATH_QUEUE(offset + 8);
+        } else if (opcode == 2) {
+            unsigned int target = zeroCtrlMipsJumpTarget(pc, word);
+            CLOCKPATH_DELAY(offset);
+            if (target >= text + CLOCKPATH_NEAR_START &&
+                    target <= text + CLOCKPATH_NEAR_END)
+                CLOCKPATH_QUEUE(target - text);
+            else
+                CLOCKPATH_EXIT(offset, 2, target);
+        } else if (opcode == 3) {
+            calls++;
+            CLOCKPATH_DELAY(offset);
+            CLOCKPATH_QUEUE(offset + 8);
+        } else if (opcode == 0 && function == 8) {
+            unsigned int rs = (word >> 21) & 0x1F;
+            CLOCKPATH_DELAY(offset);
+            if (rs == 31) {
+                returns++;
+                CLOCKPATH_EXIT(offset, 1, 0);
+            } else {
+                indirect++;
+                CLOCKPATH_EXIT(offset, 3, 0);
+            }
+        } else if (opcode == 0 && function == 9) {
+            indirect++;
+            calls++;
+            CLOCKPATH_DELAY(offset);
+            CLOCKPATH_EXIT(offset, 4, 0);
+            CLOCKPATH_QUEUE(offset + 8);
+        } else {
+            CLOCKPATH_QUEUE(offset + 4);
+        }
+    }
+#undef CLOCKPATH_QUEUE
+#undef CLOCKPATH_DELAY
+#undef CLOCKPATH_EXIT
+
+    if (zeroCtrlClockPathNodeIndex(node, count, 0x5900) < 0) return 0;
+    snprintf(line, sizeof(line),
+            "[psp1000-clockpath-cfg] reachable=%u returns=%u branches=%u "
+            "calls=%u indirect=%u\n", count, returns, branches, calls, indirect);
+    zeroCtrlDiagnosticsText(line);
+    for (i = 0; i < count; i++) {
+        snprintf(line, sizeof(line),
+                "[psp1000-clockpath-node] offset=0x%05X word=0x%08X\n",
+                node[i], _lw(text + node[i]));
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (i = 0; i < exits; i++) {
+        const char *kind = exit_kind[i] == 1 ? "JR_RA" :
+                exit_kind[i] == 2 ? "J_TAIL" :
+                exit_kind[i] == 3 ? "JR_INDIRECT" : "JALR_INDIRECT";
+        snprintf(line, sizeof(line),
+                "[psp1000-clockpath-exit] offset=0x%05X kind=%s target=0x%08X\n",
+                exit_offset[i], kind, exit_target[i]);
+        zeroCtrlDiagnosticsText(line);
+    }
+    for (i = 0; i < 3; i++) {
+        unsigned int source = i == 0 ? 0x58AC : i == 1 ? 0x58B8 : 0x58F0;
+        unsigned int call_word = _lw(text + source);
+        unsigned int target;
+        if ((call_word >> 26) != 3) return 0;
+        target = zeroCtrlMipsJumpTarget(text + source, call_word);
+        snprintf(line, sizeof(line),
+                "[psp1000-clockpath-call] source=0x%05X target=0x%05X\n",
+                source, target - text);
+        zeroCtrlDiagnosticsText(line);
+    }
+    if ((_lw(text + 0x58A4) >> 26) != 0x2B ||
+            ((_lw(text + 0x58A4) >> 21) & 0x1F) != 2 ||
+            ((_lw(text + 0x58A4) >> 16) & 0x1F) != 4 ||
+            (_lw(text + 0x58B4) >> 26) != 0x0F ||
+            ((_lw(text + 0x58B4) >> 16) & 0x1F) != 4 ||
+            (_lw(text + 0x58B8) >> 26) != 3 ||
+            (_lw(text + 0x58BC) >> 26) != 9 ||
+            ((_lw(text + 0x58BC) >> 21) & 0x1F) != 4 ||
+            ((_lw(text + 0x58BC) >> 16) & 0x1F) != 4 ||
+            ((((_lw(text + 0x589C) & 0xFFFF) << 16) +
+            (unsigned int)(int)(short)(_lw(text + 0x58A4) & 0xFFFF)) !=
+            text + 0x56C7C ||
+            (((_lw(text + 0x58B4) & 0xFFFF) << 16) +
+            (unsigned int)(int)(short)(_lw(text + 0x58BC) & 0xFFFF)) !=
+            text + 0x56CA4))
+        return 0;
+    zeroCtrlDiagnosticsText(
+            "[psp1000-clockpath-entry-arg] store_global=0x56C7C\n");
+    snprintf(line, sizeof(line),
+            "[psp1000-clockpath-58b8-arg] a0=0x%08X\n", text + 0x56CA4);
+    zeroCtrlDiagnosticsText(line);
+
+    zeroCtrlWriteClockPathXrefs(vsh, text + 0x56C7C, 0);
+    zeroCtrlWriteClockPathXrefs(vsh, text + 0x56C80, 0);
+    zeroCtrlWriteClockPathXrefs(vsh, text + 0x56CA4, 0);
+
+    for (i = 0; i < vsh->nsegment; i++) {
+        unsigned int start = vsh->segmentaddr[i];
+        unsigned int size = vsh->segmentsize[i];
+        unsigned int address;
+        if (start == 0 || size < 4 || start > 0xFFFFFFFFU - size ||
+                !zeroCtrlVshModuleRangeValid(vsh, start, size))
+            return 0;
+        address = (start + 3) & ~3U;
+        while (address >= start && address <= start + size - 4) {
+            if (_lw(address) == text + 0x589C) {
+                unsigned int window_start = address >= start + 8 ? address - 8 : start;
+                unsigned int window_end = address <= start + size - 12 ?
+                        address + 12 : start + size;
+                unsigned int p;
+                snprintf(line, sizeof(line),
+                        "[psp1000-clockpath-pointer] segment=%u address=0x%08X "
+                        "offset=0x%08X\n", i, address, address - start);
+                zeroCtrlDiagnosticsText(line);
+                if (!zeroCtrlVshModuleRangeValid(vsh, window_start,
+                            window_end - window_start)) return 0;
+                for (p = window_start; p + 4 <= window_end; p += 4) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-pointer-code] address=0x%08X "
+                            "word=0x%08X\n", p, _lw(p));
+                    zeroCtrlDiagnosticsText(line);
+                }
+                zeroCtrlWriteClockPathXrefs(vsh, address, address);
+            }
+            if (address > 0xFFFFFFFFU - 4) break;
+            address += 4;
+        }
+    }
+
+    for (i = 0; i <= vsh->text_size - 8; i += 4) {
+        unsigned int lui = _lw(text + i);
+        unsigned int low = _lw(text + i + 4);
+        unsigned int reg = (lui >> 16) & 0x1F;
+        unsigned int resolved = 0;
+        if ((lui >> 26) != 0x0F || reg == 0 ||
+                ((low >> 21) & 0x1F) != reg ||
+                ((low >> 16) & 0x1F) != reg)
+            continue;
+        if ((low >> 26) == 9)
+            resolved = ((lui & 0xFFFF) << 16) +
+                    (unsigned int)(int)(short)(low & 0xFFFF);
+        else if ((low >> 26) == 0x0D)
+            resolved = ((lui & 0xFFFF) << 16) | (low & 0xFFFF);
+        if (resolved == text + 0x589C) {
+            snprintf(line, sizeof(line),
+                    "[psp1000-clockpath-materialize] source=0x%05X reg=%u "
+                    "address=0x%08X\n", i, reg, resolved);
+            zeroCtrlDiagnosticsText(line);
+        }
+    }
+    {
+        unsigned int material_count = 0, material_source = 0;
+        unsigned int material_low = 0, material_reg = 0, material_address = 0;
+        unsigned int call_offset = 0, call_target = 0, callback_reg = 5;
+        unsigned int provenance = 1U << 5;
+        const char *status = "NO_CALL";
+        const char *kind = "NONE";
+        char argument[4][32];
+        unsigned int look;
+
+        for (i = 0; i <= vsh->text_size - 8; i += 4) {
+            unsigned int lui = _lw(text + i);
+            unsigned int low = _lw(text + i + 4);
+            unsigned int reg = (lui >> 16) & 0x1F;
+            unsigned int resolved = 0;
+            if ((lui >> 26) != 0x0F || reg == 0 ||
+                    ((low >> 21) & 0x1F) != reg ||
+                    ((low >> 16) & 0x1F) != reg)
+                continue;
+            if ((low >> 26) == 9)
+                resolved = ((lui & 0xFFFF) << 16) +
+                        (unsigned int)(int)(short)(low & 0xFFFF);
+            else if ((low >> 26) == 0x0D)
+                resolved = ((lui & 0xFFFF) << 16) | (low & 0xFFFF);
+            if (resolved != text + 0x589C) continue;
+            material_count++;
+            material_source = i;
+            material_low = i + 4;
+            material_reg = reg;
+            material_address = resolved;
+        }
+        snprintf(line, sizeof(line),
+                "[psp1000-clockpath-registration-materialize] count=%u "
+                "source=0x%05X low=0x%05X reg=%u address=0x%08X\n",
+                material_count, material_source, material_low, material_reg,
+                material_address);
+        zeroCtrlDiagnosticsText(line);
+        if (material_count != 1 || material_source != 0x56FC ||
+                material_reg != 5)
+            return 0;
+        for (look = 1; look <= 16 &&
+                material_low <= vsh->text_size - (look + 1) * 4; look++) {
+            unsigned int source = material_low + look * 4;
+            unsigned int transfer = _lw(text + source);
+            unsigned int opcode = transfer >> 26;
+            unsigned int function = transfer & 0x3F;
+            int ambiguous = 0;
+            if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                    (opcode >= 0x14 && opcode <= 0x17)) {
+                status = "AMBIGUOUS";
+                break;
+            }
+            if (opcode == 3) {
+                unsigned int delay = _lw(text + source + 4);
+                provenance = zeroCtrlClockPathPropagateCallback(delay,
+                        provenance, &ambiguous);
+                if (ambiguous) {
+                    status = "AMBIGUOUS";
+                    break;
+                }
+                if (provenance & (1U << 5)) {
+                    call_offset = source;
+                    call_target = zeroCtrlMipsJumpTarget(text + source,
+                            transfer);
+                    status = "FOUND";
+                    kind = "JAL";
+                    break;
+                }
+                status = "OVERWRITTEN";
+                break;
+            }
+            if (opcode == 0 && function == 9) {
+                if (!(provenance & (1U << 5))) {
+                    status = "OVERWRITTEN";
+                    break;
+                }
+                call_offset = source;
+                status = "FOUND";
+                kind = "JALR";
+                call_target = 0;
+                break;
+            }
+            if (opcode == 2 || (opcode == 0 && function == 8)) {
+                status = "AMBIGUOUS";
+                break;
+            }
+            provenance = zeroCtrlClockPathPropagateCallback(transfer,
+                    provenance, &ambiguous);
+            if (ambiguous) {
+                status = "AMBIGUOUS";
+                break;
+            }
+            if (provenance == 0) {
+                status = "OVERWRITTEN";
+                break;
+            }
+        }
+        snprintf(line, sizeof(line),
+                "[psp1000-clockpath-registration-consumer] status=%s "
+                "call=0x%05X kind=%s target=0x%05X callback_reg=%u\n",
+                status, call_offset, kind,
+                call_target >= text ? call_target - text : 0, callback_reg);
+        zeroCtrlDiagnosticsText(line);
+        if (strcmp(status, "FOUND") != 0) return 1;
+        for (i = 0; i < 4; i++)
+            zeroCtrlDescribeRegistrationArgument(vsh, call_offset, i + 4,
+                    argument[i], sizeof(argument[i]));
+        if (provenance & (1U << 5))
+            strcpy(argument[1], "CALLBACK_VSH_589C");
+        snprintf(line, sizeof(line),
+                "[psp1000-clockpath-registration-args] call=0x%05X "
+                "a0=%s a1=%s a2=%s a3=%s\n", call_offset, argument[0],
+                argument[1], argument[2], argument[3]);
+        zeroCtrlDiagnosticsText(line);
+        {
+            unsigned int start = call_offset >= 32 ? call_offset - 32 : 0;
+            unsigned int end = call_offset <= vsh->text_size - 24 ?
+                    call_offset + 24 : vsh->text_size;
+            if (!zeroCtrlVshModuleRangeValid(vsh, text + start, end - start))
+                return 0;
+            for (i = start; i < end; i += 4) {
+                snprintf(line, sizeof(line),
+                        "[psp1000-clockpath-registration-code] "
+                        "offset=0x%05X word=0x%08X\n", i, _lw(text + i));
+                zeroCtrlDiagnosticsText(line);
+            }
+        }
+        if (strcmp(kind, "JAL") == 0 && call_target >= text &&
+                call_target - text <= vsh->text_size - 96 * 4 &&
+                zeroCtrlVshModuleRangeValid(vsh, call_target, 96 * 4)) {
+            unsigned int callee = call_target - text;
+            unsigned int tracked = 1U << 5;
+            int flow_done = 0;
+            for (i = 0; i < 0x60; i += 4) {
+                snprintf(line, sizeof(line),
+                        "[psp1000-clockpath-registration-code] "
+                        "offset=0x%05X word=0x%08X\n", callee + i,
+                        _lw(text + callee + i));
+                zeroCtrlDiagnosticsText(line);
+            }
+            for (i = 0; i < 96 * 4; i += 4) {
+                unsigned int source = callee + i;
+                unsigned int instruction = _lw(text + source);
+                unsigned int opcode = instruction >> 26;
+                unsigned int rs = (instruction >> 21) & 0x1F;
+                unsigned int rt = (instruction >> 16) & 0x1F;
+                unsigned int function = instruction & 0x3F;
+                int ambiguous = 0;
+                if (opcode == 0x2B && (tracked & (1U << rt))) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-registration-store] "
+                            "source=0x%05X value_reg=%u base_reg=%u disp=%d\n",
+                            source, rt, rs, (short)(instruction & 0xFFFF));
+                    zeroCtrlDiagnosticsText(line);
+                }
+                if (opcode == 3) {
+                    unsigned int arg;
+                    unsigned int delay = _lw(text + source + 4);
+                    tracked = zeroCtrlClockPathPropagateCallback(delay,
+                            tracked, &ambiguous);
+                    if (ambiguous) {
+                        snprintf(line, sizeof(line),
+                                "[psp1000-clockpath-registration-flow] "
+                                "status=AMBIGUOUS offset=0x%05X\n", source + 4);
+                        zeroCtrlDiagnosticsText(line);
+                        flow_done = 1;
+                        break;
+                    }
+                    for (arg = 0; arg < 4; arg++)
+                        if (tracked & (1U << (arg + 4))) {
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-clockpath-registration-forward] "
+                                    "source=0x%05X target=0x%05X arg=%u\n",
+                                    source, zeroCtrlMipsJumpTarget(text + source,
+                                        instruction) - text, arg);
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                    flow_done = 1;
+                    break;
+                }
+                if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
+                        (opcode >= 0x14 && opcode <= 0x17) || opcode == 2 ||
+                        (opcode == 0 && (function == 8 || function == 9))) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-registration-flow] "
+                            "status=AMBIGUOUS offset=0x%05X\n", source);
+                    zeroCtrlDiagnosticsText(line);
+                    flow_done = 1;
+                    break;
+                }
+                tracked = zeroCtrlClockPathPropagateCallback(instruction,
+                        tracked, &ambiguous);
+                if (ambiguous || tracked == 0) {
+                    snprintf(line, sizeof(line),
+                            "[psp1000-clockpath-registration-flow] "
+                            "status=AMBIGUOUS offset=0x%05X\n", source);
+                    zeroCtrlDiagnosticsText(line);
+                    flow_done = 1;
+                    break;
+                }
+            }
+            if (!flow_done)
+                zeroCtrlDiagnosticsText(
+                        "[psp1000-clockpath-registration-flow] "
+                        "status=AMBIGUOUS offset=0x00000\n");
+        }
+    }
+    return 1;
+}
+
 static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
         unsigned int source) {
     unsigned int rs = (word >> 21) & 0x1F;
@@ -4003,6 +6733,634 @@ static int zeroCtrlMipsMove(unsigned int word, unsigned int destination,
     return (word >> 26) == 0 && ((word & 0x3F) == 0x21 ||
             (word & 0x3F) == 0x25) && ((word >> 11) & 0x1F) == destination &&
             ((rs == source && rt == 0) || (rs == 0 && rt == source));
+}
+
+#define CONSTRUCTED0_DEPENDENCY_MAX_RANGE 0x200
+#define CONSTRUCTED0_DEPENDENCY_MAX_ACCESS 32
+#define CONSTRUCTED0_DEPENDENCY_MAX_CHASE 16
+#define CONSTRUCTED0_DEPENDENCY_MAX_FORWARD 16
+
+enum ZeroCtrlDependencyProvenanceKind {
+    ZERO_DEPENDENCY_NONE = 0,
+    ZERO_DEPENDENCY_BASE,
+    ZERO_DEPENDENCY_BASE_PLUS,
+    ZERO_DEPENDENCY_LOADED
+};
+
+typedef struct ZeroCtrlDependencyProvenance {
+    unsigned int kind;
+    int offset;
+} ZeroCtrlDependencyProvenance;
+
+static const char *zeroCtrlDependencyMemoryKind(unsigned int opcode) {
+    static const char *name[] = {
+        "LB", "LH", "LWL", "LW", "LBU", "LHU", "LWR", 0,
+        "SB", "SH", "SWL", "SW", 0, 0, "SWR"
+    };
+
+    if (opcode < 0x20 || opcode > 0x2E) return 0;
+    return name[opcode - 0x20];
+}
+
+static const char *zeroCtrlDependencyProvenanceName(unsigned int kind) {
+    if (kind == ZERO_DEPENDENCY_BASE) return "BASE";
+    if (kind == ZERO_DEPENDENCY_BASE_PLUS) return "BASE_PLUS_OFFSET";
+    if (kind == ZERO_DEPENDENCY_LOADED)
+        return "LOADED_FROM_DEPENDENCY";
+    return "UNKNOWN";
+}
+
+/* Returns 1 on a supported instruction and 0 on ambiguous provenance use. */
+static int zeroCtrlApplyConstructed0DependencyInstruction(unsigned int word,
+        unsigned int offset, ZeroCtrlDependencyProvenance provenance[32],
+        unsigned int *accesses, unsigned int *chases,
+        unsigned int *max_direct_offset, unsigned int *pointer_chase,
+        const char **reason) {
+    unsigned int opcode = word >> 26;
+    unsigned int rs = (word >> 21) & 0x1F;
+    unsigned int rt = (word >> 16) & 0x1F;
+    unsigned int rd = (word >> 11) & 0x1F;
+    unsigned int reads = 0, tracked = 0, i;
+    int destination = zeroCtrlMipsGprWriteDestination(word);
+    const char *memory_kind = zeroCtrlDependencyMemoryKind(opcode);
+    char line[192];
+
+    for (i = 1; i < 32; i++)
+        if (provenance[i].kind != ZERO_DEPENDENCY_NONE)
+            tracked |= 1U << i;
+    if ((zeroCtrlMipsMove(word, rd, rs) ||
+                zeroCtrlMipsMove(word, rd, rt)) && rd != 0) {
+        provenance[rd] = provenance[rs == 0 ? rt : rs];
+        return 1;
+    }
+    if (opcode == 9 && rt != 0) {
+        int immediate = (int)(short)(word & 0xFFFF);
+        if (provenance[rs].kind == ZERO_DEPENDENCY_BASE ||
+                provenance[rs].kind == ZERO_DEPENDENCY_BASE_PLUS) {
+            provenance[rt] = provenance[rs];
+            provenance[rt].offset += immediate;
+            provenance[rt].kind = provenance[rt].offset == 0 ?
+                    ZERO_DEPENDENCY_BASE : ZERO_DEPENDENCY_BASE_PLUS;
+            return 1;
+        }
+        if (provenance[rs].kind == ZERO_DEPENDENCY_LOADED && immediate == 0) {
+            provenance[rt] = provenance[rs];
+            return 1;
+        }
+        if (provenance[rs].kind != ZERO_DEPENDENCY_NONE) {
+            *reason = "UNSUPPORTED_WRITE";
+            return 0;
+        }
+        provenance[rt].kind = ZERO_DEPENDENCY_NONE;
+        provenance[rt].offset = 0;
+        return 1;
+    }
+    if (memory_kind) {
+        int displacement = (int)(short)(word & 0xFFFF);
+        int effective = provenance[rs].offset + displacement;
+        int is_load = opcode >= 0x20 && opcode <= 0x26;
+        int unsupported_width = opcode == 0x22 || opcode == 0x26 ||
+                opcode == 0x2A || opcode == 0x2E;
+        if (unsupported_width &&
+                provenance[rs].kind != ZERO_DEPENDENCY_NONE) {
+            *reason = "UNSUPPORTED_MEMORY";
+            return 0;
+        }
+        if (provenance[rs].kind == ZERO_DEPENDENCY_BASE ||
+                provenance[rs].kind == ZERO_DEPENDENCY_BASE_PLUS) {
+            if (*accesses >= CONSTRUCTED0_DEPENDENCY_MAX_ACCESS) {
+                *reason = "ACCESS_LIMIT";
+                return 0;
+            }
+            snprintf(line, sizeof(line),
+                    "[psp1000-constructed0-dependency-access] off=0x%X "
+                    "kind=%s base_off=0x%X field_off=0x%X "
+                    "effective_off=0x%X\n", offset, memory_kind,
+                    (unsigned int)provenance[rs].offset,
+                    (unsigned int)displacement, (unsigned int)effective);
+            zeroCtrlDiagnosticsText(line);
+            (*accesses)++;
+            if (effective >= 0 &&
+                    (unsigned int)effective > *max_direct_offset)
+                *max_direct_offset = (unsigned int)effective;
+            if (is_load && rt != 0) {
+                provenance[rt].kind = ZERO_DEPENDENCY_LOADED;
+                provenance[rt].offset = effective;
+            }
+            return 1;
+        }
+        if (provenance[rs].kind == ZERO_DEPENDENCY_LOADED) {
+            if (*chases >= CONSTRUCTED0_DEPENDENCY_MAX_CHASE) {
+                *reason = "CHASE_LIMIT";
+                return 0;
+            }
+            snprintf(line, sizeof(line),
+                    "[psp1000-constructed0-dependency-chase] "
+                    "source_off=0x%X use_off=0x%X kind=%s disp=0x%X\n",
+                    (unsigned int)provenance[rs].offset, offset, memory_kind,
+                    (unsigned int)displacement);
+            zeroCtrlDiagnosticsText(line);
+            (*chases)++;
+            *pointer_chase = 1;
+            if (is_load && rt != 0) {
+                provenance[rt].kind = ZERO_DEPENDENCY_NONE;
+                provenance[rt].offset = 0;
+            }
+            return 1;
+        }
+        if (is_load && rt != 0) {
+            provenance[rt].kind = ZERO_DEPENDENCY_NONE;
+            provenance[rt].offset = 0;
+        } else if (!is_load && provenance[rt].kind != ZERO_DEPENDENCY_NONE) {
+            *reason = "UNSUPPORTED_WRITE";
+            return 0;
+        }
+        return 1;
+    }
+    if (!zeroCtrlBridgeReadMask(word, &reads)) {
+        if (tracked || (destination > 0 &&
+                    provenance[destination].kind != ZERO_DEPENDENCY_NONE)) {
+            *reason = "UNSUPPORTED_WRITE";
+            return 0;
+        }
+        return 1;
+    }
+    if (reads & tracked) {
+        *reason = "UNSUPPORTED_WRITE";
+        return 0;
+    }
+    if (destination > 0) {
+        provenance[destination].kind = ZERO_DEPENDENCY_NONE;
+        provenance[destination].offset = 0;
+    }
+    return 1;
+}
+
+static void zeroCtrlWriteConstructed0DependencyMap(SceModule2 *paf,
+        unsigned int target) {
+    unsigned int offset;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, target, 0x200)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-map] validation=0\n");
+        return;
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-map] validation=1 "
+            "target=0x%08X target_off=0x%X size=0x200\n",
+            target, target - paf->text_addr);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0x1E0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-code] off=0x%03X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(target + offset + 0x00), _lw(target + offset + 0x04),
+                _lw(target + offset + 0x08), _lw(target + offset + 0x0C),
+                _lw(target + offset + 0x10), _lw(target + offset + 0x14),
+                _lw(target + offset + 0x18), _lw(target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
+static void zeroCtrlWriteConstructed0DependencyHelperMap(SceModule2 *paf,
+        unsigned int dependency_consumer_target) {
+    unsigned int call0, call1, helper_target, segment, remaining, offset;
+    unsigned int addiu;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,
+                0x200) ||
+            !zeroCtrlMipsMove(_lw(dependency_consumer_target + 0x034), 19, 5) ||
+            (_lw(dependency_consumer_target + 0x038) >> 26) != 3 ||
+            (_lw(dependency_consumer_target + 0x050) >> 26) != 3) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-helper] validation=0\n");
+        return;
+    }
+    addiu = _lw(dependency_consumer_target + 0x04C);
+    if ((addiu >> 26) != 9 || ((addiu >> 21) & 0x1F) != 19 ||
+            ((addiu >> 16) & 0x1F) != 5 ||
+            (short)(addiu & 0xFFFF) != 0x0C) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-helper] validation=0\n");
+        return;
+    }
+    call0 = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x038,
+            _lw(dependency_consumer_target + 0x038));
+    call1 = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x050,
+            _lw(dependency_consumer_target + 0x050));
+    if (call0 != call1 ||
+            !zeroCtrlModuleContainingSegment(paf, call0, &segment,
+                &remaining) || !zeroCtrlBridgeExecutableRange(paf, call0,
+                    0x100)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-helper] validation=0\n");
+        return;
+    }
+    helper_target = call0;
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-helper] validation=1 "
+            "call0_off=0x038 call1_off=0x050 target=0x%08X "
+            "segment=%u segment_off=0x%X size=0x100\n", helper_target,
+            segment, helper_target - paf->segmentaddr[segment]);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0xE0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-helper-code] off=0x%03X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(helper_target + offset + 0x00),
+                _lw(helper_target + offset + 0x04),
+                _lw(helper_target + offset + 0x08),
+                _lw(helper_target + offset + 0x0C),
+                _lw(helper_target + offset + 0x10),
+                _lw(helper_target + offset + 0x14),
+                _lw(helper_target + offset + 0x18),
+                _lw(helper_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
+static void zeroCtrlWriteConstructed0DependencyCopyImplementationMap(
+        SceModule2 *paf, unsigned int copy_target) {
+    SceModule2 *owner;
+    unsigned int implementation_target, segment, remaining, offset;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, copy_target, 8) ||
+            (_lw(copy_target) >> 26) != 2 ||
+            _lw(copy_target + 0x004) != 0) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-copy-impl] validation=0\n");
+        return;
+    }
+    implementation_target = zeroCtrlMipsJumpTarget(copy_target,
+            _lw(copy_target));
+    owner = sceKernelFindModuleByAddress(implementation_target);
+    if (!owner || !zeroCtrlLoadedModuleMetadataValid(owner) ||
+            !zeroCtrlModuleContainingSegment(owner, implementation_target,
+                &segment, &remaining) || segment != 0 || remaining < 0x100 ||
+            !zeroCtrlBridgeExecutableRange(owner, implementation_target,
+                0x100)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-copy-impl] validation=0\n");
+        return;
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-copy-impl] validation=1 "
+            "stub=0x%08X target=0x%08X module=%.27s segment=%u "
+            "segment_off=0x%X size=0x100\n", copy_target,
+            implementation_target, owner->modname, segment,
+            implementation_target - owner->segmentaddr[segment]);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0xE0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-copy-impl-code] off=0x%03X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(implementation_target + offset + 0x00),
+                _lw(implementation_target + offset + 0x04),
+                _lw(implementation_target + offset + 0x08),
+                _lw(implementation_target + offset + 0x0C),
+                _lw(implementation_target + offset + 0x10),
+                _lw(implementation_target + offset + 0x14),
+                _lw(implementation_target + offset + 0x18),
+                _lw(implementation_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+    {
+        unsigned int load = _lw(implementation_target + 0x024);
+        unsigned int store = _lw(implementation_target + 0x028);
+        if (!zeroCtrlMipsMove(_lw(implementation_target + 0x000), 10, 5) ||
+                !zeroCtrlMipsMove(_lw(implementation_target + 0x004), 3, 4) ||
+                _lw(implementation_target + 0x00C) != 0x00865821 ||
+                (load >> 26) != 0x24 || ((load >> 21) & 0x1F) != 10 ||
+                (short)(load & 0xFFFF) != 0 ||
+                (store >> 26) != 0x28 || ((store >> 21) & 0x1F) != 3 ||
+                ((store >> 16) & 0x1F) != ((load >> 16) & 0x1F) ||
+                (short)(store & 0xFFFF) != 0 ||
+                _lw(implementation_target + 0x034) != 0x254A0001 ||
+                _lw(implementation_target + 0x038) != 0x03E00008 ||
+                _lw(implementation_target + 0x03C) != 0x00801021 ||
+                !zeroCtrlBridgeExecutableRange(owner,
+                    implementation_target + 0x100, 0x180)) {
+            zeroCtrlDiagnosticsText(
+                    "[psp1000-constructed0-dependency-copy-cont] "
+                    "validation=0\n");
+            return;
+        }
+    }
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-copy-cont] validation=1 "
+            "start_off=0x100 size=0x180\n");
+    for (offset = 0x100; offset <= 0x260; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-copy-cont-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(implementation_target + offset + 0x00),
+                _lw(implementation_target + offset + 0x04),
+                _lw(implementation_target + offset + 0x08),
+                _lw(implementation_target + offset + 0x0C),
+                _lw(implementation_target + offset + 0x10),
+                _lw(implementation_target + offset + 0x14),
+                _lw(implementation_target + offset + 0x18),
+                _lw(implementation_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
+static void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(SceModule2 *paf,
+        unsigned int dependency_consumer_target) {
+    unsigned int common0, common1, common_helper_target, copy_target;
+    unsigned int segment, remaining, offset, word, source_moves = 0;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,
+                0x200) ||
+            !zeroCtrlMipsMove(_lw(dependency_consumer_target + 0x034), 19, 5) ||
+            (_lw(dependency_consumer_target + 0x038) >> 26) != 3 ||
+            (_lw(dependency_consumer_target + 0x050) >> 26) != 3) goto invalid;
+    word = _lw(dependency_consumer_target + 0x04C);
+    if ((word >> 26) != 9 || ((word >> 21) & 0x1F) != 19 ||
+            ((word >> 16) & 0x1F) != 5 || (short)(word & 0xFFFF) != 0x0C)
+        goto invalid;
+    common0 = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x038,
+            _lw(dependency_consumer_target + 0x038));
+    common1 = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x050,
+            _lw(dependency_consumer_target + 0x050));
+    if (common0 != common1 ||
+            !zeroCtrlBridgeExecutableRange(paf, common0, 0x100)) goto invalid;
+    common_helper_target = common0;
+    for (offset = 0; offset <= 0x034; offset += 4) {
+        word = _lw(common_helper_target + offset);
+        if (zeroCtrlMipsMove(word, 16, 5)) source_moves++;
+    }
+    if (source_moves != 1 ||
+            _lw(common_helper_target + 0x038) != 0x8E020004 ||
+            _lw(common_helper_target + 0x03C) != 0x1440000A ||
+            _lw(common_helper_target + 0x040) != 0x24440001 ||
+            (_lw(common_helper_target + 0x068) >> 26) != 3 ||
+            _lw(common_helper_target + 0x06C) != 0x00000000 ||
+            _lw(common_helper_target + 0x070) != 0xAE220000 ||
+            _lw(common_helper_target + 0x074) != 0x00402021 ||
+            _lw(common_helper_target + 0x078) != 0x8E060004 ||
+            _lw(common_helper_target + 0x07C) != 0x8E050000 ||
+            _lw(common_helper_target + 0x080) != 0xAE260004 ||
+            (_lw(common_helper_target + 0x084) >> 26) != 3 ||
+            _lw(common_helper_target + 0x088) != 0x24C60001)
+        goto invalid;
+    copy_target = zeroCtrlMipsJumpTarget(common_helper_target + 0x084,
+            _lw(common_helper_target + 0x084));
+    if (!zeroCtrlModuleContainingSegment(paf, copy_target, &segment,
+                &remaining) || segment != 0 ||
+            !zeroCtrlBridgeExecutableRange(paf, copy_target, 0x100))
+        goto invalid;
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-copy-callee] validation=1 "
+            "call_off=0x084 target=0x%08X target_off=0x%X size=0x100\n",
+            copy_target, copy_target - paf->text_addr);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0xE0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-copy-code] off=0x%03X "
+                "w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(copy_target + offset + 0x00),
+                _lw(copy_target + offset + 0x04),
+                _lw(copy_target + offset + 0x08),
+                _lw(copy_target + offset + 0x0C),
+                _lw(copy_target + offset + 0x10),
+                _lw(copy_target + offset + 0x14),
+                _lw(copy_target + offset + 0x18),
+                _lw(copy_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+    zeroCtrlWriteConstructed0DependencyCopyImplementationMap(paf, copy_target);
+    return;
+invalid:
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-copy-callee] validation=0\n");
+}
+
+static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
+    SceModule2 *vsh = sceKernelFindModuleByName("vsh_module");
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    ZeroCtrlDependencyProvenance provenance[32];
+    unsigned int constructed0, allocation_target, target, segment, remaining;
+    unsigned int boundary = 0, offset, accesses = 0, chases = 0, forwards = 0;
+    unsigned int max_direct_offset = 0, pointer_chase = 0, forwarded = 0;
+    const char *reason = "NO_RETURN";
+    char line[256];
+
+    if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
+            !slide_diag.functional_enabled ||
+            slide_diag.bridge_validation != 1 ||
+            slide_diag.bridge_install != 1 ||
+            !zeroCtrlLoadedModuleMetadataValid(vsh) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
+            strcmp(vsh->modname, "vsh_module") != 0 ||
+            strcmp(paf->modname, "scePaf_Module") != 0 ||
+            slide_diag.bridge_callback != vsh->text_addr + 0x589C ||
+            slide_diag.bridge_constructed1 != paf->text_addr + 0x34658 ||
+            slide_diag.bridge_constructed0 != paf->text_addr + 0x34610) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-analysis] validation=0 "
+                "complete=0 reason=DERIVATION off=0x0\n");
+        return 0;
+    }
+    constructed0 = slide_diag.bridge_constructed0;
+    if (!zeroCtrlBridgeExecutableRange(paf, constructed0, 0x30) ||
+            _lw(constructed0) != 0x27BDFFF0 ||
+            _lw(constructed0 + 0x04) != 0xAFB10004 ||
+            !zeroCtrlMipsMove(_lw(constructed0 + 0x08), 17, 4) ||
+            _lw(constructed0 + 0x0C) != 0x240401D8 ||
+            _lw(constructed0 + 0x10) != 0xAFBF0008 ||
+            (_lw(constructed0 + 0x14) >> 26) != 3 ||
+            _lw(constructed0 + 0x18) != 0xAFB00000 ||
+            !zeroCtrlMipsMove(_lw(constructed0 + 0x1C), 16, 2) ||
+            _lw(constructed0 + 0x20) != 0x8E250008 ||
+            (_lw(constructed0 + 0x24) >> 26) != 3 ||
+            !zeroCtrlMipsMove(_lw(constructed0 + 0x28), 4, 2) ||
+            _lw(constructed0 + 0x2C) != 0xAE300004) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-analysis] validation=0 "
+                "complete=0 reason=PREFIX off=0x0\n");
+        return 0;
+    }
+    allocation_target = zeroCtrlMipsJumpTarget(constructed0 + 0x14,
+            _lw(constructed0 + 0x14));
+    target = zeroCtrlMipsJumpTarget(constructed0 + 0x24,
+            _lw(constructed0 + 0x24));
+    if (!zeroCtrlModuleContainingSegment(paf, target, &segment, &remaining)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-analysis] validation=0 "
+                "complete=0 reason=TARGET off=0x24\n");
+        return 0;
+    }
+    if (segment == 0)
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-consumer] validation=1 "
+                "constructed0_off=0x34610 allocation=0x%08X call_off=0x24 "
+                "target=0x%08X target_off=0x%X\n", allocation_target,
+                target, target - paf->text_addr);
+    else
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-consumer] validation=1 "
+                "constructed0_off=0x34610 allocation=0x%08X call_off=0x24 "
+                "target=0x%08X segment=%u segment_off=0x%X\n",
+                allocation_target, target, segment,
+                target - paf->segmentaddr[segment]);
+    zeroCtrlDiagnosticsText(line);
+    if (!zeroCtrlBridgeExecutableRange(paf, target, 4)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-analysis] validation=0 "
+                "complete=0 reason=NON_EXECUTABLE off=0x24\n");
+        return 0;
+    }
+
+    for (offset = 0;
+            offset <= CONSTRUCTED0_DEPENDENCY_MAX_RANGE - 8;
+            offset += 4) {
+        if (!zeroCtrlBridgeExecutableRange(paf, target + offset, 8)) break;
+        if (_lw(target + offset) == 0x03E00008) {
+            boundary = offset + 8;
+            break;
+        }
+    }
+    if (boundary == 0) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-analysis] validation=0 "
+                "complete=0 reason=NO_RETURN off=0x200\n");
+        zeroCtrlWriteConstructed0DependencyMap(paf, target);
+        zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);
+        zeroCtrlWriteConstructed0DependencyCopyCalleeMap(paf, target);
+        return 0;
+    }
+    memset(provenance, 0, sizeof(provenance));
+    provenance[5].kind = ZERO_DEPENDENCY_BASE;
+    for (offset = 0; offset < boundary; offset += 4) {
+        unsigned int pc = target + offset;
+        unsigned int word = _lw(pc);
+        unsigned int opcode = word >> 26;
+        unsigned int rt = (word >> 16) & 0x1F;
+        unsigned int function = word & 0x3F;
+        unsigned int delay, arg;
+
+        if (opcode >= 0x14 && opcode <= 0x17) {
+            if (!zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)) {
+                reason = "DELAY_SLOT";
+                goto incomplete;
+            }
+            delay = _lw(pc + 4);
+            (void)delay;
+            reason = "BRANCH_LIKELY";
+            goto incomplete;
+        }
+        if (opcode == 1) {
+            if (rt == 2 || rt == 3 || rt == 0x12 || rt == 0x13) {
+                if (!zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)) {
+                    reason = "DELAY_SLOT";
+                    goto incomplete;
+                }
+                delay = _lw(pc + 4);
+                (void)delay;
+                reason = "BRANCH_LIKELY";
+                goto incomplete;
+            }
+            if (rt == 0x10 || rt == 0x11) {
+                if (!zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)) {
+                    reason = "DELAY_SLOT";
+                    goto incomplete;
+                }
+                delay = _lw(pc + 4);
+                (void)delay;
+                reason = "REGIMM_LINK";
+                goto incomplete;
+            }
+            if (rt != 0 && rt != 1) {
+                reason = "UNSUPPORTED_REGIMM";
+                goto incomplete;
+            }
+        }
+        if (opcode == 3 || opcode == 2 ||
+                (opcode == 1 && (rt == 0 || rt == 1)) ||
+                (opcode >= 4 && opcode <= 7) ||
+                (opcode == 0 && (function == 8 || function == 9))) {
+            unsigned int target_register = (word >> 21) & 0x1F;
+            unsigned int link_register = (word >> 11) & 0x1F;
+            if (!zeroCtrlBridgeExecutableRange(paf, pc + 4, 4)) {
+                reason = "DELAY_SLOT";
+                goto incomplete;
+            }
+            if (opcode == 3) {
+                provenance[31].kind = ZERO_DEPENDENCY_NONE;
+                provenance[31].offset = 0;
+            } else if (opcode == 0 && function == 9 && link_register != 0) {
+                provenance[link_register].kind = ZERO_DEPENDENCY_NONE;
+                provenance[link_register].offset = 0;
+            }
+            delay = _lw(pc + 4);
+            if (!zeroCtrlApplyConstructed0DependencyInstruction(delay,
+                        offset + 4, provenance, &accesses, &chases,
+                        &max_direct_offset, &pointer_chase, &reason))
+                goto incomplete;
+            if (opcode == 3 || (opcode == 0 && function == 9)) {
+                unsigned int call_target = opcode == 3 ?
+                        zeroCtrlMipsJumpTarget(pc, word) : 0;
+                unsigned int call_forwarded = 0;
+                for (arg = 4; arg <= 7; arg++)
+                    if (provenance[arg].kind != ZERO_DEPENDENCY_NONE) {
+                        if (forwards >= CONSTRUCTED0_DEPENDENCY_MAX_FORWARD) {
+                            reason = "FORWARD_LIMIT";
+                            goto incomplete;
+                        }
+                        snprintf(line, sizeof(line),
+                                "[psp1000-constructed0-dependency-forward] "
+                                "call_off=0x%X arg=a%u provenance=%s "
+                                "target=0x%08X\n", offset, arg - 4,
+                                zeroCtrlDependencyProvenanceName(
+                                    provenance[arg].kind), call_target);
+                        zeroCtrlDiagnosticsText(line);
+                        forwards++;
+                        forwarded = 1;
+                        call_forwarded = 1;
+                    }
+                if (opcode == 0) {
+                    (void)target_register;
+                    reason = "INDIRECT_CALL";
+                    goto incomplete;
+                }
+                reason = call_forwarded ? "FORWARDED" : "DIRECT_CALL";
+                goto incomplete;
+            }
+            if (opcode == 0 && function == 8 && target_register == 31) {
+                snprintf(line, sizeof(line),
+                        "[psp1000-constructed0-dependency-analysis] "
+                        "validation=1 complete=1 max_direct_offset=0x%X "
+                        "pointer_chase=%u forwarded=%u\n", max_direct_offset,
+                        pointer_chase, forwarded);
+                zeroCtrlDiagnosticsText(line);
+                return 1;
+            }
+            reason = (opcode == 1 || (opcode >= 4 && opcode <= 7)) ?
+                    "BRANCH" : "CONTROL_FLOW";
+            goto incomplete;
+        }
+        if (!zeroCtrlApplyConstructed0DependencyInstruction(word, offset,
+                    provenance, &accesses, &chases, &max_direct_offset,
+                    &pointer_chase, &reason))
+            goto incomplete;
+    }
+    reason = "NO_RETURN";
+incomplete:
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-analysis] validation=1 "
+            "complete=0 reason=%s off=0x%X\n", reason, offset);
+    zeroCtrlDiagnosticsText(line);
+    return 0;
 }
 
 enum ZeroCtrlPafA989NearbyOrigin {
@@ -4426,7 +7784,8 @@ static void zeroCtrlWritePafA989Downstream(SceModule2 *paf,
         unsigned int global_target);
 
 static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
-        const unsigned int constructed[2]);
+        const unsigned int constructed[2], unsigned int root_slot,
+        unsigned int root_segment);
 
 static void zeroCtrlWritePafA989NearbyFlows(SceModule2 *paf);
 static void zeroCtrlWritePafA989NearbyCallArgs(SceModule2 *paf);
@@ -4617,7 +7976,7 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
     };
     unsigned int words[0x100 / 4];
     unsigned int call_targets[5];
-    unsigned int slot, slot_segment, slot_remaining;
+    unsigned int slot, slot_segment = 0xFFFFFFFFU, slot_remaining;
     unsigned int i, row;
     char line[256];
 
@@ -4858,16 +8217,20 @@ static void zeroCtrlWritePafA989ConsumerStructure(SceModule2 *paf,
                 slot);
         zeroCtrlDiagnosticsText(line);
     }
-    zeroCtrlWritePafA989ConstructedFlows(paf, constructed);
+    zeroCtrlWritePafA989ConstructedFlows(paf, constructed, slot, slot_segment);
     zeroCtrlWritePafA989Downstream(paf, call_targets[0], call_targets[2],
             call_targets[3]);
 }
 
 static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
-        const unsigned int constructed[2]) {
+        const unsigned int constructed[2], unsigned int root_slot,
+        unsigned int root_segment) {
     unsigned int segment, remaining, offset, look;
     unsigned int constructed0_size;
-    unsigned int candidates = 0, reported = 0, closure = 0;
+    unsigned int candidates = 0, reported = 0, exact_same_outer = 0;
+    unsigned int a1_origin_reported = 0;
+    unsigned int adapter_valid = 0, exact_dispatches = 0, exact_entry = 0;
+    unsigned int exact_header_link_proven = 0;
     char line[256];
 
     if (!zeroCtrlModuleContainingSegment(paf, constructed[1], &segment,
@@ -4899,12 +8262,17 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 (jalr_delay >> 26) == 0x23 &&
                 ((jalr_delay >> 21) & 0x1F) == 16 &&
                 ((jalr_delay >> 16) & 0x1F) == 4 &&
-                (short)(jalr_delay & 0xFFFF) == 4)
+                (short)(jalr_delay & 0xFFFF) == 4) {
+            adapter_valid = 1;
             zeroCtrlDiagnosticsText(
                     "[paf-a989-constructed1-indirect] validation=1 "
                     "base_arg_reg=5 target_field_off=0x0C "
                     "arg0_field_off=0x04 jalr_off=0xB4\n");
-        else
+            zeroCtrlDiagnosticsText(
+                    "[paf-a989-callback-adapter] validation=1 "
+                    "adapter_off=0x34658 base_arg=a1 callback_field=0x0C "
+                    "callback_a0_field=0x04 jalr_off=0xB4\n");
+        } else
             zeroCtrlDiagnosticsText(
                     "[paf-a989-constructed1-indirect] validation=0\n");
     }
@@ -4959,13 +8327,64 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
     if (!zeroCtrlVshModuleRangeValid(paf, paf->text_addr, paf->text_size))
         return;
     for (offset = 0; offset + 8 <= paf->text_size; offset += 4) {
+        enum {
+            OUTER_PROV_UNKNOWN = 0,
+            OUTER_PROV_BASE,
+            OUTER_PROV_PLUS04,
+            OUTER_PROV_PLUS14
+        };
+        typedef struct {
+            unsigned int kind;
+            unsigned int id;
+        } ZeroCtrlOuterProvenance;
         unsigned int load = _lw(paf->text_addr + offset);
         unsigned int base = (load >> 21) & 0x1F;
         unsigned int target = (load >> 16) & 0x1F;
-        unsigned char source[32] = { 0 };
+        unsigned int prefix_floor = offset > 0x80 ? offset - 0x80 : 0;
+        unsigned int prefix_start = prefix_floor;
+        unsigned int boundary_scan = prefix_floor >= 4 ? prefix_floor - 4 : 0;
+        unsigned int next_opaque_id = 1;
+        unsigned int candidate_outer_id = 0;
+        ZeroCtrlOuterProvenance provenance[32] = { { 0, 0 } };
+        const char *terminal_result = "CONTROL_FLOW";
+        const char *a1_writer_kind = "ENTRY";
+        unsigned int a1_writer_off = prefix_start;
+        unsigned int a1_writer_base = 5;
+        int a1_writer_disp = 0;
+        unsigned int terminal_jalr = 0;
+        unsigned int matched = 0;
+        unsigned int reg;
+
         if ((load >> 26) != 0x23 || target == 0 || base == target ||
                 (short)(load & 0xFFFF) != 0x14) continue;
-        for (look = offset + 4; look <= offset + 0x40 &&
+
+        /* Select one bounded basic-block prefix, never a predecessor delay slot. */
+        for (; boundary_scan < offset; boundary_scan += 4) {
+            unsigned int boundary = _lw(paf->text_addr + boundary_scan);
+            unsigned int boundary_opcode = boundary >> 26;
+            unsigned int boundary_function = boundary & 0x3F;
+            if (boundary_opcode == 1 || boundary_opcode == 2 ||
+                    boundary_opcode == 3 ||
+                    (boundary_opcode >= 4 && boundary_opcode <= 7) ||
+                    (boundary_opcode >= 0x14 && boundary_opcode <= 0x17) ||
+                    (boundary_opcode == 0 &&
+                     (boundary_function == 8 || boundary_function == 9))) {
+                if (boundary_scan + 8 <= offset)
+                    prefix_start = boundary_scan + 8;
+                else
+                    prefix_start = offset + 4;
+            }
+        }
+        if (prefix_start > offset) continue;
+
+        /* Distinct opaque entry values; equality is learned only by replay. */
+        for (reg = 1; reg < 32; reg++) {
+            provenance[reg].kind = OUTER_PROV_BASE;
+            provenance[reg].id = next_opaque_id++;
+        }
+        a1_writer_off = prefix_start;
+
+        for (look = prefix_start; look <= offset + 0x80 &&
                 look + 4 <= paf->text_size; look += 4) {
             unsigned int word = _lw(paf->text_addr + look);
             unsigned int opcode = word >> 26;
@@ -4974,57 +8393,126 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
             unsigned int rd = (word >> 11) & 0x1F;
             unsigned int function = word & 0x3F;
             int destination;
-            if (!(opcode == 0 && function == 9)) {
-                destination = zeroCtrlMipsGprWriteDestination(word);
-                if (destination < 0 || (unsigned int)destination == target ||
-                        (unsigned int)destination == base) break;
+
+            if (look == offset) {
+                if (word != load || provenance[base].kind != OUTER_PROV_BASE)
+                    break;
+                candidate_outer_id = provenance[base].id;
+                provenance[target].kind = OUTER_PROV_PLUS14;
+                provenance[target].id = candidate_outer_id;
+                continue;
             }
+
             if (opcode == 0 && function == 9) {
                 unsigned int delay;
+                unsigned int delay_opcode, delay_rs, delay_rt, delay_rd;
                 int delay_destination;
-                unsigned int delay_writes_base;
-                if (rs != target || rd != 31) break;
+                unsigned int delay_supported = 1;
+                ZeroCtrlOuterProvenance target_value_before_delay;
+                ZeroCtrlOuterProvenance a1_value_after_delay;
+                const char *target_kind;
+                const char *a1_kind;
+
+                /* Unrelated indirect calls terminate replay without accounting. */
+                target_value_before_delay = provenance[rs];
+                if (candidate_outer_id == 0 ||
+                        target_value_before_delay.kind != OUTER_PROV_PLUS14 ||
+                        target_value_before_delay.id != candidate_outer_id)
+                    break;
+                if (look + 8 > paf->text_size) break;
+                /* JALR consumes rs before its architectural delay slot. */
                 delay = _lw(paf->text_addr + look + 4);
+                delay_opcode = delay >> 26;
+                delay_rs = (delay >> 21) & 0x1F;
+                delay_rt = (delay >> 16) & 0x1F;
+                delay_rd = (delay >> 11) & 0x1F;
                 delay_destination = zeroCtrlMipsGprWriteDestination(delay);
-                if (delay_destination < 0 ||
-                        (unsigned int)delay_destination == target) break;
-                delay_writes_base =
-                        (unsigned int)delay_destination == base;
-                if ((delay >> 26) == 0x23 &&
-                        ((delay >> 21) & 0x1F) == base &&
-                        (short)(delay & 0xFFFF) == 4 &&
-                        ((delay >> 16) & 0x1F) != 0) {
-                    source[(delay >> 16) & 0x1F] = 1;
-                } else if ((zeroCtrlMipsMove(delay,
-                            (delay >> 11) & 0x1F,
-                            (delay >> 21) & 0x1F) ||
-                            zeroCtrlMipsMove(delay,
-                            (delay >> 11) & 0x1F,
-                            (delay >> 16) & 0x1F)) &&
-                        ((delay >> 11) & 0x1F) != 0) {
-                    unsigned int copy_source =
-                            ((delay >> 21) & 0x1F) == 0 ?
-                            (delay >> 16) & 0x1F : (delay >> 21) & 0x1F;
-                    source[(delay >> 11) & 0x1F] = source[copy_source];
-                } else if ((delay >> 26) == 9 &&
-                        (short)(delay & 0xFFFF) == 0 &&
-                        ((delay >> 16) & 0x1F) != 0) {
-                    source[(delay >> 16) & 0x1F] =
-                            source[(delay >> 21) & 0x1F];
+                if (delay_destination < 0) {
+                    delay_supported = 0;
+                } else if (zeroCtrlMipsMove(delay, delay_rd, delay_rs) &&
+                        delay_rd != 0) {
+                    provenance[delay_rd] = provenance[delay_rs];
+                    if (delay_rd == 5) {
+                        a1_writer_kind = "MOVE";
+                        a1_writer_off = look + 4;
+                        a1_writer_base = delay_rs;
+                        a1_writer_disp = 0;
+                    }
+                } else if (zeroCtrlMipsMove(delay, delay_rd, delay_rt) &&
+                        delay_rd != 0) {
+                    provenance[delay_rd] = provenance[delay_rt];
+                    if (delay_rd == 5) {
+                        a1_writer_kind = "MOVE";
+                        a1_writer_off = look + 4;
+                        a1_writer_base = delay_rt;
+                        a1_writer_disp = 0;
+                    }
+                } else if (delay_opcode == 9 &&
+                        (short)(delay & 0xFFFF) == 0 && delay_rt != 0) {
+                    provenance[delay_rt] = provenance[delay_rs];
+                    if (delay_rt == 5) {
+                        a1_writer_kind = "ADDIU_ZERO";
+                        a1_writer_off = look + 4;
+                        a1_writer_base = delay_rs;
+                        a1_writer_disp = 0;
+                    }
+                } else if (delay_opcode == 0x23 && delay_rt != 0) {
+                    if (provenance[delay_rs].kind == OUTER_PROV_BASE &&
+                            ((short)(delay & 0xFFFF) == 4 ||
+                             (short)(delay & 0xFFFF) == 0x14)) {
+                        provenance[delay_rt].kind =
+                                (short)(delay & 0xFFFF) == 4 ?
+                                OUTER_PROV_PLUS04 : OUTER_PROV_PLUS14;
+                        provenance[delay_rt].id = provenance[delay_rs].id;
+                    } else {
+                        provenance[delay_rt].kind = OUTER_PROV_BASE;
+                        provenance[delay_rt].id = next_opaque_id++;
+                    }
+                    if (delay_rt == 5) {
+                        a1_writer_kind = "DELAY_LW";
+                        a1_writer_off = look + 4;
+                        a1_writer_base = delay_rs;
+                        a1_writer_disp = (int)(short)(delay & 0xFFFF);
+                    }
                 } else if (delay_destination != 0) {
-                    source[delay_destination] = 0;
+                    provenance[delay_destination].kind = OUTER_PROV_UNKNOWN;
+                    provenance[delay_destination].id = 0;
+                    if ((unsigned int)delay_destination == 5) {
+                        a1_writer_kind = "UNKNOWN";
+                        a1_writer_off = look + 4;
+                        a1_writer_base = 0;
+                        a1_writer_disp = 0;
+                    }
                 }
-                /* A delay-slot load uses the original base before any write. */
-                if (delay_writes_base && !((delay >> 26) == 0x23 &&
-                        ((delay >> 21) & 0x1F) == base &&
-                        (short)(delay & 0xFFFF) == 4))
-                    source[base] = 0;
+
+                /* a1 observes the delay slot; the captured target does not. */
+                a1_value_after_delay = provenance[5];
+                terminal_jalr = look;
                 candidates++;
+                target_kind = "PLUS14";
+                a1_kind = a1_value_after_delay.kind == OUTER_PROV_BASE ?
+                        "BASE" : a1_value_after_delay.kind ==
+                        OUTER_PROV_PLUS04 ? "PLUS04" :
+                        a1_value_after_delay.kind == OUTER_PROV_PLUS14 ?
+                        "PLUS14" : "UNKNOWN";
+                if (!delay_supported)
+                    terminal_result = "OVERWRITTEN";
+                else if (a1_value_after_delay.kind != OUTER_PROV_PLUS04)
+                    terminal_result = "A1_UNKNOWN";
+                else if (a1_value_after_delay.id != candidate_outer_id)
+                    terminal_result = "DIFFERENT_BASE";
+                else {
+                    terminal_result = "MATCH";
+                    matched = 1;
+                }
                 if (reported < 16) {
-                    unsigned int back = offset;
-                    unsigned int back_start = offset > 0x40 ?
-                            offset - 0x40 : 0;
-                    unsigned int definition_found = 0;
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-outer14-exact-check] load_off=0x%X "
+                            "jalr_off=0x%X target_kind=%s target_id=%u "
+                            "a1_kind=%s a1_id=%u result=%s\n", offset, look,
+                            target_kind, target_value_before_delay.id,
+                            a1_kind, a1_value_after_delay.id, terminal_result);
+                    zeroCtrlDiagnosticsText(line);
                     snprintf(line, sizeof(line),
                             "[paf-a989-outer14-call-candidate] load_off=0x%X "
                             "jalr_off=0x%X base_reg=%u target_reg=%u\n",
@@ -5033,122 +8521,214 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                     snprintf(line, sizeof(line),
                             "[paf-a989-outer14-call-provenance] jalr_off=0x%X "
                             "a1_source=%s\n", look,
-                            source[5] ? "base_plus_0x04" : "UNKNOWN");
+                            a1_value_after_delay.kind == OUTER_PROV_PLUS04 &&
+                            a1_value_after_delay.id == candidate_outer_id ?
+                            "same_base_plus_0x04" : "UNKNOWN");
                     zeroCtrlDiagnosticsText(line);
-                    while (back > back_start) {
-                        unsigned int definition_off = back - 4;
-                        unsigned int definition =
-                                _lw(paf->text_addr + definition_off);
-                        unsigned int definition_opcode = definition >> 26;
-                        unsigned int definition_rs =
-                                (definition >> 21) & 0x1F;
-                        unsigned int definition_rt =
-                                (definition >> 16) & 0x1F;
-                        unsigned int definition_function = definition & 0x3F;
-                        int definition_destination;
-                        if (definition_off >= 4) {
-                            unsigned int prior = _lw(paf->text_addr +
-                                    definition_off - 4);
-                            unsigned int prior_opcode = prior >> 26;
-                            unsigned int prior_function = prior & 0x3F;
-                            if (prior_opcode == 1 || prior_opcode == 2 ||
-                                    prior_opcode == 3 ||
-                                    (prior_opcode >= 4 && prior_opcode <= 7) ||
-                                    (prior_opcode >= 0x14 &&
-                                        prior_opcode <= 0x17) ||
-                                    (prior_opcode == 0 &&
-                                        (prior_function == 8 ||
-                                         prior_function == 9)))
-                                break;
-                        }
-                        if (definition_opcode == 1 ||
-                                definition_opcode == 2 ||
-                                definition_opcode == 3 ||
-                                (definition_opcode >= 4 &&
-                                    definition_opcode <= 7) ||
-                                (definition_opcode >= 0x14 &&
-                                    definition_opcode <= 0x17) ||
-                                (definition_opcode == 0 &&
-                                    (definition_function == 8 ||
-                                     definition_function == 9)))
-                            break;
-                        definition_destination =
-                                zeroCtrlMipsGprWriteDestination(definition);
-                        if (definition_destination < 0) break;
-                        if ((unsigned int)definition_destination == base) {
-                            const char *kind = 0;
-                            unsigned int source_reg = definition_rs;
-                            int displacement = 0;
-                            if (zeroCtrlMipsMove(definition, base,
-                                        definition_rs) ||
-                                    zeroCtrlMipsMove(definition, base,
-                                        definition_rt)) {
-                                kind = "MOVE";
-                                source_reg = definition_rs == 0 ?
-                                        definition_rt : definition_rs;
-                            } else if (definition_opcode == 9 &&
-                                    definition_rt == base) {
-                                kind = "ADDIU";
-                                displacement =
-                                        (int)(short)(definition & 0xFFFF);
-                            } else if (definition_opcode == 0x23 &&
-                                    definition_rt == base) {
-                                kind = "LW";
-                                displacement =
-                                        (int)(short)(definition & 0xFFFF);
-                            }
-                            if (kind != 0) {
-                                snprintf(line, sizeof(line),
-                                        "[paf-a989-outer14-base-origin] "
-                                        "load_off=0x%X "
-                                        "status=LOCAL_DEFINITION "
-                                        "definition_off=0x%X kind=%s "
-                                        "source_reg=%u disp=%d "
-                                        "path=BRANCH_FREE_SUFFIX\n",
-                                        offset, definition_off, kind,
-                                        source_reg, displacement);
-                                zeroCtrlDiagnosticsText(line);
-                                definition_found = 1;
-                            }
-                            break;
-                        }
-                        back = definition_off;
-                    }
-                    if (!definition_found) {
-                        snprintf(line, sizeof(line),
-                                "[paf-a989-outer14-base-origin] "
-                                "load_off=0x%X status=UNKNOWN "
-                                "path=BRANCH_FREE_SUFFIX\n", offset);
-                        zeroCtrlDiagnosticsText(line);
-                    }
                     reported++;
                 }
-                if (source[5]) closure = 1;
+                if (delay_supported && !matched && a1_origin_reported < 8 &&
+                        a1_value_after_delay.kind != OUTER_PROV_PLUS04) {
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-outer14-a1-origin] load_off=0x%X "
+                            "jalr_off=0x%X writer_off=0x%X kind=%s "
+                            "base_reg=%u disp=%d\n", offset, look,
+                            a1_writer_off, a1_writer_kind, a1_writer_base,
+                            a1_writer_disp);
+                    zeroCtrlDiagnosticsText(line);
+                    a1_origin_reported++;
+                }
                 break;
             }
-            if (opcode == 0x23 && rs == base &&
-                    (short)(word & 0xFFFF) == 4 && rt != 0) {
-                source[rt] = 1;
-            } else if (zeroCtrlMipsMove(word, rd, rs) && rd != 0) {
-                source[rd] = source[rs];
-            } else if (zeroCtrlMipsMove(word, rd, rt) && rd != 0) {
-                source[rd] = source[rt];
-            } else if (opcode == 9 && (short)(word & 0xFFFF) == 0 && rt != 0) {
-                source[rt] = source[rs];
-            } else if (destination != 0) {
-                source[destination] = 0;
-            }
+
             if (opcode == 1 || opcode == 2 || opcode == 3 ||
                     (opcode >= 4 && opcode <= 7) ||
                     (opcode >= 0x14 && opcode <= 0x17) ||
-                    (opcode == 0 && function == 8)) break;
+                    (opcode == 0 && function == 8))
+                break;
+            destination = zeroCtrlMipsGprWriteDestination(word);
+            if (destination < 0) break;
+            if (zeroCtrlMipsMove(word, rd, rs) && rd != 0) {
+                provenance[rd] = provenance[rs];
+                if (rd == 5) {
+                    a1_writer_kind = "MOVE";
+                    a1_writer_off = look;
+                    a1_writer_base = rs;
+                    a1_writer_disp = 0;
+                }
+            } else if (zeroCtrlMipsMove(word, rd, rt) && rd != 0) {
+                provenance[rd] = provenance[rt];
+                if (rd == 5) {
+                    a1_writer_kind = "MOVE";
+                    a1_writer_off = look;
+                    a1_writer_base = rt;
+                    a1_writer_disp = 0;
+                }
+            } else if (opcode == 9 && (short)(word & 0xFFFF) == 0 && rt != 0) {
+                provenance[rt] = provenance[rs];
+                if (rt == 5) {
+                    a1_writer_kind = "ADDIU_ZERO";
+                    a1_writer_off = look;
+                    a1_writer_base = rs;
+                    a1_writer_disp = 0;
+                }
+            } else if (opcode == 0x23 && rt != 0) {
+                if (provenance[rs].kind == OUTER_PROV_BASE &&
+                        ((short)(word & 0xFFFF) == 4 ||
+                         (short)(word & 0xFFFF) == 0x14)) {
+                    provenance[rt].kind = (short)(word & 0xFFFF) == 4 ?
+                            OUTER_PROV_PLUS04 : OUTER_PROV_PLUS14;
+                    provenance[rt].id = provenance[rs].id;
+                } else {
+                    provenance[rt].kind = OUTER_PROV_BASE;
+                    provenance[rt].id = next_opaque_id++;
+                }
+                if (rt == 5) {
+                    a1_writer_kind = "LW";
+                    a1_writer_off = look;
+                    a1_writer_base = rs;
+                    a1_writer_disp = (int)(short)(word & 0xFFFF);
+                }
+            } else if (destination != 0) {
+                provenance[destination].kind = OUTER_PROV_UNKNOWN;
+                provenance[destination].id = 0;
+                if ((unsigned int)destination == 5) {
+                    a1_writer_kind = "UNKNOWN";
+                    a1_writer_off = look;
+                    a1_writer_base = 0;
+                    a1_writer_disp = 0;
+                }
+            }
+        }
+
+        if (matched) {
+            unsigned int back = offset;
+            unsigned int back_start = offset > 0x100 ? offset - 0x100 : 0;
+            unsigned int definition_found = 0;
+            const char *outer_origin = "UNKNOWN";
+            unsigned int search = offset;
+            unsigned int function_entry = 0;
+
+            while (back > back_start) {
+                unsigned int definition_off = back - 4;
+                unsigned int definition = _lw(paf->text_addr + definition_off);
+                unsigned int definition_opcode = definition >> 26;
+                unsigned int definition_rs = (definition >> 21) & 0x1F;
+                unsigned int definition_rt = (definition >> 16) & 0x1F;
+                unsigned int definition_function = definition & 0x3F;
+                int definition_destination;
+                if (definition_opcode == 1 || definition_opcode == 2 ||
+                        definition_opcode == 3 ||
+                        (definition_opcode >= 4 && definition_opcode <= 7) ||
+                        (definition_opcode >= 0x14 && definition_opcode <= 0x17) ||
+                        (definition_opcode == 0 &&
+                         (definition_function == 8 || definition_function == 9)))
+                    break;
+                definition_destination =
+                        zeroCtrlMipsGprWriteDestination(definition);
+                if (definition_destination < 0) break;
+                if ((unsigned int)definition_destination == base) {
+                    if (definition_opcode == 0x23)
+                        outer_origin = "LOCAL_LW";
+                    else if (definition_opcode == 9 &&
+                            (short)(definition & 0xFFFF) == 0 &&
+                            definition_rs >= 4 && definition_rs <= 7)
+                        outer_origin = definition_rs == 4 ? "ENTRY_A0" :
+                                definition_rs == 5 ? "ENTRY_A1" :
+                                definition_rs == 6 ? "ENTRY_A2" : "ENTRY_A3";
+                    else if ((zeroCtrlMipsMove(definition, base, definition_rs) ||
+                            zeroCtrlMipsMove(definition, base, definition_rt)) &&
+                            (definition_rs >= 4 && definition_rs <= 7))
+                        outer_origin = definition_rs == 4 ? "ENTRY_A0" :
+                                definition_rs == 5 ? "ENTRY_A1" :
+                                definition_rs == 6 ? "ENTRY_A2" : "ENTRY_A3";
+                    definition_found = 1;
+                    break;
+                }
+                back = definition_off;
+            }
+            snprintf(line, sizeof(line),
+                    "[paf-a989-outer14-base-origin] load_off=0x%X status=%s "
+                    "path=BRANCH_FREE_SUFFIX\n", offset,
+                    definition_found ? outer_origin : "UNKNOWN");
+            zeroCtrlDiagnosticsText(line);
+
+            while (search >= 4 && offset - search <= 0x100) {
+                unsigned int prologue = _lw(paf->text_addr + search);
+                if ((prologue >> 26) == 1 ||
+                        ((prologue >> 26) >= 4 && (prologue >> 26) <= 7) ||
+                        ((prologue >> 26) >= 0x14 && (prologue >> 26) <= 0x17) ||
+                        (prologue >> 26) == 2 ||
+                        ((prologue >> 26) == 0 &&
+                         ((prologue & 0x3F) == 8 || (prologue & 0x3F) == 9)))
+                    break;
+                if ((prologue >> 26) == 9 &&
+                        ((prologue >> 21) & 0x1F) == 29 &&
+                        ((prologue >> 16) & 0x1F) == 29 &&
+                        (short)(prologue & 0xFFFF) < 0) {
+                    unsigned int save;
+                    for (save = search + 4; save <= search + 0x20 &&
+                            save + 4 <= paf->text_size; save += 4) {
+                        unsigned int save_word = _lw(paf->text_addr + save);
+                        if ((save_word >> 26) == 0x2B &&
+                                ((save_word >> 21) & 0x1F) == 29 &&
+                                ((save_word >> 16) & 0x1F) == 31) {
+                            function_entry = search;
+                            break;
+                        }
+                    }
+                    if (function_entry) break;
+                }
+                search -= 4;
+            }
+            snprintf(line, sizeof(line),
+                    "[paf-a989-exact-dispatch] site=0x%X target_load=0x%X "
+                    "jalr=0x%X outer_reg=%u a1_reg=5 same_outer=1 "
+                    "outer_origin=%s\n", terminal_jalr, offset, terminal_jalr,
+                    base, outer_origin);
+            zeroCtrlDiagnosticsText(line);
+            snprintf(line, sizeof(line),
+                    "[paf-a989-exact-dispatch-function] site=0x%X entry=0x%X "
+                    "status=%s evidence=%s\n", terminal_jalr, function_entry,
+                    function_entry ? "VALID" : "UNKNOWN", function_entry ?
+                    "STACK_FRAME_AND_SAVED_RA" : "NONE");
+            zeroCtrlDiagnosticsText(line);
+            exact_dispatches++;
+            exact_same_outer = 1;
+            exact_entry = function_entry;
+            if (function_entry) {
+                unsigned int caller_off, caller_reported = 0;
+                for (caller_off = 0; caller_off + 4 <= paf->text_size &&
+                        caller_reported < 16; caller_off += 4) {
+                    unsigned int caller_word = _lw(paf->text_addr + caller_off);
+                    unsigned int caller_opcode = caller_word >> 26;
+                    unsigned int arg;
+                    if ((caller_opcode != 2 && caller_opcode != 3) ||
+                            zeroCtrlMipsJumpTarget(paf->text_addr + caller_off,
+                                caller_word) != paf->text_addr + function_entry)
+                        continue;
+                    snprintf(line, sizeof(line),
+                            "[paf-a989-exact-dispatch-caller] entry=0x%X "
+                            "caller=0x%X kind=%s\n", function_entry, caller_off,
+                            caller_opcode == 3 ? "JAL" : "J");
+                    zeroCtrlDiagnosticsText(line);
+                    for (arg = 0; arg < 4; arg++) {
+                        snprintf(line, sizeof(line),
+                                "[paf-a989-exact-dispatch-arg] caller=0x%X "
+                                "arg=a%u kind=UNKNOWN reg=%u disp=0\n",
+                                caller_off, arg, arg + 4);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                    caller_reported++;
+                }
+            }
         }
     }
     snprintf(line, sizeof(line),
             "[paf-a989-outer14-scan] candidates=%u reported=%u\n",
             candidates, reported);
     zeroCtrlDiagnosticsText(line);
-    if (closure) {
+    if (exact_same_outer) {
         zeroCtrlDiagnosticsText(
                 "[paf-a989-outer14-dispatch-shape] validation=1 "
                 "target_field_off=0x14 arg1_field_off=0x04\n");
@@ -5158,6 +8738,29 @@ static void zeroCtrlWritePafA989ConstructedFlows(SceModule2 *paf,
                 "target=0x%08X a1=inner_container execution=NOT_OBSERVED\n",
                 constructed[1]);
         zeroCtrlDiagnosticsText(line);
+    }
+    if (root_segment != 0xFFFFFFFFU && root_segment < paf->nsegment &&
+            root_slot >= paf->segmentaddr[root_segment] &&
+            zeroCtrlVshModuleRangeValid(paf, root_slot, 4)) {
+        unsigned int root_off = root_slot - paf->segmentaddr[root_segment];
+        const char *root_status = exact_dispatches && exact_entry &&
+                exact_header_link_proven ? "PARTIALLY_LINKED" : "UNKNOWN";
+        snprintf(line, sizeof(line),
+                "[paf-a989-root-slot] segment=%u segment_off=0x%X "
+                "value=0x%08X\n", root_segment, root_off, _lw(root_slot));
+        zeroCtrlDiagnosticsText(line);
+        snprintf(line, sizeof(line),
+                "[paf-a989-exact-dispatch-root] status=%s root_segment=%u "
+                "root_off=0x%X dispatch_entry=0x%X\n", root_status,
+                root_segment, root_off, exact_entry);
+        zeroCtrlDiagnosticsText(line);
+    }
+    if (exact_dispatches && exact_same_outer && adapter_valid) {
+        zeroCtrlDiagnosticsText(
+                "[paf-a989-dispatch-chain] validation=1 "
+                "outer_plus_14=constructed_1 outer_plus_04=inner "
+                "constructed1_a1=inner inner_plus_0C=vsh589c "
+                "inner_plus_04=callback_a0_source\n");
     }
     zeroCtrlWritePafA989NearbyFlows(paf);
 }
@@ -5923,7 +9526,7 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
     char line[256];
 
     if (model != 0 || sceKernelDevkitVersion() != 0x06060110 ||
-            slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
+            !slide_diag.functional_enabled || !slide_diag.minimal_memory_test ||
             !slide_diag.vsh_module_seen)
         return;
     vsh = sceKernelFindModuleByName("vsh_module");
@@ -6259,6 +9862,61 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
         0xFFFFFFFF, 0xFFFFFFFF
     };
+    unsigned int observed_functional_home[11] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_bridge[13] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF
+    };
+    unsigned int observed_functional_bridge_reject2[14] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_vsh5704_trace[4] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_paf_a989_target_trace[6] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_a989_root_state[4] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_a989_target_life[13] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF
+    };
+    unsigned int a989_target_node = 0;
+    unsigned int a989_target_outer = 0;
+    unsigned int a989_target_inner = 0;
+    unsigned int a989_target_dependency = 0;
+    unsigned int observed_a989_target_dependency[5] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_bridge_livein[10] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_bridge_blocker[8] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    unsigned int observed_functional_bridge_install[8] = {
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF
+    };
+    int clockpath_written = 0;
+    int constructed0_dependency_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -6273,7 +9931,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     slide_diag.bsman.activation_hits_addr);
             unsigned int state;
             zeroCtrlRefreshSonyStartTrace();
-            if (!vsh3f568_scan_written && !slide_diag.functional_enabled &&
+            if (!vsh3f568_scan_written && slide_diag.functional_enabled &&
                     slide_diag.minimal_memory_test && slide_diag.vsh_module_seen) {
                 vsh3f568_scan_written = 1;
                 zeroCtrlWriteFunctionalVsh3f568Analysis();
@@ -6398,6 +10056,393 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             "stage=%u validation=%u install=%u cache_sync=%u\n",
                             post_t39_install[0], post_t39_install[1],
                             post_t39_install[2], post_t39_install[3]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+            }
+            if (slide_diag.functional_enabled && slide_diag.bridge_registered) {
+                unsigned int state[13];
+                unsigned int livein[10];
+                unsigned int blocker[8];
+                unsigned int install_state[8];
+                unsigned int reject2[14] = { 0 };
+                install_state[0] = slide_diag.bridge_install_attempts;
+                install_state[1] = slide_diag.bridge_resolve_stage;
+                install_state[2] = slide_diag.bridge_resolve_reject;
+                install_state[3] = slide_diag.functional_request_armed;
+                install_state[4] = slide_diag.bridge_registered;
+                install_state[5] = slide_diag.bridge_validation;
+                install_state[6] = slide_diag.bridge_install;
+                install_state[7] = slide_diag.bridge_cache_sync;
+                if (memcmp(install_state, observed_functional_bridge_install,
+                            sizeof(install_state)) != 0) {
+                    memcpy(observed_functional_bridge_install, install_state,
+                            sizeof(install_state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-314a4-install] attempts=%u "
+                            "stage=%u reject=%u armed=%u registered=%u "
+                            "validation=%u install=%u cache_sync=%u\n",
+                            install_state[0], install_state[1], install_state[2],
+                            install_state[3], install_state[4], install_state[5],
+                            install_state[6], install_state[7]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                if (!constructed0_dependency_written &&
+                        slide_diag.bridge_validation == 1 &&
+                        slide_diag.bridge_install == 1) {
+                    SceModule2 *dependency_paf = sceKernelFindModuleByName(
+                            "scePaf_Module");
+                    if (zeroCtrlLoadedModuleMetadataValid(dependency_paf)) {
+                        constructed0_dependency_written = 1;
+                        zeroCtrlWriteConstructed0DependencyConsumer();
+                    }
+                }
+                livein[0] = slide_diag.bridge_livein_validation;
+                livein[1] = slide_diag.bridge_livein_arg[0];
+                livein[2] = slide_diag.bridge_livein_arg[1];
+                livein[3] = slide_diag.bridge_livein_arg[2];
+                livein[4] = slide_diag.bridge_livein_arg[3];
+                livein[5] = slide_diag.bridge_livein_blocker_domain;
+                livein[6] = slide_diag.bridge_livein_blocker_call;
+                livein[7] = slide_diag.bridge_livein_blocker_arg;
+                livein[8] = slide_diag.bridge_livein_blocker_reason;
+                livein[9] = slide_diag.bridge_livein_blocker_taint;
+                if (memcmp(livein, observed_functional_bridge_livein,
+                            sizeof(livein)) != 0) {
+                    memcpy(observed_functional_bridge_livein, livein,
+                            sizeof(livein));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-314a4-livein] validation=%u "
+                            "a0=%s a1=%s a2=%s a3=%s blocker_domain=%u "
+                            "blocker_off=0x%X blocker_arg=%u blocker_reason=%u "
+                            "blocker_taint=0x%08X\n", livein[0],
+                            zeroCtrlBridgeLiveInClassName(livein[1]),
+                            zeroCtrlBridgeLiveInClassName(livein[2]),
+                            zeroCtrlBridgeLiveInClassName(livein[3]),
+                            zeroCtrlBridgeLiveInClassName(livein[4]),
+                            livein[5], livein[6], livein[7], livein[8],
+                            livein[9]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                blocker[0] = slide_diag.bridge_livein_blocker_domain;
+                blocker[1] = slide_diag.bridge_livein_blocker_call;
+                blocker[2] = slide_diag.bridge_livein_blocker_prev_word;
+                blocker[3] = slide_diag.bridge_livein_blocker_word;
+                blocker[4] = slide_diag.bridge_livein_blocker_next_word;
+                blocker[5] = slide_diag.bridge_livein_blocker_reason;
+                blocker[6] = slide_diag.bridge_livein_blocker_taint;
+                blocker[7] = slide_diag.bridge_livein_blocker_arg;
+                if (blocker[0] != ZERO_BRIDGE_BLOCKER_NONE &&
+                        memcmp(blocker, observed_functional_bridge_blocker,
+                            sizeof(blocker)) != 0) {
+                    memcpy(observed_functional_bridge_blocker, blocker,
+                            sizeof(blocker));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-314a4-blocker] domain=%u "
+                            "off=0x%X prev=0x%08X word=0x%08X next=0x%08X "
+                            "reason=%u taint=0x%08X arg=%u\n", blocker[0],
+                            blocker[1], blocker[2], blocker[3], blocker[4],
+                            blocker[5], blocker[6], blocker[7]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                state[0] = slide_diag.bridge_validation;
+                state[1] = slide_diag.bridge_install;
+                state[2] = slide_diag.bridge_cache_sync;
+                state[3] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[9]);
+                state[4] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[10]);
+                state[5] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[11]);
+                state[6] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[12]);
+                state[7] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[13]);
+                state[8] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[8]);
+                state[9] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[14]);
+                state[10] = zeroCtrlReadHelperCounter(
+                        slide_diag.triggers[0].request_addr);
+                state[11] = slide_diag.functional_trigger_consumed;
+                state[12] = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_scalar[15]);
+                if (memcmp(state, observed_functional_bridge,
+                            sizeof(state)) != 0) {
+                    memcpy(observed_functional_bridge, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-314a4-bridge] "
+                            "validation=%u install=%u cache_sync=%u hits=%u "
+                            "request_seen=%u attempts=%u stage0_calls=%u "
+                            "stage1_calls=%u busy=%u reject=%u request=%u "
+                            "consumed=%u reject_object=0x%08X\n", state[0],
+                            state[1], state[2],
+                            state[3], state[4], state[5], state[6], state[7],
+                            state[8], state[9], state[10], state[11], state[12]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                if (slide_diag.bridge_validation == 1 &&
+                        slide_diag.bridge_install == 1 && state[9] == 2 &&
+                        state[12] != 0) {
+                    unsigned int lower = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_scalar[5]);
+                    unsigned int upper = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_scalar[6]);
+                    unsigned int object = state[12];
+                    unsigned int inner = 0;
+
+                    reject2[0] = object;
+                    reject2[1] = zeroCtrlPsp1000BridgeUserRangeValid(object,
+                            0x1C, lower, upper);
+                    if (reject2[1]) {
+                        reject2[2] = _lw(object + 0x00);
+                        reject2[3] = _lw(object + 0x04);
+                        reject2[4] = _lw(object + 0x08);
+                        reject2[5] = _lw(object + 0x0C);
+                        reject2[6] = _lw(object + 0x14);
+                        reject2[7] = _lw(object + 0x18);
+                        inner = reject2[3];
+                        reject2[8] = zeroCtrlPsp1000BridgeUserRangeValid(inner,
+                                0x10, lower, upper);
+                        if (reject2[8]) {
+                            reject2[9] = _lw(inner + 0x04);
+                            reject2[10] = _lw(inner + 0x0C);
+                        }
+                    }
+                    reject2[11] = slide_diag.bridge_constructed0;
+                    reject2[12] = slide_diag.bridge_constructed1;
+                    reject2[13] = slide_diag.bridge_callback;
+                    if (memcmp(reject2, observed_functional_bridge_reject2,
+                                sizeof(reject2)) != 0) {
+                        memcpy(observed_functional_bridge_reject2, reject2,
+                                sizeof(reject2));
+                        snprintf(line, sizeof(line),
+                                "[psp1000-functional-314a4-reject2-object] "
+                                "object=0x%08X valid=%u f00=0x%08X f04=0x%08X "
+                                "f08=0x%08X f0c=0x%08X f14=0x%08X f18=0x%08X\n",
+                                reject2[0], reject2[1], reject2[2], reject2[3],
+                                reject2[4], reject2[5], reject2[6], reject2[7]);
+                        zeroCtrlDiagnosticsText(line);
+                        snprintf(line, sizeof(line),
+                                "[psp1000-functional-314a4-reject2-inner] "
+                                "valid=%u inner04=0x%08X inner0c=0x%08X "
+                                "expected0=0x%08X expected14=0x%08X "
+                                "expected_cb=0x%08X\n", reject2[8], reject2[9],
+                                reject2[10], reject2[11], reject2[12],
+                                reject2[13]);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                }
+                if (slide_diag.paf_a989_target_trace_registered) {
+                    unsigned int capture[6];
+                    capture[0] = slide_diag.paf_a989_target_trace_registered;
+                    capture[1] = slide_diag.paf_a989_target_trace_validation;
+                    capture[2] = slide_diag.paf_a989_target_trace_install;
+                    capture[3] = slide_diag.paf_a989_target_trace_cache_sync;
+                    capture[4] = zeroCtrlReadHelperCounter(
+                            slide_diag.paf_a989_target_trace_scalar[0]);
+                    capture[5] = zeroCtrlReadHelperCounter(
+                            slide_diag.paf_a989_target_trace_scalar[1]);
+                    if (memcmp(capture, observed_paf_a989_target_trace,
+                                sizeof(capture)) != 0) {
+                        memcpy(observed_paf_a989_target_trace, capture,
+                                sizeof(capture));
+                        snprintf(line, sizeof(line),
+                                "[psp1000-paf-a989-target-trace] registered=%u "
+                                "validation=%u install=%u cache_sync=%u "
+                                "entry_hits=%u exact_hits=%u\n", capture[0],
+                                capture[1], capture[2], capture[3], capture[4],
+                                capture[5]);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                    if (capture[5] != 0 && a989_target_node == 0) {
+                        unsigned int lower = zeroCtrlReadHelperCounter(
+                                slide_diag.bridge_scalar[5]);
+                        unsigned int upper = zeroCtrlReadHelperCounter(
+                                slide_diag.bridge_scalar[6]);
+                        unsigned int dependency_valid = 0;
+                        a989_target_node = zeroCtrlReadHelperCounter(
+                                slide_diag.paf_a989_target_trace_scalar[2]);
+                        a989_target_outer = zeroCtrlReadHelperCounter(
+                                slide_diag.paf_a989_target_trace_scalar[3]);
+                        a989_target_inner = zeroCtrlReadHelperCounter(
+                                slide_diag.paf_a989_target_trace_scalar[4]);
+                        snprintf(line, sizeof(line),
+                                "[psp1000-a989-target-capture] entry_hits=%u "
+                                "exact_hits=%u node=0x%08X outer=0x%08X "
+                                "inner=0x%08X exact=1\n", capture[4], capture[5],
+                                a989_target_node, a989_target_outer,
+                                a989_target_inner);
+                        zeroCtrlDiagnosticsText(line);
+                        if (zeroCtrlPsp1000BridgeUserRangeValid(
+                                    a989_target_inner, 0x10, lower, upper) &&
+                                _lw(a989_target_inner + 0x0C) ==
+                                    slide_diag.bridge_callback) {
+                            a989_target_dependency =
+                                    _lw(a989_target_inner + 0x08);
+                            dependency_valid =
+                                    zeroCtrlPsp1000BridgeUserRangeValid(
+                                        a989_target_dependency, 0x10,
+                                        lower, upper);
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-capture] "
+                                    "inner08=0x%08X valid=%u\n",
+                                    a989_target_dependency, dependency_valid);
+                        } else {
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-capture-missed] "
+                                    "inner=0x%08X\n", a989_target_inner);
+                        }
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                }
+                if (slide_diag.bridge_validation == 1 &&
+                        slide_diag.bridge_install == 1) {
+                    SceModule2 *paf = sceKernelFindModuleByName(
+                            "scePaf_Module");
+                    unsigned int root_state[4] = { 0, 0, 0, 0 };
+                    unsigned int lower = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_scalar[5]);
+                    unsigned int upper = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_scalar[6]);
+                    unsigned int current_header_valid = 0;
+                    unsigned int current_node = 0;
+
+                    if (zeroCtrlLoadedModuleMetadataValid(paf) &&
+                            zeroCtrlVshModuleRangeValid(paf,
+                                slide_diag.bridge_root_slot, 4)) {
+                        unsigned int header = _lw(slide_diag.bridge_root_slot);
+                        root_state[0] = header;
+                        if (zeroCtrlPsp1000BridgeUserRangeValid(header, 8,
+                                    lower, upper)) {
+                            unsigned int node = _lw(header + 4);
+                            current_header_valid = 1;
+                            current_node = node;
+                            root_state[1] = node;
+                            root_state[2] = node == header;
+                            if (node != header &&
+                                    zeroCtrlPsp1000BridgeUserRangeValid(node, 8,
+                                        lower, upper)) {
+                                unsigned int outer = _lw(node + 0x04);
+                                if (zeroCtrlPsp1000BridgeUserRangeValid(outer,
+                                            0x1C, lower, upper)) {
+                                    unsigned int f00 = _lw(outer + 0x00);
+                                    unsigned int inner = _lw(outer + 0x04);
+                                    unsigned int f08 = _lw(outer + 0x08);
+                                    unsigned int f0c = _lw(outer + 0x0C);
+                                    unsigned int f14 = _lw(outer + 0x14);
+                                    unsigned int f18 = _lw(outer + 0x18);
+                                    unsigned int inner_valid =
+                                            zeroCtrlPsp1000BridgeUserRangeValid(
+                                                inner, 0x10, lower, upper);
+                                    if (f00 == slide_diag.bridge_constructed0 &&
+                                            f08 == 0xFFFFFFFF &&
+                                            f0c == 0xFFFFFFFF &&
+                                            f14 ==
+                                                slide_diag.bridge_constructed1 &&
+                                            f18 == 0 && inner_valid &&
+                                            _lw(inner + 0x0C) ==
+                                                slide_diag.bridge_callback) {
+                                        root_state[3] = 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (memcmp(root_state, observed_a989_root_state,
+                                sizeof(root_state)) != 0) {
+                        memcpy(observed_a989_root_state, root_state,
+                                sizeof(root_state));
+                        snprintf(line, sizeof(line),
+                                "[psp1000-a989-root-state] slot_value=0x%08X "
+                                "next=0x%08X self_link=%u "
+                                "expected_outer_present=%u\n", root_state[0],
+                                root_state[1], root_state[2], root_state[3]);
+                        zeroCtrlDiagnosticsText(line);
+                    }
+                    if (a989_target_node != 0) {
+                        unsigned int life[13] = { 0 };
+                        life[0] = current_header_valid &&
+                                current_node == a989_target_node;
+                        life[1] = zeroCtrlPsp1000BridgeUserRangeValid(
+                                a989_target_node, 8, lower, upper);
+                        if (life[1]) life[2] = _lw(a989_target_node + 0x04);
+                        life[3] = zeroCtrlPsp1000BridgeUserRangeValid(
+                                a989_target_outer, 0x1C, lower, upper);
+                        if (life[3]) {
+                            life[4] = _lw(a989_target_outer + 0x00);
+                            life[5] = _lw(a989_target_outer + 0x04);
+                            life[6] = _lw(a989_target_outer + 0x08);
+                            life[7] = _lw(a989_target_outer + 0x0C);
+                            life[8] = _lw(a989_target_outer + 0x14);
+                            life[9] = _lw(a989_target_outer + 0x18);
+                        }
+                        life[10] = zeroCtrlPsp1000BridgeUserRangeValid(
+                                a989_target_inner, 0x10, lower, upper);
+                        if (life[10]) {
+                            life[11] = _lw(a989_target_inner + 0x04);
+                            life[12] = _lw(a989_target_inner + 0x0C);
+                        }
+                        if (memcmp(life, observed_a989_target_life,
+                                    sizeof(life)) != 0) {
+                            memcpy(observed_a989_target_life, life,
+                                    sizeof(life));
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-target-life] linked=%u "
+                                    "node_valid=%u node04=0x%08X outer_valid=%u "
+                                    "f00=0x%08X f04=0x%08X f08=0x%08X "
+                                    "f0c=0x%08X f14=0x%08X f18=0x%08X\n",
+                                    life[0], life[1], life[2], life[3], life[4],
+                                    life[5], life[6], life[7], life[8], life[9]);
+                            zeroCtrlDiagnosticsText(line);
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-target-life-inner] valid=%u "
+                                    "inner04=0x%08X inner0c=0x%08X\n",
+                                    life[10], life[11], life[12]);
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                    }
+                    if (a989_target_dependency != 0) {
+                        unsigned int dependency[5] = { 0, 0, 0, 0, 0 };
+                        dependency[0] = zeroCtrlPsp1000BridgeUserRangeValid(
+                                a989_target_dependency, 0x10, lower, upper);
+                        if (dependency[0]) {
+                            dependency[1] = _lw(a989_target_dependency + 0x00);
+                            dependency[2] = _lw(a989_target_dependency + 0x04);
+                            dependency[3] = _lw(a989_target_dependency + 0x08);
+                            dependency[4] = _lw(a989_target_dependency + 0x0C);
+                        }
+                        if (memcmp(dependency,
+                                    observed_a989_target_dependency,
+                                    sizeof(dependency)) != 0) {
+                            memcpy(observed_a989_target_dependency, dependency,
+                                    sizeof(dependency));
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-life] valid=%u "
+                                    "w00=0x%08X w04=0x%08X w08=0x%08X "
+                                    "w0c=0x%08X\n", dependency[0],
+                                    dependency[1], dependency[2], dependency[3],
+                                    dependency[4]);
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                    }
+                }
+            }
+            if (slide_diag.functional_enabled &&
+                    slide_diag.vsh5704_trace_registered) {
+                unsigned int trace[4];
+                trace[0] = slide_diag.vsh5704_trace_validation;
+                trace[1] = slide_diag.vsh5704_trace_install;
+                trace[2] = slide_diag.vsh5704_trace_cache_sync;
+                trace[3] = zeroCtrlReadHelperCounter(
+                        slide_diag.vsh5704_trace_hit_counter);
+                if (memcmp(trace, observed_vsh5704_trace,
+                            sizeof(trace)) != 0) {
+                    memcpy(observed_vsh5704_trace, trace, sizeof(trace));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-vsh5704-registration-trace] "
+                            "validation=%u install=%u cache_sync=%u hits=%u "
+                            "original_target_off=0x3F568\n", trace[0], trace[1],
+                            trace[2], trace[3]);
                     zeroCtrlDiagnosticsText(line);
                 }
             }
@@ -6572,7 +10617,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             sizeof(state)) != 0) {
                     memcpy(observed_functional_return_install, state, sizeof(state));
                     snprintf(line, sizeof(line),
-                            "[psp1000-functional-activation-return-install] "
+                            "[psp1000-functional-paf-dispatch-return-install] "
                             "rev=1 validation=%u install=%u cache_sync=%u\n",
                             state[0], state[1], state[2]);
                     zeroCtrlDiagnosticsText(line);
@@ -6593,7 +10638,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 if (memcmp(state, observed_functional_return, sizeof(state)) != 0) {
                     memcpy(observed_functional_return, state, sizeof(state));
                     snprintf(line, sizeof(line),
-                            "[psp1000-functional-activation-return] returns=%u "
+                            "[psp1000-functional-paf-dispatch-return] returns=%u "
                             "paf_ret=%u bs_ret=%u state_ret=%u vsh_ret=%u "
                             "first_ra=0x%08X last_ra=0x%08X ra_changes=%u "
                             "first_v0=0x%08X last_v0=0x%08X v0_changes=%u\n",
@@ -6661,6 +10706,45 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 zeroCtrlDiagnosticsText(
                         "[psp1000-functional] startup_58d4_armed=1\n");
                 minimal_memory_written |= 0x0200;
+            }
+            if (!clockpath_written && slide_diag.functional_enabled &&
+                    slide_diag.vsh_module_seen &&
+                    slide_diag.functional_request_armed &&
+                    zeroCtrlWriteFunctionalClockPathAnalysis())
+                clockpath_written = 1;
+            if (slide_diag.functional_enabled) {
+                ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
+                SceModule2 *helper =
+                        sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+                unsigned int state[11];
+                state[0] = slide_diag.functional_home_press_hits;
+                state[1] = slide_diag.functional_home_first_load_attempts;
+                state[2] = slide_diag.functional_home_first_load_published;
+                state[3] = slide_diag.functional_home_first_load_reject_reason;
+                state[4] = slide_diag.functional_home_open_pending;
+                state[5] = 0xFFFFFFFF;
+                if (zeroCtrlLoadedModuleMetadataValid(helper) &&
+                        trigger->request_addr != 0 &&
+                        (trigger->request_addr & 3) == 0 &&
+                        zeroCtrlVshModuleRangeValid(helper,
+                            trigger->request_addr, 4))
+                    state[5] = _lw(trigger->request_addr);
+                state[6] = zeroCtrlReadTriggerHits(0);
+                state[7] = slide_diag.functional_trigger_consumed;
+                state[8] = slide_diag.bsman.functional_validation;
+                state[9] = slide_diag.bsman.functional_install;
+                state[10] = slide_diag.bsman.functional_cache_sync;
+                if (memcmp(state, observed_functional_home, sizeof(state)) != 0) {
+                    memcpy(observed_functional_home, state, sizeof(state));
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-home] press=%u attempt=%u "
+                            "published=%u reject=%u pending=%u request=%u "
+                            "hit=%u consumed=%u compat=%u/%u/%u\n",
+                            state[0], state[1], state[2], state[3], state[4],
+                            state[5], state[6], state[7], state[8], state[9],
+                            state[10]);
+                    zeroCtrlDiagnosticsText(line);
+                }
             }
             if (slide_diag.functional_request_armed &&
                     !slide_diag.functional_trigger_consumed) {
@@ -9416,7 +13500,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     unsigned int paf_matches = 0, bsman_matches = 0, vshbridge_matches = 0;
     unsigned int bsman_callers = 0, bsman_caller = 0;
     unsigned int owner[4], original[4], replacement[4], leaf[4], leaf_size[4];
-    unsigned int scalar[40], scalar_count = 0, i;
+    unsigned int scalar[40], scalar_count = 0, initial_mode, i;
 
     bsman->functional_activation_stage = 1;
     if (!slide_diag.functional_enabled || model != 0 ||
@@ -9587,10 +13671,11 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
 
     bsman->activation_addr = activation;
     bsman->caller_addr = owner[1];
+    initial_mode = slide_diag.functional_home_open_pending ? 1 : 0;
     _sw(0, bsman->prefix_path_mask_addr);
     _sw(paf_stub, bsman->prefix_paf_target_addr);
     _sw(0, bsman->prefix_paf_ra_addr);
-    _sw(1, bsman->prefix_paf_compat_mode_addr);
+    _sw(initial_mode, bsman->prefix_paf_compat_mode_addr);
     _sw(0, bsman->prefix_paf_natural_result_addr);
     _sw(0, bsman->prefix_paf_substitution_hits_addr);
     _sw(0, bsman->prefix_paf_return_hits_addr);
@@ -9600,7 +13685,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0, bsman->trace_stage_addr);
     _sw(0, bsman->post_path_mask_addr);
     _sw(0, bsman->bsman_natural_result_addr);
-    _sw(1, bsman->bsman_compat_mode_addr);
+    _sw(initial_mode, bsman->bsman_compat_mode_addr);
     _sw(0, bsman->bsman_substitution_hits_addr);
     _sw(0, bsman->bsman_effective_result_addr);
     _sw(0, bsman->bsman_return_hits_addr);
@@ -9610,7 +13695,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0, bsman->post_vsh_return_hits_addr);
     _sw(0, bsman->post_vsh_entry_hits_addr);
     _sw(0xFFFFFFFF, bsman->post_vsh_argument_addr);
-    _sw(1, bsman->post_vsh_compat_mode_addr);
+    _sw(initial_mode, bsman->post_vsh_compat_mode_addr);
     _sw(0xFFFFFFFF, bsman->post_vsh_effective_result_addr);
     _sw(0, bsman->post_vsh_substitution_hits_addr);
     _sw(0, bsman->state_zero_path_mask_addr);
@@ -9619,7 +13704,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     _sw(0xFFFFFFFF, bsman->state_zero_value_addr[6]);
     _sw(0, bsman->state_zero_counter_addr[1]);
     _sw(0, bsman->state_zero_counter_addr[2]);
-    _sw(1, bsman->state_zero_15to14_compat_mode_addr);
+    _sw(initial_mode, bsman->state_zero_15to14_compat_mode_addr);
     _sw(0xFFFFFFFF, bsman->state_zero_15to14_effective_result_addr);
     _sw(0, bsman->state_zero_15to14_substitution_hits_addr);
     for (i = 0; i < scalar_count; i++)
@@ -9635,6 +13720,7 @@ static void zeroCtrlInstallPsp1000FunctionalCompat(SceModule2 *mod) {
     bsman->functional_validation = 1;
     bsman->functional_install = 1;
     bsman->functional_cache_sync = 1;
+    slide_diag.functional_home_open_pending = 0;
     bsman->functional_activation_stage = 13;
 }
 
@@ -9918,32 +14004,49 @@ static void zeroCtrlInstallPsp1000ExitDiagnostic(SceModule2 *mod) {
     b->functional_exit_cache_sync = 1;
 }
 
-static void zeroCtrlInstallPsp1000ActivationReturnDiagnostic(SceModule2 *mod) {
-    static const unsigned int epilogue[9] = {
-        0x8FB60018, 0x8FB50014, 0x8FB40010, 0x8FB3000C, 0x8FB20008,
-        0x8FB10004, 0x8FB00000, 0x03E00008, 0x27BD0020
+static void zeroCtrlInstallPsp1000PafDispatchReturnDiagnostic(SceModule2 *mod) {
+    static const unsigned int fingerprint_offset[14] = {
+        0xDEA1C, 0xDEA20, 0xDEA28, 0xDEA2C, 0xDEA30,
+        0xDEABC, 0xDEAC0,
+        0xDEAD8, 0xDEADC, 0xDEAE0, 0xDEAE4, 0xDEAE8, 0xDEAEC, 0xDEAF0
+    };
+    static const unsigned int fingerprint[14] = {
+        0x27BDFFD0, 0xAFB00020, 0xAFBF002C, 0xAFB20028, 0xAFB10024,
+        0x0100F809, 0x8CE7002C,
+        0x8FBF002C, 0x8FB20028, 0x8FB10024, 0x8FB00020, 0x00601021,
+        0x03E00008, 0x27BD0030
     };
     ZeroCtrlBSManEvidence *b = &slide_diag.bsman;
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
-    unsigned int a, owner, replacement, i;
+    SceModule2 *paf = sceKernelFindModuleByName("scePaf_Module");
+    unsigned int owner, replacement, jump, caller, i;
     if (!slide_diag.functional_enabled || model != 0 ||
             sceKernelDevkitVersion() != 0x06060110 ||
             !b->functional_validation || !b->functional_install ||
             !b->functional_cache_sync || !b->functional_return_registered ||
             !zeroCtrlLoadedModuleMetadataValid(mod) ||
-            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
-    a = mod->text_addr + 0x9304;
-    if (b->activation_addr != a ||
-            !zeroCtrlVshModuleRangeValid(mod, a + 0x50, 0x24)) return;
-    for (i = 0; i < 9; i++)
-        if (_lw(a + 0x50 + i * 4) != epilogue[i]) return;
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            !zeroCtrlLoadedModuleMetadataValid(paf) ||
+            paf->text_addr > 0xFFFFFFFFU - 0xDECE0 ||
+            !zeroCtrlVshModuleRangeValid(paf, paf->text_addr + 0xDEA1C,
+                0x2C8)) return;
+    for (i = 0; i < 14; i++)
+        if (_lw(paf->text_addr + fingerprint_offset[i]) != fingerprint[i]) return;
+    jump = _lw(paf->text_addr + 0xDEAC4);
+    if ((jump >> 26) != 2 || zeroCtrlMipsJumpTarget(
+                paf->text_addr + 0xDEAC4, jump) != paf->text_addr + 0xDEA64 ||
+            _lw(paf->text_addr + 0xDEAC8) != 0x8E0901A0) return;
+    caller = _lw(paf->text_addr + 0xDECD8);
+    if ((caller >> 26) != 3 || zeroCtrlMipsJumpTarget(
+                paf->text_addr + 0xDECD8, caller) != paf->text_addr + 0xDEA1C)
+        return;
     if (!zeroCtrlVshModuleRangeValid(helper, b->functional_return_leaf,
                 b->functional_return_leaf_size)) return;
     for (i = 0; i < 7; i++)
         if ((b->functional_return_scalar[i] & 3) ||
                 !zeroCtrlVshModuleRangeValid(helper,
                     b->functional_return_scalar[i], 4)) return;
-    owner = a + 0x6C;
+    owner = paf->text_addr + 0xDEAEC;
     replacement = 0x08000000 |
             ((b->functional_return_leaf >> 2) & 0x03FFFFFF);
     if (((owner + 4) & 0xF0000000) !=
@@ -11222,6 +15325,18 @@ static void zeroCtrlInstallBSManClosedShim(SceModule2 *mod) {
 int OnModuleStart(SceModule2 *mod) {
         zeroCtrlWriteDebug("Module: %s\n", mod->modname);
 
+        if (slide_diag.functional_enabled && slide_diag.bridge_registered &&
+                !slide_diag.bridge_install)
+                zeroCtrlInstallVshCtrl314A4Bridge();
+        if (slide_diag.functional_enabled &&
+                slide_diag.paf_a989_target_trace_registered &&
+                !slide_diag.paf_a989_target_trace_install)
+                zeroCtrlInstallPafA989TargetTrace();
+        if (slide_diag.functional_enabled &&
+                slide_diag.vsh5704_trace_registered &&
+                !slide_diag.vsh5704_trace_install)
+                zeroCtrlInstallVsh5704RegistrationTrace();
+
         if (zeroCtrlIsPsp1000SlideExperimentEnabled() &&
                 strcmp(mod->modname, "slide_plugin_module") == 0) {
                 int previous_result;
@@ -11247,7 +15362,6 @@ int OnModuleStart(SceModule2 *mod) {
                 zeroCtrlInstallSonyStartTrace(mod);
                 if (slide_diag.functional_enabled) {
                     zeroCtrlInstallPsp1000FunctionalCompat(mod);
-                    zeroCtrlInstallPsp1000PostBSRouteDiagnostic(mod);
                 } else {
                     zeroCtrlInstallBSManClosedShim(mod);
                 }
@@ -11463,6 +15577,149 @@ void zeroCtrlSetClockSpeed(void) {
 #define ALL_FUNCTION (PSP_CTRL_SELECT|PSP_CTRL_START|PSP_CTRL_HOME|PSP_CTRL_HOLD|PSP_CTRL_NOTE)
 #define ALL_CTRL  (ALL_ALLOW|ALL_BUTTON|ALL_TRIGGER|ALL_FUNCTION)
 
+static void zeroCtrlArmPsp1000FunctionalCompatFromHome(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+    unsigned int address[4], mode[4], i;
+
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110 ||
+            !bsman->functional_validation || !bsman->functional_install ||
+            !bsman->functional_cache_sync ||
+            !zeroCtrlLoadedModuleMetadataValid(helper)) return;
+    address[0] = bsman->bsman_compat_mode_addr;
+    address[1] = bsman->state_zero_15to14_compat_mode_addr;
+    address[2] = bsman->post_vsh_compat_mode_addr;
+    address[3] = bsman->prefix_paf_compat_mode_addr;
+    for (i = 0; i < 4; i++)
+        if (address[i] == 0 || (address[i] & 3) != 0 ||
+                !zeroCtrlVshModuleRangeValid(helper, address[i], 4)) return;
+    for (i = 0; i < 4; i++) mode[i] = _lw(address[i]);
+    if (mode[0] == 1 && mode[1] == 1 && mode[2] == 1 && mode[3] == 1) return;
+    if (mode[0] != 0 || mode[1] != 0 || mode[2] != 0 || mode[3] != 0) return;
+    for (i = 0; i < 4; i++) {
+        _sw(1, address[i]);
+        sceKernelDcacheWritebackInvalidateRange((const void *)address[i], 4);
+    }
+}
+
+static void zeroCtrlRequestPsp1000FunctionalOpenFromHome(void) {
+    ZeroCtrlBSManEvidence *bsman = &slide_diag.bsman;
+    ZeroCtrlVshTriggerEvidence *trigger = &slide_diag.triggers[0];
+    SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
+
+    slide_diag.functional_home_first_load_attempts++;
+    if (!slide_diag.functional_enabled || model != 0 ||
+            sceKernelDevkitVersion() != 0x06060110) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_PLATFORM;
+        return;
+    }
+    if (bsman->functional_install) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_COMPAT_INSTALLED;
+        return;
+    }
+    if (!(slide_diag.trigger_mode & ZERO_TRIGGER_58D4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_MODE;
+        return;
+    }
+    if (!trigger->validation) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_VALIDATION;
+        return;
+    }
+    if (!trigger->patch_applied) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_PATCH;
+        return;
+    }
+    if (!trigger->cache_sync) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TRIGGER_CACHE;
+        return;
+    }
+    if (!zeroCtrlLoadedModuleMetadataValid(helper)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_HELPER;
+        return;
+    }
+    if (trigger->request_addr == 0 || (trigger->request_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper, trigger->request_addr, 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_REQUEST_ADDRESS;
+        return;
+    }
+    if (trigger->functional_mode_addr == 0 ||
+            (trigger->functional_mode_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                trigger->functional_mode_addr, 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_MODE_ADDRESS;
+        return;
+    }
+    if (trigger->original_target_addr == 0 ||
+            (trigger->original_target_addr & 3) != 0 ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                trigger->original_target_addr, 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_TARGET_ADDRESS;
+        return;
+    }
+    if (_lw(trigger->functional_mode_addr) != 1) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_MODE_VALUE;
+        return;
+    }
+    if (_lw(trigger->request_addr) != 0) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_REQUEST_VALUE;
+        return;
+    }
+    if (slide_diag.functional_trigger_consumed) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_CONSUMED;
+        return;
+    }
+    if (slide_diag.functional_home_open_pending) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_PENDING;
+        return;
+    }
+    if (!slide_diag.bridge_validation || !slide_diag.bridge_install ||
+            !slide_diag.bridge_cache_sync || !slide_diag.bridge_registered ||
+            !zeroCtrlLoadedModuleMetadataValid(helper) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.bridge_scalar[7], 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.bridge_scalar[8], 4) ||
+            !zeroCtrlVshModuleRangeValid(helper,
+                slide_diag.bridge_scalar[14], 4)) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_BRIDGE;
+        return;
+    }
+    if (_lw(slide_diag.bridge_scalar[8]) != 0) {
+        slide_diag.functional_home_first_load_reject_reason =
+                ZERO_HOME_REJECT_BRIDGE_BUSY;
+        return;
+    }
+    /* HOME changes bridge DATA only; Sony execution remains scheduler-owned. */
+    _sw(0, slide_diag.bridge_scalar[7]);
+    _sw(0, slide_diag.bridge_scalar[14]);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.bridge_scalar[7], 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.bridge_scalar[14], 4);
+    slide_diag.functional_home_open_pending = 1;
+    _sw(1, trigger->request_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)trigger->request_addr, 4);
+    slide_diag.functional_home_first_load_published++;
+    slide_diag.functional_home_first_load_reject_reason = ZERO_HOME_REJECT_NONE;
+}
+
 //OK
 void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 	SceCtrlLatch data;	
@@ -11475,8 +15732,15 @@ void zeroCtrlReadButtons(SceSize args UNUSED, void *argp UNUSED) {
 				int request_ready = !slide_diag.functional_enabled;
 				zeroCtrlWriteDebug("Starting slide\n\n");
 				if (slide_diag.functional_enabled) {
-					/* Functional startup is pre-armed; HOME never executes Sony. */
+					slide_diag.functional_home_press_hits++;
+					/* HOME arms data-only compatibility; it never executes Sony. */
 					slide_diag.functional_runtime_request_blocked = 1;
+					if (slide_diag.bsman.functional_validation &&
+							slide_diag.bsman.functional_install &&
+							slide_diag.bsman.functional_cache_sync)
+						zeroCtrlArmPsp1000FunctionalCompatFromHome();
+					else
+						zeroCtrlRequestPsp1000FunctionalOpenFromHome();
 					request_ready = 0;
 				}
 				if (request_ready)

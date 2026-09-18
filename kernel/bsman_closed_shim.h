@@ -271,4 +271,39 @@ typedef struct {
 typedef char ZeroCtrlActivationReturnRegistration_size[
     sizeof(ZeroCtrlActivationReturnRegistration) == 36 ? 1 : -1];
 
+/* Separate from the fixed activation ABIs above. */
+typedef struct {
+    u32 helper_addr;
+    u32 helper_end_addr;
+    u32 scalar_addr[16];
+} ZeroCtrlPsp1000BridgeRegistration;
+
+typedef char ZeroCtrlPsp1000BridgeRegistration_size[
+    sizeof(ZeroCtrlPsp1000BridgeRegistration) == 72 ? 1 : -1];
+
+/* Diagnostic-only VSH+0x5704 execution trace; separate from functional ABIs. */
+typedef struct {
+    u32 helper_addr;
+    u32 helper_end_addr;
+    u32 jump_slot_addr;
+    u32 hit_counter_addr;
+} ZeroCtrlVsh5704TraceRegistration;
+
+typedef char ZeroCtrlVsh5704TraceRegistration_size[
+    sizeof(ZeroCtrlVsh5704TraceRegistration) == 16 ? 1 : -1];
+
+typedef struct {
+    u32 helper_addr;
+    u32 helper_end_addr;
+    u32 jump_slot_addr;
+    u32 entry_hits_addr;
+    u32 exact_hits_addr;
+    u32 target_node_addr;
+    u32 target_outer_addr;
+    u32 target_inner_addr;
+} ZeroCtrlPafA989TargetTraceRegistration;
+
+typedef char ZeroCtrlPafA989TargetTraceRegistration_size[
+    sizeof(ZeroCtrlPafA989TargetTraceRegistration) == 32 ? 1 : -1];
+
 #endif
