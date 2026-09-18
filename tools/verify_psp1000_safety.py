@@ -2158,14 +2158,56 @@ def check_sources(root):
         fail("direct-call taint/delay-slot ordering regressed")
     forbidden_abi_kills = ('taint &= ~0x8300FFFCU',
             'taint &= ~VSH_CALLER_SAVED_GPR_MASK',
-            'caller-saved values cannot carry the old incoming taint')
+            'caller-saved values cannot carry the old incoming taint',
+            'JAL means a0/a1/a2/a3/v0/v1 are destroyed')
     for token in forbidden_abi_kills:
         if token in taint:
             fail("ABI-only caller-saved taint kill returned: " + token)
-    preserve_comment = taint.find(
-            'Preserve taint after a proven-unobserving callee')
-    if preserve_comment < recursive_call or preserve_comment > continuation:
-        fail("direct-call proof does not conservatively preserve input taint")
+    for token in ('typedef struct ZeroCtrlBridgeReturnSummary',
+            'unsigned int saw_return', 'unsigned int return_taint',
+            'ZeroCtrlBridgeReturnSummary *summary',
+            'summary->saw_return = 0', 'summary->return_taint = 0',
+            'ZeroCtrlBridgeReturnSummary callee_summary',
+            'ZeroCtrlBridgeReturnSummary tail_summary',
+            'ZeroCtrlBridgeReturnSummary callback_summary',
+            'taint = (taint & ~call_taint) |',
+            'callee_summary.return_taint',
+            'summary->return_taint |= tail_summary.return_taint',
+            'callback_summary.return_taint',
+            'summary->return_taint |= taint'):
+        if token not in kernel and token not in taint:
+            fail("return-taint summary lacks " + token)
+    direct_summary = taint.find('if (callee_summary.saw_return)', recursive_call)
+    direct_replace = taint.find('taint = (taint & ~call_taint) |', direct_summary)
+    if not 0 <= recursive_call < direct_summary < direct_replace < continuation:
+        fail("direct-call return summary does not mechanically update caller taint")
+    if '(taint & ~call_taint)' not in taint[direct_summary:continuation]:
+        fail("callee summary erases caller-local non-argument taint")
+    jr_return = taint.find('if (function == 8 && rs == 31)')
+    jalr_block = taint.rfind(
+            'opcode == 0 && (function == 8 || function == 9)', 0, jr_return)
+    jr_delay = taint.find(
+            'zeroCtrlBridgeApplyTaint(delay, &taint)', jalr_block, jr_return)
+    jr_summary = taint.find('summary->saw_return = 1', jr_return)
+    jr_union = taint.find('summary->return_taint |= taint', jr_summary)
+    if not 0 <= jalr_block < jr_delay < jr_return < jr_summary < jr_union:
+        fail("JR ra return summary is not captured after its delay slot")
+    if '&=' in taint[jr_summary:jr_union + len('summary->return_taint |= taint')]:
+        fail("multiple normal return taints are intersected instead of unioned")
+    tail_recurse = taint.find(
+            'zeroCtrlBridgeAnalyzeTaintedFunction(owner, target', recursive_call + 1)
+    tail_union = taint.find(
+            'summary->return_taint |= tail_summary.return_taint', tail_recurse)
+    if not 0 <= tail_recurse < tail_union:
+        fail("direct tail-call return summary is not propagated")
+    callback_recurse_for_summary = taint.find(
+            'zeroCtrlBridgeAnalyzeTaintedFunction(context->vsh')
+    callback_replace = taint.find(
+            'callback_summary.return_taint', callback_recurse_for_summary)
+    if not 0 <= callback_recurse_for_summary < callback_replace:
+        fail("known callback return summary is not propagated")
+    if '0x36AB0' in kernel or '0x36A64' in kernel:
+        fail("hardware blocker/callee was hard-coded into the taint proof")
     for offset in ('0x18', '0x24', '0x30', '0x38'):
         if offset not in livein:
             fail("constructed1 call is not reachable to live-in proof: +" + offset)

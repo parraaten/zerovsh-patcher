@@ -4875,6 +4875,11 @@ typedef struct ZeroCtrlBridgeTaintNode {
     unsigned int taint;
 } ZeroCtrlBridgeTaintNode;
 
+typedef struct ZeroCtrlBridgeReturnSummary {
+    unsigned int saw_return;
+    unsigned int return_taint;
+} ZeroCtrlBridgeReturnSummary;
+
 enum ZeroCtrlBridgeBlockerDomain {
     ZERO_BRIDGE_BLOCKER_NONE = 0,
     ZERO_BRIDGE_BLOCKER_PAF,
@@ -5018,12 +5023,15 @@ static int zeroCtrlBridgeApplyTaint(unsigned int word, unsigned int *taint) {
 
 static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
         unsigned int entry, unsigned int input_taint, unsigned int depth,
-        unsigned int original_arg, ZeroCtrlBridgeTaintContext *context) {
+        unsigned int original_arg, ZeroCtrlBridgeTaintContext *context,
+        ZeroCtrlBridgeReturnSummary *summary) {
     ZeroCtrlBridgeTaintNode queue[BRIDGE_TAINT_MAX_NODES];
     unsigned int seen_addr[BRIDGE_TAINT_MAX_NODES];
     unsigned int seen_taint[BRIDGE_TAINT_MAX_NODES];
     unsigned int head = 0, tail = 1, seen = 0;
 
+    summary->saw_return = 0;
+    summary->return_taint = 0;
     if (depth > BRIDGE_TAINT_MAX_DEPTH) {
         zeroCtrlBridgeSetBlocker(context, module, entry, original_arg,
                 ZERO_BRIDGE_BLOCK_REASON_DEPTH_LIMIT, input_taint);
@@ -5076,6 +5084,7 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
         function = word & 0x3F;
         if (opcode == 3) {
             unsigned int call_taint;
+            ZeroCtrlBridgeReturnSummary callee_summary;
             if (!zeroCtrlBridgeExecutableRange(module, pc + 4, 4)) {
                 zeroCtrlBridgeSetBlocker(context, module, pc + 4, original_arg,
                         ZERO_BRIDGE_BLOCK_REASON_RANGE, taint);
@@ -5108,18 +5117,17 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                     return 2;
                 }
                 result = zeroCtrlBridgeAnalyzeTaintedFunction(owner, target,
-                        call_taint, depth + 1, original_arg, context);
+                        call_taint, depth + 1, original_arg, context,
+                        &callee_summary);
                 if (result) {
                     zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
                             ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
                     return result;
                 }
+                if (callee_summary.saw_return)
+                    taint = (taint & ~call_taint) |
+                            callee_summary.return_taint;
             }
-            /*
-             * A caller-saved register may legally retain its physical value.
-             * Preserve taint after a proven-unobserving callee so later calls
-             * cannot be incorrectly classified independent of that value.
-             */
             pc += 8;
         } else if (opcode == 1 || (opcode >= 4 && opcode <= 7) ||
                 (opcode >= 0x14 && opcode <= 0x17)) {
@@ -5229,6 +5237,7 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
             } else if (taint != 0) {
                 SceModule2 *owner = sceKernelFindModuleByAddress(target);
                 unsigned int segment, remaining;
+                ZeroCtrlBridgeReturnSummary tail_summary;
                 if (!zeroCtrlLoadedModuleMetadataValid(owner) ||
                         !zeroCtrlModuleContainingSegment(owner, target, &segment,
                             &remaining) || segment != 0 || remaining < 8) {
@@ -5238,10 +5247,15 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                     return 2;
                 }
                 result = zeroCtrlBridgeAnalyzeTaintedFunction(owner, target,
-                        taint, depth + 1, original_arg, context);
+                        taint, depth + 1, original_arg, context,
+                        &tail_summary);
                 if (result)
                     zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
                             ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
+                else if (tail_summary.saw_return) {
+                    summary->saw_return = 1;
+                    summary->return_taint |= tail_summary.return_taint;
+                }
                 return result;
             }
             return 0;
@@ -5272,6 +5286,7 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
             }
             if (function == 9 && (taint & 0xF0) != 0) {
                 unsigned int call_taint = taint & 0xF0;
+                ZeroCtrlBridgeReturnSummary callback_summary;
                 int known_callback = module == context->paf &&
                         pc == context->constructed1 + 0xB4 &&
                         word == 0x0040F809 &&
@@ -5294,12 +5309,15 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                 }
                 result = zeroCtrlBridgeAnalyzeTaintedFunction(context->vsh,
                         context->expected_callback, call_taint, depth + 1,
-                        original_arg, context);
+                        original_arg, context, &callback_summary);
                 if (result) {
                     zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
                             ZERO_BRIDGE_BLOCK_REASON_CALLEE_UNKNOWN, taint);
                     return result;
                 }
+                if (callback_summary.saw_return)
+                    taint = (taint & ~call_taint) |
+                            callback_summary.return_taint;
                 pc += 8;
                 if (tail >= BRIDGE_TAINT_MAX_NODES) {
                     zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
@@ -5310,7 +5328,12 @@ static int zeroCtrlBridgeAnalyzeTaintedFunction(SceModule2 *module,
                 queue[tail++].taint = taint;
                 continue;
             }
-            if (function == 8 && rs == 31) continue;
+            if (function == 8 && rs == 31) {
+                /* JR ra's delay slot has already produced this MAY-return state. */
+                summary->saw_return = 1;
+                summary->return_taint |= taint;
+                continue;
+            }
             if (taint) {
                 zeroCtrlBridgeSetBlocker(context, module, pc, original_arg,
                         ZERO_BRIDGE_BLOCK_REASON_UNRESOLVED_JALR, taint);
@@ -5351,6 +5374,7 @@ static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf, SceModule2 *vsh,
     };
     static const unsigned int call_off[4] = { 0x18, 0x24, 0x30, 0x38 };
     ZeroCtrlBridgeTaintContext context;
+    ZeroCtrlBridgeReturnSummary return_summary;
     unsigned int target[4], i, segment, remaining;
     int a2, a3;
 
@@ -5397,7 +5421,7 @@ static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf, SceModule2 *vsh,
     context.constructed1 = constructed1;
     context.expected_callback = expected_callback;
     a2 = zeroCtrlBridgeAnalyzeTaintedFunction(paf, constructed1, 1U << 6,
-            0, 2, &context);
+            0, 2, &context, &return_summary);
     if (a2 != 0) {
         slide_diag.bridge_livein_arg[2] = a2 == 1 ?
                 ZERO_BRIDGE_LIVEIN_REQUIRED : ZERO_BRIDGE_LIVEIN_UNKNOWN;
@@ -5420,7 +5444,7 @@ static int zeroCtrlPsp1000BridgeLiveInValid(SceModule2 *paf, SceModule2 *vsh,
     context.constructed1 = constructed1;
     context.expected_callback = expected_callback;
     a3 = zeroCtrlBridgeAnalyzeTaintedFunction(paf, constructed1, 1U << 7,
-            0, 3, &context);
+            0, 3, &context, &return_summary);
     if (a3 != 0) {
         slide_diag.bridge_livein_arg[3] = a3 == 1 ?
                 ZERO_BRIDGE_LIVEIN_REQUIRED : ZERO_BRIDGE_LIVEIN_UNKNOWN;
