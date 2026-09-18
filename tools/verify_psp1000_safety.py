@@ -3165,21 +3165,19 @@ def check_sources(root):
             'common1 = zeroCtrlMipsJumpTarget(', 'common0 != common1',
             'zeroCtrlBridgeExecutableRange(paf, common0, 0x100)',
             'zeroCtrlMipsMove(word, 16, 5)',
-            '((word >> 21) & 0x1F) == 16',
-            '(short)(word & 0xFFFF) == 4',
-            'source_moves != 1', 'source_loads != 1',
-            'source_branches != 1',
-            'common_helper_target + 0x068',
-            'common_helper_target + 0x06C',
-            '((word >> 16) & 0x1F) != 4',
-            '(short)(word & 0xFFFF) != 1',
-            'common_helper_target + 0x070', '0xAE220000',
-            'word == 0x8E240000', 'word == 0x8E050000',
-            'word == 0x8E060004',
-            'destination = zeroCtrlMipsGprWriteDestination(word)',
-            'destination >= 4 && destination <= 6', 'setup_invalid',
-            'common_helper_target + 0x084',
-            'common_helper_target + 0x088', '0x24C60001',
+            'source_moves != 1',
+            '_lw(common_helper_target + 0x038) != 0x8E020004',
+            '_lw(common_helper_target + 0x03C) != 0x1440000A',
+            '_lw(common_helper_target + 0x040) != 0x24440001',
+            '(_lw(common_helper_target + 0x068) >> 26) != 3',
+            '_lw(common_helper_target + 0x06C) != 0x00000000',
+            '_lw(common_helper_target + 0x070) != 0xAE220000',
+            '_lw(common_helper_target + 0x074) != 0x00402021',
+            '_lw(common_helper_target + 0x078) != 0x8E060004',
+            '_lw(common_helper_target + 0x07C) != 0x8E050000',
+            '_lw(common_helper_target + 0x080) != 0xAE260004',
+            '(_lw(common_helper_target + 0x084) >> 26) != 3',
+            '_lw(common_helper_target + 0x088) != 0x24C60001',
             'copy_target = zeroCtrlMipsJumpTarget(',
             'zeroCtrlModuleContainingSegment(paf, copy_target, &segment,',
             'segment != 0',
@@ -3188,6 +3186,27 @@ def check_sources(root):
             '[psp1000-constructed0-dependency-copy-code] off=0x%03X'):
         if token not in dependency_copy_map:
             fail("constructed0 dependency copy-callee proof lacks " + token)
+    exact_helper_words = (
+            '_lw(common_helper_target + 0x038) != 0x8E020004',
+            '_lw(common_helper_target + 0x03C) != 0x1440000A',
+            '_lw(common_helper_target + 0x040) != 0x24440001',
+            '(_lw(common_helper_target + 0x068) >> 26) != 3',
+            '_lw(common_helper_target + 0x06C) != 0x00000000',
+            '_lw(common_helper_target + 0x070) != 0xAE220000',
+            '_lw(common_helper_target + 0x074) != 0x00402021',
+            '_lw(common_helper_target + 0x078) != 0x8E060004',
+            '_lw(common_helper_target + 0x07C) != 0x8E050000',
+            '_lw(common_helper_target + 0x080) != 0xAE260004',
+            '(_lw(common_helper_target + 0x084) >> 26) != 3',
+            '_lw(common_helper_target + 0x088) != 0x24C60001')
+    exact_positions = [dependency_copy_map.find(token)
+            for token in exact_helper_words]
+    if any(position < 0 for position in exact_positions) or \
+            exact_positions != sorted(exact_positions):
+        fail("copy-callee source/destination grammar is not validated in order")
+    if 'common_helper_target + 0x06C) != 0x24440001' in \
+            dependency_copy_map:
+        fail("copy-callee proof incorrectly moves source+4 preparation to +0x06C")
     copy_consumer_range = dependency_copy_map.find(
             'zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,')
     copy_consumer_size = dependency_copy_map.find(

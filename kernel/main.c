@@ -6986,10 +6986,7 @@ static void zeroCtrlWriteConstructed0DependencyHelperMap(SceModule2 *paf,
 static void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(SceModule2 *paf,
         unsigned int dependency_consumer_target) {
     unsigned int common0, common1, common_helper_target, copy_target;
-    unsigned int segment, remaining, offset, word, load_reg = 0;
-    unsigned int source_moves = 0, source_loads = 0, source_branches = 0;
-    unsigned int setup_store = 0, setup_a0 = 0, setup_a1 = 0, setup_a2 = 0;
-    unsigned int setup_invalid = 0;
+    unsigned int segment, remaining, offset, word, source_moves = 0;
     char line[256];
 
     if (!zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,
@@ -7008,42 +7005,21 @@ static void zeroCtrlWriteConstructed0DependencyCopyCalleeMap(SceModule2 *paf,
     if (common0 != common1 ||
             !zeroCtrlBridgeExecutableRange(paf, common0, 0x100)) goto invalid;
     common_helper_target = common0;
-    for (offset = 0; offset <= 0x64; offset += 4) {
+    for (offset = 0; offset <= 0x034; offset += 4) {
         word = _lw(common_helper_target + offset);
         if (zeroCtrlMipsMove(word, 16, 5)) source_moves++;
-        if ((word >> 26) == 0x23 && ((word >> 21) & 0x1F) == 16 &&
-                (short)(word & 0xFFFF) == 4) {
-            load_reg = (word >> 16) & 0x1F;
-            source_loads++;
-        } else if (((word >> 26) == 4 || (word >> 26) == 5) &&
-                load_reg != 0 &&
-                ((((word >> 21) & 0x1F) == load_reg &&
-                  ((word >> 16) & 0x1F) == 0) ||
-                 (((word >> 16) & 0x1F) == load_reg &&
-                  ((word >> 21) & 0x1F) == 0)))
-            source_branches++;
     }
-    word = _lw(common_helper_target + 0x06C);
-    if (source_moves != 1 || source_loads != 1 || source_branches != 1 ||
+    if (source_moves != 1 ||
+            _lw(common_helper_target + 0x038) != 0x8E020004 ||
+            _lw(common_helper_target + 0x03C) != 0x1440000A ||
+            _lw(common_helper_target + 0x040) != 0x24440001 ||
             (_lw(common_helper_target + 0x068) >> 26) != 3 ||
-            (word >> 26) != 9 || ((word >> 21) & 0x1F) != load_reg ||
-            ((word >> 16) & 0x1F) != 4 || (short)(word & 0xFFFF) != 1 ||
-            _lw(common_helper_target + 0x070) != 0xAE220000)
-        goto invalid;
-    for (offset = 0x074; offset <= 0x080; offset += 4) {
-        int destination;
-        word = _lw(common_helper_target + offset);
-        if (word == 0x8E240000) setup_a0++;
-        else if (word == 0x8E050000) setup_a1++;
-        else if (word == 0x8E060004) setup_a2++;
-        else if (word == 0xAE220000) setup_store++;
-        else {
-            destination = zeroCtrlMipsGprWriteDestination(word);
-            if (destination >= 4 && destination <= 6) setup_invalid = 1;
-        }
-    }
-    if (setup_invalid || setup_store != 0 || setup_a0 != 1 ||
-            setup_a1 != 1 || setup_a2 != 1 ||
+            _lw(common_helper_target + 0x06C) != 0x00000000 ||
+            _lw(common_helper_target + 0x070) != 0xAE220000 ||
+            _lw(common_helper_target + 0x074) != 0x00402021 ||
+            _lw(common_helper_target + 0x078) != 0x8E060004 ||
+            _lw(common_helper_target + 0x07C) != 0x8E050000 ||
+            _lw(common_helper_target + 0x080) != 0xAE260004 ||
             (_lw(common_helper_target + 0x084) >> 26) != 3 ||
             _lw(common_helper_target + 0x088) != 0x24C60001)
         goto invalid;
