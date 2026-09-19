@@ -6896,6 +6896,64 @@ static int zeroCtrlApplyConstructed0DependencyInstruction(unsigned int word,
     return 1;
 }
 
+static void zeroCtrlWriteConstructed0Dependency44CalleeMap(
+        SceModule2 *paf, unsigned int dependency_consumer_target) {
+    unsigned int dependency44_callee_target, segment, remaining, offset, word;
+    int destination;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,
+                0x258) ||
+            _lw(dependency_consumer_target + 0x1A8) != 0x262401A0 ||
+            _lw(dependency_consumer_target + 0x1AC) != 0x26650044) {
+        goto invalid;
+    }
+    for (offset = 0x1B0; offset <= 0x24C; offset += 4) {
+        word = _lw(dependency_consumer_target + offset);
+        destination = zeroCtrlMipsGprWriteDestination(word);
+        if (destination < 0 || destination == 5) goto invalid;
+    }
+    word = _lw(dependency_consumer_target + 0x250);
+    if ((word >> 26) != 3 ||
+            _lw(dependency_consumer_target + 0x254) != 0xAE20019C) {
+        goto invalid;
+    }
+    dependency44_callee_target = zeroCtrlMipsJumpTarget(
+            dependency_consumer_target + 0x250,
+            _lw(dependency_consumer_target + 0x250));
+    if (!zeroCtrlModuleContainingSegment(paf, dependency44_callee_target,
+                &segment, &remaining) || segment != 0 || remaining < 0x100 ||
+            !zeroCtrlBridgeExecutableRange(paf, dependency44_callee_target,
+                0x100)) {
+        goto invalid;
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-44-callee] validation=1 "
+            "call_off=0x250 target=0x%08X target_off=0x%X size=0x100\n",
+            dependency44_callee_target,
+            dependency44_callee_target - paf->text_addr);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0xE0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-44-callee-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(dependency44_callee_target + offset + 0x00),
+                _lw(dependency44_callee_target + offset + 0x04),
+                _lw(dependency44_callee_target + offset + 0x08),
+                _lw(dependency44_callee_target + offset + 0x0C),
+                _lw(dependency44_callee_target + offset + 0x10),
+                _lw(dependency44_callee_target + offset + 0x14),
+                _lw(dependency44_callee_target + offset + 0x18),
+                _lw(dependency44_callee_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+    return;
+invalid:
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-44-callee] validation=0\n");
+}
+
 static void zeroCtrlWriteConstructed0DependencyConsumerContinuation(
         SceModule2 *paf, unsigned int dependency_consumer_target) {
     unsigned int offset;
@@ -7320,6 +7378,7 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
                 "complete=0 reason=NO_RETURN off=0x200\n");
         zeroCtrlWriteConstructed0DependencyMap(paf, target);
         zeroCtrlWriteConstructed0DependencyConsumerContinuation(paf, target);
+        zeroCtrlWriteConstructed0Dependency44CalleeMap(paf, target);
         zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);
         zeroCtrlWriteConstructed0DependencyCopyCalleeMap(paf, target);
         return 0;

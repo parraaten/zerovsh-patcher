@@ -3043,6 +3043,123 @@ def check_sources(root):
     if 'boundary = offset + 8;' not in boundary_search or \
             'if (boundary == 0)' not in boundary_search:
         fail("dependency analysis no longer fails closed without a full return")
+    dependency44_map_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0Dependency44CalleeMap(')
+    dependency44_map_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0DependencyConsumerContinuation(',
+            dependency44_map_start)
+    dependency44_map = kernel[dependency44_map_start:dependency44_map_end]
+    if dependency44_map_start < 0 or dependency44_map_end < 0:
+        fail("constructed0 dependency+0x44 callee map is missing")
+    for token in ('int destination;',
+            'dependency_consumer_target + 0x1A8) != 0x262401A0',
+            'dependency_consumer_target + 0x1AC) != 0x26650044',
+            'for (offset = 0x1B0; offset <= 0x24C; offset += 4)',
+            'destination = zeroCtrlMipsGprWriteDestination(word)',
+            'destination < 0 || destination == 5',
+            'word = _lw(dependency_consumer_target + 0x250)',
+            '(word >> 26) != 3',
+            '_lw(dependency_consumer_target + 0x254) != 0xAE20019C',
+            'dependency44_callee_target = zeroCtrlMipsJumpTarget(',
+            'dependency_consumer_target + 0x250,',
+            '_lw(dependency_consumer_target + 0x250)',
+            'zeroCtrlModuleContainingSegment(paf, dependency44_callee_target,',
+            'segment != 0', 'remaining < 0x100',
+            'zeroCtrlBridgeExecutableRange(paf, dependency44_callee_target,',
+            '[psp1000-constructed0-dependency-44-callee] validation=0',
+            '[psp1000-constructed0-dependency-44-callee] validation=1',
+            'call_off=0x250 target=0x%08X target_off=0x%X size=0x100',
+            '[psp1000-constructed0-dependency-44-callee-code]'):
+        if token not in dependency44_map:
+            fail("dependency+0x44 callee proof lacks " + token)
+    dependency44_prefix_range = dependency44_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,')
+    dependency44_prefix_size = dependency44_map.find(
+            '0x258)', dependency44_prefix_range)
+    dependency44_setup_a0 = dependency44_map.find(
+            'dependency_consumer_target + 0x1A8) != 0x262401A0',
+            dependency44_prefix_size)
+    dependency44_setup_a1 = dependency44_map.find(
+            'dependency_consumer_target + 0x1AC) != 0x26650044',
+            dependency44_setup_a0)
+    dependency44_live_loop = dependency44_map.find(
+            'for (offset = 0x1B0; offset <= 0x24C; offset += 4)',
+            dependency44_setup_a1)
+    dependency44_live_read = dependency44_map.find(
+            'word = _lw(dependency_consumer_target + offset)',
+            dependency44_live_loop)
+    dependency44_live_decode = dependency44_map.find(
+            'destination = zeroCtrlMipsGprWriteDestination(word)',
+            dependency44_live_read)
+    dependency44_live_fail = dependency44_map.find(
+            'destination < 0 || destination == 5', dependency44_live_decode)
+    dependency44_call_read = dependency44_map.find(
+            'word = _lw(dependency_consumer_target + 0x250)',
+            dependency44_live_fail)
+    dependency44_jal = dependency44_map.find(
+            '(word >> 26) != 3', dependency44_call_read)
+    dependency44_delay = dependency44_map.find(
+            '_lw(dependency_consumer_target + 0x254) != 0xAE20019C',
+            dependency44_jal)
+    dependency44_decode = dependency44_map.find(
+            'dependency44_callee_target = zeroCtrlMipsJumpTarget(',
+            dependency44_delay)
+    dependency44_decode_pc = dependency44_map.find(
+            'dependency_consumer_target + 0x250,', dependency44_decode)
+    dependency44_decode_word = dependency44_map.find(
+            '_lw(dependency_consumer_target + 0x250)', dependency44_decode_pc)
+    dependency44_owner = dependency44_map.find(
+            'zeroCtrlModuleContainingSegment(paf, dependency44_callee_target,',
+            dependency44_decode_word)
+    dependency44_segment = dependency44_map.find(
+            'segment != 0', dependency44_owner)
+    dependency44_remaining = dependency44_map.find(
+            'remaining < 0x100', dependency44_segment)
+    dependency44_range = dependency44_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency44_callee_target,',
+            dependency44_remaining)
+    dependency44_range_size = dependency44_map.find(
+            '0x100)', dependency44_range)
+    dependency44_header = dependency44_map.find(
+            '[psp1000-constructed0-dependency-44-callee] validation=1',
+            dependency44_range_size)
+    dependency44_loop = dependency44_map.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)',
+            dependency44_header)
+    dependency44_first_read = dependency44_map.find(
+            '_lw(dependency44_callee_target + offset + 0x00)',
+            dependency44_loop)
+    dependency44_last_read = dependency44_map.find(
+            '_lw(dependency44_callee_target + offset + 0x1C)',
+            dependency44_loop)
+    if not 0 <= dependency44_prefix_range < dependency44_prefix_size < \
+            dependency44_setup_a0 < dependency44_setup_a1 < \
+            dependency44_live_loop < dependency44_live_read < \
+            dependency44_live_decode < dependency44_live_fail < \
+            dependency44_call_read < dependency44_jal < dependency44_delay < \
+            dependency44_decode < dependency44_decode_pc < \
+            dependency44_decode_word < dependency44_owner < \
+            dependency44_segment < dependency44_remaining < \
+            dependency44_range < dependency44_range_size < \
+            dependency44_header < dependency44_loop < \
+            dependency44_first_read < dependency44_last_read:
+        fail("dependency+0x44 callee derivation/range order regressed")
+    dependency44_rows = dependency44_map[dependency44_loop:]
+    if dependency44_rows.count(
+                '_lw(dependency44_callee_target + offset + ') != 8 or \
+            dependency44_map.count(
+                'for (offset = 0; offset <= 0xE0; offset += 0x20)') != 1 or \
+            dependency44_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            dependency44_map.count(
+                'dependency44_callee_target = zeroCtrlMipsJumpTarget(') != 1 or \
+            'dependency44_callee_target + offset + 0x20' in dependency44_rows or \
+            'dependency44_callee_target + 0x100' in dependency44_map or \
+            any(token in dependency44_map for token in
+                ('0x35A24', 'zeroCtrlMipsBranchTarget',
+                 'a989_target_dependency', 'a989_target_node',
+                 'a989_target_outer', 'a989_target_inner', '_sw(', '_sb(',
+                 'sceKernelDcache', 'sceKernelIcache', 'dependency+0x44')):
+        fail("dependency+0x44 callee map follows code, uses runtime state, or writes")
     consumer_cont_start = kernel.find(
             'static void zeroCtrlWriteConstructed0DependencyConsumerContinuation(')
     consumer_cont_end = kernel.find(
@@ -3156,16 +3273,22 @@ def check_sources(root):
     consumer_cont_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0DependencyConsumerContinuation(paf, target);',
             map_call)
+    dependency44_map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0Dependency44CalleeMap(paf, target);',
+            consumer_cont_call)
     helper_map_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);',
-            consumer_cont_call)
+            dependency44_map_call)
     no_return_exit = dependency_analysis.find('return 0;', map_call)
     if not 0 <= no_return_gate < no_return_record < map_call < \
-            consumer_cont_call < helper_map_call < no_return_exit or \
+            consumer_cont_call < dependency44_map_call < helper_map_call < \
+            no_return_exit or \
             dependency_analysis.count(
                 'zeroCtrlWriteConstructed0DependencyMap(') != 1 or \
             dependency_analysis.count(
-                'zeroCtrlWriteConstructed0DependencyConsumerContinuation(') != 1:
+                'zeroCtrlWriteConstructed0DependencyConsumerContinuation(') != 1 or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0Dependency44CalleeMap(') != 1:
         fail("dependency map is not gated solely by the existing NO_RETURN path")
     if 'int constructed0_dependency_written = 0;' not in writer or \
             'slide_diag.constructed0_dependency' in kernel:
