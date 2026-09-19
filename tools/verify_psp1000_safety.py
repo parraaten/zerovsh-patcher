@@ -3273,6 +3273,93 @@ def check_sources(root):
     if 'boundary = offset + 8;' not in boundary_search or \
             'if (boundary == 0)' not in boundary_search:
         fail("dependency analysis no longer fails closed without a full return")
+    w28_forward_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyW28ForwardCalleeMap(')
+    w28_forward_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0DependencyW28CalleeMap(',
+            w28_forward_start)
+    w28_forward = kernel[w28_forward_start:w28_forward_end]
+    if w28_forward_start < 0 or w28_forward_end < 0:
+        fail("constructed0 dependency w28 forward-callee map is missing")
+    for token in ('w28_parent_target + 0x28,', '0xD0)',
+            'w28_parent_target + 0x028) != 0x00809021',
+            'for (offset = 0x02C; offset <= 0x0DC; offset += 4)',
+            'word = _lw(w28_parent_target + offset)',
+            'destination = zeroCtrlMipsGprWriteDestination(word)',
+            'destination < 0 || destination == 18',
+            'w28_parent_target + 0x0E0) != 0x02402021',
+            'w28_parent_target + 0x0E4) != 0x8FA30024',
+            'w28_parent_target + 0x0E8) != 0x8FA20020',
+            'w28_parent_target + 0x0EC) != 0xAE030018',
+            'w28_parent_target + 0x0F4) != 0xAE02001C',
+            'call = _lw(w28_parent_target + 0x0F0)', '(call >> 26) != 3',
+            'target = zeroCtrlMipsJumpTarget(w28_parent_target + 0x0F0, call)',
+            'zeroCtrlModuleContainingSegment(paf, target, &segment, &remaining)',
+            'segment != 0', 'target < paf->text_addr',
+            'target - paf->text_addr != 0x13E3DC', 'remaining < 0x100',
+            'zeroCtrlBridgeExecutableRange(paf, target, 0x100)',
+            '[psp1000-constructed0-dependency-w28-forward-callee] ',
+            'validation=0\\n', 'validation=1 parent_off=0x687E8',
+            'source_off=0xF0', 'target=0x%08X target_off=0x%X size=0x100',
+            'a0_source=dependency_w28_via_s2',
+            '[psp1000-constructed0-dependency-w28-forward-callee-code]'):
+        if token not in w28_forward:
+            fail("dependency w28 forward-callee proof lacks " + token)
+    forward_parent_range = w28_forward.find(
+            'zeroCtrlBridgeExecutableRange(paf, w28_parent_target + 0x28,')
+    forward_parent_size = w28_forward.find('0xD0)', forward_parent_range)
+    forward_parent_first = w28_forward.find(
+            '_lw(w28_parent_target + 0x028)', forward_parent_size)
+    forward_scan = w28_forward.find(
+            'for (offset = 0x02C; offset <= 0x0DC; offset += 4)',
+            forward_parent_first)
+    forward_scan_read = w28_forward.find(
+            'word = _lw(w28_parent_target + offset)', forward_scan)
+    forward_restore = w28_forward.find(
+            '_lw(w28_parent_target + 0x0E0)', forward_scan_read)
+    forward_call = w28_forward.find(
+            'call = _lw(w28_parent_target + 0x0F0)', forward_restore)
+    forward_decode = w28_forward.find(
+            'target = zeroCtrlMipsJumpTarget(w28_parent_target + 0x0F0, call)',
+            forward_call)
+    forward_owner = w28_forward.find(
+            'zeroCtrlModuleContainingSegment(paf, target, &segment, &remaining)',
+            forward_decode)
+    forward_relative = w28_forward.find(
+            'target - paf->text_addr != 0x13E3DC', forward_owner)
+    forward_range = w28_forward.find(
+            'zeroCtrlBridgeExecutableRange(paf, target, 0x100)',
+            forward_relative)
+    forward_header = w28_forward.find(
+            '[psp1000-constructed0-dependency-w28-forward-callee] ',
+            forward_range)
+    forward_loop = w28_forward.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)', forward_header)
+    forward_first_read = w28_forward.find(
+            '_lw(target + offset + 0x00)', forward_loop)
+    forward_last_read = w28_forward.find(
+            '_lw(target + offset + 0x1C)', forward_loop)
+    if not 0 <= forward_parent_range < forward_parent_size < \
+            forward_parent_first < forward_scan < forward_scan_read < \
+            forward_restore < forward_call < forward_decode < forward_owner < \
+            forward_relative < forward_range < forward_header < forward_loop < \
+            forward_first_read < forward_last_read:
+        fail("dependency w28 forward-callee validation/read order regressed")
+    if w28_forward.count('_lw(target + offset + ') != 8 or \
+            w28_forward.count(
+                'for (offset = 0; offset <= 0xE0; offset += 0x20)') != 1 or \
+            w28_forward.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            w28_forward.count(
+                'zeroCtrlWriteConstructed0DependencyW28ForwardCalleeMap(') != 1 or \
+            kernel.count(
+                'zeroCtrlWriteConstructed0DependencyW28ForwardCalleeMap(') != 2 or \
+            'target + offset + 0x20' in w28_forward or \
+            'target + 0x100' in w28_forward or \
+            any(token in w28_forward for token in
+                ('a989_target_dependency', 'snapshot[', '_sw(', '_sb(',
+                 'sceKernelDcache', 'sceKernelIcache', 'sceKernelStart',
+                 'for (candidate')):
+        fail("dependency w28 forward-callee map executes, writes, or exceeds bounds")
     w28_map_start = kernel.find(
             'static void zeroCtrlWriteConstructed0DependencyW28CalleeMap(')
     w28_map_end = kernel.find(
@@ -3330,10 +3417,15 @@ def check_sources(root):
             'for (offset = 0; offset <= 0xE0; offset += 0x20)', w28_header)
     w28_first_read = w28_map.find('_lw(target + offset + 0x00)', w28_loop)
     w28_last_read = w28_map.find('_lw(target + offset + 0x1C)', w28_loop)
+    w28_forward_call = w28_map.find(
+            'zeroCtrlWriteConstructed0DependencyW28ForwardCalleeMap(paf, target);',
+            w28_last_read)
+    w28_success_return = w28_map.find('return;', w28_forward_call)
     if not 0 <= w28_source_range < w28_source_args < w28_source_first < \
             w28_source_last < w28_call < w28_decode < w28_owner < \
             w28_relative < w28_range < w28_header < w28_loop < \
-            w28_first_read < w28_last_read:
+            w28_first_read < w28_last_read < w28_forward_call < \
+            w28_success_return:
         fail("dependency w28 callee validation/read order regressed")
     if w28_map.count('_lw(target + offset + ') != 8 or \
             w28_map.count(
