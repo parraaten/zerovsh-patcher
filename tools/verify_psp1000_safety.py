@@ -2586,8 +2586,8 @@ def check_sources(root):
             'snapshot_base, i;',
             'paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4',
             'snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4',
-            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x2C)',
-            'for (i = 0; i < 11; i++)',
+            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x30)',
+            'for (i = 0; i < 12; i++)',
             '_sw(0, snapshot_base + i * 4)',
             '(const void *)(snapshot_base + i * 4), 4'):
         if token not in target_install:
@@ -2626,10 +2626,10 @@ def check_sources(root):
             'snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4',
             snapshot_overflow)
     snapshot_range = target_install.find(
-            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x2C)',
+            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x30)',
             snapshot_derive)
     snapshot_clear = target_install.find(
-            'for (i = 0; i < 11; i++)', snapshot_range)
+            'for (i = 0; i < 12; i++)', snapshot_range)
     snapshot_clear_word = target_install.find(
             '_sw(0, snapshot_base + i * 4)', snapshot_clear)
     snapshot_clear_sync = target_install.find(
@@ -2652,7 +2652,7 @@ def check_sources(root):
             'zeroCtrlPafA989TargetTraceEnd:', target_helper_start)
     target_helper = assembly[target_helper_start:target_helper_end]
     if hashlib.sha256(target_helper.encode()).hexdigest() != \
-            '60c312998922d172f526b50ae6fa6dff0a8fd743dab9b30dec7408fdefbbcd1d':
+            '8a5db2868db6338ba30512cf4a13bd9c38be22974d69d2762002f6b54b24e97c':
         fail("synchronous A989 target helper hash changed")
     for reg, offset in zip(('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7'),
             range(0, 32, 4)):
@@ -2670,12 +2670,12 @@ def check_sources(root):
             'zeroCtrlPafA989DependencyW38', 'zeroCtrlPafA989DependencyW3C',
             'zeroCtrlPafA989DependencyW40', 'zeroCtrlPafA989DependencyW54',
             'zeroCtrlPafA989DependencyW64', 'zeroCtrlPafA989DependencyW68',
-            'zeroCtrlPafA989DependencyW6C')
+            'zeroCtrlPafA989DependencyW6C', 'zeroCtrlPafA989DependencyW28')
     bss_positions = [a989_snapshot_bss.find(name + ': .space 4')
             for name in required_bss]
     if bss_start < 0 or bss_end < 0 or any(pos < 0 for pos in bss_positions) or \
             bss_positions != sorted(bss_positions) or \
-            a989_snapshot_bss.count(': .space 4') != 12 or \
+            a989_snapshot_bss.count(': .space 4') != 13 or \
             '.align' in a989_snapshot_bss:
         fail("A989 synchronous snapshot BSS is not exactly contiguous")
     for token in ('zeroCtrlVsh5704RegistrationTraceHits',
@@ -2713,14 +2713,16 @@ def check_sources(root):
     dependency_store = target_helper.find(
             'sw      $t7, %lo(zeroCtrlPafA989TargetDependencySync)',
             dependency_range)
-    direct_offsets = ('2C', '34', '38', '3C', '40', '54', '64', '68', '6C')
+    direct_offsets = ('2C', '34', '38', '3C', '40', '54', '64', '68', '6C',
+            '28')
     direct_loads = [target_helper.find('lw      $t3, 0x' + offset + '($t7)',
             dependency_store) for offset in direct_offsets]
     direct_symbols = ('zeroCtrlPafA989DependencyW2C',
             'zeroCtrlPafA989DependencyW34', 'zeroCtrlPafA989DependencyW38',
             'zeroCtrlPafA989DependencyW3C', 'zeroCtrlPafA989DependencyW40',
             'zeroCtrlPafA989DependencyW54', 'zeroCtrlPafA989DependencyW64',
-            'zeroCtrlPafA989DependencyW68', 'zeroCtrlPafA989DependencyW6C')
+            'zeroCtrlPafA989DependencyW68', 'zeroCtrlPafA989DependencyW6C',
+            'zeroCtrlPafA989DependencyW28')
     direct_stores = [target_helper.find(
             'sw      $t3, %lo(' + symbol + ')', direct_loads[index])
             for index, symbol in enumerate(direct_symbols)]
@@ -3054,26 +3056,38 @@ def check_sources(root):
             'validation=0\\n', 'validation=1 dependency=0x%08X',
             'w2c=0x%08X w34=0x%08X', 'w38=0x%08X w3c=0x%08X',
             'w40=0x%08X w54=0x%08X', 'w64=0x%08X w68=0x%08X',
-            'w6c=0x%08X'):
+            'w6c=0x%08X w28=0x%08X',
+            'snapshot_base + 0x2C',
+            '[psp1000-a989-dependency-w28] ',
+            'validation=1 value=0x%08X', 'aligned=%u user_range=%u',
+            'module_owned=1 module=%.27s', 'segment=%u segment_off=0x%X',
+            'module_owned=0'):
         if (token.startswith('int ') and token not in writer) or \
                 (not token.startswith('int ') and
                     token not in direct_sync_writer):
             fail("synchronous direct-dependency telemetry lacks " + token)
-    for offset in range(0, 0x2C, 4):
+    for offset in range(0, 0x30, 4):
         token = 'snapshot_base + 0x%02X' % offset
         if direct_sync_writer.count(token) != 1:
             fail("direct-sync telemetry does not read exactly " + token)
     sync_valid_read = direct_sync_writer.find('snapshot_base + 0x00')
     sync_valid_gate = direct_sync_writer.find('snapshot[0] != 1', sync_valid_read)
     sync_data_first = direct_sync_writer.find('snapshot_base + 0x04', sync_valid_gate)
-    sync_data_last = direct_sync_writer.find('snapshot_base + 0x28', sync_data_first)
+    sync_data_last = direct_sync_writer.find('snapshot_base + 0x2C', sync_data_first)
     if direct_sync_start < 0 or not 0 <= sync_valid_read < sync_valid_gate < \
             sync_data_first < sync_data_last or \
             'a989_target_inner + 0x0C' in direct_sync_writer or \
             'a989_target_dependency' in direct_sync_writer or \
             '_lw(' in direct_sync_writer or \
             'a989_dependency_direct_snapshot_written' in writer or \
-            '[psp1000-a989-dependency-direct-snapshot]' in writer:
+            '[psp1000-a989-dependency-direct-snapshot]' in writer or \
+            '_lw(a989_target_dependency + 0x28)' in writer or \
+            '_lw(snapshot[11]' in direct_sync_writer or \
+            not re.search(r'zeroCtrlPsp1000BridgeUserRangeValid\s*\(\s*'
+                r'snapshot\[11\],\s*4,', direct_sync_writer) or \
+            'sceKernelFindModuleByAddress(snapshot[11])' not in \
+                direct_sync_writer or \
+            'zeroCtrlModuleContainingSegment(owner,' not in direct_sync_writer:
         fail("direct-sync telemetry rereads mutable Sony dependency state")
     dependency_marker = writer.find('[psp1000-a989-dependency-life]')
     dependency_start = writer.rfind(

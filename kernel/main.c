@@ -6011,7 +6011,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
     if (slide_diag.paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4)
         return;
     snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4;
-    if (!zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x2C))
+    if (!zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x30))
         return;
     helper_jump = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
     replacement = 0x0C000000 |
@@ -6042,7 +6042,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)slide_diag.paf_a989_target_trace_scalar[i], 4);
     }
-    for (i = 0; i < 11; i++) {
+    for (i = 0; i < 12; i++) {
         _sw(0, snapshot_base + i * 4);
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)(snapshot_base + i * 4), 4);
@@ -10568,8 +10568,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     }
                     if (capture[5] != 0 &&
                             !a989_dependency_direct_sync_written) {
-                        unsigned int snapshot[11] = { 0, 0, 0, 0, 0, 0,
-                            0, 0, 0, 0, 0 };
+                        unsigned int snapshot[12] = { 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0 };
                         unsigned int snapshot_base = 0;
                         a989_dependency_direct_sync_written = 1;
                         if (slide_diag.paf_a989_target_trace_scalar[4] <= 0xFFFFFFFFU - 4) {
@@ -10603,6 +10603,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                     snapshot_base + 0x24);
                             snapshot[10] = zeroCtrlReadHelperCounter(
                                     snapshot_base + 0x28);
+                            snapshot[11] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x2C);
                             snprintf(line, sizeof(line),
                                     "[psp1000-a989-dependency-direct-sync] "
                                     "validation=1 dependency=0x%08X "
@@ -10610,11 +10612,52 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                     "w38=0x%08X w3c=0x%08X "
                                     "w40=0x%08X w54=0x%08X "
                                     "w64=0x%08X w68=0x%08X "
-                                    "w6c=0x%08X\n", snapshot[1], snapshot[2],
+                                    "w6c=0x%08X w28=0x%08X\n",
+                                    snapshot[1], snapshot[2],
                                     snapshot[3], snapshot[4], snapshot[5],
                                     snapshot[6], snapshot[7], snapshot[8],
-                                    snapshot[9], snapshot[10]);
+                                    snapshot[9], snapshot[10], snapshot[11]);
                             zeroCtrlDiagnosticsText(line);
+                            {
+                                SceModule2 *owner =
+                                        sceKernelFindModuleByAddress(snapshot[11]);
+                                unsigned int lower = zeroCtrlReadHelperCounter(
+                                        slide_diag.bridge_scalar[5]);
+                                unsigned int upper = zeroCtrlReadHelperCounter(
+                                        slide_diag.bridge_scalar[6]);
+                                unsigned int aligned =
+                                        (snapshot[11] & 3) == 0;
+                                unsigned int user_range =
+                                        zeroCtrlPsp1000BridgeUserRangeValid(
+                                            snapshot[11], 4, lower, upper);
+                                unsigned int owner_segment = 0;
+                                unsigned int owner_remaining = 0;
+                                unsigned int module_owned = owner &&
+                                        zeroCtrlLoadedModuleMetadataValid(owner) &&
+                                        zeroCtrlModuleContainingSegment(owner,
+                                            snapshot[11], &owner_segment,
+                                            &owner_remaining);
+                                if (module_owned) {
+                                    snprintf(line, sizeof(line),
+                                            "[psp1000-a989-dependency-w28] "
+                                            "validation=1 value=0x%08X "
+                                            "aligned=%u user_range=%u "
+                                            "module_owned=1 module=%.27s "
+                                            "segment=%u segment_off=0x%X\n",
+                                            snapshot[11], aligned, user_range,
+                                            owner->modname, owner_segment,
+                                            snapshot[11] -
+                                                owner->segmentaddr[owner_segment]);
+                                } else {
+                                    snprintf(line, sizeof(line),
+                                            "[psp1000-a989-dependency-w28] "
+                                            "validation=1 value=0x%08X "
+                                            "aligned=%u user_range=%u "
+                                            "module_owned=0\n", snapshot[11],
+                                            aligned, user_range);
+                                }
+                                zeroCtrlDiagnosticsText(line);
+                            }
                         }
                     }
                     if (capture[5] != 0 && a989_target_node == 0) {

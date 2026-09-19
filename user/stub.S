@@ -405,6 +405,9 @@ zeroCtrlPafA989TargetTrace:
     lw      $t3, 0x6C($t7)
     lui     $t0, %hi(zeroCtrlPafA989DependencyW6C)
     sw      $t3, %lo(zeroCtrlPafA989DependencyW6C)($t0)
+    lw      $t3, 0x28($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW28)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW28)($t0)
     addiu   $t3, $zero, 1
     lui     $t0, %hi(zeroCtrlPafA989DependencyDirectValid)
     sw      $t3, %lo(zeroCtrlPafA989DependencyDirectValid)($t0)
@@ -512,6 +515,8 @@ zeroCtrlPafA989DependencyW64: .space 4
 zeroCtrlPafA989DependencyW68: .space 4
 .globl zeroCtrlPafA989DependencyW6C
 zeroCtrlPafA989DependencyW6C: .space 4
+.globl zeroCtrlPafA989DependencyW28
+zeroCtrlPafA989DependencyW28: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 
