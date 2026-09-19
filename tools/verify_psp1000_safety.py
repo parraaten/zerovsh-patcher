@@ -2586,8 +2586,8 @@ def check_sources(root):
             'snapshot_base, i;',
             'paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4',
             'snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4',
-            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x74)',
-            'for (i = 0; i < 29; i++)',
+            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x10C)',
+            'for (i = 0; i < 67; i++)',
             '_sw(0, snapshot_base + i * 4)',
             '(const void *)(snapshot_base + i * 4), 4'):
         if token not in target_install:
@@ -2626,10 +2626,10 @@ def check_sources(root):
             'snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4',
             snapshot_overflow)
     snapshot_range = target_install.find(
-            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x74)',
+            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x10C)',
             snapshot_derive)
     snapshot_clear = target_install.find(
-            'for (i = 0; i < 29; i++)', snapshot_range)
+            'for (i = 0; i < 67; i++)', snapshot_range)
     snapshot_clear_word = target_install.find(
             '_sw(0, snapshot_base + i * 4)', snapshot_clear)
     snapshot_clear_sync = target_install.find(
@@ -2652,7 +2652,7 @@ def check_sources(root):
             'zeroCtrlPafA989TargetTraceEnd:', target_helper_start)
     target_helper = assembly[target_helper_start:target_helper_end]
     if hashlib.sha256(target_helper.encode()).hexdigest() != \
-            '5b913fd4886c29ca8132c88ea2475608aab062706fa1e1ea2f980211ba3a59f4':
+            '4fabbd02b6d5aa060810d7e1e06ad3903f5405ca395e9005148a6b6e98f5f710':
         fail("synchronous A989 target helper hash changed")
     for reg, offset in zip(('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7'),
             range(0, 32, 4)):
@@ -2679,12 +2679,25 @@ def check_sources(root):
             'zeroCtrlPafA989W28Data20', 'zeroCtrlPafA989W28Data24',
             'zeroCtrlPafA989W28Data28', 'zeroCtrlPafA989W28Data2C',
             'zeroCtrlPafA989W28Data30', 'zeroCtrlPafA989W28Data34',
-            'zeroCtrlPafA989W28Data38', 'zeroCtrlPafA989W28Data3C')
+            'zeroCtrlPafA989W28Data38', 'zeroCtrlPafA989W28Data3C',
+            'zeroCtrlPafA989Pair00Valid', 'zeroCtrlPafA989Pair00Ptr', 'zeroCtrlPafA989Pair00Len',
+            'zeroCtrlPafA989Pair00Data00', 'zeroCtrlPafA989Pair00Data04', 'zeroCtrlPafA989Pair00Data08',
+            'zeroCtrlPafA989Pair00Data0C', 'zeroCtrlPafA989Pair00Data10', 'zeroCtrlPafA989Pair00Data14',
+            'zeroCtrlPafA989Pair00Data18', 'zeroCtrlPafA989Pair00Data1C', 'zeroCtrlPafA989Pair00Data20',
+            'zeroCtrlPafA989Pair00Data24', 'zeroCtrlPafA989Pair00Data28', 'zeroCtrlPafA989Pair00Data2C',
+            'zeroCtrlPafA989Pair00Data30', 'zeroCtrlPafA989Pair00Data34', 'zeroCtrlPafA989Pair00Data38',
+            'zeroCtrlPafA989Pair00Data3C', 'zeroCtrlPafA989Pair0CValid', 'zeroCtrlPafA989Pair0CPtr',
+            'zeroCtrlPafA989Pair0CLen', 'zeroCtrlPafA989Pair0CData00', 'zeroCtrlPafA989Pair0CData04',
+            'zeroCtrlPafA989Pair0CData08', 'zeroCtrlPafA989Pair0CData0C', 'zeroCtrlPafA989Pair0CData10',
+            'zeroCtrlPafA989Pair0CData14', 'zeroCtrlPafA989Pair0CData18', 'zeroCtrlPafA989Pair0CData1C',
+            'zeroCtrlPafA989Pair0CData20', 'zeroCtrlPafA989Pair0CData24', 'zeroCtrlPafA989Pair0CData28',
+            'zeroCtrlPafA989Pair0CData2C', 'zeroCtrlPafA989Pair0CData30', 'zeroCtrlPafA989Pair0CData34',
+            'zeroCtrlPafA989Pair0CData38', 'zeroCtrlPafA989Pair0CData3C')
     bss_positions = [a989_snapshot_bss.find(name + ': .space 4')
             for name in required_bss]
     if bss_start < 0 or bss_end < 0 or any(pos < 0 for pos in bss_positions) or \
             bss_positions != sorted(bss_positions) or \
-            a989_snapshot_bss.count(': .space 4') != 30 or \
+            a989_snapshot_bss.count(': .space 4') != 68 or \
             '.align' in a989_snapshot_bss:
         fail("A989 synchronous snapshot BSS is not exactly contiguous")
     for token in ('zeroCtrlVsh5704RegistrationTraceHits',
@@ -2793,6 +2806,76 @@ def check_sources(root):
                 'sw      $t3, %lo(zeroCtrlPafA989W28BytesValid)') != 1 or \
             '0x40($t5)' in target_helper:
         fail("A989 w28 string snapshot reads outside the fixed 0x40 bytes")
+    pair_specs = (('00', '00', '04', '4', '5'),
+            ('0C', '0C', '10', '6', '7'))
+    pair_ends = []
+    pair_search = string_done
+    for pair, pointer_offset, length_offset, failure_label, success_label in \
+            pair_specs:
+        pair_valid_clear = target_helper.find(
+                'sw      $zero, %lo(zeroCtrlPafA989Pair' + pair + 'Valid)',
+                pair_search)
+        pair_pointer_load = target_helper.find(
+                'lw      $t5, 0x' + pointer_offset + '($t7)', pair_valid_clear)
+        pair_pointer_store = target_helper.find(
+                'sw      $t5, %lo(zeroCtrlPafA989Pair' + pair + 'Ptr)',
+                pair_pointer_load)
+        pair_length_load = target_helper.find(
+                'lw      $t4, 0x' + length_offset + '($t7)', pair_pointer_store)
+        pair_length_store = target_helper.find(
+                'sw      $t4, %lo(zeroCtrlPafA989Pair' + pair + 'Len)',
+                pair_length_load)
+        pair_zero = target_helper.find(
+                'beqz    $t4, ' + success_label + 'f', pair_length_store)
+        pair_bound = target_helper.find('sltiu   $t2, $t4, 0x40', pair_zero)
+        pair_bound_fail = target_helper.find(
+                'beqz    $t2, ' + failure_label + 'f', pair_bound)
+        pair_null = target_helper.find(
+                'beqz    $t5, ' + failure_label + 'f', pair_bound_fail)
+        pair_align = target_helper.find('andi    $t2, $t5, 3', pair_null)
+        pair_align_fail = target_helper.find(
+                'bnez    $t2, ' + failure_label + 'f', pair_align)
+        pair_range = target_helper.find(
+                'BRIDGE_VALIDATE $t5, 0x40, ' + failure_label + 'f',
+                pair_align_fail)
+        pair_loads = [target_helper.find(
+                'lw      $t3, 0x' + offset + '($t5)', pair_range)
+                for offset in string_offsets]
+        pair_stores = [target_helper.find(
+                'sw      $t3, %lo(zeroCtrlPafA989Pair' + pair + 'Data' +
+                    offset + ')', pair_loads[index])
+                for index, offset in enumerate(string_offsets)]
+        pair_success = target_helper.find('\n' + success_label + ':\n',
+                pair_stores[-1])
+        pair_valid_set = target_helper.find(
+                'sw      $t3, %lo(zeroCtrlPafA989Pair' + pair + 'Valid)',
+                pair_success)
+        pair_failure = target_helper.find('\n' + failure_label + ':\n',
+                pair_valid_set)
+        if not 0 <= pair_valid_clear < pair_pointer_load < pair_pointer_store < \
+                pair_length_load < pair_length_store < pair_zero < pair_bound < \
+                pair_bound_fail < pair_null < pair_align < pair_align_fail < \
+                pair_range or any(pos < 0 for pos in pair_loads) or \
+                any(pos < 0 for pos in pair_stores) or \
+                any(not pair_loads[index] < pair_stores[index] <
+                    (pair_loads[index + 1] if index + 1 < len(pair_loads) else
+                        pair_success) for index in range(len(pair_loads))) or \
+                not pair_stores[-1] < pair_success < pair_valid_set < pair_failure:
+            fail("A989 pair" + pair + " validation/publication order regressed")
+        pair_source_offsets = re.findall(
+                r'lw      \$t3, 0x([0-9A-F]+)\(\$t5\)',
+                target_helper[pair_range:pair_success])
+        if tuple(pair_source_offsets) != string_offsets or \
+                target_helper.count('BRIDGE_VALIDATE $t5, 0x40, ' +
+                    failure_label + 'f') != 1 or \
+                target_helper.count('sw      $t3, %lo(zeroCtrlPafA989Pair' +
+                    pair + 'Valid)') != 1 or \
+                '0x40($t5)' in target_helper[pair_range:pair_success]:
+            fail("A989 pair" + pair + " capture exceeds its fixed source window")
+        pair_ends.append(pair_failure)
+        pair_search = pair_failure
+    if not string_done < pair_ends[0] < pair_ends[1] < valid_store:
+        fail("A989 optional pair failures do not preserve later captures")
     if any(token in target_helper for token in ('jal ', 'jalr', 'sw      $ra',
             'sw      $a2', 'sw      $a3', 'move    $a')):
         fail("A989 synchronous helper calls code or changes Sony-visible state")
@@ -3113,14 +3196,20 @@ def check_sources(root):
             'validation=%u size=0x40',
             '[psp1000-a989-dependency-w28-string-code] ',
             'off=0x00 w0=%08X w1=%08X w2=%08X',
-            'off=0x20 w0=%08X w1=%08X w2=%08X'):
+            'off=0x20 w0=%08X w1=%08X w2=%08X',
+            '[psp1000-a989-dependency-pair00] ',
+            '[psp1000-a989-dependency-pair00-code] ',
+            '[psp1000-a989-dependency-pair0c] ',
+            '[psp1000-a989-dependency-pair0c-code] ',
+            'validation=%u ptr=0x%08X len=0x%08X'):
         if (token.startswith('int ') and token not in writer) or \
                 (not token.startswith('int ') and
                     token not in direct_sync_writer):
             fail("synchronous direct-dependency telemetry lacks " + token)
     for offset in range(0, 0x74, 4):
         token = 'snapshot_base + 0x%02X' % offset
-        if direct_sync_writer.count(token) != 1:
+        if len(re.findall(re.escape(token) + r'(?![0-9A-F])',
+                    direct_sync_writer)) != 1:
             fail("direct-sync telemetry does not read exactly " + token)
     sync_valid_read = direct_sync_writer.find('snapshot_base + 0x00')
     sync_valid_gate = direct_sync_writer.find('snapshot[0] != 1', sync_valid_read)
@@ -3169,8 +3258,70 @@ def check_sources(root):
                     tuple(str(index) for index in range(21, 29)) or \
             '%s' in direct_sync_writer or 'strlen' in direct_sync_writer or \
             '_lb(' in direct_sync_writer or '_lbu(' in direct_sync_writer or \
-            'snapshot_base + 0x74' in direct_sync_writer:
+            'snapshot_base + 0x10C' in direct_sync_writer:
         fail("w28 string telemetry scans, formats, or exceeds private snapshot")
+    pair00_meta = [direct_sync_writer.find('snapshot_base + 0x%02X' % offset)
+            for offset in (0x74, 0x78, 0x7C)]
+    pair00_gate = direct_sync_writer.find(
+            'if (snapshot[29] == 1 && snapshot[31] != 0)', pair00_meta[-1])
+    pair00_reads = [direct_sync_writer.find(
+            'snapshot_base + 0x%02X' % offset, pair00_gate)
+            for offset in range(0x80, 0xC0, 4)]
+    pair0c_meta = [direct_sync_writer.find('snapshot_base + 0x%02X' % offset,
+            pair00_reads[-1]) for offset in (0xC0, 0xC4, 0xC8)]
+    pair0c_gate = direct_sync_writer.find(
+            'if (snapshot[48] == 1 && snapshot[50] != 0)', pair0c_meta[-1])
+    pair0c_reads = [direct_sync_writer.find(
+            'snapshot_base + 0x%02X' % offset, pair0c_gate)
+            for offset in range(0xCC, 0x10C, 4)]
+    pair00_record = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair00] ', pair0c_reads[-1])
+    pair00_row0 = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair00-code] ', pair00_record)
+    pair00_row1 = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair00-code] ', pair00_row0 + 1)
+    pair0c_record = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair0c] ', pair00_row1)
+    pair0c_row0 = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair0c-code] ', pair0c_record)
+    pair0c_row1 = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair0c-code] ', pair0c_row0 + 1)
+    pair_rows = ((pair00_row0, pair00_row1, 32),
+            (pair0c_row0, pair0c_row1, 51))
+    if any(len(re.findall(re.escape('snapshot_base + 0x%02X' % offset) +
+                r'(?![0-9A-F])', direct_sync_writer)) != 1
+                for offset in range(0x74, 0x10C, 4)) or \
+            any(pos < 0 for pos in pair00_meta + pair00_reads + pair0c_meta +
+                pair0c_reads) or pair00_reads != sorted(pair00_reads) or \
+            pair0c_reads != sorted(pair0c_reads) or \
+            not pair00_meta[-1] < pair00_gate < pair00_reads[0] < \
+                pair00_reads[-1] < pair0c_meta[0] or \
+            not pair0c_meta[-1] < pair0c_gate < pair0c_reads[0] < \
+                pair0c_reads[-1] < \
+                pair00_record < pair00_row0 < pair00_row1 < pair0c_record < \
+                pair0c_row0 < pair0c_row1 or \
+            direct_sync_writer.count(
+                '[psp1000-a989-dependency-pair00-code] ') != 2 or \
+            direct_sync_writer.count(
+                '[psp1000-a989-dependency-pair0c-code] ') != 2:
+        fail("pair telemetry is not bounded to its private snapshot windows")
+    for row0, row1, first_index in pair_rows:
+        row0_end = direct_sync_writer.find('zeroCtrlDiagnosticsText(line);', row0)
+        row1_end = direct_sync_writer.find('zeroCtrlDiagnosticsText(line);', row1)
+        if tuple(re.findall(r'snapshot\[(\d+)\]',
+                    direct_sync_writer[row0:row0_end])) != \
+                tuple(str(index) for index in range(first_index,
+                    first_index + 8)) or \
+                tuple(re.findall(r'snapshot\[(\d+)\]',
+                    direct_sync_writer[row1:row1_end])) != \
+                tuple(str(index) for index in range(first_index + 8,
+                    first_index + 16)):
+            fail("pair telemetry does not expose exactly sixteen private words")
+    if any(token in direct_sync_writer for token in
+            ('_lw(snapshot[30]', '_lw(snapshot[49]',
+             'zeroCtrlReadHelperCounter(snapshot[30]',
+             'zeroCtrlReadHelperCounter(snapshot[49]')):
+        fail("pair telemetry dereferences a captured runtime pointer")
     dependency_marker = writer.find('[psp1000-a989-dependency-life]')
     dependency_start = writer.rfind(
             'if (a989_target_dependency != 0)', 0, dependency_marker)

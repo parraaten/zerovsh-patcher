@@ -6011,7 +6011,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
     if (slide_diag.paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4)
         return;
     snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4;
-    if (!zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x74))
+    if (!zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x10C))
         return;
     helper_jump = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
     replacement = 0x0C000000 |
@@ -6042,7 +6042,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)slide_diag.paf_a989_target_trace_scalar[i], 4);
     }
-    for (i = 0; i < 29; i++) {
+    for (i = 0; i < 67; i++) {
         _sw(0, snapshot_base + i * 4);
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)(snapshot_base + i * 4), 4);
@@ -10674,7 +10674,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     }
                     if (capture[5] != 0 &&
                             !a989_dependency_direct_sync_written) {
-                        unsigned int snapshot[29] = { 0 };
+                        unsigned int snapshot[67] = { 0 };
                         unsigned int snapshot_base = 0;
                         a989_dependency_direct_sync_written = 1;
                         if (slide_diag.paf_a989_target_trace_scalar[4] <= 0xFFFFFFFFU - 4) {
@@ -10745,6 +10745,86 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                         snapshot_base + 0x6C);
                                 snapshot[28] = zeroCtrlReadHelperCounter(
                                         snapshot_base + 0x70);
+                            }
+                            snapshot[29] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x74);
+                            snapshot[30] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x78);
+                            snapshot[31] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x7C);
+                            if (snapshot[29] == 1 && snapshot[31] != 0) {
+                                snapshot[32] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x80);
+                                snapshot[33] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x84);
+                                snapshot[34] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x88);
+                                snapshot[35] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x8C);
+                                snapshot[36] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x90);
+                                snapshot[37] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x94);
+                                snapshot[38] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x98);
+                                snapshot[39] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x9C);
+                                snapshot[40] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xA0);
+                                snapshot[41] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xA4);
+                                snapshot[42] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xA8);
+                                snapshot[43] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xAC);
+                                snapshot[44] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xB0);
+                                snapshot[45] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xB4);
+                                snapshot[46] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xB8);
+                                snapshot[47] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xBC);
+                            }
+                            snapshot[48] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0xC0);
+                            snapshot[49] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0xC4);
+                            snapshot[50] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0xC8);
+                            if (snapshot[48] == 1 && snapshot[50] != 0) {
+                                snapshot[51] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xCC);
+                                snapshot[52] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xD0);
+                                snapshot[53] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xD4);
+                                snapshot[54] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xD8);
+                                snapshot[55] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xDC);
+                                snapshot[56] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xE0);
+                                snapshot[57] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xE4);
+                                snapshot[58] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xE8);
+                                snapshot[59] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xEC);
+                                snapshot[60] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xF0);
+                                snapshot[61] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xF4);
+                                snapshot[62] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xF8);
+                                snapshot[63] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0xFC);
+                                snapshot[64] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x100);
+                                snapshot[65] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x104);
+                                snapshot[66] = zeroCtrlReadHelperCounter(
+                                        snapshot_base + 0x108);
                             }
                             snprintf(line, sizeof(line),
                                     "[psp1000-a989-dependency-direct-sync] "
@@ -10819,6 +10899,52 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                         "w7=%08X\n", snapshot[21], snapshot[22],
                                         snapshot[23], snapshot[24], snapshot[25],
                                         snapshot[26], snapshot[27], snapshot[28]);
+                                zeroCtrlDiagnosticsText(line);
+                            }
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-pair00] "
+                                    "validation=%u ptr=0x%08X len=0x%08X\n",
+                                    snapshot[29], snapshot[30], snapshot[31]);
+                            zeroCtrlDiagnosticsText(line);
+                            if (snapshot[29] == 1 && snapshot[31] != 0) {
+                                snprintf(line, sizeof(line),
+                                        "[psp1000-a989-dependency-pair00-code] "
+                                        "off=0x00 w0=%08X w1=%08X w2=%08X "
+                                        "w3=%08X w4=%08X w5=%08X w6=%08X "
+                                        "w7=%08X\n", snapshot[32], snapshot[33],
+                                        snapshot[34], snapshot[35], snapshot[36],
+                                        snapshot[37], snapshot[38], snapshot[39]);
+                                zeroCtrlDiagnosticsText(line);
+                                snprintf(line, sizeof(line),
+                                        "[psp1000-a989-dependency-pair00-code] "
+                                        "off=0x20 w0=%08X w1=%08X w2=%08X "
+                                        "w3=%08X w4=%08X w5=%08X w6=%08X "
+                                        "w7=%08X\n", snapshot[40], snapshot[41],
+                                        snapshot[42], snapshot[43], snapshot[44],
+                                        snapshot[45], snapshot[46], snapshot[47]);
+                                zeroCtrlDiagnosticsText(line);
+                            }
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-pair0c] "
+                                    "validation=%u ptr=0x%08X len=0x%08X\n",
+                                    snapshot[48], snapshot[49], snapshot[50]);
+                            zeroCtrlDiagnosticsText(line);
+                            if (snapshot[48] == 1 && snapshot[50] != 0) {
+                                snprintf(line, sizeof(line),
+                                        "[psp1000-a989-dependency-pair0c-code] "
+                                        "off=0x00 w0=%08X w1=%08X w2=%08X "
+                                        "w3=%08X w4=%08X w5=%08X w6=%08X "
+                                        "w7=%08X\n", snapshot[51], snapshot[52],
+                                        snapshot[53], snapshot[54], snapshot[55],
+                                        snapshot[56], snapshot[57], snapshot[58]);
+                                zeroCtrlDiagnosticsText(line);
+                                snprintf(line, sizeof(line),
+                                        "[psp1000-a989-dependency-pair0c-code] "
+                                        "off=0x20 w0=%08X w1=%08X w2=%08X "
+                                        "w3=%08X w4=%08X w5=%08X w6=%08X "
+                                        "w7=%08X\n", snapshot[59], snapshot[60],
+                                        snapshot[61], snapshot[62], snapshot[63],
+                                        snapshot[64], snapshot[65], snapshot[66]);
                                 zeroCtrlDiagnosticsText(line);
                             }
                         }

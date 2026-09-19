@@ -469,6 +469,150 @@ zeroCtrlPafA989TargetTrace:
     lui     $t0, %hi(zeroCtrlPafA989W28BytesValid)
     sw      $t3, %lo(zeroCtrlPafA989W28BytesValid)($t0)
 3:
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Valid)
+    sw      $zero, %lo(zeroCtrlPafA989Pair00Valid)($t0)
+    lw      $t5, 0x00($t7)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Ptr)
+    sw      $t5, %lo(zeroCtrlPafA989Pair00Ptr)($t0)
+    lw      $t4, 0x04($t7)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Len)
+    sw      $t4, %lo(zeroCtrlPafA989Pair00Len)($t0)
+    beqz    $t4, 5f
+    nop
+    sltiu   $t2, $t4, 0x40
+    beqz    $t2, 4f
+    nop
+    beqz    $t5, 4f
+    nop
+    andi    $t2, $t5, 3
+    bnez    $t2, 4f
+    nop
+    BRIDGE_VALIDATE $t5, 0x40, 4f
+    lw      $t3, 0x00($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data00)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data00)($t0)
+    lw      $t3, 0x04($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data04)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data04)($t0)
+    lw      $t3, 0x08($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data08)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data08)($t0)
+    lw      $t3, 0x0C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data0C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data0C)($t0)
+    lw      $t3, 0x10($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data10)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data10)($t0)
+    lw      $t3, 0x14($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data14)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data14)($t0)
+    lw      $t3, 0x18($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data18)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data18)($t0)
+    lw      $t3, 0x1C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data1C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data1C)($t0)
+    lw      $t3, 0x20($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data20)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data20)($t0)
+    lw      $t3, 0x24($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data24)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data24)($t0)
+    lw      $t3, 0x28($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data28)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data28)($t0)
+    lw      $t3, 0x2C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data2C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data2C)($t0)
+    lw      $t3, 0x30($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data30)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data30)($t0)
+    lw      $t3, 0x34($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data34)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data34)($t0)
+    lw      $t3, 0x38($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data38)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data38)($t0)
+    lw      $t3, 0x3C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data3C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data3C)($t0)
+5:
+    addiu   $t3, $zero, 1
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Valid)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Valid)($t0)
+4:
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CValid)
+    sw      $zero, %lo(zeroCtrlPafA989Pair0CValid)($t0)
+    lw      $t5, 0x0C($t7)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CPtr)
+    sw      $t5, %lo(zeroCtrlPafA989Pair0CPtr)($t0)
+    lw      $t4, 0x10($t7)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CLen)
+    sw      $t4, %lo(zeroCtrlPafA989Pair0CLen)($t0)
+    beqz    $t4, 7f
+    nop
+    sltiu   $t2, $t4, 0x40
+    beqz    $t2, 6f
+    nop
+    beqz    $t5, 6f
+    nop
+    andi    $t2, $t5, 3
+    bnez    $t2, 6f
+    nop
+    BRIDGE_VALIDATE $t5, 0x40, 6f
+    lw      $t3, 0x00($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData00)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData00)($t0)
+    lw      $t3, 0x04($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData04)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData04)($t0)
+    lw      $t3, 0x08($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData08)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData08)($t0)
+    lw      $t3, 0x0C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData0C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData0C)($t0)
+    lw      $t3, 0x10($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData10)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData10)($t0)
+    lw      $t3, 0x14($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData14)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData14)($t0)
+    lw      $t3, 0x18($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData18)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData18)($t0)
+    lw      $t3, 0x1C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData1C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData1C)($t0)
+    lw      $t3, 0x20($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData20)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData20)($t0)
+    lw      $t3, 0x24($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData24)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData24)($t0)
+    lw      $t3, 0x28($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData28)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData28)($t0)
+    lw      $t3, 0x2C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData2C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData2C)($t0)
+    lw      $t3, 0x30($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData30)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData30)($t0)
+    lw      $t3, 0x34($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData34)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData34)($t0)
+    lw      $t3, 0x38($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData38)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData38)($t0)
+    lw      $t3, 0x3C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData3C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData3C)($t0)
+7:
+    addiu   $t3, $zero, 1
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CValid)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CValid)($t0)
+6:
     addiu   $t3, $zero, 1
     lui     $t0, %hi(zeroCtrlPafA989DependencyDirectValid)
     sw      $t3, %lo(zeroCtrlPafA989DependencyDirectValid)($t0)
@@ -612,6 +756,82 @@ zeroCtrlPafA989W28Data34: .space 4
 zeroCtrlPafA989W28Data38: .space 4
 .globl zeroCtrlPafA989W28Data3C
 zeroCtrlPafA989W28Data3C: .space 4
+.globl zeroCtrlPafA989Pair00Valid
+zeroCtrlPafA989Pair00Valid: .space 4
+.globl zeroCtrlPafA989Pair00Ptr
+zeroCtrlPafA989Pair00Ptr: .space 4
+.globl zeroCtrlPafA989Pair00Len
+zeroCtrlPafA989Pair00Len: .space 4
+.globl zeroCtrlPafA989Pair00Data00
+zeroCtrlPafA989Pair00Data00: .space 4
+.globl zeroCtrlPafA989Pair00Data04
+zeroCtrlPafA989Pair00Data04: .space 4
+.globl zeroCtrlPafA989Pair00Data08
+zeroCtrlPafA989Pair00Data08: .space 4
+.globl zeroCtrlPafA989Pair00Data0C
+zeroCtrlPafA989Pair00Data0C: .space 4
+.globl zeroCtrlPafA989Pair00Data10
+zeroCtrlPafA989Pair00Data10: .space 4
+.globl zeroCtrlPafA989Pair00Data14
+zeroCtrlPafA989Pair00Data14: .space 4
+.globl zeroCtrlPafA989Pair00Data18
+zeroCtrlPafA989Pair00Data18: .space 4
+.globl zeroCtrlPafA989Pair00Data1C
+zeroCtrlPafA989Pair00Data1C: .space 4
+.globl zeroCtrlPafA989Pair00Data20
+zeroCtrlPafA989Pair00Data20: .space 4
+.globl zeroCtrlPafA989Pair00Data24
+zeroCtrlPafA989Pair00Data24: .space 4
+.globl zeroCtrlPafA989Pair00Data28
+zeroCtrlPafA989Pair00Data28: .space 4
+.globl zeroCtrlPafA989Pair00Data2C
+zeroCtrlPafA989Pair00Data2C: .space 4
+.globl zeroCtrlPafA989Pair00Data30
+zeroCtrlPafA989Pair00Data30: .space 4
+.globl zeroCtrlPafA989Pair00Data34
+zeroCtrlPafA989Pair00Data34: .space 4
+.globl zeroCtrlPafA989Pair00Data38
+zeroCtrlPafA989Pair00Data38: .space 4
+.globl zeroCtrlPafA989Pair00Data3C
+zeroCtrlPafA989Pair00Data3C: .space 4
+.globl zeroCtrlPafA989Pair0CValid
+zeroCtrlPafA989Pair0CValid: .space 4
+.globl zeroCtrlPafA989Pair0CPtr
+zeroCtrlPafA989Pair0CPtr: .space 4
+.globl zeroCtrlPafA989Pair0CLen
+zeroCtrlPafA989Pair0CLen: .space 4
+.globl zeroCtrlPafA989Pair0CData00
+zeroCtrlPafA989Pair0CData00: .space 4
+.globl zeroCtrlPafA989Pair0CData04
+zeroCtrlPafA989Pair0CData04: .space 4
+.globl zeroCtrlPafA989Pair0CData08
+zeroCtrlPafA989Pair0CData08: .space 4
+.globl zeroCtrlPafA989Pair0CData0C
+zeroCtrlPafA989Pair0CData0C: .space 4
+.globl zeroCtrlPafA989Pair0CData10
+zeroCtrlPafA989Pair0CData10: .space 4
+.globl zeroCtrlPafA989Pair0CData14
+zeroCtrlPafA989Pair0CData14: .space 4
+.globl zeroCtrlPafA989Pair0CData18
+zeroCtrlPafA989Pair0CData18: .space 4
+.globl zeroCtrlPafA989Pair0CData1C
+zeroCtrlPafA989Pair0CData1C: .space 4
+.globl zeroCtrlPafA989Pair0CData20
+zeroCtrlPafA989Pair0CData20: .space 4
+.globl zeroCtrlPafA989Pair0CData24
+zeroCtrlPafA989Pair0CData24: .space 4
+.globl zeroCtrlPafA989Pair0CData28
+zeroCtrlPafA989Pair0CData28: .space 4
+.globl zeroCtrlPafA989Pair0CData2C
+zeroCtrlPafA989Pair0CData2C: .space 4
+.globl zeroCtrlPafA989Pair0CData30
+zeroCtrlPafA989Pair0CData30: .space 4
+.globl zeroCtrlPafA989Pair0CData34
+zeroCtrlPafA989Pair0CData34: .space 4
+.globl zeroCtrlPafA989Pair0CData38
+zeroCtrlPafA989Pair0CData38: .space 4
+.globl zeroCtrlPafA989Pair0CData3C
+zeroCtrlPafA989Pair0CData3C: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 
