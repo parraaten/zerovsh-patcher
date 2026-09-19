@@ -374,6 +374,44 @@ zeroCtrlPafA989TargetTrace:
     sw      $a1, %lo(zeroCtrlPafA989TargetOuter)($t0)
     lui     $t0, %hi(zeroCtrlPafA989TargetInner)
     sw      $t6, %lo(zeroCtrlPafA989TargetInner)($t0)
+    lw      $t7, 0x08($t6)
+    BRIDGE_VALIDATE $t7, 0x70, 2f
+    lui     $t0, %hi(zeroCtrlPafA989TargetDependencySync)
+    sw      $t7, %lo(zeroCtrlPafA989TargetDependencySync)($t0)
+    lw      $t3, 0x2C($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW2C)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW2C)($t0)
+    lw      $t3, 0x34($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW34)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW34)($t0)
+    lw      $t3, 0x38($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW38)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW38)($t0)
+    lw      $t3, 0x3C($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW3C)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW3C)($t0)
+    lw      $t3, 0x40($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW40)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW40)($t0)
+    lw      $t3, 0x54($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW54)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW54)($t0)
+    lw      $t3, 0x64($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW64)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW64)($t0)
+    lw      $t3, 0x68($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW68)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW68)($t0)
+    lw      $t3, 0x6C($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW6C)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW6C)($t0)
+    lw      $t3, 0x28($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW28)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW28)($t0)
+    addiu   $t3, $zero, 1
+    lui     $t0, %hi(zeroCtrlPafA989DependencyDirectValid)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyDirectValid)($t0)
+2:
     lui     $t0, %hi(zeroCtrlPafA989TargetTraceExactHits)
     lw      $t1, %lo(zeroCtrlPafA989TargetTraceExactHits)($t0)
     addiu   $t1, $t1, 1
@@ -455,6 +493,30 @@ zeroCtrlPafA989TargetNode: .space 4
 zeroCtrlPafA989TargetOuter: .space 4
 .globl zeroCtrlPafA989TargetInner
 zeroCtrlPafA989TargetInner: .space 4
+.globl zeroCtrlPafA989DependencyDirectValid
+zeroCtrlPafA989DependencyDirectValid: .space 4
+.globl zeroCtrlPafA989TargetDependencySync
+zeroCtrlPafA989TargetDependencySync: .space 4
+.globl zeroCtrlPafA989DependencyW2C
+zeroCtrlPafA989DependencyW2C: .space 4
+.globl zeroCtrlPafA989DependencyW34
+zeroCtrlPafA989DependencyW34: .space 4
+.globl zeroCtrlPafA989DependencyW38
+zeroCtrlPafA989DependencyW38: .space 4
+.globl zeroCtrlPafA989DependencyW3C
+zeroCtrlPafA989DependencyW3C: .space 4
+.globl zeroCtrlPafA989DependencyW40
+zeroCtrlPafA989DependencyW40: .space 4
+.globl zeroCtrlPafA989DependencyW54
+zeroCtrlPafA989DependencyW54: .space 4
+.globl zeroCtrlPafA989DependencyW64
+zeroCtrlPafA989DependencyW64: .space 4
+.globl zeroCtrlPafA989DependencyW68
+zeroCtrlPafA989DependencyW68: .space 4
+.globl zeroCtrlPafA989DependencyW6C
+zeroCtrlPafA989DependencyW6C: .space 4
+.globl zeroCtrlPafA989DependencyW28
+zeroCtrlPafA989DependencyW28: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 

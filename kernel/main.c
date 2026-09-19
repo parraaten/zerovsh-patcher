@@ -5913,7 +5913,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     PspSysmemPartitionInfo info;
     unsigned int vtext, ptext, thunk, wrapper, inner, consumer;
-    unsigned int owner, target, helper_jump, replacement, i;
+    unsigned int owner, target, helper_jump, replacement, snapshot_base, i;
 
     if (slide_diag.paf_a989_target_trace_install ||
             !slide_diag.paf_a989_target_trace_registered ||
@@ -6008,6 +6008,11 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
         if (!zeroCtrlVshModuleRangeValid(helper,
                     slide_diag.paf_a989_target_trace_scalar[i], 4))
             return;
+    if (slide_diag.paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4)
+        return;
+    snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4;
+    if (!zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x30))
+        return;
     helper_jump = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
     replacement = 0x0C000000 |
             ((slide_diag.paf_a989_target_trace_helper >> 2) & 0x03FFFFFF);
@@ -6036,6 +6041,11 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
         _sw(0, slide_diag.paf_a989_target_trace_scalar[i]);
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)slide_diag.paf_a989_target_trace_scalar[i], 4);
+    }
+    for (i = 0; i < 12; i++) {
+        _sw(0, snapshot_base + i * 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)(snapshot_base + i * 4), 4);
     }
     _sw(helper_jump, slide_diag.paf_a989_target_trace_jump_slot);
     sceKernelDcacheWritebackInvalidateRange(
@@ -6896,6 +6906,268 @@ static int zeroCtrlApplyConstructed0DependencyInstruction(unsigned int word,
     return 1;
 }
 
+static void zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(
+        SceModule2 *paf, unsigned int dependency_consumer_target) {
+    unsigned int dependency_w40_zero_target, delay, segment, remaining, offset;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf,
+                dependency_consumer_target + 0x27C, 0x30) ||
+            _lw(dependency_consumer_target + 0x27C) != 0x8E72003C ||
+            _lw(dependency_consumer_target + 0x298) != 0x1640011A ||
+            _lw(dependency_consumer_target + 0x29C) != 0xAE2001D0 ||
+            _lw(dependency_consumer_target + 0x2A0) != 0x8E620040 ||
+            _lw(dependency_consumer_target + 0x2A4) != 0x10400113) {
+        goto invalid;
+    }
+    delay = _lw(dependency_consumer_target + 0x2A8);
+    if ((delay >> 26) != 0x0F || ((delay >> 16) & 0x1F) != 4)
+        goto invalid;
+    dependency_w40_zero_target = zeroCtrlMipsBranchTarget(
+            dependency_consumer_target + 0x2A4,
+            _lw(dependency_consumer_target + 0x2A4));
+    if (dependency_w40_zero_target < dependency_consumer_target ||
+            dependency_w40_zero_target - dependency_consumer_target != 0x6F4 ||
+            !zeroCtrlModuleContainingSegment(paf, dependency_w40_zero_target,
+                &segment, &remaining) || segment != 0 || remaining < 0x100 ||
+            !zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,
+                0x100)) {
+        goto invalid;
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-w40-zero-target] validation=1 "
+            "source_off=0x2A4 target=0x%08X target_off=0x%X "
+            "consumer_off=0x6F4 delay=0x%08X size=0x100\n",
+            dependency_w40_zero_target,
+            dependency_w40_zero_target - paf->text_addr, delay);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0xE0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-w40-zero-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(dependency_w40_zero_target + offset + 0x00),
+                _lw(dependency_w40_zero_target + offset + 0x04),
+                _lw(dependency_w40_zero_target + offset + 0x08),
+                _lw(dependency_w40_zero_target + offset + 0x0C),
+                _lw(dependency_w40_zero_target + offset + 0x10),
+                _lw(dependency_w40_zero_target + offset + 0x14),
+                _lw(dependency_w40_zero_target + offset + 0x18),
+                _lw(dependency_w40_zero_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+    return;
+invalid:
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-w40-zero-target] validation=0\n");
+}
+
+static void zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(
+        SceModule2 *paf, unsigned int dependency_consumer_target) {
+    unsigned int dependency_w40_zero_target, dependency_w40_rejoin_target;
+    unsigned int dependency_w2c_nonzero_target, delay, fallback_load;
+    unsigned int rejoin_load, jump, segment, remaining, offset;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf,
+                dependency_consumer_target + 0x2A4, 8) ||
+            _lw(dependency_consumer_target + 0x2A4) != 0x10400113)
+        goto invalid;
+    delay = _lw(dependency_consumer_target + 0x2A8);
+    if ((delay >> 26) != 0x0F || ((delay >> 16) & 0x1F) != 4)
+        goto invalid;
+    dependency_w40_zero_target = zeroCtrlMipsBranchTarget(
+            dependency_consumer_target + 0x2A4,
+            _lw(dependency_consumer_target + 0x2A4));
+    if (dependency_w40_zero_target < dependency_consumer_target ||
+            dependency_w40_zero_target - dependency_consumer_target != 0x6F4 ||
+            !zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,
+                0x10))
+        goto invalid;
+    fallback_load = _lw(dependency_w40_zero_target + 0x00);
+    if ((fallback_load >> 26) != 0x23 ||
+            ((fallback_load >> 21) & 0x1F) != 4 ||
+            ((fallback_load >> 16) & 0x1F) != 2 ||
+            _lw(dependency_w40_zero_target + 0x04) != 0x8C43002C)
+        goto invalid;
+    jump = _lw(dependency_w40_zero_target + 0x08);
+    if ((jump >> 26) != 2 ||
+            _lw(dependency_w40_zero_target + 0x0C) != 0xAE23019C)
+        goto invalid;
+    dependency_w40_rejoin_target = zeroCtrlMipsJumpTarget(
+            dependency_w40_zero_target + 0x08,
+            _lw(dependency_w40_zero_target + 0x08));
+    if (dependency_w40_rejoin_target < dependency_consumer_target ||
+            dependency_w40_rejoin_target - dependency_consumer_target != 0x2B0 ||
+            !zeroCtrlBridgeExecutableRange(paf, dependency_w40_rejoin_target,
+                0x20))
+        goto invalid;
+    rejoin_load = _lw(dependency_w40_rejoin_target + 0x00);
+    if ((rejoin_load >> 26) != 0x23 ||
+            ((rejoin_load >> 21) & 0x1F) != 4 ||
+            ((rejoin_load >> 16) & 0x1F) != 2 ||
+            (rejoin_load & 0xFFFF) != (fallback_load & 0xFFFF) ||
+            _lw(dependency_w40_rejoin_target + 0x04) != 0x8E2401D4 ||
+            _lw(dependency_w40_rejoin_target + 0x08) != 0x8C450098 ||
+            _lw(dependency_w40_rejoin_target + 0x0C) != 0x14800109 ||
+            _lw(dependency_w40_rejoin_target + 0x10) != 0xAE2501C0 ||
+            _lw(dependency_w40_rejoin_target + 0x14) != 0x8E62002C ||
+            _lw(dependency_w40_rejoin_target + 0x18) != 0x144000E7 ||
+            _lw(dependency_w40_rejoin_target + 0x1C) != 0x00000000)
+        goto invalid;
+    dependency_w2c_nonzero_target = zeroCtrlMipsBranchTarget(
+            dependency_consumer_target + 0x2C8,
+            _lw(dependency_consumer_target + 0x2C8));
+    if (dependency_w2c_nonzero_target < dependency_consumer_target ||
+            dependency_w2c_nonzero_target - dependency_consumer_target != 0x668 ||
+            !zeroCtrlModuleContainingSegment(paf, dependency_w2c_nonzero_target,
+                &segment, &remaining) || segment != 0 || remaining < 0x8C ||
+            !zeroCtrlBridgeExecutableRange(paf, dependency_w2c_nonzero_target,
+                0x8C))
+        goto invalid;
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-w2c-nonzero-target] validation=1 "
+            "source_off=0x2C8 target=0x%08X target_off=0x%X "
+            "consumer_off=0x668 rejoin_off=0x2B0 end_before=0x6F4 "
+            "size=0x8C\n", dependency_w2c_nonzero_target,
+            dependency_w2c_nonzero_target - paf->text_addr);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0x60; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-w2c-nonzero-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(dependency_w2c_nonzero_target + offset + 0x00),
+                _lw(dependency_w2c_nonzero_target + offset + 0x04),
+                _lw(dependency_w2c_nonzero_target + offset + 0x08),
+                _lw(dependency_w2c_nonzero_target + offset + 0x0C),
+                _lw(dependency_w2c_nonzero_target + offset + 0x10),
+                _lw(dependency_w2c_nonzero_target + offset + 0x14),
+                _lw(dependency_w2c_nonzero_target + offset + 0x18),
+                _lw(dependency_w2c_nonzero_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-w2c-nonzero-code] "
+            "off=0x080 w0=%08X w1=%08X w2=%08X\n",
+            _lw(dependency_w2c_nonzero_target + 0x80),
+            _lw(dependency_w2c_nonzero_target + 0x84),
+            _lw(dependency_w2c_nonzero_target + 0x88));
+    zeroCtrlDiagnosticsText(line);
+    return;
+invalid:
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-w2c-nonzero-target] validation=0\n");
+}
+
+static void zeroCtrlWriteConstructed0Dependency44CalleeMap(
+        SceModule2 *paf, unsigned int dependency_consumer_target) {
+    unsigned int dependency44_callee_target, segment, remaining, offset, word;
+    int destination;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,
+                0x258) ||
+            _lw(dependency_consumer_target + 0x1A8) != 0x262401A0 ||
+            _lw(dependency_consumer_target + 0x1AC) != 0x26650044) {
+        goto invalid;
+    }
+    for (offset = 0x1B0; offset <= 0x24C; offset += 4) {
+        word = _lw(dependency_consumer_target + offset);
+        destination = zeroCtrlMipsGprWriteDestination(word);
+        if (destination < 0 || destination == 5) goto invalid;
+    }
+    word = _lw(dependency_consumer_target + 0x250);
+    if ((word >> 26) != 3 ||
+            _lw(dependency_consumer_target + 0x254) != 0xAE20019C) {
+        goto invalid;
+    }
+    dependency44_callee_target = zeroCtrlMipsJumpTarget(
+            dependency_consumer_target + 0x250,
+            _lw(dependency_consumer_target + 0x250));
+    if (!zeroCtrlModuleContainingSegment(paf, dependency44_callee_target,
+                &segment, &remaining) || segment != 0 || remaining < 0x100 ||
+            !zeroCtrlBridgeExecutableRange(paf, dependency44_callee_target,
+                0x100)) {
+        goto invalid;
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-44-callee] validation=1 "
+            "call_off=0x250 target=0x%08X target_off=0x%X size=0x100\n",
+            dependency44_callee_target,
+            dependency44_callee_target - paf->text_addr);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0xE0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-44-callee-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(dependency44_callee_target + offset + 0x00),
+                _lw(dependency44_callee_target + offset + 0x04),
+                _lw(dependency44_callee_target + offset + 0x08),
+                _lw(dependency44_callee_target + offset + 0x0C),
+                _lw(dependency44_callee_target + offset + 0x10),
+                _lw(dependency44_callee_target + offset + 0x14),
+                _lw(dependency44_callee_target + offset + 0x18),
+                _lw(dependency44_callee_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+    return;
+invalid:
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-44-callee] validation=0\n");
+}
+
+static void zeroCtrlWriteConstructed0DependencyConsumerContinuation(
+        SceModule2 *paf, unsigned int dependency_consumer_target) {
+    unsigned int offset;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,
+                0x200) ||
+            _lw(dependency_consumer_target + 0x1A8) != 0x262401A0 ||
+            _lw(dependency_consumer_target + 0x1AC) != 0x26650044) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-consumer-cont] "
+                "validation=0\n");
+        return;
+    }
+    for (offset = 0x1B0; offset <= 0x1FC; offset += 4) {
+        if (zeroCtrlMipsGprWriteDestination(
+                    _lw(dependency_consumer_target + offset)) == 5) {
+            zeroCtrlDiagnosticsText(
+                    "[psp1000-constructed0-dependency-consumer-cont] "
+                    "validation=0\n");
+            return;
+        }
+    }
+    if (!zeroCtrlBridgeExecutableRange(paf,
+                dependency_consumer_target + 0x200, 0x100)) {
+        zeroCtrlDiagnosticsText(
+                "[psp1000-constructed0-dependency-consumer-cont] "
+                "validation=0\n");
+        return;
+    }
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-consumer-cont] validation=1 "
+            "start_off=0x200 size=0x100\n");
+    for (offset = 0x200; offset <= 0x2E0; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-consumer-cont-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(dependency_consumer_target + offset + 0x00),
+                _lw(dependency_consumer_target + offset + 0x04),
+                _lw(dependency_consumer_target + offset + 0x08),
+                _lw(dependency_consumer_target + offset + 0x0C),
+                _lw(dependency_consumer_target + offset + 0x10),
+                _lw(dependency_consumer_target + offset + 0x14),
+                _lw(dependency_consumer_target + offset + 0x18),
+                _lw(dependency_consumer_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+}
+
 static void zeroCtrlWriteConstructed0DependencyMap(SceModule2 *paf,
         unsigned int target) {
     unsigned int offset;
@@ -7058,6 +7330,40 @@ static void zeroCtrlWriteConstructed0DependencyCopyImplementationMap(
     for (offset = 0x100; offset <= 0x260; offset += 0x20) {
         snprintf(line, sizeof(line),
                 "[psp1000-constructed0-dependency-copy-cont-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(implementation_target + offset + 0x00),
+                _lw(implementation_target + offset + 0x04),
+                _lw(implementation_target + offset + 0x08),
+                _lw(implementation_target + offset + 0x0C),
+                _lw(implementation_target + offset + 0x10),
+                _lw(implementation_target + offset + 0x14),
+                _lw(implementation_target + offset + 0x18),
+                _lw(implementation_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+    {
+        unsigned int boundary_branch =
+                _lw(implementation_target + 0x27C);
+        if (_lw(implementation_target + 0x278) != 0x2CC70008 ||
+                boundary_branch != 0x10E00008 ||
+                (boundary_branch >> 26) != 4 ||
+                zeroCtrlMipsBranchTarget(implementation_target + 0x27C,
+                    boundary_branch) != implementation_target + 0x2A0 ||
+                !zeroCtrlBridgeExecutableRange(owner,
+                    implementation_target + 0x280, 0x100)) {
+            zeroCtrlDiagnosticsText(
+                    "[psp1000-constructed0-dependency-copy-cont2] "
+                    "validation=0\n");
+            return;
+        }
+    }
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-copy-cont2] validation=1 "
+            "start_off=0x280 size=0x100\n");
+    for (offset = 0x280; offset <= 0x360; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-copy-cont2-code] "
                 "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
                 "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
                 _lw(implementation_target + offset + 0x00),
@@ -7235,6 +7541,10 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
                 "[psp1000-constructed0-dependency-analysis] validation=0 "
                 "complete=0 reason=NO_RETURN off=0x200\n");
         zeroCtrlWriteConstructed0DependencyMap(paf, target);
+        zeroCtrlWriteConstructed0DependencyConsumerContinuation(paf, target);
+        zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(paf, target);
+        zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(paf, target);
+        zeroCtrlWriteConstructed0Dependency44CalleeMap(paf, target);
         zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);
         zeroCtrlWriteConstructed0DependencyCopyCalleeMap(paf, target);
         return 0;
@@ -9917,6 +10227,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     };
     int clockpath_written = 0;
     int constructed0_dependency_written = 0;
+    int a989_dependency44_snapshot_written = 0;
+    int a989_dependency_direct_sync_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -10254,12 +10566,107 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 capture[5]);
                         zeroCtrlDiagnosticsText(line);
                     }
+                    if (capture[5] != 0 &&
+                            !a989_dependency_direct_sync_written) {
+                        unsigned int snapshot[12] = { 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0, 0 };
+                        unsigned int snapshot_base = 0;
+                        a989_dependency_direct_sync_written = 1;
+                        if (slide_diag.paf_a989_target_trace_scalar[4] <= 0xFFFFFFFFU - 4) {
+                            snapshot_base =
+                                    slide_diag.paf_a989_target_trace_scalar[4] + 4;
+                            snapshot[0] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x00);
+                        }
+                        if (snapshot[0] != 1) {
+                            zeroCtrlDiagnosticsText(
+                                    "[psp1000-a989-dependency-direct-sync] "
+                                    "validation=0\n");
+                        } else {
+                            snapshot[1] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x04);
+                            snapshot[2] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x08);
+                            snapshot[3] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x0C);
+                            snapshot[4] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x10);
+                            snapshot[5] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x14);
+                            snapshot[6] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x18);
+                            snapshot[7] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x1C);
+                            snapshot[8] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x20);
+                            snapshot[9] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x24);
+                            snapshot[10] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x28);
+                            snapshot[11] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x2C);
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-direct-sync] "
+                                    "validation=1 dependency=0x%08X "
+                                    "w2c=0x%08X w34=0x%08X "
+                                    "w38=0x%08X w3c=0x%08X "
+                                    "w40=0x%08X w54=0x%08X "
+                                    "w64=0x%08X w68=0x%08X "
+                                    "w6c=0x%08X w28=0x%08X\n",
+                                    snapshot[1], snapshot[2],
+                                    snapshot[3], snapshot[4], snapshot[5],
+                                    snapshot[6], snapshot[7], snapshot[8],
+                                    snapshot[9], snapshot[10], snapshot[11]);
+                            zeroCtrlDiagnosticsText(line);
+                            {
+                                SceModule2 *owner =
+                                        sceKernelFindModuleByAddress(snapshot[11]);
+                                unsigned int lower = zeroCtrlReadHelperCounter(
+                                        slide_diag.bridge_scalar[5]);
+                                unsigned int upper = zeroCtrlReadHelperCounter(
+                                        slide_diag.bridge_scalar[6]);
+                                unsigned int aligned =
+                                        (snapshot[11] & 3) == 0;
+                                unsigned int user_range =
+                                        zeroCtrlPsp1000BridgeUserRangeValid(
+                                            snapshot[11], 4, lower, upper);
+                                unsigned int owner_segment = 0;
+                                unsigned int owner_remaining = 0;
+                                unsigned int module_owned = owner &&
+                                        zeroCtrlLoadedModuleMetadataValid(owner) &&
+                                        zeroCtrlModuleContainingSegment(owner,
+                                            snapshot[11], &owner_segment,
+                                            &owner_remaining);
+                                if (module_owned) {
+                                    snprintf(line, sizeof(line),
+                                            "[psp1000-a989-dependency-w28] "
+                                            "validation=1 value=0x%08X "
+                                            "aligned=%u user_range=%u "
+                                            "module_owned=1 module=%.27s "
+                                            "segment=%u segment_off=0x%X\n",
+                                            snapshot[11], aligned, user_range,
+                                            owner->modname, owner_segment,
+                                            snapshot[11] -
+                                                owner->segmentaddr[owner_segment]);
+                                } else {
+                                    snprintf(line, sizeof(line),
+                                            "[psp1000-a989-dependency-w28] "
+                                            "validation=1 value=0x%08X "
+                                            "aligned=%u user_range=%u "
+                                            "module_owned=0\n", snapshot[11],
+                                            aligned, user_range);
+                                }
+                                zeroCtrlDiagnosticsText(line);
+                            }
+                        }
+                    }
                     if (capture[5] != 0 && a989_target_node == 0) {
                         unsigned int lower = zeroCtrlReadHelperCounter(
                                 slide_diag.bridge_scalar[5]);
                         unsigned int upper = zeroCtrlReadHelperCounter(
                                 slide_diag.bridge_scalar[6]);
                         unsigned int dependency_valid = 0;
+                        int exact_dependency_capture = 0;
                         a989_target_node = zeroCtrlReadHelperCounter(
                                 slide_diag.paf_a989_target_trace_scalar[2]);
                         a989_target_outer = zeroCtrlReadHelperCounter(
@@ -10279,6 +10686,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                     slide_diag.bridge_callback) {
                             a989_target_dependency =
                                     _lw(a989_target_inner + 0x08);
+                            exact_dependency_capture = 1;
                             dependency_valid =
                                     zeroCtrlPsp1000BridgeUserRangeValid(
                                         a989_target_dependency, 0x10,
@@ -10293,6 +10701,63 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                     "inner=0x%08X\n", a989_target_inner);
                         }
                         zeroCtrlDiagnosticsText(line);
+                        if (exact_dependency_capture &&
+                                !a989_dependency44_snapshot_written) {
+                            unsigned int dependency44 = 0;
+                            unsigned int dependency48 = 0;
+                            unsigned int first = 0;
+                            unsigned int root = 0;
+                            unsigned int dependency48_user_ptr = 0;
+                            unsigned int first_valid = 0;
+                            unsigned int root_valid = 0;
+                            unsigned int flag2d_valid = 0;
+                            unsigned int root_flag_2d = 0;
+                            a989_dependency44_snapshot_written = 1;
+                            if (!zeroCtrlPsp1000BridgeUserRangeValid(
+                                        a989_target_dependency, 0x4C,
+                                        lower, upper)) {
+                                zeroCtrlDiagnosticsText(
+                                        "[psp1000-a989-dependency44-snapshot] "
+                                        "validation=0\n");
+                            } else {
+                                dependency44 = _lw(a989_target_dependency + 0x44);
+                                dependency48 = _lw(a989_target_dependency + 0x48);
+                                dependency48_user_ptr =
+                                        zeroCtrlPsp1000BridgeUserRangeValid(
+                                            dependency48, 4, lower, upper);
+                                first_valid =
+                                        zeroCtrlPsp1000BridgeUserRangeValid(
+                                            dependency44, 4, lower, upper);
+                                if (first_valid) {
+                                    first = _lw(dependency44 + 0x00);
+                                    root_valid =
+                                            zeroCtrlPsp1000BridgeUserRangeValid(
+                                                first, 4, lower, upper);
+                                    if (root_valid) {
+                                        root = _lw(first + 0x00);
+                                        flag2d_valid =
+                                            zeroCtrlPsp1000BridgeUserRangeValid(
+                                                root, 0x2E, lower, upper);
+                                        if (flag2d_valid)
+                                            root_flag_2d =
+                                                    _lb(root + 0x2D) & 0xFF;
+                                    }
+                                }
+                                snprintf(line, sizeof(line),
+                                        "[psp1000-a989-dependency44-snapshot] "
+                                        "validation=1 dependency=0x%08X "
+                                        "w44=0x%08X w48=0x%08X "
+                                        "w48_user_ptr=%u first_valid=%u "
+                                        "first=0x%08X root_valid=%u "
+                                        "root=0x%08X flag2d_valid=%u "
+                                        "flag2d=0x%02X\n",
+                                        a989_target_dependency, dependency44,
+                                        dependency48, dependency48_user_ptr,
+                                        first_valid, first, root_valid, root,
+                                        flag2d_valid, root_flag_2d);
+                                zeroCtrlDiagnosticsText(line);
+                            }
+                        }
                     }
                 }
                 if (slide_diag.bridge_validation == 1 &&
