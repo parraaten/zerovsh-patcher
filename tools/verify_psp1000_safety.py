@@ -3273,6 +3273,80 @@ def check_sources(root):
     if 'boundary = offset + 8;' not in boundary_search or \
             'if (boundary == 0)' not in boundary_search:
         fail("dependency analysis no longer fails closed without a full return")
+    w28_map_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyW28CalleeMap(')
+    w28_map_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(',
+            w28_map_start)
+    w28_map = kernel[w28_map_start:w28_map_end]
+    if w28_map_start < 0 or w28_map_end < 0:
+        fail("constructed0 dependency w28 callee map is missing")
+    for token in ('dependency_consumer_target + 0x67C, 0x1C',
+            'dependency_consumer_target + 0x67C) != 0x8E640028',
+            'dependency_consumer_target + 0x680) != 0x8E2701C0',
+            'dependency_consumer_target + 0x684) != 0x26280058',
+            'dependency_consumer_target + 0x688) != 0x24050001',
+            'dependency_consumer_target + 0x68C) != 0x00003021',
+            'dependency_consumer_target + 0x694) != 0x27A90040',
+            'call = _lw(dependency_consumer_target + 0x690)',
+            '(call >> 26) != 3',
+            'target = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x690,',
+            'zeroCtrlModuleContainingSegment(paf, target, &segment, &remaining)',
+            'segment != 0', 'target < paf->text_addr',
+            'target - paf->text_addr != 0x687E8', 'remaining < 0x100',
+            'zeroCtrlBridgeExecutableRange(paf, target, 0x100)',
+            '[psp1000-constructed0-dependency-w28-callee] validation=0',
+            '[psp1000-constructed0-dependency-w28-callee] validation=1',
+            'source_off=0x690 target=0x%08X target_off=0x%X size=0x100',
+            'a0_source=dependency_w28 a1=1 a2=0',
+            'a3_source=s1_plus_1c0 t0_source=s1_plus_58',
+            't1_source=sp_plus_40',
+            '[psp1000-constructed0-dependency-w28-callee-code]'):
+        if token not in w28_map:
+            fail("dependency w28 callee proof lacks " + token)
+    w28_source_range = w28_map.find('zeroCtrlBridgeExecutableRange(paf,')
+    w28_source_args = w28_map.find(
+            'dependency_consumer_target + 0x67C, 0x1C', w28_source_range)
+    w28_source_first = w28_map.find(
+            '_lw(dependency_consumer_target + 0x67C)', w28_source_args)
+    w28_source_last = w28_map.find(
+            '_lw(dependency_consumer_target + 0x694)', w28_source_first)
+    w28_call = w28_map.find(
+            'call = _lw(dependency_consumer_target + 0x690)', w28_source_last)
+    w28_decode = w28_map.find(
+            'target = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x690,',
+            w28_call)
+    w28_owner = w28_map.find(
+            'zeroCtrlModuleContainingSegment(paf, target, &segment, &remaining)',
+            w28_decode)
+    w28_relative = w28_map.find(
+            'target - paf->text_addr != 0x687E8', w28_owner)
+    w28_range = w28_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, target, 0x100)', w28_relative)
+    w28_header = w28_map.find(
+            '[psp1000-constructed0-dependency-w28-callee] validation=1',
+            w28_range)
+    w28_loop = w28_map.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)', w28_header)
+    w28_first_read = w28_map.find('_lw(target + offset + 0x00)', w28_loop)
+    w28_last_read = w28_map.find('_lw(target + offset + 0x1C)', w28_loop)
+    if not 0 <= w28_source_range < w28_source_args < w28_source_first < \
+            w28_source_last < w28_call < w28_decode < w28_owner < \
+            w28_relative < w28_range < w28_header < w28_loop < \
+            w28_first_read < w28_last_read:
+        fail("dependency w28 callee validation/read order regressed")
+    if w28_map.count('_lw(target + offset + ') != 8 or \
+            w28_map.count(
+                'for (offset = 0; offset <= 0xE0; offset += 0x20)') != 1 or \
+            w28_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            'target + offset + 0x20' in w28_map or \
+            'target + 0x100' in w28_map or '0x68A04' in w28_map or \
+            kernel.count(
+                'zeroCtrlWriteConstructed0DependencyW28CalleeMap(') != 2 or \
+            any(token in w28_map for token in
+                ('a989_target_dependency', '_sw(', '_sb(', 'sceKernelDcache',
+                 'sceKernelIcache', 'sceKernelStart', 'for (candidate')):
+        fail("dependency w28 callee map executes, writes, or exceeds bounds")
     w40_map_start = kernel.find(
             'static void zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(')
     w40_map_end = kernel.find(
@@ -3483,6 +3557,10 @@ def check_sources(root):
             w2c_complete_last)
     w2c_final_read = w2c_map.find(
             '_lw(dependency_w2c_nonzero_target + 0x88)', w2c_partial)
+    w28_map_call = w2c_map.find(
+            'zeroCtrlWriteConstructed0DependencyW28CalleeMap(paf,',
+            w2c_final_read)
+    w2c_success_return = w2c_map.find('return;', w28_map_call)
     if not 0 <= route_source_range < route_source_args < route_branch_read < \
             route_delay_read < route_delay_shape < trampoline_decode < \
             trampoline_range < trampoline_range_size < \
@@ -3491,7 +3569,8 @@ def check_sources(root):
             rejoin_first_read < rejoin_immediate_match < rejoin_last_read < \
             w2c_decode < w2c_relative < \
             w2c_owner < w2c_range < w2c_range_size < w2c_header < w2c_loop < \
-            w2c_complete_first < w2c_complete_last < w2c_partial < w2c_final_read:
+            w2c_complete_first < w2c_complete_last < w2c_partial < \
+            w2c_final_read < w28_map_call < w2c_success_return:
         fail("dependency w2c-nonzero validation/read order regressed")
     w2c_complete_rows = w2c_map[w2c_loop:w2c_partial]
     w2c_partial_row = w2c_map[w2c_partial:]
@@ -3502,6 +3581,8 @@ def check_sources(root):
             w2c_partial_row.count('_lw(dependency_w2c_nonzero_target + 0x') != 3 or \
             w2c_map.count('zeroCtrlMipsBranchTarget(') != 2 or \
             w2c_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            w2c_map.count(
+                'zeroCtrlWriteConstructed0DependencyW28CalleeMap(') != 1 or \
             '0x8C825A34' in w2c_map or '0x8C825B34' in w2c_map or \
             re.search(r'delay\s*&\s*0xFFFF', w2c_map) or \
             'dependency_w2c_nonzero_target + 0x8C' in w2c_map or \
