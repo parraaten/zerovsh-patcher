@@ -10061,6 +10061,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     };
     int clockpath_written = 0;
     int constructed0_dependency_written = 0;
+    int a989_dependency44_snapshot_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -10404,6 +10405,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         unsigned int upper = zeroCtrlReadHelperCounter(
                                 slide_diag.bridge_scalar[6]);
                         unsigned int dependency_valid = 0;
+                        int exact_dependency_capture = 0;
                         a989_target_node = zeroCtrlReadHelperCounter(
                                 slide_diag.paf_a989_target_trace_scalar[2]);
                         a989_target_outer = zeroCtrlReadHelperCounter(
@@ -10423,6 +10425,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                     slide_diag.bridge_callback) {
                             a989_target_dependency =
                                     _lw(a989_target_inner + 0x08);
+                            exact_dependency_capture = 1;
                             dependency_valid =
                                     zeroCtrlPsp1000BridgeUserRangeValid(
                                         a989_target_dependency, 0x10,
@@ -10437,6 +10440,63 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                     "inner=0x%08X\n", a989_target_inner);
                         }
                         zeroCtrlDiagnosticsText(line);
+                        if (exact_dependency_capture &&
+                                !a989_dependency44_snapshot_written) {
+                            unsigned int dependency44 = 0;
+                            unsigned int dependency48 = 0;
+                            unsigned int first = 0;
+                            unsigned int root = 0;
+                            unsigned int dependency48_user_ptr = 0;
+                            unsigned int first_valid = 0;
+                            unsigned int root_valid = 0;
+                            unsigned int flag2d_valid = 0;
+                            unsigned int root_flag_2d = 0;
+                            a989_dependency44_snapshot_written = 1;
+                            if (!zeroCtrlPsp1000BridgeUserRangeValid(
+                                        a989_target_dependency, 0x4C,
+                                        lower, upper)) {
+                                zeroCtrlDiagnosticsText(
+                                        "[psp1000-a989-dependency44-snapshot] "
+                                        "validation=0\n");
+                            } else {
+                                dependency44 = _lw(a989_target_dependency + 0x44);
+                                dependency48 = _lw(a989_target_dependency + 0x48);
+                                dependency48_user_ptr =
+                                        zeroCtrlPsp1000BridgeUserRangeValid(
+                                            dependency48, 4, lower, upper);
+                                first_valid =
+                                        zeroCtrlPsp1000BridgeUserRangeValid(
+                                            dependency44, 4, lower, upper);
+                                if (first_valid) {
+                                    first = _lw(dependency44 + 0x00);
+                                    root_valid =
+                                            zeroCtrlPsp1000BridgeUserRangeValid(
+                                                first, 4, lower, upper);
+                                    if (root_valid) {
+                                        root = _lw(first + 0x00);
+                                        flag2d_valid =
+                                            zeroCtrlPsp1000BridgeUserRangeValid(
+                                                root, 0x2E, lower, upper);
+                                        if (flag2d_valid)
+                                            root_flag_2d =
+                                                    _lb(root + 0x2D) & 0xFF;
+                                    }
+                                }
+                                snprintf(line, sizeof(line),
+                                        "[psp1000-a989-dependency44-snapshot] "
+                                        "validation=1 dependency=0x%08X "
+                                        "w44=0x%08X w48=0x%08X "
+                                        "w48_user_ptr=%u first_valid=%u "
+                                        "first=0x%08X root_valid=%u "
+                                        "root=0x%08X flag2d_valid=%u "
+                                        "flag2d=0x%02X\n",
+                                        a989_target_dependency, dependency44,
+                                        dependency48, dependency48_user_ptr,
+                                        first_valid, first, root_valid, root,
+                                        flag2d_valid, root_flag_2d);
+                                zeroCtrlDiagnosticsText(line);
+                            }
+                        }
                     }
                 }
                 if (slide_diag.bridge_validation == 1 &&

@@ -2859,6 +2859,83 @@ def check_sources(root):
     if len(re.findall(r'(?<!unsigned int )a989_target_dependency\s*=',
             writer)) != 1:
         fail("captured A989 dependency can be assigned more than once")
+    snapshot_marker = capture_writer.find(
+            '[psp1000-a989-dependency44-snapshot]')
+    snapshot_start = capture_writer.rfind(
+            'if (exact_dependency_capture &&', 0, snapshot_marker)
+    snapshot_writer = capture_writer[snapshot_start:]
+    for token in ('int a989_dependency44_snapshot_written = 0;',
+            'int exact_dependency_capture = 0;',
+            'exact_dependency_capture = 1;',
+            'if (exact_dependency_capture &&',
+            '!a989_dependency44_snapshot_written',
+            'a989_dependency44_snapshot_written = 1;',
+            'a989_target_dependency, 0x4C,',
+            '_lw(a989_target_dependency + 0x44)',
+            '_lw(a989_target_dependency + 0x48)',
+            'dependency48, 4, lower, upper)',
+            'dependency44, 4, lower, upper)',
+            'first = _lw(dependency44 + 0x00)',
+            'first, 4, lower, upper)',
+            'root = _lw(first + 0x00)',
+            'root, 0x2E, lower, upper)',
+            '_lb(root + 0x2D) & 0xFF',
+            '[psp1000-a989-dependency44-snapshot] ',
+            'validation=0\\n', 'validation=1 dependency=0x%08X',
+            'w44=0x%08X w48=0x%08X',
+            'w48_user_ptr=%u first_valid=%u',
+            'first=0x%08X root_valid=%u',
+            'root=0x%08X flag2d_valid=%u', 'flag2d=0x%02X'):
+        if (token == 'int a989_dependency44_snapshot_written = 0;' and
+                token not in writer) or (token !=
+                'int a989_dependency44_snapshot_written = 0;' and
+                token not in capture_writer):
+            fail("authoritative dependency+0x44 snapshot lacks " + token)
+    snapshot_authority = capture_writer.find(
+            'exact_dependency_capture = 1;', dependency_read)
+    snapshot_gate = capture_writer.find(
+            'if (exact_dependency_capture &&', snapshot_authority)
+    snapshot_once = capture_writer.find(
+            'a989_dependency44_snapshot_written = 1;', snapshot_gate)
+    snapshot_dependency_range = capture_writer.find(
+            'a989_target_dependency, 0x4C,', snapshot_once)
+    snapshot_w44 = capture_writer.find(
+            '_lw(a989_target_dependency + 0x44)', snapshot_dependency_range)
+    snapshot_w48 = capture_writer.find(
+            '_lw(a989_target_dependency + 0x48)', snapshot_w44)
+    snapshot_w48_class = capture_writer.find(
+            'dependency48, 4, lower, upper)', snapshot_w48)
+    snapshot_first_range = capture_writer.find(
+            'dependency44, 4, lower, upper)', snapshot_w48_class)
+    snapshot_first_read = capture_writer.find(
+            'first = _lw(dependency44 + 0x00)', snapshot_first_range)
+    snapshot_root_range = capture_writer.find(
+            'first, 4, lower, upper)', snapshot_first_read)
+    snapshot_root_read = capture_writer.find(
+            'root = _lw(first + 0x00)', snapshot_root_range)
+    snapshot_flag_range = capture_writer.find(
+            'root, 0x2E, lower, upper)', snapshot_root_read)
+    snapshot_flag_read = capture_writer.find(
+            '_lb(root + 0x2D) & 0xFF', snapshot_flag_range)
+    if not 0 <= dependency_read < snapshot_authority < snapshot_gate < snapshot_once < \
+            snapshot_dependency_range < snapshot_w44 < snapshot_w48 < \
+            snapshot_w48_class < snapshot_first_range < snapshot_first_read < \
+            snapshot_root_range < snapshot_root_read < snapshot_flag_range < \
+            snapshot_flag_read:
+        fail("dependency+0x44 snapshot validation/dereference order regressed")
+    if capture_writer.count('_lw(a989_target_dependency + 0x44)') != 1 or \
+            capture_writer.count('_lw(a989_target_dependency + 0x48)') != 1 or \
+            capture_writer.count('a989_dependency44_snapshot_written = 1;') != 1 or \
+            '_lw(dependency48' in snapshot_writer or \
+            snapshot_writer.count('_lb(root + ') != 1 or \
+            '_lb(root + 0x2D)' not in snapshot_writer or \
+            any(token in snapshot_writer for token in
+                ('_sw(', '_sb(', 'sceKernelDcache', 'sceKernelIcache',
+                 'slide_diag.a989_dependency44', 'sceKernelAlloc')):
+        fail("dependency+0x44 snapshot is repeated, unsafe, or changes runtime state")
+    if 'slide_diag.a989_dependency44' in kernel or \
+            writer.count('int a989_dependency44_snapshot_written = 0;') != 1:
+        fail("dependency+0x44 snapshot state is not writer-local")
     dependency_marker = writer.find('[psp1000-a989-dependency-life]')
     dependency_start = writer.rfind(
             'if (a989_target_dependency != 0)', 0, dependency_marker)
