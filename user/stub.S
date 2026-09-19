@@ -408,6 +408,67 @@ zeroCtrlPafA989TargetTrace:
     lw      $t3, 0x28($t7)
     lui     $t0, %hi(zeroCtrlPafA989DependencyW28)
     sw      $t3, %lo(zeroCtrlPafA989DependencyW28)($t0)
+    addu    $t5, $t3, $zero
+    lui     $t0, %hi(zeroCtrlPafA989W28BytesValid)
+    sw      $zero, %lo(zeroCtrlPafA989W28BytesValid)($t0)
+    beqz    $t5, 3f
+    nop
+    andi    $t2, $t5, 3
+    bnez    $t2, 3f
+    nop
+    BRIDGE_VALIDATE $t5, 0x40, 3f
+    lw      $t3, 0x00($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data00)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data00)($t0)
+    lw      $t3, 0x04($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data04)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data04)($t0)
+    lw      $t3, 0x08($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data08)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data08)($t0)
+    lw      $t3, 0x0C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data0C)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data0C)($t0)
+    lw      $t3, 0x10($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data10)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data10)($t0)
+    lw      $t3, 0x14($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data14)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data14)($t0)
+    lw      $t3, 0x18($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data18)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data18)($t0)
+    lw      $t3, 0x1C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data1C)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data1C)($t0)
+    lw      $t3, 0x20($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data20)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data20)($t0)
+    lw      $t3, 0x24($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data24)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data24)($t0)
+    lw      $t3, 0x28($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data28)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data28)($t0)
+    lw      $t3, 0x2C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data2C)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data2C)($t0)
+    lw      $t3, 0x30($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data30)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data30)($t0)
+    lw      $t3, 0x34($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data34)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data34)($t0)
+    lw      $t3, 0x38($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data38)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data38)($t0)
+    lw      $t3, 0x3C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data3C)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data3C)($t0)
+    addiu   $t3, $zero, 1
+    lui     $t0, %hi(zeroCtrlPafA989W28BytesValid)
+    sw      $t3, %lo(zeroCtrlPafA989W28BytesValid)($t0)
+3:
     addiu   $t3, $zero, 1
     lui     $t0, %hi(zeroCtrlPafA989DependencyDirectValid)
     sw      $t3, %lo(zeroCtrlPafA989DependencyDirectValid)($t0)
@@ -517,6 +578,40 @@ zeroCtrlPafA989DependencyW68: .space 4
 zeroCtrlPafA989DependencyW6C: .space 4
 .globl zeroCtrlPafA989DependencyW28
 zeroCtrlPafA989DependencyW28: .space 4
+.globl zeroCtrlPafA989W28BytesValid
+zeroCtrlPafA989W28BytesValid: .space 4
+.globl zeroCtrlPafA989W28Data00
+zeroCtrlPafA989W28Data00: .space 4
+.globl zeroCtrlPafA989W28Data04
+zeroCtrlPafA989W28Data04: .space 4
+.globl zeroCtrlPafA989W28Data08
+zeroCtrlPafA989W28Data08: .space 4
+.globl zeroCtrlPafA989W28Data0C
+zeroCtrlPafA989W28Data0C: .space 4
+.globl zeroCtrlPafA989W28Data10
+zeroCtrlPafA989W28Data10: .space 4
+.globl zeroCtrlPafA989W28Data14
+zeroCtrlPafA989W28Data14: .space 4
+.globl zeroCtrlPafA989W28Data18
+zeroCtrlPafA989W28Data18: .space 4
+.globl zeroCtrlPafA989W28Data1C
+zeroCtrlPafA989W28Data1C: .space 4
+.globl zeroCtrlPafA989W28Data20
+zeroCtrlPafA989W28Data20: .space 4
+.globl zeroCtrlPafA989W28Data24
+zeroCtrlPafA989W28Data24: .space 4
+.globl zeroCtrlPafA989W28Data28
+zeroCtrlPafA989W28Data28: .space 4
+.globl zeroCtrlPafA989W28Data2C
+zeroCtrlPafA989W28Data2C: .space 4
+.globl zeroCtrlPafA989W28Data30
+zeroCtrlPafA989W28Data30: .space 4
+.globl zeroCtrlPafA989W28Data34
+zeroCtrlPafA989W28Data34: .space 4
+.globl zeroCtrlPafA989W28Data38
+zeroCtrlPafA989W28Data38: .space 4
+.globl zeroCtrlPafA989W28Data3C
+zeroCtrlPafA989W28Data3C: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 
