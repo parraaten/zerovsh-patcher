@@ -3259,6 +3259,92 @@ def check_sources(root):
     if 'boundary = offset + 8;' not in boundary_search or \
             'if (boundary == 0)' not in boundary_search:
         fail("dependency analysis no longer fails closed without a full return")
+    w40_map_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(')
+    w40_map_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0Dependency44CalleeMap(',
+            w40_map_start)
+    w40_map = kernel[w40_map_start:w40_map_end]
+    if w40_map_start < 0 or w40_map_end < 0:
+        fail("constructed0 dependency w40-zero target map is missing")
+    for token in ('dependency_consumer_target + 0x27C, 0x30',
+            'dependency_consumer_target + 0x27C) != 0x8E72003C',
+            'dependency_consumer_target + 0x298) != 0x1640011A',
+            'dependency_consumer_target + 0x29C) != 0xAE2001D0',
+            'dependency_consumer_target + 0x2A0) != 0x8E620040',
+            'dependency_consumer_target + 0x2A4) != 0x10400113',
+            'delay = _lw(dependency_consumer_target + 0x2A8)',
+            '(delay >> 26) != 0x0F', '((delay >> 16) & 0x1F) != 4',
+            'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(',
+            'dependency_consumer_target + 0x2A4,',
+            '_lw(dependency_consumer_target + 0x2A4)',
+            'dependency_w40_zero_target < dependency_consumer_target',
+            'dependency_w40_zero_target - dependency_consumer_target != 0x6F4',
+            'zeroCtrlModuleContainingSegment(paf, dependency_w40_zero_target,',
+            'segment != 0', 'remaining < 0x100',
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,',
+            '[psp1000-constructed0-dependency-w40-zero-target] validation=0',
+            '[psp1000-constructed0-dependency-w40-zero-target] validation=1',
+            'source_off=0x2A4 target=0x%08X target_off=0x%X',
+            'consumer_off=0x6F4 delay=0x%08X size=0x100',
+            '[psp1000-constructed0-dependency-w40-zero-code]'):
+        if token not in w40_map:
+            fail("dependency w40-zero target proof lacks " + token)
+    w40_source_range = w40_map.find(
+            'zeroCtrlBridgeExecutableRange(paf,')
+    w40_source_args = w40_map.find(
+            'dependency_consumer_target + 0x27C, 0x30', w40_source_range)
+    w40_source_first = w40_map.find(
+            '_lw(dependency_consumer_target + 0x27C)', w40_source_args)
+    w40_source_last = w40_map.find(
+            'delay = _lw(dependency_consumer_target + 0x2A8)', w40_source_first)
+    w40_decode = w40_map.find(
+            'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(',
+            w40_source_last)
+    w40_decode_pc = w40_map.find(
+            'dependency_consumer_target + 0x2A4,', w40_decode)
+    w40_decode_word = w40_map.find(
+            '_lw(dependency_consumer_target + 0x2A4)', w40_decode_pc)
+    w40_relative = w40_map.find(
+            'dependency_w40_zero_target - dependency_consumer_target != 0x6F4',
+            w40_decode_word)
+    w40_owner = w40_map.find(
+            'zeroCtrlModuleContainingSegment(paf, dependency_w40_zero_target,',
+            w40_relative)
+    w40_range = w40_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,',
+            w40_owner)
+    w40_range_size = w40_map.find('0x100)', w40_range)
+    w40_header = w40_map.find(
+            '[psp1000-constructed0-dependency-w40-zero-target] validation=1',
+            w40_range_size)
+    w40_loop = w40_map.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)', w40_header)
+    w40_first_read = w40_map.find(
+            '_lw(dependency_w40_zero_target + offset + 0x00)', w40_loop)
+    w40_last_read = w40_map.find(
+            '_lw(dependency_w40_zero_target + offset + 0x1C)', w40_loop)
+    if not 0 <= w40_source_range < w40_source_args < w40_source_first < \
+            w40_source_last < w40_decode < w40_decode_pc < w40_decode_word < \
+            w40_relative < w40_owner < w40_range < w40_range_size < \
+            w40_header < w40_loop < w40_first_read < w40_last_read:
+        fail("dependency w40-zero target validation/read order regressed")
+    w40_rows = w40_map[w40_loop:]
+    if w40_rows.count('_lw(dependency_w40_zero_target + offset + ') != 8 or \
+            w40_map.count(
+                'for (offset = 0; offset <= 0xE0; offset += 0x20)') != 1 or \
+            w40_map.count('zeroCtrlMipsBranchTarget(') != 1 or \
+            w40_map.count(
+                'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(') != 1 or \
+            'dependency_w40_zero_target + offset + 0x20' in w40_rows or \
+            'dependency_w40_zero_target + 0x100' in w40_map or \
+            re.search(r'delay\s*&\s*0xFFFF', w40_map) or \
+            any(token in w40_map for token in
+                ('0x35A24', 'a989_target_dependency',
+                 'zeroCtrlMipsJumpTarget', '_sw(', '_sb(', 'sceKernelDcache',
+                 'sceKernelIcache', 'for (candidate', 'consumer_target + 0x300',
+                 'consumer_target + 0x6F0')):
+        fail("dependency w40-zero map follows code, scans, or exceeds bounds")
     dependency44_map_start = kernel.find(
             'static void zeroCtrlWriteConstructed0Dependency44CalleeMap(')
     dependency44_map_end = kernel.find(
@@ -3489,20 +3575,25 @@ def check_sources(root):
     consumer_cont_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0DependencyConsumerContinuation(paf, target);',
             map_call)
+    w40_map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(paf, target);',
+            consumer_cont_call)
     dependency44_map_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0Dependency44CalleeMap(paf, target);',
-            consumer_cont_call)
+            w40_map_call)
     helper_map_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);',
             dependency44_map_call)
     no_return_exit = dependency_analysis.find('return 0;', map_call)
     if not 0 <= no_return_gate < no_return_record < map_call < \
-            consumer_cont_call < dependency44_map_call < helper_map_call < \
-            no_return_exit or \
+            consumer_cont_call < w40_map_call < dependency44_map_call < \
+            helper_map_call < no_return_exit or \
             dependency_analysis.count(
                 'zeroCtrlWriteConstructed0DependencyMap(') != 1 or \
             dependency_analysis.count(
                 'zeroCtrlWriteConstructed0DependencyConsumerContinuation(') != 1 or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(') != 1 or \
             dependency_analysis.count(
                 'zeroCtrlWriteConstructed0Dependency44CalleeMap(') != 1:
         fail("dependency map is not gated solely by the existing NO_RETURN path")
