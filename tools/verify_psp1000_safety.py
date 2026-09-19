@@ -3262,7 +3262,7 @@ def check_sources(root):
     w40_map_start = kernel.find(
             'static void zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(')
     w40_map_end = kernel.find(
-            '\nstatic void zeroCtrlWriteConstructed0Dependency44CalleeMap(',
+            '\nstatic void zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(',
             w40_map_start)
     w40_map = kernel[w40_map_start:w40_map_end]
     if w40_map_start < 0 or w40_map_end < 0:
@@ -3345,6 +3345,127 @@ def check_sources(root):
                  'sceKernelIcache', 'for (candidate', 'consumer_target + 0x300',
                  'consumer_target + 0x6F0')):
         fail("dependency w40-zero map follows code, scans, or exceeds bounds")
+    w2c_map_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(')
+    w2c_map_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0Dependency44CalleeMap(',
+            w2c_map_start)
+    w2c_map = kernel[w2c_map_start:w2c_map_end]
+    if w2c_map_start < 0 or w2c_map_end < 0:
+        fail("constructed0 dependency w2c-nonzero target map is missing")
+    for token in ('dependency_consumer_target + 0x2A4, 4',
+            'dependency_consumer_target + 0x2A4) != 0x10400113',
+            'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(',
+            'dependency_w40_zero_target - dependency_consumer_target != 0x6F4',
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,',
+            '0x10)',
+            'dependency_w40_zero_target + 0x00) != 0x8C825A34',
+            'dependency_w40_zero_target + 0x04) != 0x8C43002C',
+            'jump = _lw(dependency_w40_zero_target + 0x08)',
+            '(jump >> 26) != 2',
+            'dependency_w40_zero_target + 0x0C) != 0xAE23019C',
+            'dependency_w40_rejoin_target = zeroCtrlMipsJumpTarget(',
+            'dependency_w40_zero_target + 0x08,',
+            '_lw(dependency_w40_zero_target + 0x08)',
+            'dependency_w40_rejoin_target - dependency_consumer_target != 0x2B0',
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_rejoin_target,',
+            '0x20)',
+            'dependency_w40_rejoin_target + 0x00) != 0x8C825A34',
+            'dependency_w40_rejoin_target + 0x04) != 0x8E2401D4',
+            'dependency_w40_rejoin_target + 0x08) != 0x8C450098',
+            'dependency_w40_rejoin_target + 0x0C) != 0x14800109',
+            'dependency_w40_rejoin_target + 0x10) != 0xAE2501C0',
+            'dependency_w40_rejoin_target + 0x14) != 0x8E62002C',
+            'dependency_w40_rejoin_target + 0x18) != 0x144000E7',
+            'dependency_w40_rejoin_target + 0x1C) != 0x00000000',
+            'dependency_w2c_nonzero_target = zeroCtrlMipsBranchTarget(',
+            'dependency_consumer_target + 0x2C8,',
+            '_lw(dependency_consumer_target + 0x2C8)',
+            'dependency_w2c_nonzero_target - dependency_consumer_target != 0x668',
+            'zeroCtrlModuleContainingSegment(paf, dependency_w2c_nonzero_target,',
+            'segment != 0', 'remaining < 0x8C',
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w2c_nonzero_target,',
+            '0x8C)',
+            '[psp1000-constructed0-dependency-w2c-nonzero-target] validation=0',
+            '[psp1000-constructed0-dependency-w2c-nonzero-target] validation=1',
+            'source_off=0x2C8 target=0x%08X target_off=0x%X',
+            'consumer_off=0x668 rejoin_off=0x2B0 end_before=0x6F4',
+            'size=0x8C',
+            '[psp1000-constructed0-dependency-w2c-nonzero-code]'):
+        if token not in w2c_map:
+            fail("dependency w2c-nonzero target proof lacks " + token)
+    trampoline_range = w2c_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,')
+    trampoline_range_size = w2c_map.find('0x10)', trampoline_range)
+    trampoline_first_read = w2c_map.find(
+            '_lw(dependency_w40_zero_target + 0x00)', trampoline_range_size)
+    trampoline_jump_read = w2c_map.find(
+            'jump = _lw(dependency_w40_zero_target + 0x08)',
+            trampoline_first_read)
+    rejoin_decode = w2c_map.find(
+            'dependency_w40_rejoin_target = zeroCtrlMipsJumpTarget(',
+            trampoline_jump_read)
+    rejoin_relative = w2c_map.find(
+            'dependency_w40_rejoin_target - dependency_consumer_target != 0x2B0',
+            rejoin_decode)
+    rejoin_range = w2c_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_rejoin_target,',
+            rejoin_relative)
+    rejoin_range_size = w2c_map.find('0x20)', rejoin_range)
+    rejoin_first_read = w2c_map.find(
+            '_lw(dependency_w40_rejoin_target + 0x00)', rejoin_range_size)
+    rejoin_last_read = w2c_map.find(
+            '_lw(dependency_w40_rejoin_target + 0x1C)', rejoin_first_read)
+    w2c_decode = w2c_map.find(
+            'dependency_w2c_nonzero_target = zeroCtrlMipsBranchTarget(',
+            rejoin_last_read)
+    w2c_relative = w2c_map.find(
+            'dependency_w2c_nonzero_target - dependency_consumer_target != 0x668',
+            w2c_decode)
+    w2c_owner = w2c_map.find(
+            'zeroCtrlModuleContainingSegment(paf, dependency_w2c_nonzero_target,',
+            w2c_relative)
+    w2c_range = w2c_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w2c_nonzero_target,',
+            w2c_owner)
+    w2c_range_size = w2c_map.find('0x8C)', w2c_range)
+    w2c_header = w2c_map.find(
+            '[psp1000-constructed0-dependency-w2c-nonzero-target] validation=1',
+            w2c_range_size)
+    w2c_loop = w2c_map.find(
+            'for (offset = 0; offset <= 0x60; offset += 0x20)', w2c_header)
+    w2c_complete_first = w2c_map.find(
+            '_lw(dependency_w2c_nonzero_target + offset + 0x00)', w2c_loop)
+    w2c_complete_last = w2c_map.find(
+            '_lw(dependency_w2c_nonzero_target + offset + 0x1C)', w2c_loop)
+    w2c_partial = w2c_map.find('off=0x080 w0=%08X w1=%08X w2=%08X',
+            w2c_complete_last)
+    w2c_final_read = w2c_map.find(
+            '_lw(dependency_w2c_nonzero_target + 0x88)', w2c_partial)
+    if not 0 <= trampoline_range < trampoline_range_size < \
+            trampoline_first_read < trampoline_jump_read < rejoin_decode < \
+            rejoin_relative < rejoin_range < rejoin_range_size < \
+            rejoin_first_read < rejoin_last_read < w2c_decode < w2c_relative < \
+            w2c_owner < w2c_range < w2c_range_size < w2c_header < w2c_loop < \
+            w2c_complete_first < w2c_complete_last < w2c_partial < w2c_final_read:
+        fail("dependency w2c-nonzero validation/read order regressed")
+    w2c_complete_rows = w2c_map[w2c_loop:w2c_partial]
+    w2c_partial_row = w2c_map[w2c_partial:]
+    if w2c_complete_rows.count(
+                '_lw(dependency_w2c_nonzero_target + offset + ') != 8 or \
+            w2c_map.count(
+                'for (offset = 0; offset <= 0x60; offset += 0x20)') != 1 or \
+            w2c_partial_row.count('_lw(dependency_w2c_nonzero_target + 0x') != 3 or \
+            w2c_map.count('zeroCtrlMipsBranchTarget(') != 2 or \
+            w2c_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            'dependency_w2c_nonzero_target + 0x8C' in w2c_map or \
+            'dependency_w2c_nonzero_target + 0x6F4' in w2c_map or \
+            any(token in w2c_map for token in
+                ('0x35A24', 'a989_target_dependency', '_sw(', '_sb(',
+                 'sceKernelDcache', 'sceKernelIcache', 'for (candidate',
+                 'dependency_consumer_target + 0x2D0',
+                 'dependency_consumer_target + 0x667')):
+        fail("dependency w2c-nonzero map follows code, duplicates, or exceeds bounds")
     dependency44_map_start = kernel.find(
             'static void zeroCtrlWriteConstructed0Dependency44CalleeMap(')
     dependency44_map_end = kernel.find(
@@ -3578,22 +3699,28 @@ def check_sources(root):
     w40_map_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(paf, target);',
             consumer_cont_call)
+    w2c_map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(paf, target);',
+            w40_map_call)
     dependency44_map_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0Dependency44CalleeMap(paf, target);',
-            w40_map_call)
+            w2c_map_call)
     helper_map_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);',
             dependency44_map_call)
     no_return_exit = dependency_analysis.find('return 0;', map_call)
     if not 0 <= no_return_gate < no_return_record < map_call < \
             consumer_cont_call < w40_map_call < dependency44_map_call < \
-            helper_map_call < no_return_exit or \
+            helper_map_call < no_return_exit or not w40_map_call < \
+            w2c_map_call < dependency44_map_call or \
             dependency_analysis.count(
                 'zeroCtrlWriteConstructed0DependencyMap(') != 1 or \
             dependency_analysis.count(
                 'zeroCtrlWriteConstructed0DependencyConsumerContinuation(') != 1 or \
             dependency_analysis.count(
                 'zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(') != 1 or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(') != 1 or \
             dependency_analysis.count(
                 'zeroCtrlWriteConstructed0Dependency44CalleeMap(') != 1:
         fail("dependency map is not gated solely by the existing NO_RETURN path")

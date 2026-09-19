@@ -6962,6 +6962,91 @@ invalid:
             "[psp1000-constructed0-dependency-w40-zero-target] validation=0\n");
 }
 
+static void zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(
+        SceModule2 *paf, unsigned int dependency_consumer_target) {
+    unsigned int dependency_w40_zero_target, dependency_w40_rejoin_target;
+    unsigned int dependency_w2c_nonzero_target, jump, segment, remaining, offset;
+    char line[256];
+
+    if (!zeroCtrlBridgeExecutableRange(paf,
+                dependency_consumer_target + 0x2A4, 4) ||
+            _lw(dependency_consumer_target + 0x2A4) != 0x10400113)
+        goto invalid;
+    dependency_w40_zero_target = zeroCtrlMipsBranchTarget(
+            dependency_consumer_target + 0x2A4,
+            _lw(dependency_consumer_target + 0x2A4));
+    if (dependency_w40_zero_target < dependency_consumer_target ||
+            dependency_w40_zero_target - dependency_consumer_target != 0x6F4 ||
+            !zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,
+                0x10) ||
+            _lw(dependency_w40_zero_target + 0x00) != 0x8C825A34 ||
+            _lw(dependency_w40_zero_target + 0x04) != 0x8C43002C)
+        goto invalid;
+    jump = _lw(dependency_w40_zero_target + 0x08);
+    if ((jump >> 26) != 2 ||
+            _lw(dependency_w40_zero_target + 0x0C) != 0xAE23019C)
+        goto invalid;
+    dependency_w40_rejoin_target = zeroCtrlMipsJumpTarget(
+            dependency_w40_zero_target + 0x08,
+            _lw(dependency_w40_zero_target + 0x08));
+    if (dependency_w40_rejoin_target < dependency_consumer_target ||
+            dependency_w40_rejoin_target - dependency_consumer_target != 0x2B0 ||
+            !zeroCtrlBridgeExecutableRange(paf, dependency_w40_rejoin_target,
+                0x20) ||
+            _lw(dependency_w40_rejoin_target + 0x00) != 0x8C825A34 ||
+            _lw(dependency_w40_rejoin_target + 0x04) != 0x8E2401D4 ||
+            _lw(dependency_w40_rejoin_target + 0x08) != 0x8C450098 ||
+            _lw(dependency_w40_rejoin_target + 0x0C) != 0x14800109 ||
+            _lw(dependency_w40_rejoin_target + 0x10) != 0xAE2501C0 ||
+            _lw(dependency_w40_rejoin_target + 0x14) != 0x8E62002C ||
+            _lw(dependency_w40_rejoin_target + 0x18) != 0x144000E7 ||
+            _lw(dependency_w40_rejoin_target + 0x1C) != 0x00000000)
+        goto invalid;
+    dependency_w2c_nonzero_target = zeroCtrlMipsBranchTarget(
+            dependency_consumer_target + 0x2C8,
+            _lw(dependency_consumer_target + 0x2C8));
+    if (dependency_w2c_nonzero_target < dependency_consumer_target ||
+            dependency_w2c_nonzero_target - dependency_consumer_target != 0x668 ||
+            !zeroCtrlModuleContainingSegment(paf, dependency_w2c_nonzero_target,
+                &segment, &remaining) || segment != 0 || remaining < 0x8C ||
+            !zeroCtrlBridgeExecutableRange(paf, dependency_w2c_nonzero_target,
+                0x8C))
+        goto invalid;
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-w2c-nonzero-target] validation=1 "
+            "source_off=0x2C8 target=0x%08X target_off=0x%X "
+            "consumer_off=0x668 rejoin_off=0x2B0 end_before=0x6F4 "
+            "size=0x8C\n", dependency_w2c_nonzero_target,
+            dependency_w2c_nonzero_target - paf->text_addr);
+    zeroCtrlDiagnosticsText(line);
+    for (offset = 0; offset <= 0x60; offset += 0x20) {
+        snprintf(line, sizeof(line),
+                "[psp1000-constructed0-dependency-w2c-nonzero-code] "
+                "off=0x%03X w0=%08X w1=%08X w2=%08X w3=%08X "
+                "w4=%08X w5=%08X w6=%08X w7=%08X\n", offset,
+                _lw(dependency_w2c_nonzero_target + offset + 0x00),
+                _lw(dependency_w2c_nonzero_target + offset + 0x04),
+                _lw(dependency_w2c_nonzero_target + offset + 0x08),
+                _lw(dependency_w2c_nonzero_target + offset + 0x0C),
+                _lw(dependency_w2c_nonzero_target + offset + 0x10),
+                _lw(dependency_w2c_nonzero_target + offset + 0x14),
+                _lw(dependency_w2c_nonzero_target + offset + 0x18),
+                _lw(dependency_w2c_nonzero_target + offset + 0x1C));
+        zeroCtrlDiagnosticsText(line);
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-constructed0-dependency-w2c-nonzero-code] "
+            "off=0x080 w0=%08X w1=%08X w2=%08X\n",
+            _lw(dependency_w2c_nonzero_target + 0x80),
+            _lw(dependency_w2c_nonzero_target + 0x84),
+            _lw(dependency_w2c_nonzero_target + 0x88));
+    zeroCtrlDiagnosticsText(line);
+    return;
+invalid:
+    zeroCtrlDiagnosticsText(
+            "[psp1000-constructed0-dependency-w2c-nonzero-target] validation=0\n");
+}
+
 static void zeroCtrlWriteConstructed0Dependency44CalleeMap(
         SceModule2 *paf, unsigned int dependency_consumer_target) {
     unsigned int dependency44_callee_target, segment, remaining, offset, word;
@@ -7445,6 +7530,7 @@ static int zeroCtrlWriteConstructed0DependencyConsumer(void) {
         zeroCtrlWriteConstructed0DependencyMap(paf, target);
         zeroCtrlWriteConstructed0DependencyConsumerContinuation(paf, target);
         zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(paf, target);
+        zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(paf, target);
         zeroCtrlWriteConstructed0Dependency44CalleeMap(paf, target);
         zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);
         zeroCtrlWriteConstructed0DependencyCopyCalleeMap(paf, target);
