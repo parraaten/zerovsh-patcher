@@ -6965,12 +6965,16 @@ invalid:
 static void zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(
         SceModule2 *paf, unsigned int dependency_consumer_target) {
     unsigned int dependency_w40_zero_target, dependency_w40_rejoin_target;
-    unsigned int dependency_w2c_nonzero_target, jump, segment, remaining, offset;
+    unsigned int dependency_w2c_nonzero_target, delay, fallback_load;
+    unsigned int rejoin_load, jump, segment, remaining, offset;
     char line[256];
 
     if (!zeroCtrlBridgeExecutableRange(paf,
-                dependency_consumer_target + 0x2A4, 4) ||
+                dependency_consumer_target + 0x2A4, 8) ||
             _lw(dependency_consumer_target + 0x2A4) != 0x10400113)
+        goto invalid;
+    delay = _lw(dependency_consumer_target + 0x2A8);
+    if ((delay >> 26) != 0x0F || ((delay >> 16) & 0x1F) != 4)
         goto invalid;
     dependency_w40_zero_target = zeroCtrlMipsBranchTarget(
             dependency_consumer_target + 0x2A4,
@@ -6978,8 +6982,12 @@ static void zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(
     if (dependency_w40_zero_target < dependency_consumer_target ||
             dependency_w40_zero_target - dependency_consumer_target != 0x6F4 ||
             !zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,
-                0x10) ||
-            _lw(dependency_w40_zero_target + 0x00) != 0x8C825A34 ||
+                0x10))
+        goto invalid;
+    fallback_load = _lw(dependency_w40_zero_target + 0x00);
+    if ((fallback_load >> 26) != 0x23 ||
+            ((fallback_load >> 21) & 0x1F) != 4 ||
+            ((fallback_load >> 16) & 0x1F) != 2 ||
             _lw(dependency_w40_zero_target + 0x04) != 0x8C43002C)
         goto invalid;
     jump = _lw(dependency_w40_zero_target + 0x08);
@@ -6992,8 +7000,13 @@ static void zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(
     if (dependency_w40_rejoin_target < dependency_consumer_target ||
             dependency_w40_rejoin_target - dependency_consumer_target != 0x2B0 ||
             !zeroCtrlBridgeExecutableRange(paf, dependency_w40_rejoin_target,
-                0x20) ||
-            _lw(dependency_w40_rejoin_target + 0x00) != 0x8C825A34 ||
+                0x20))
+        goto invalid;
+    rejoin_load = _lw(dependency_w40_rejoin_target + 0x00);
+    if ((rejoin_load >> 26) != 0x23 ||
+            ((rejoin_load >> 21) & 0x1F) != 4 ||
+            ((rejoin_load >> 16) & 0x1F) != 2 ||
+            (rejoin_load & 0xFFFF) != (fallback_load & 0xFFFF) ||
             _lw(dependency_w40_rejoin_target + 0x04) != 0x8E2401D4 ||
             _lw(dependency_w40_rejoin_target + 0x08) != 0x8C450098 ||
             _lw(dependency_w40_rejoin_target + 0x0C) != 0x14800109 ||

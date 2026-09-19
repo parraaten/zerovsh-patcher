@@ -3353,13 +3353,18 @@ def check_sources(root):
     w2c_map = kernel[w2c_map_start:w2c_map_end]
     if w2c_map_start < 0 or w2c_map_end < 0:
         fail("constructed0 dependency w2c-nonzero target map is missing")
-    for token in ('dependency_consumer_target + 0x2A4, 4',
+    for token in ('dependency_consumer_target + 0x2A4, 8',
             'dependency_consumer_target + 0x2A4) != 0x10400113',
+            'delay = _lw(dependency_consumer_target + 0x2A8)',
+            '(delay >> 26) != 0x0F', '((delay >> 16) & 0x1F) != 4',
             'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(',
             'dependency_w40_zero_target - dependency_consumer_target != 0x6F4',
             'zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,',
             '0x10)',
-            'dependency_w40_zero_target + 0x00) != 0x8C825A34',
+            'fallback_load = _lw(dependency_w40_zero_target + 0x00)',
+            '(fallback_load >> 26) != 0x23',
+            '((fallback_load >> 21) & 0x1F) != 4',
+            '((fallback_load >> 16) & 0x1F) != 2',
             'dependency_w40_zero_target + 0x04) != 0x8C43002C',
             'jump = _lw(dependency_w40_zero_target + 0x08)',
             '(jump >> 26) != 2',
@@ -3370,7 +3375,11 @@ def check_sources(root):
             'dependency_w40_rejoin_target - dependency_consumer_target != 0x2B0',
             'zeroCtrlBridgeExecutableRange(paf, dependency_w40_rejoin_target,',
             '0x20)',
-            'dependency_w40_rejoin_target + 0x00) != 0x8C825A34',
+            'rejoin_load = _lw(dependency_w40_rejoin_target + 0x00)',
+            '(rejoin_load >> 26) != 0x23',
+            '((rejoin_load >> 21) & 0x1F) != 4',
+            '((rejoin_load >> 16) & 0x1F) != 2',
+            '(rejoin_load & 0xFFFF) != (fallback_load & 0xFFFF)',
             'dependency_w40_rejoin_target + 0x04) != 0x8E2401D4',
             'dependency_w40_rejoin_target + 0x08) != 0x8C450098',
             'dependency_w40_rejoin_target + 0x0C) != 0x14800109',
@@ -3394,6 +3403,20 @@ def check_sources(root):
             '[psp1000-constructed0-dependency-w2c-nonzero-code]'):
         if token not in w2c_map:
             fail("dependency w2c-nonzero target proof lacks " + token)
+    route_source_range = w2c_map.find(
+            'zeroCtrlBridgeExecutableRange(paf,')
+    route_source_args = w2c_map.find(
+            'dependency_consumer_target + 0x2A4, 8', route_source_range)
+    route_branch_read = w2c_map.find(
+            '_lw(dependency_consumer_target + 0x2A4)', route_source_args)
+    route_delay_read = w2c_map.find(
+            'delay = _lw(dependency_consumer_target + 0x2A8)',
+            route_branch_read)
+    route_delay_shape = w2c_map.find(
+            '((delay >> 16) & 0x1F) != 4', route_delay_read)
+    trampoline_decode = w2c_map.find(
+            'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(',
+            route_delay_shape)
     trampoline_range = w2c_map.find(
             'zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,')
     trampoline_range_size = w2c_map.find('0x10)', trampoline_range)
@@ -3414,8 +3437,12 @@ def check_sources(root):
     rejoin_range_size = w2c_map.find('0x20)', rejoin_range)
     rejoin_first_read = w2c_map.find(
             '_lw(dependency_w40_rejoin_target + 0x00)', rejoin_range_size)
+    rejoin_immediate_match = w2c_map.find(
+            '(rejoin_load & 0xFFFF) != (fallback_load & 0xFFFF)',
+            rejoin_first_read)
     rejoin_last_read = w2c_map.find(
-            '_lw(dependency_w40_rejoin_target + 0x1C)', rejoin_first_read)
+            '_lw(dependency_w40_rejoin_target + 0x1C)',
+            rejoin_immediate_match)
     w2c_decode = w2c_map.find(
             'dependency_w2c_nonzero_target = zeroCtrlMipsBranchTarget(',
             rejoin_last_read)
@@ -3442,10 +3469,13 @@ def check_sources(root):
             w2c_complete_last)
     w2c_final_read = w2c_map.find(
             '_lw(dependency_w2c_nonzero_target + 0x88)', w2c_partial)
-    if not 0 <= trampoline_range < trampoline_range_size < \
+    if not 0 <= route_source_range < route_source_args < route_branch_read < \
+            route_delay_read < route_delay_shape < trampoline_decode < \
+            trampoline_range < trampoline_range_size < \
             trampoline_first_read < trampoline_jump_read < rejoin_decode < \
             rejoin_relative < rejoin_range < rejoin_range_size < \
-            rejoin_first_read < rejoin_last_read < w2c_decode < w2c_relative < \
+            rejoin_first_read < rejoin_immediate_match < rejoin_last_read < \
+            w2c_decode < w2c_relative < \
             w2c_owner < w2c_range < w2c_range_size < w2c_header < w2c_loop < \
             w2c_complete_first < w2c_complete_last < w2c_partial < w2c_final_read:
         fail("dependency w2c-nonzero validation/read order regressed")
@@ -3458,6 +3488,8 @@ def check_sources(root):
             w2c_partial_row.count('_lw(dependency_w2c_nonzero_target + 0x') != 3 or \
             w2c_map.count('zeroCtrlMipsBranchTarget(') != 2 or \
             w2c_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            '0x8C825A34' in w2c_map or '0x8C825B34' in w2c_map or \
+            re.search(r'delay\s*&\s*0xFFFF', w2c_map) or \
             'dependency_w2c_nonzero_target + 0x8C' in w2c_map or \
             'dependency_w2c_nonzero_target + 0x6F4' in w2c_map or \
             any(token in w2c_map for token in
