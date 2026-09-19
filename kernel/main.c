@@ -5913,7 +5913,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
     SceModule2 *helper = sceKernelFindModuleByName("ZeroVSH_Patcher_User");
     PspSysmemPartitionInfo info;
     unsigned int vtext, ptext, thunk, wrapper, inner, consumer;
-    unsigned int owner, target, helper_jump, replacement, i;
+    unsigned int owner, target, helper_jump, replacement, snapshot_base, i;
 
     if (slide_diag.paf_a989_target_trace_install ||
             !slide_diag.paf_a989_target_trace_registered ||
@@ -6008,6 +6008,11 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
         if (!zeroCtrlVshModuleRangeValid(helper,
                     slide_diag.paf_a989_target_trace_scalar[i], 4))
             return;
+    if (slide_diag.paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4)
+        return;
+    snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4;
+    if (!zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x2C))
+        return;
     helper_jump = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
     replacement = 0x0C000000 |
             ((slide_diag.paf_a989_target_trace_helper >> 2) & 0x03FFFFFF);
@@ -6036,6 +6041,11 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
         _sw(0, slide_diag.paf_a989_target_trace_scalar[i]);
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)slide_diag.paf_a989_target_trace_scalar[i], 4);
+    }
+    for (i = 0; i < 11; i++) {
+        _sw(0, snapshot_base + i * 4);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)(snapshot_base + i * 4), 4);
     }
     _sw(helper_jump, slide_diag.paf_a989_target_trace_jump_slot);
     sceKernelDcacheWritebackInvalidateRange(
@@ -10062,7 +10072,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int clockpath_written = 0;
     int constructed0_dependency_written = 0;
     int a989_dependency44_snapshot_written = 0;
-    int a989_dependency_direct_snapshot_written = 0;
+    int a989_dependency_direct_sync_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -10400,6 +10410,57 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 capture[5]);
                         zeroCtrlDiagnosticsText(line);
                     }
+                    if (capture[5] != 0 &&
+                            !a989_dependency_direct_sync_written) {
+                        unsigned int snapshot[11] = { 0, 0, 0, 0, 0, 0,
+                            0, 0, 0, 0, 0 };
+                        unsigned int snapshot_base = 0;
+                        a989_dependency_direct_sync_written = 1;
+                        if (slide_diag.paf_a989_target_trace_scalar[4] <= 0xFFFFFFFFU - 4) {
+                            snapshot_base =
+                                    slide_diag.paf_a989_target_trace_scalar[4] + 4;
+                            snapshot[0] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x00);
+                        }
+                        if (snapshot[0] != 1) {
+                            zeroCtrlDiagnosticsText(
+                                    "[psp1000-a989-dependency-direct-sync] "
+                                    "validation=0\n");
+                        } else {
+                            snapshot[1] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x04);
+                            snapshot[2] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x08);
+                            snapshot[3] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x0C);
+                            snapshot[4] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x10);
+                            snapshot[5] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x14);
+                            snapshot[6] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x18);
+                            snapshot[7] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x1C);
+                            snapshot[8] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x20);
+                            snapshot[9] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x24);
+                            snapshot[10] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x28);
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-direct-sync] "
+                                    "validation=1 dependency=0x%08X "
+                                    "w2c=0x%08X w34=0x%08X "
+                                    "w38=0x%08X w3c=0x%08X "
+                                    "w40=0x%08X w54=0x%08X "
+                                    "w64=0x%08X w68=0x%08X "
+                                    "w6c=0x%08X\n", snapshot[1], snapshot[2],
+                                    snapshot[3], snapshot[4], snapshot[5],
+                                    snapshot[6], snapshot[7], snapshot[8],
+                                    snapshot[9], snapshot[10]);
+                            zeroCtrlDiagnosticsText(line);
+                        }
+                    }
                     if (capture[5] != 0 && a989_target_node == 0) {
                         unsigned int lower = zeroCtrlReadHelperCounter(
                                 slide_diag.bridge_scalar[5]);
@@ -10495,40 +10556,6 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                         dependency48, dependency48_user_ptr,
                                         first_valid, first, root_valid, root,
                                         flag2d_valid, root_flag_2d);
-                                zeroCtrlDiagnosticsText(line);
-                            }
-                        }
-                        if (exact_dependency_capture &&
-                                !a989_dependency_direct_snapshot_written) {
-                            unsigned int w2c, w34, w38, w3c, w40;
-                            unsigned int w54, w64, w68, w6c;
-                            a989_dependency_direct_snapshot_written = 1;
-                            if (!zeroCtrlPsp1000BridgeUserRangeValid(
-                                        a989_target_dependency, 0x70,
-                                        lower, upper)) {
-                                zeroCtrlDiagnosticsText(
-                                        "[psp1000-a989-dependency-direct-snapshot] "
-                                        "validation=0\n");
-                            } else {
-                                w2c = _lw(a989_target_dependency + 0x2C);
-                                w34 = _lw(a989_target_dependency + 0x34);
-                                w38 = _lw(a989_target_dependency + 0x38);
-                                w3c = _lw(a989_target_dependency + 0x3C);
-                                w40 = _lw(a989_target_dependency + 0x40);
-                                w54 = _lw(a989_target_dependency + 0x54);
-                                w64 = _lw(a989_target_dependency + 0x64);
-                                w68 = _lw(a989_target_dependency + 0x68);
-                                w6c = _lw(a989_target_dependency + 0x6C);
-                                snprintf(line, sizeof(line),
-                                        "[psp1000-a989-dependency-direct-snapshot] "
-                                        "validation=1 dependency=0x%08X "
-                                        "w2c=0x%08X w34=0x%08X "
-                                        "w38=0x%08X w3c=0x%08X "
-                                        "w40=0x%08X w54=0x%08X "
-                                        "w64=0x%08X w68=0x%08X "
-                                        "w6c=0x%08X\n",
-                                        a989_target_dependency, w2c, w34,
-                                        w38, w3c, w40, w54, w64, w68, w6c);
                                 zeroCtrlDiagnosticsText(line);
                             }
                         }
