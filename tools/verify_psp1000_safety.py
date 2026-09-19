@@ -2936,6 +2936,66 @@ def check_sources(root):
     if 'slide_diag.a989_dependency44' in kernel or \
             writer.count('int a989_dependency44_snapshot_written = 0;') != 1:
         fail("dependency+0x44 snapshot state is not writer-local")
+    direct_marker = capture_writer.find(
+            '[psp1000-a989-dependency-direct-snapshot]')
+    direct_start = capture_writer.rfind(
+            'if (exact_dependency_capture &&', 0, direct_marker)
+    direct_writer = capture_writer[direct_start:]
+    direct_offsets = ('2C', '34', '38', '3C', '40', '54', '64', '68', '6C')
+    for token in ('int a989_dependency_direct_snapshot_written = 0;',
+            'if (exact_dependency_capture &&',
+            '!a989_dependency_direct_snapshot_written',
+            'a989_dependency_direct_snapshot_written = 1;',
+            'a989_target_dependency, 0x70,',
+            '[psp1000-a989-dependency-direct-snapshot] ',
+            'validation=0\\n', 'validation=1 dependency=0x%08X',
+            'w2c=0x%08X w34=0x%08X', 'w38=0x%08X w3c=0x%08X',
+            'w40=0x%08X w54=0x%08X', 'w64=0x%08X w68=0x%08X',
+            'w6c=0x%08X'):
+        if (token == 'int a989_dependency_direct_snapshot_written = 0;' and
+                token not in writer) or (token !=
+                'int a989_dependency_direct_snapshot_written = 0;' and
+                token not in direct_writer):
+            fail("authoritative direct-dependency snapshot lacks " + token)
+    for offset in direct_offsets:
+        token = '_lw(a989_target_dependency + 0x' + offset + ')'
+        if direct_writer.count(token) != 1:
+            fail("direct-dependency snapshot does not read exactly +0x" + offset)
+    direct_gate = capture_writer.find(
+            'if (exact_dependency_capture &&', snapshot_flag_read)
+    direct_once = capture_writer.find(
+            'a989_dependency_direct_snapshot_written = 1;', direct_gate)
+    direct_range = capture_writer.find(
+            'a989_target_dependency, 0x70,', direct_once)
+    direct_first_read = capture_writer.find(
+            '_lw(a989_target_dependency + 0x2C)', direct_range)
+    direct_last_read = capture_writer.find(
+            '_lw(a989_target_dependency + 0x6C)', direct_first_read)
+    direct_success = capture_writer.find(
+            'validation=1 dependency=0x%08X', direct_last_read)
+    if not 0 <= dependency_read < snapshot_authority < direct_gate < \
+            direct_once < direct_range < direct_first_read < direct_last_read < \
+            direct_success:
+        fail("direct-dependency snapshot authority/range ordering regressed")
+    direct_read_offsets = re.findall(
+            r'_lw\(a989_target_dependency \+ 0x([0-9A-Fa-f]+)\)',
+            direct_writer)
+    if tuple(direct_read_offsets) != direct_offsets or \
+            capture_writer.count(
+                'a989_dependency_direct_snapshot_written = 1;') != 1 or \
+            'a989_target_dependency + 0x70' in direct_writer or \
+            re.search(r'_l(?:b|h|w)\s*\(\s*w(?:2c|34|38|3c|40|54|64|68|6c)',
+                direct_writer) or \
+            re.search(r'zeroCtrlPsp1000BridgeUserRangeValid\s*\(\s*'
+                r'w(?:2c|34|38|3c|40|54|64|68|6c)', direct_writer) or \
+            any(token in direct_writer for token in
+                ('_sw(', '_sb(', 'sceKernelDcache', 'sceKernelIcache',
+                 'sceKernelAlloc', 'slide_diag.a989_dependency_direct')):
+        fail("direct-dependency snapshot reads extra state or changes runtime state")
+    if 'slide_diag.a989_dependency_direct' in kernel or \
+            writer.count(
+                'int a989_dependency_direct_snapshot_written = 0;') != 1:
+        fail("direct-dependency snapshot state is not writer-local")
     dependency_marker = writer.find('[psp1000-a989-dependency-life]')
     dependency_start = writer.rfind(
             'if (a989_target_dependency != 0)', 0, dependency_marker)

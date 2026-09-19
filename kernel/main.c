@@ -10062,6 +10062,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int clockpath_written = 0;
     int constructed0_dependency_written = 0;
     int a989_dependency44_snapshot_written = 0;
+    int a989_dependency_direct_snapshot_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -10494,6 +10495,40 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                         dependency48, dependency48_user_ptr,
                                         first_valid, first, root_valid, root,
                                         flag2d_valid, root_flag_2d);
+                                zeroCtrlDiagnosticsText(line);
+                            }
+                        }
+                        if (exact_dependency_capture &&
+                                !a989_dependency_direct_snapshot_written) {
+                            unsigned int w2c, w34, w38, w3c, w40;
+                            unsigned int w54, w64, w68, w6c;
+                            a989_dependency_direct_snapshot_written = 1;
+                            if (!zeroCtrlPsp1000BridgeUserRangeValid(
+                                        a989_target_dependency, 0x70,
+                                        lower, upper)) {
+                                zeroCtrlDiagnosticsText(
+                                        "[psp1000-a989-dependency-direct-snapshot] "
+                                        "validation=0\n");
+                            } else {
+                                w2c = _lw(a989_target_dependency + 0x2C);
+                                w34 = _lw(a989_target_dependency + 0x34);
+                                w38 = _lw(a989_target_dependency + 0x38);
+                                w3c = _lw(a989_target_dependency + 0x3C);
+                                w40 = _lw(a989_target_dependency + 0x40);
+                                w54 = _lw(a989_target_dependency + 0x54);
+                                w64 = _lw(a989_target_dependency + 0x64);
+                                w68 = _lw(a989_target_dependency + 0x68);
+                                w6c = _lw(a989_target_dependency + 0x6C);
+                                snprintf(line, sizeof(line),
+                                        "[psp1000-a989-dependency-direct-snapshot] "
+                                        "validation=1 dependency=0x%08X "
+                                        "w2c=0x%08X w34=0x%08X "
+                                        "w38=0x%08X w3c=0x%08X "
+                                        "w40=0x%08X w54=0x%08X "
+                                        "w64=0x%08X w68=0x%08X "
+                                        "w6c=0x%08X\n",
+                                        a989_target_dependency, w2c, w34,
+                                        w38, w3c, w40, w54, w64, w68, w6c);
                                 zeroCtrlDiagnosticsText(line);
                             }
                         }
