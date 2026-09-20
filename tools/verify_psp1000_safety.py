@@ -2343,63 +2343,172 @@ def check_sources(root):
     helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
     helper = assembly[helper_start:helper_end]
     if hashlib.sha256(helper.encode()).hexdigest() != \
-            '2bde3c548d4bb66261023f965325196f448578e35cda2dee76c0872ff995446c':
-        fail("functional +314A4 bridge assembly changed during diagnostic work")
+            '6d6092682f280b82b9a6222517c7764cb25a2c8b62ecdc4a586af930774a3bed':
+        fail("functional +314A4 bridge assembly changed")
     controller_call = helper.find("jalr    $t9")
     result_save = helper.find("sw      $v0, 32($sp)", controller_call)
     request_read = helper.find("%lo(zeroCtrlTrigger58D4Request)", result_save)
-    root_read = helper.find("%lo(zeroCtrlVsh314A4RootSlot)", request_read)
+    request_zero = helper.find("beqz    $t1, 9f", request_read)
+    busy_gate = helper.find("%lo(zeroCtrlVsh314A4Busy)", request_zero)
+    attempted_gate = helper.find("%lo(zeroCtrlVsh314A4Attempted)", busy_gate)
+    first_retained = helper.find("%hi(zeroCtrlPafA989DependencyDirectValid)",
+            attempted_gate)
     result_restore = helper.rfind("lw      $v0, 32($sp)")
-    if not 0 <= controller_call < result_save < request_read < root_read < \
-            result_restore or helper.count("zeroCtrlVsh314A4OriginalController") != 2:
-        fail("bridge does not call controller once before request/root access")
-    for token in ('zeroCtrlVsh314A4Busy', 'zeroCtrlVsh314A4Attempted',
-            'zeroCtrlVsh314A4Hits', 'zeroCtrlVsh314A4RequestSeen',
-            'zeroCtrlVsh314A4Stage0Calls', 'zeroCtrlVsh314A4Stage1Calls',
-            'BRIDGE_VALIDATE $s1, 8, 1f', 'BRIDGE_VALIDATE $s2, 0x18, 1f',
-            'BRIDGE_VALIDATE $s3, 0x10, 1f',
-            'lw      $t3, 0($s2)', 'lw      $s3, 4($s2)',
-            'lw      $t3, 0x14($s2)', 'lw      $t3, 0x0C($s3)',
-            'move    $a0, $s3', 'move    $a1, $s2',
-            'move    $a1, $s3', 'move    $a2, $zero',
-            'move    $a3, $zero'):
+    if not 0 <= controller_call < result_save < request_read < request_zero < \
+            busy_gate < attempted_gate < first_retained < result_restore or \
+            helper.count("zeroCtrlVsh314A4OriginalController") != 2 or \
+            helper.count("jalr    $t9") != 3:
+        fail("bridge controller/request ordering or Sony call count regressed")
+    for token in ('addiu   $sp, $sp, -64', 'sw      $ra, 28($sp)',
+            'sw      $s0, 0($sp)', 'sw      $s1, 4($sp)',
+            'sw      $s2, 8($sp)', 'sw      $s3, 12($sp)',
+            'sw      $s4, 16($sp)', 'sw      $s5, 20($sp)',
+            'sw      $gp, 24($sp)', 'lw      $v0, 32($sp)',
+            'lw      $gp, 24($sp)', 'lw      $ra, 28($sp)',
+            'jr      $ra', 'addiu   $sp, $sp, 64'):
         if token not in helper:
-            fail("functional assembly bridge lacks " + token)
-    reject_object_clear = helper.find(
-            'sw      $zero, %lo(zeroCtrlVsh314A4RejectObject)($t0)')
-    root_slot_read = helper.find('%lo(zeroCtrlVsh314A4RootSlot)',
-            reject_object_clear)
-    outer_actual = helper.find('lw      $t3, 0($s2)', root_slot_read)
-    outer_expected = helper.find(
-            'lw      $t0, %lo(zeroCtrlVsh314A4Constructed0)($t0)', outer_actual)
-    outer_compare = helper.find('bne     $t3, $t0, 2f', outer_expected)
-    reject2_label = helper.find('2:', outer_compare)
-    reject_object_capture = helper.find(
-            'sw      $s2, %lo(zeroCtrlVsh314A4RejectObject)($t0)', reject2_label)
-    reject2_value = helper.find('addiu   $t1, $zero, 2', reject_object_capture)
-    busy_set = helper.find('sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)')
-    attempt_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Attempts')
-    stage0_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls')
-    if not 0 <= reject_object_clear < root_slot_read < outer_actual < \
-            outer_expected < outer_compare < reject2_label < \
-            reject_object_capture < reject2_value:
-        fail("reject 2 does not capture its exact mismatching outer object")
-    reject2_block = helper[reject2_label:helper.find('3:', reject2_label)]
-    if not outer_compare < busy_set < attempt_inc < stage0_inc or any(
-            token in reject2_block for token in (
-                'zeroCtrlVsh314A4Busy', 'zeroCtrlVsh314A4Attempted',
-                'zeroCtrlVsh314A4Attempts', 'zeroCtrlVsh314A4Stage0Calls')):
-        fail("reject-object evidence changes pre-validation attempt ordering")
-    callback_load = helper.rfind('lw      $t3, 0x0C($s3)', 0,
-            helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage1Calls'))
-    expected_load = helper.find(
-            'lw      $t0, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)',
-            callback_load)
-    callback_compare = helper.find('bne     $t3, $t0, 5f', expected_load)
-    constructed1_call = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage1Calls',
-            callback_compare)
-    if not 0 <= callback_load < expected_load < callback_compare < constructed1_call:
-        fail("runtime constructed1 call lacks expected-callback equality gate")
+            fail("functional bridge transparency lacks " + token)
+    pre_request = helper[:request_zero]
+    if any(token in pre_request for token in
+            ('zeroCtrlPafA989Dependency', 'zeroCtrlPafA989W28',
+             'zeroCtrlPafA989Pair', 'zeroCtrlPafA989Shadow')):
+        fail("request-zero bridge path accesses retained or shadow state")
+    for forbidden_old in ('zeroCtrlVsh314A4RootSlot',
+            'zeroCtrlPafA989TargetNode', 'zeroCtrlPafA989TargetOuter',
+            'zeroCtrlPafA989TargetInner', 'zeroCtrlPafA989TargetDependencySync',
+            'zeroCtrlPafA989Pair00Ptr', 'zeroCtrlPafA989Pair0CPtr'):
+        if forbidden_old in helper:
+            fail("functional bridge still uses ephemeral state: " + forbidden_old)
+    validity_symbols = ('zeroCtrlPafA989DependencyDirectValid',
+            'zeroCtrlPafA989W28BytesValid', 'zeroCtrlPafA989Pair00Valid',
+            'zeroCtrlPafA989Pair0CValid')
+    validity_positions = [helper.find('%hi(' + symbol + ')', first_retained)
+            for symbol in validity_symbols]
+    scalar_specs = (('W2C', 'addiu   $t2, $zero, 0x27'),
+            ('W34', 'bnez    $t1, 2f'),
+            ('W3C', 'bnez    $t1, 2f'), ('W40', 'bnez    $t1, 2f'),
+            ('W54', 'bnez    $t1, 2f'), ('W68', 'bnez    $t1, 2f'),
+            ('W6C', 'bnez    $t1, 2f'),
+            ('W20', 'bnez    $t1, 2f'),
+            ('W38', 'addiu   $t2, $zero, 0x32'),
+            ('W64', 'addiu   $t2, $zero, 0x0C'))
+    scalar_positions = []
+    for suffix, check in scalar_specs:
+        load = helper.find('%hi(zeroCtrlPafA989Dependency' + suffix + ')',
+                validity_positions[-1])
+        check_pos = helper.find(check, load)
+        if load < 0 or check_pos < load:
+            fail("functional bridge lacks selected-route scalar check " + suffix)
+        scalar_positions.append(load)
+    shape_tokens = ('%hi(zeroCtrlPafA989Pair00Len)',
+            'addiu   $t2, $zero, 0x0E', '%hi(zeroCtrlPafA989Pair0CLen)',
+            'addiu   $t2, $zero, 0x08',
+            '%hi(zeroCtrlPafA989Pair00Data00)', 'lbu     $t1, 0x0E($t0)',
+            '%hi(zeroCtrlPafA989Pair0CData00)', 'lbu     $t1, 0x08($t0)',
+            '%hi(zeroCtrlPafA989W28Data00)', 'lbu     $t1, 0x27($t0)')
+    shape_positions = [helper.find(token, scalar_positions[-1])
+            for token in shape_tokens]
+    callback_load = helper.find('%hi(zeroCtrlVsh314A4ExpectedCallback)',
+            shape_positions[-1])
+    provenance_tokens = ('lui     $t2, 0x0001', 'ori     $t2, $t2, 0xA274',
+            '%hi(zeroCtrlPafA989DependencyW18)', 'ori     $t2, $t2, 0xA324',
+            '%hi(zeroCtrlPafA989DependencyW1C)', 'ori     $t2, $t2, 0xA3A4',
+            '%hi(zeroCtrlPafA989DependencyW24)')
+    provenance_positions = [helper.find(token, callback_load)
+            for token in provenance_tokens]
+    shadow_start = helper.find('%hi(zeroCtrlPafA989ShadowOuter)',
+            provenance_positions[-1])
+    busy_set = helper.find('sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)',
+            shadow_start)
+    attempted_set = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)', busy_set)
+    stage0_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls',
+            attempted_set)
+    constructed0_load = helper.find('%hi(zeroCtrlVsh314A4Constructed0)',
+            stage0_inc)
+    constructed0_call = helper.find('jalr    $t9', constructed0_load)
+    if any(pos < 0 for pos in validity_positions + scalar_positions +
+                shape_positions + provenance_positions) or \
+            validity_positions != sorted(validity_positions) or \
+            scalar_positions != sorted(scalar_positions) or \
+            shape_positions != sorted(shape_positions) or \
+            not validity_positions[-1] < scalar_positions[0] < \
+                scalar_positions[-1] < shape_positions[0] < shape_positions[-1] < \
+                callback_load < provenance_positions[0] < \
+                provenance_positions[-1] < shadow_start < busy_set < \
+                attempted_set < stage0_inc < constructed0_load < constructed0_call:
+        fail("retained-state validation does not precede shadow Sony execution")
+    if any(token in helper for token in ('0x1FB10', '0x1FBC0', '0x1FC40')) or \
+            helper.count('addu    $t2, $s5, $t2') != 3:
+        fail("persistent VSH pointers are not callback-relative")
+    shadow_clear_start = shadow_start
+    shadow_build_end = busy_set
+    shadow_build = helper[shadow_clear_start:shadow_build_end]
+    dependency_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$s3\)', shadow_build))
+    if dependency_zero_offsets != tuple('%02X' % offset
+            for offset in range(0, 0x70, 4)):
+        fail("shadow dependency is not fully zeroed before selected fields")
+    outer_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$s1\)', shadow_build))
+    inner_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$s2\)', shadow_build))
+    root_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$t3\)', shadow_build))
+    if outer_zero_offsets != tuple('%02X' % offset
+                for offset in range(0, 0x1C, 4)) or \
+            inner_zero_offsets != tuple('%02X' % offset
+                for offset in range(0, 0x10, 4)) or \
+            root_zero_offsets != tuple('%02X' % offset
+                for offset in range(0, 0x30, 4)):
+        fail("shadow outer/inner/root are not completely reset per attempt")
+    required_shadow_tokens = (
+            'sw      $t0, 0x00($s3)', 'sw      $t1, 0x04($s3)',
+            'sw      $t0, 0x0C($s3)', 'sw      $t1, 0x10($s3)',
+            'sw      $t1, 0x18($s3)', 'sw      $t1, 0x1C($s3)',
+            'sw      $t1, 0x20($s3)', 'sw      $t1, 0x24($s3)',
+            'sw      $t0, 0x28($s3)', 'sw      $t1, 0x2C($s3)',
+            'sw      $t1, 0x34($s3)', 'sw      $t1, 0x38($s3)',
+            'sw      $t1, 0x3C($s3)', 'sw      $t1, 0x40($s3)',
+            'sw      $t2, 0x44($s3)', 'sw      $t1, 0x54($s3)',
+            'sw      $t1, 0x64($s3)', 'sw      $t1, 0x68($s3)',
+            'sw      $t1, 0x6C($s3)',
+            '%hi(zeroCtrlPafA989Shadow44Wrapper)',
+            '%hi(zeroCtrlPafA989Shadow44Root)', 'sw      $t3, 0x00($t2)',
+            'sb      $t1, 0x2D($t3)', 'sw      $s3, 0x08($s2)',
+            'sw      $s5, 0x0C($s2)', 'sw      $t1, 0x00($s1)',
+            'sw      $s2, 0x04($s1)', 'sw      $t1, 0x08($s1)',
+            'sw      $t1, 0x0C($s1)', 'sw      $t1, 0x14($s1)')
+    for token in required_shadow_tokens:
+        if token not in shadow_build:
+            fail("private shadow construction lacks " + token)
+    constructed0_a0 = helper.find('move    $a0, $s2', constructed0_load)
+    constructed0_a1 = helper.find('move    $a1, $s1', constructed0_load)
+    if 'sw      $zero, 0x48($s3)' not in shadow_build or \
+            not constructed0_a0 < constructed0_call < constructed0_a1:
+        fail("constructed0 does not receive the complete private shadow")
+    post_start = constructed0_call
+    post_tokens = ('lw      $s4, 0x04($s2)', 'BRIDGE_VALIDATE $s4, 4, 5f',
+            'lw      $t3, 0x04($s1)', 'bne     $t3, $s2, 5f',
+            'lw      $t3, 0x14($s1)', 'lw      $t3, 0x08($s2)',
+            'bne     $t3, $s3, 5f', 'lw      $t3, 0x0C($s2)',
+            'bne     $t3, $s5, 5f')
+    post_positions = [helper.find(token, post_start) for token in post_tokens]
+    stage1_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage1Calls',
+            post_positions[-1])
+    constructed1_call = helper.find('jalr    $t9', stage1_inc)
+    if any(pos < 0 for pos in post_positions) or \
+            post_positions != sorted(post_positions) or \
+            not constructed0_call < post_positions[0] < post_positions[-1] < \
+                stage1_inc < constructed1_call or \
+            helper.find('move    $a1, $s2', stage1_inc) > constructed1_call:
+        fail("constructed1 call lacks post-constructed0 shadow validation")
+    for code, label in ((6, '1:'), (7, '2:'), (8, '3:'), (9, '4:'),
+            (5, '5:')):
+        label_pos = helper.find(label, constructed1_call)
+        value_pos = helper.find('addiu   $t1, $zero, ' + str(code), label_pos)
+        if label_pos < 0 or value_pos < label_pos:
+            fail("functional bridge reject code mapping regressed")
     for forbidden in ('sw      $zero, %lo(zeroCtrlTrigger58D4Request)',
             'zeroCtrlTrigger13F6CHits', 'zeroCtrlTrigger14020Hits',
             '0x57B0', '0x58D4'):
@@ -2661,7 +2770,7 @@ def check_sources(root):
             fail("A989 synchronous helper does not preserve $" + reg)
     bss_start = assembly.find('zeroCtrlPafA989TargetInner: .space 4')
     bss_end = assembly.find(
-            'zeroCtrlGlobalPredicate6F84Hits: .space 4', bss_start)
+            '.align 2\n.globl zeroCtrlPafA989ShadowOuter', bss_start)
     a989_snapshot_bss = assembly[bss_start:bss_end]
     required_bss = ('zeroCtrlPafA989TargetInner',
             'zeroCtrlPafA989DependencyDirectValid',
@@ -2702,6 +2811,22 @@ def check_sources(root):
             a989_snapshot_bss.count(': .space 4') != 72 or \
             '.align' in a989_snapshot_bss:
         fail("A989 synchronous snapshot BSS is not exactly contiguous")
+    shadow_bss_end = assembly.find(
+            '.globl zeroCtrlGlobalPredicate6F84Hits', bss_end)
+    shadow_bss = assembly[bss_end:shadow_bss_end]
+    expected_shadow_bss = (
+            '.globl zeroCtrlPafA989ShadowOuter\n'
+            'zeroCtrlPafA989ShadowOuter: .space 0x1C\n'
+            '.globl zeroCtrlPafA989ShadowInner\n'
+            'zeroCtrlPafA989ShadowInner: .space 0x10\n'
+            '.globl zeroCtrlPafA989ShadowDependency\n'
+            'zeroCtrlPafA989ShadowDependency: .space 0x70\n'
+            '.globl zeroCtrlPafA989Shadow44Wrapper\n'
+            'zeroCtrlPafA989Shadow44Wrapper: .space 4\n'
+            '.globl zeroCtrlPafA989Shadow44Root\n'
+            'zeroCtrlPafA989Shadow44Root: .space 0x30\n')
+    if shadow_bss_end < 0 or shadow_bss.count('.align 2') != 1 or             shadow_bss.replace('.align 2\n', '') != expected_shadow_bss:
+        fail("private functional shadow BSS layout changed")
     for token in ('zeroCtrlVsh5704RegistrationTraceHits',
             'bnez    $t1, 1f', 'addiu   $t2, $a0, 8',
             'bne     $t2, $a1, 1f', 'lw      $t4, 0x00($a1)',
@@ -5798,9 +5923,9 @@ def check_sources(root):
     worker_end = user.find("static void zeroCtrlCreatePsp1000RuntimeRequestWorker(",
             worker_start)
     worker = user[worker_start:worker_end]
-    if "#define PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED 0" not in user or \
+    if "#define PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED 1" not in user or \
             "if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&" not in worker:
-        fail("direct +57B0 runtime execution is not compile-time disabled")
+        fail("direct +57B0 runtime execution is not request-gated and enabled")
     for token in ("psp1000RuntimeRequestValid && psp1000RuntimeRequest",
             "psp1000RuntimeRequest = 0", "psp1000RuntimeRequestCalled++",
             "psp1000RuntimeRequestTarget", "request_function()",
