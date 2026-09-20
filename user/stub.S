@@ -167,6 +167,10 @@ zeroCtrlVsh314A4FunctionalBridge:
     lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)
     beqz    $t1, 9f
     nop
+    lui     $t0, %hi(zeroCtrlVsh314A4ShadowProbeDone)
+    lw      $t1, %lo(zeroCtrlVsh314A4ShadowProbeDone)($t0)
+    bnez    $t1, 9f
+    nop
     BRIDGE_INC zeroCtrlVsh314A4RequestSeen
     lui     $t0, %hi(zeroCtrlVsh314A4Busy)
     lw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)
@@ -341,35 +345,27 @@ zeroCtrlVsh314A4FunctionalBridge:
     lui     $t2, %hi(zeroCtrlPafA989Shadow44NodeA)
     addiu   $t2, $t2, %lo(zeroCtrlPafA989Shadow44NodeA)
     sw      $zero, 0x00($t2)
-    sw      $zero, 0x04($t2)
-    sw      $zero, 0x08($t2)
-    sw      $zero, 0x0C($t2)
-    sw      $zero, 0x10($t2)
-    sw      $zero, 0x14($t2)
-    sw      $zero, 0x18($t2)
-    sw      $zero, 0x1C($t2)
-    sw      $zero, 0x20($t2)
-    sw      $zero, 0x24($t2)
-    sw      $zero, 0x28($t2)
-    sw      $zero, 0x2C($t2)
     lui     $t3, %hi(zeroCtrlPafA989Shadow44NodeB)
     addiu   $t3, $t3, %lo(zeroCtrlPafA989Shadow44NodeB)
     sw      $zero, 0x00($t3)
-    sw      $zero, 0x04($t3)
-    sw      $zero, 0x08($t3)
-    sw      $zero, 0x0C($t3)
-    sw      $zero, 0x10($t3)
-    sw      $zero, 0x14($t3)
-    sw      $zero, 0x18($t3)
-    sw      $zero, 0x1C($t3)
-    sw      $zero, 0x20($t3)
-    sw      $zero, 0x24($t3)
-    sw      $zero, 0x28($t3)
-    sw      $zero, 0x2C($t3)
+    lui     $t4, %hi(zeroCtrlPafA989Shadow44Root)
+    addiu   $t4, $t4, %lo(zeroCtrlPafA989Shadow44Root)
+    sw      $zero, 0x00($t4)
+    sw      $zero, 0x04($t4)
+    sw      $zero, 0x08($t4)
+    sw      $zero, 0x0C($t4)
+    sw      $zero, 0x10($t4)
+    sw      $zero, 0x14($t4)
+    sw      $zero, 0x18($t4)
+    sw      $zero, 0x1C($t4)
+    sw      $zero, 0x20($t4)
+    sw      $zero, 0x24($t4)
+    sw      $zero, 0x28($t4)
+    sw      $zero, 0x2C($t4)
     sw      $t3, 0x00($t2)
-    sw      $t2, 0x00($t3)
-    addiu   $t1, $zero, 1
-    sb      $t1, 0x2D($t2)
+    sw      $t4, 0x00($t3)
+    addiu   $t1, $zero, 0x0A
+    sb      $t1, 0x2D($t4)
 
     lui     $t0, %hi(zeroCtrlPafA989Pair00Data00)
     addiu   $t0, $t0, %lo(zeroCtrlPafA989Pair00Data00)
@@ -439,6 +435,15 @@ zeroCtrlVsh314A4FunctionalBridge:
     lui     $t0, %hi(zeroCtrlVsh314A4Constructed1)
     lw      $t1, %lo(zeroCtrlVsh314A4Constructed1)($t0)
     sw      $t1, 0x14($s1)
+
+    lui     $t0, %hi(zeroCtrlVsh314A4ShadowProbeDone)
+    addiu   $t1, $zero, 1
+    sw      $t1, %lo(zeroCtrlVsh314A4ShadowProbeDone)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4Reject)
+    addiu   $t1, $zero, 10
+    sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
+    b       9f
+    nop
 
     lui     $t0, %hi(zeroCtrlVsh314A4Busy)
     addiu   $t1, $zero, 1
@@ -1091,9 +1096,13 @@ zeroCtrlPafA989ShadowInner: .space 0x10
 .globl zeroCtrlPafA989ShadowDependency
 zeroCtrlPafA989ShadowDependency: .space 0x70
 .globl zeroCtrlPafA989Shadow44NodeA
-zeroCtrlPafA989Shadow44NodeA: .space 0x30
+zeroCtrlPafA989Shadow44NodeA: .space 4
 .globl zeroCtrlPafA989Shadow44NodeB
-zeroCtrlPafA989Shadow44NodeB: .space 0x30
+zeroCtrlPafA989Shadow44NodeB: .space 4
+.globl zeroCtrlPafA989Shadow44Root
+zeroCtrlPafA989Shadow44Root: .space 0x30
+.globl zeroCtrlVsh314A4ShadowProbeDone
+zeroCtrlVsh314A4ShadowProbeDone: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 

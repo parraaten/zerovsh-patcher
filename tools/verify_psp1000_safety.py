@@ -2343,19 +2343,23 @@ def check_sources(root):
     helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
     helper = assembly[helper_start:helper_end]
     if hashlib.sha256(helper.encode()).hexdigest() != \
-            'dcb6cb11de9fad104272c81ea486cd95ea4c28ae8b0a4c5e95d06387fdea4b84':
+            'cf6e46f76e9f268ad112e8194846ceccde9c0e34d5c4e4a7c5269504b053526f':
         fail("functional +314A4 bridge assembly changed")
     controller_call = helper.find("jalr    $t9")
     result_save = helper.find("sw      $v0, 32($sp)", controller_call)
     request_read = helper.find("%lo(zeroCtrlTrigger58D4Request)", result_save)
     request_zero = helper.find("beqz    $t1, 9f", request_read)
-    busy_gate = helper.find("%lo(zeroCtrlVsh314A4Busy)", request_zero)
+    probe_read = helper.find("%lo(zeroCtrlVsh314A4ShadowProbeDone)", request_zero)
+    probe_gate = helper.find("bnez    $t1, 9f", probe_read)
+    request_seen = helper.find("BRIDGE_INC zeroCtrlVsh314A4RequestSeen", probe_gate)
+    busy_gate = helper.find("%lo(zeroCtrlVsh314A4Busy)", request_seen)
     attempted_gate = helper.find("%lo(zeroCtrlVsh314A4Attempted)", busy_gate)
     first_retained = helper.find("%hi(zeroCtrlPafA989DependencyDirectValid)",
             attempted_gate)
     result_restore = helper.rfind("lw      $v0, 32($sp)")
     if not 0 <= controller_call < result_save < request_read < request_zero < \
-            busy_gate < attempted_gate < first_retained < result_restore or \
+            probe_read < probe_gate < request_seen < busy_gate < attempted_gate < \
+            first_retained < result_restore or \
             helper.count("zeroCtrlVsh314A4OriginalController") != 2 or \
             helper.count("jalr    $t9") != 3:
         fail("bridge controller/request ordering or Sony call count regressed")
@@ -2457,13 +2461,15 @@ def check_sources(root):
             r'sw      \$zero, 0x([0-9A-F]{2})\(\$t2\)', shadow_build))
     node_b_zero_offsets = tuple(re.findall(
             r'sw      \$zero, 0x([0-9A-F]{2})\(\$t3\)', shadow_build))
+    root_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$t4\)', shadow_build))
     if outer_zero_offsets != tuple('%02X' % offset
                 for offset in range(0, 0x1C, 4)) or \
             inner_zero_offsets != tuple('%02X' % offset
                 for offset in range(0, 0x10, 4)) or \
-            node_a_zero_offsets != tuple('%02X' % offset
-                for offset in range(0, 0x30, 4)) or \
-            node_b_zero_offsets != tuple('%02X' % offset
+            node_a_zero_offsets != ('00',) or \
+            node_b_zero_offsets != ('00',) or \
+            root_zero_offsets != tuple('%02X' % offset
                 for offset in range(0, 0x30, 4)):
         fail("shadow outer/inner/+0x44 nodes are not reset per attempt")
     required_shadow_tokens = (
@@ -2479,7 +2485,8 @@ def check_sources(root):
             'sw      $t1, 0x6C($s3)',
             '%hi(zeroCtrlPafA989Shadow44NodeA)',
             '%hi(zeroCtrlPafA989Shadow44NodeB)', 'sw      $t3, 0x00($t2)',
-            'sw      $t2, 0x00($t3)', 'sb      $t1, 0x2D($t2)',
+            '%hi(zeroCtrlPafA989Shadow44Root)', 'sw      $t4, 0x00($t3)',
+            'addiu   $t1, $zero, 0x0A', 'sb      $t1, 0x2D($t4)',
             'sw      $s3, 0x08($s2)',
             'sw      $s5, 0x0C($s2)', 'sw      $t1, 0x00($s1)',
             'sw      $s2, 0x04($s1)', 'sw      $t1, 0x08($s1)',
@@ -2488,9 +2495,28 @@ def check_sources(root):
         if token not in shadow_build:
             fail("private shadow construction lacks " + token)
     if 'zeroCtrlPafA989Shadow44Wrapper' in helper or \
-            'zeroCtrlPafA989Shadow44Root' in helper or \
-            'sb      $t1, 0x2D($t3)' in shadow_build:
-        fail("functional bridge retains the invalid wrapper/root topology")
+            'sw      $t2, 0x00($t3)' in shadow_build or \
+            'sb      $t1, 0x2D($t2)' in shadow_build or \
+            'sb      $t1, 0x2D($t3)' in shadow_build or \
+            shadow_build.count('sb      ') != 1:
+        fail("functional bridge retains a cyclic or preinitialized node topology")
+    probe_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4ShadowProbeDone)($t0)', shadow_start)
+    reject10_value = helper.find('addiu   $t1, $zero, 10', probe_publish)
+    reject10_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)', reject10_value)
+    dry_run_branch = helper.find('b       9f', reject10_publish)
+    node_a_link = helper.find('sw      $t3, 0x00($t2)', shadow_start)
+    node_b_link = helper.find('sw      $t4, 0x00($t3)', node_a_link)
+    root_flag = helper.find('sb      $t1, 0x2D($t4)', node_b_link)
+    dependency_node = helper.find('sw      $t2, 0x44($s3)', root_flag)
+    shadow_complete = helper.find('sw      $t1, 0x14($s1)', dependency_node)
+    if not shadow_start < node_a_link < node_b_link < root_flag < \
+            dependency_node < shadow_complete < probe_publish < reject10_value < \
+            reject10_publish < \
+            dry_run_branch < busy_set < attempted_set < stage0_inc < \
+            constructed0_call:
+        fail("dry-run publication does not bypass all Sony execution state")
     constructed0_a0 = helper.find('move    $a0, $s2', constructed0_load)
     constructed0_a1 = helper.find('move    $a1, $s1', constructed0_load)
     if 'sw      $zero, 0x48($s3)' not in shadow_build or \
@@ -2831,9 +2857,13 @@ def check_sources(root):
             '.globl zeroCtrlPafA989ShadowDependency\n'
             'zeroCtrlPafA989ShadowDependency: .space 0x70\n'
             '.globl zeroCtrlPafA989Shadow44NodeA\n'
-            'zeroCtrlPafA989Shadow44NodeA: .space 0x30\n'
+            'zeroCtrlPafA989Shadow44NodeA: .space 4\n'
             '.globl zeroCtrlPafA989Shadow44NodeB\n'
-            'zeroCtrlPafA989Shadow44NodeB: .space 0x30\n')
+            'zeroCtrlPafA989Shadow44NodeB: .space 4\n'
+            '.globl zeroCtrlPafA989Shadow44Root\n'
+            'zeroCtrlPafA989Shadow44Root: .space 0x30\n'
+            '.globl zeroCtrlVsh314A4ShadowProbeDone\n'
+            'zeroCtrlVsh314A4ShadowProbeDone: .space 4\n')
     if shadow_bss_end < 0 or shadow_bss.count('.align 2') != 1 or             shadow_bss.replace('.align 2\n', '') != expected_shadow_bss:
         fail("private functional shadow BSS layout changed")
     for token in ('zeroCtrlVsh5704RegistrationTraceHits',
