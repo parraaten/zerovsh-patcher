@@ -10335,6 +10335,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int constructed0_dependency_written = 0;
     int a989_dependency44_snapshot_written = 0;
     int a989_dependency_direct_sync_written = 0;
+    int functional_alloc_probe_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -10596,6 +10597,21 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             state[1], state[2],
                             state[3], state[4], state[5], state[6], state[7],
                             state[8], state[9], state[10], state[11], state[12]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                if (state[9] == 13 && !functional_alloc_probe_written) {
+                    unsigned int lower = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_scalar[5]);
+                    unsigned int upper = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_scalar[6]);
+                    unsigned int result = state[12];
+                    functional_alloc_probe_written = 1;
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-314a4-alloc-probe] "
+                            "result=0x%08X nonzero=%u aligned=%u user_range=%u\n",
+                            result, result != 0, (result & 3) == 0,
+                            zeroCtrlPsp1000BridgeUserRangeValid(
+                                result, 4, lower, upper));
                     zeroCtrlDiagnosticsText(line);
                 }
                 if (slide_diag.bridge_validation == 1 &&
