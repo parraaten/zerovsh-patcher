@@ -442,8 +442,6 @@ zeroCtrlVsh314A4FunctionalBridge:
     lui     $t0, %hi(zeroCtrlVsh314A4Reject)
     addiu   $t1, $zero, 10
     sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
-    b       9f
-    nop
 
     lui     $t0, %hi(zeroCtrlVsh314A4Busy)
     addiu   $t1, $zero, 1
@@ -459,6 +457,8 @@ zeroCtrlVsh314A4FunctionalBridge:
     move    $a1, $s1
 
     lw      $s4, 0x04($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
+    sw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)
     BRIDGE_VALIDATE $s4, 4, 5f
     lw      $t3, 0x04($s1)
     bne     $t3, $s2, 5f
@@ -473,6 +473,12 @@ zeroCtrlVsh314A4FunctionalBridge:
     nop
     lw      $t3, 0x0C($s2)
     bne     $t3, $s5, 5f
+    nop
+
+    lui     $t0, %hi(zeroCtrlVsh314A4Reject)
+    addiu   $t1, $zero, 11
+    sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
+    b       8f
     nop
 
     BRIDGE_INC zeroCtrlVsh314A4Stage1Calls

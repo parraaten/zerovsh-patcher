@@ -2343,7 +2343,7 @@ def check_sources(root):
     helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
     helper = assembly[helper_start:helper_end]
     if hashlib.sha256(helper.encode()).hexdigest() != \
-            'cf6e46f76e9f268ad112e8194846ceccde9c0e34d5c4e4a7c5269504b053526f':
+            '4821024335adc7cb081a6634e6cbc4c52e37b58bea832ef681f4b222484b8f96':
         fail("functional +314A4 bridge assembly changed")
     controller_call = helper.find("jalr    $t9")
     result_save = helper.find("sw      $v0, 32($sp)", controller_call)
@@ -2505,7 +2505,6 @@ def check_sources(root):
     reject10_value = helper.find('addiu   $t1, $zero, 10', probe_publish)
     reject10_publish = helper.find(
             'sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)', reject10_value)
-    dry_run_branch = helper.find('b       9f', reject10_publish)
     node_a_link = helper.find('sw      $t3, 0x00($t2)', shadow_start)
     node_b_link = helper.find('sw      $t4, 0x00($t3)', node_a_link)
     root_flag = helper.find('sb      $t1, 0x2D($t4)', node_b_link)
@@ -2513,17 +2512,24 @@ def check_sources(root):
     shadow_complete = helper.find('sw      $t1, 0x14($s1)', dependency_node)
     if not shadow_start < node_a_link < node_b_link < root_flag < \
             dependency_node < shadow_complete < probe_publish < reject10_value < \
-            reject10_publish < \
-            dry_run_branch < busy_set < attempted_set < stage0_inc < \
+            reject10_publish < busy_set < attempted_set < stage0_inc < \
             constructed0_call:
-        fail("dry-run publication does not bypass all Sony execution state")
+        fail("constructed0 milestone/publication ordering regressed")
+    if helper.count('sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)') != 1 or \
+            helper.count(
+                'sw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)') != 1 or \
+            helper.count('BRIDGE_INC zeroCtrlVsh314A4Attempts') != 1 or \
+            helper.count('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls') != 1:
+        fail("constructed0 one-shot state publication is duplicated")
     constructed0_a0 = helper.find('move    $a0, $s2', constructed0_load)
     constructed0_a1 = helper.find('move    $a1, $s1', constructed0_load)
     if 'sw      $zero, 0x48($s3)' not in shadow_build or \
             not constructed0_a0 < constructed0_call < constructed0_a1:
         fail("constructed0 does not receive the complete private shadow")
     post_start = constructed0_call
-    post_tokens = ('lw      $s4, 0x04($s2)', 'BRIDGE_VALIDATE $s4, 4, 5f',
+    post_tokens = ('lw      $s4, 0x04($s2)',
+            'sw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)',
+            'BRIDGE_VALIDATE $s4, 4, 5f',
             'lw      $t3, 0x04($s1)', 'bne     $t3, $s2, 5f',
             'lw      $t3, 0x14($s1)', 'lw      $t3, 0x08($s2)',
             'bne     $t3, $s3, 5f', 'lw      $t3, 0x0C($s2)',
@@ -2532,12 +2538,17 @@ def check_sources(root):
     stage1_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage1Calls',
             post_positions[-1])
     constructed1_call = helper.find('jalr    $t9', stage1_inc)
+    reject11_value = helper.find('addiu   $t1, $zero, 11', post_positions[-1])
+    reject11_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)', reject11_value)
+    constructed1_bypass = helper.find('b       8f', reject11_publish)
     if any(pos < 0 for pos in post_positions) or \
             post_positions != sorted(post_positions) or \
             not constructed0_call < post_positions[0] < post_positions[-1] < \
+                reject11_value < reject11_publish < constructed1_bypass < \
                 stage1_inc < constructed1_call or \
             helper.find('move    $a1, $s2', stage1_inc) > constructed1_call:
-        fail("constructed1 call lacks post-constructed0 shadow validation")
+        fail("constructed0 success does not bypass constructed1")
     for code, label in ((6, '1:'), (7, '2:'), (8, '3:'), (9, '4:'),
             (5, '5:')):
         label_pos = helper.find(label, constructed1_call)
