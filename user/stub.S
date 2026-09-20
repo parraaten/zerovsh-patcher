@@ -613,6 +613,18 @@ zeroCtrlPafA989TargetTrace:
     lui     $t0, %hi(zeroCtrlPafA989Pair0CValid)
     sw      $t3, %lo(zeroCtrlPafA989Pair0CValid)($t0)
 6:
+    lw      $t3, 0x18($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW18)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW18)($t0)
+    lw      $t3, 0x1C($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW1C)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW1C)($t0)
+    lw      $t3, 0x20($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW20)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW20)($t0)
+    lw      $t3, 0x24($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW24)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW24)($t0)
     addiu   $t3, $zero, 1
     lui     $t0, %hi(zeroCtrlPafA989DependencyDirectValid)
     sw      $t3, %lo(zeroCtrlPafA989DependencyDirectValid)($t0)
@@ -832,6 +844,14 @@ zeroCtrlPafA989Pair0CData34: .space 4
 zeroCtrlPafA989Pair0CData38: .space 4
 .globl zeroCtrlPafA989Pair0CData3C
 zeroCtrlPafA989Pair0CData3C: .space 4
+.globl zeroCtrlPafA989DependencyW18
+zeroCtrlPafA989DependencyW18: .space 4
+.globl zeroCtrlPafA989DependencyW1C
+zeroCtrlPafA989DependencyW1C: .space 4
+.globl zeroCtrlPafA989DependencyW20
+zeroCtrlPafA989DependencyW20: .space 4
+.globl zeroCtrlPafA989DependencyW24
+zeroCtrlPafA989DependencyW24: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 

@@ -2586,8 +2586,8 @@ def check_sources(root):
             'snapshot_base, i;',
             'paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4',
             'snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4',
-            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x10C)',
-            'for (i = 0; i < 67; i++)',
+            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x11C)',
+            'for (i = 0; i < 71; i++)',
             '_sw(0, snapshot_base + i * 4)',
             '(const void *)(snapshot_base + i * 4), 4'):
         if token not in target_install:
@@ -2626,10 +2626,10 @@ def check_sources(root):
             'snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4',
             snapshot_overflow)
     snapshot_range = target_install.find(
-            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x10C)',
+            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x11C)',
             snapshot_derive)
     snapshot_clear = target_install.find(
-            'for (i = 0; i < 67; i++)', snapshot_range)
+            'for (i = 0; i < 71; i++)', snapshot_range)
     snapshot_clear_word = target_install.find(
             '_sw(0, snapshot_base + i * 4)', snapshot_clear)
     snapshot_clear_sync = target_install.find(
@@ -2652,7 +2652,7 @@ def check_sources(root):
             'zeroCtrlPafA989TargetTraceEnd:', target_helper_start)
     target_helper = assembly[target_helper_start:target_helper_end]
     if hashlib.sha256(target_helper.encode()).hexdigest() != \
-            '4fabbd02b6d5aa060810d7e1e06ad3903f5405ca395e9005148a6b6e98f5f710':
+            '57d9b6cbdddbc42a8e65a0a9fe51725cf52a369a5aa8c0cc4ba97a8013bbafd4':
         fail("synchronous A989 target helper hash changed")
     for reg, offset in zip(('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7'),
             range(0, 32, 4)):
@@ -2692,12 +2692,14 @@ def check_sources(root):
             'zeroCtrlPafA989Pair0CData14', 'zeroCtrlPafA989Pair0CData18', 'zeroCtrlPafA989Pair0CData1C',
             'zeroCtrlPafA989Pair0CData20', 'zeroCtrlPafA989Pair0CData24', 'zeroCtrlPafA989Pair0CData28',
             'zeroCtrlPafA989Pair0CData2C', 'zeroCtrlPafA989Pair0CData30', 'zeroCtrlPafA989Pair0CData34',
-            'zeroCtrlPafA989Pair0CData38', 'zeroCtrlPafA989Pair0CData3C')
+            'zeroCtrlPafA989Pair0CData38', 'zeroCtrlPafA989Pair0CData3C',
+            'zeroCtrlPafA989DependencyW18', 'zeroCtrlPafA989DependencyW1C',
+            'zeroCtrlPafA989DependencyW20', 'zeroCtrlPafA989DependencyW24')
     bss_positions = [a989_snapshot_bss.find(name + ': .space 4')
             for name in required_bss]
     if bss_start < 0 or bss_end < 0 or any(pos < 0 for pos in bss_positions) or \
             bss_positions != sorted(bss_positions) or \
-            a989_snapshot_bss.count(': .space 4') != 68 or \
+            a989_snapshot_bss.count(': .space 4') != 72 or \
             '.align' in a989_snapshot_bss:
         fail("A989 synchronous snapshot BSS is not exactly contiguous")
     for token in ('zeroCtrlVsh5704RegistrationTraceHits',
@@ -2763,7 +2765,7 @@ def check_sources(root):
         fail("A989 synchronous dependency capture/publication order regressed")
     loaded_offsets = re.findall(r'lw      \$t3, 0x([0-9A-F]+)\(\$t7\)',
             target_helper[dependency_range:snapshot_done])
-    if tuple(loaded_offsets) != direct_offsets or \
+    if tuple(loaded_offsets[:len(direct_offsets)]) != direct_offsets or \
             target_helper.count('BRIDGE_VALIDATE $t7, 0x70, 2f') != 1 or \
             target_helper.count(
                 'sw      $t3, %lo(zeroCtrlPafA989DependencyDirectValid)') != 1:
@@ -2876,6 +2878,31 @@ def check_sources(root):
         pair_search = pair_failure
     if not string_done < pair_ends[0] < pair_ends[1] < valid_store:
         fail("A989 optional pair failures do not preserve later captures")
+    extra_offsets = ('18', '1C', '20', '24')
+    extra_symbols = ('zeroCtrlPafA989DependencyW18',
+            'zeroCtrlPafA989DependencyW1C', 'zeroCtrlPafA989DependencyW20',
+            'zeroCtrlPafA989DependencyW24')
+    extra_loads = [target_helper.find(
+            'lw      $t3, 0x' + offset + '($t7)', pair_ends[1])
+            for offset in extra_offsets]
+    extra_stores = [target_helper.find(
+            'sw      $t3, %lo(' + symbol + ')', extra_loads[index])
+            for index, symbol in enumerate(extra_symbols)]
+    if any(pos < 0 for pos in extra_loads + extra_stores) or \
+            extra_loads != sorted(extra_loads) or \
+            any(not extra_loads[index] < extra_stores[index] <
+                (extra_loads[index + 1] if index + 1 < len(extra_loads) else
+                    valid_store) for index in range(len(extra_loads))) or \
+            not pair_ends[1] < extra_loads[0] < extra_stores[-1] < valid_store:
+        fail("A989 direct-extra capture/publication order regressed")
+    for offset, symbol in zip(extra_offsets, extra_symbols):
+        if target_helper.count('lw      $t3, 0x' + offset + '($t7)') != 1 or \
+                target_helper.count('sw      $t3, %lo(' + symbol + ')') != 1:
+            fail("A989 direct-extra field is not captured exactly once")
+    loaded_offsets = re.findall(r'lw      \$t3, 0x([0-9A-F]+)\(\$t7\)',
+            target_helper[dependency_range:snapshot_done])
+    if tuple(loaded_offsets) != direct_offsets + extra_offsets:
+        fail("A989 synchronous dependency capture reads unexpected fields")
     if any(token in target_helper for token in ('jal ', 'jalr', 'sw      $ra',
             'sw      $a2', 'sw      $a3', 'move    $a')):
         fail("A989 synchronous helper calls code or changes Sony-visible state")
@@ -3181,6 +3208,7 @@ def check_sources(root):
             'a989_dependency_direct_sync_written = 1;',
             'paf_a989_target_trace_scalar[4] <= 0xFFFFFFFFU - 4',
             'paf_a989_target_trace_scalar[4] + 4',
+            'unsigned int snapshot[71] = { 0 };',
             'snapshot_base + 0x00', 'snapshot[0] != 1',
             '[psp1000-a989-dependency-direct-sync] ',
             'validation=0\\n', 'validation=1 dependency=0x%08X',
@@ -3201,7 +3229,10 @@ def check_sources(root):
             '[psp1000-a989-dependency-pair00-code] ',
             '[psp1000-a989-dependency-pair0c] ',
             '[psp1000-a989-dependency-pair0c-code] ',
-            'validation=%u ptr=0x%08X len=0x%08X'):
+            'validation=%u ptr=0x%08X len=0x%08X',
+            '[psp1000-a989-dependency-direct-extra] ',
+            'validation=1 w18=0x%08X w1c=0x%08X ',
+            'w20=0x%08X w24=0x%08X'):
         if (token.startswith('int ') and token not in writer) or \
                 (not token.startswith('int ') and
                     token not in direct_sync_writer):
@@ -3258,7 +3289,7 @@ def check_sources(root):
                     tuple(str(index) for index in range(21, 29)) or \
             '%s' in direct_sync_writer or 'strlen' in direct_sync_writer or \
             '_lb(' in direct_sync_writer or '_lbu(' in direct_sync_writer or \
-            'snapshot_base + 0x10C' in direct_sync_writer:
+            'snapshot_base + 0x11C' in direct_sync_writer:
         fail("w28 string telemetry scans, formats, or exceeds private snapshot")
     pair00_meta = [direct_sync_writer.find('snapshot_base + 0x%02X' % offset)
             for offset in (0x74, 0x78, 0x7C)]
@@ -3322,6 +3353,24 @@ def check_sources(root):
              'zeroCtrlReadHelperCounter(snapshot[30]',
              'zeroCtrlReadHelperCounter(snapshot[49]')):
         fail("pair telemetry dereferences a captured runtime pointer")
+    extra_offsets = (0x10C, 0x110, 0x114, 0x118)
+    extra_reads = [direct_sync_writer.find(
+            'snapshot_base + 0x%X' % offset) for offset in extra_offsets]
+    extra_record = direct_sync_writer.find(
+            '[psp1000-a989-dependency-direct-extra] ', pair0c_row1)
+    extra_record_end = direct_sync_writer.find(
+            'zeroCtrlDiagnosticsText(line);', extra_record)
+    if any(pos < 0 for pos in extra_reads) or \
+            extra_reads != sorted(extra_reads) or \
+            not pair0c_reads[-1] < extra_reads[0] < extra_reads[-1] < \
+                pair00_record < pair0c_row1 < extra_record < extra_record_end or \
+            any(direct_sync_writer.count('snapshot_base + 0x%X' % offset) != 1
+                for offset in extra_offsets) or \
+            tuple(re.findall(r'snapshot\[(\d+)\]',
+                direct_sync_writer[extra_record:extra_record_end])) != \
+                    ('67', '68', '69', '70') or \
+            'snapshot_base + 0x11C' in direct_sync_writer:
+        fail("direct-extra telemetry is not bounded to four private words")
     dependency_marker = writer.find('[psp1000-a989-dependency-life]')
     dependency_start = writer.rfind(
             'if (a989_target_dependency != 0)', 0, dependency_marker)

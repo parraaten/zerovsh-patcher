@@ -6011,7 +6011,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
     if (slide_diag.paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4)
         return;
     snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4;
-    if (!zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x10C))
+    if (!zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x11C))
         return;
     helper_jump = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
     replacement = 0x0C000000 |
@@ -6042,7 +6042,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)slide_diag.paf_a989_target_trace_scalar[i], 4);
     }
-    for (i = 0; i < 67; i++) {
+    for (i = 0; i < 71; i++) {
         _sw(0, snapshot_base + i * 4);
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)(snapshot_base + i * 4), 4);
@@ -10674,7 +10674,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                     }
                     if (capture[5] != 0 &&
                             !a989_dependency_direct_sync_written) {
-                        unsigned int snapshot[67] = { 0 };
+                        unsigned int snapshot[71] = { 0 };
                         unsigned int snapshot_base = 0;
                         a989_dependency_direct_sync_written = 1;
                         if (slide_diag.paf_a989_target_trace_scalar[4] <= 0xFFFFFFFFU - 4) {
@@ -10826,6 +10826,14 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                 snapshot[66] = zeroCtrlReadHelperCounter(
                                         snapshot_base + 0x108);
                             }
+                            snapshot[67] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x10C);
+                            snapshot[68] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x110);
+                            snapshot[69] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x114);
+                            snapshot[70] = zeroCtrlReadHelperCounter(
+                                    snapshot_base + 0x118);
                             snprintf(line, sizeof(line),
                                     "[psp1000-a989-dependency-direct-sync] "
                                     "validation=1 dependency=0x%08X "
@@ -10947,6 +10955,13 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                                         snapshot[64], snapshot[65], snapshot[66]);
                                 zeroCtrlDiagnosticsText(line);
                             }
+                            snprintf(line, sizeof(line),
+                                    "[psp1000-a989-dependency-direct-extra] "
+                                    "validation=1 w18=0x%08X w1c=0x%08X "
+                                    "w20=0x%08X w24=0x%08X\n",
+                                    snapshot[67], snapshot[68], snapshot[69],
+                                    snapshot[70]);
+                            zeroCtrlDiagnosticsText(line);
                         }
                     }
                     if (capture[5] != 0 && a989_target_node == 0) {
