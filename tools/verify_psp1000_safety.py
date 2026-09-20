@@ -2343,7 +2343,7 @@ def check_sources(root):
     helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
     helper = assembly[helper_start:helper_end]
     if hashlib.sha256(helper.encode()).hexdigest() != \
-            '4821024335adc7cb081a6634e6cbc4c52e37b58bea832ef681f4b222484b8f96':
+            'ec7f10b3cf4688fcc10c80ec1c5ade9c4ad3b55a057d74a27a99e70411b9855d':
         fail("functional +314A4 bridge assembly changed")
     controller_call = helper.find("jalr    $t9")
     result_save = helper.find("sw      $v0, 32($sp)", controller_call)
@@ -2354,15 +2354,29 @@ def check_sources(root):
     request_seen = helper.find("BRIDGE_INC zeroCtrlVsh314A4RequestSeen", probe_gate)
     busy_gate = helper.find("%lo(zeroCtrlVsh314A4Busy)", request_seen)
     attempted_gate = helper.find("%lo(zeroCtrlVsh314A4Attempted)", busy_gate)
+    request_gp_store = helper.find(
+            "sw      $gp, %lo(zeroCtrlVsh314A4RequestGp)($t0)", attempted_gate)
+    gp_probe_publish = helper.find(
+            "sw      $t1, %lo(zeroCtrlVsh314A4ShadowProbeDone)($t0)",
+            request_gp_store)
+    reject12_value = helper.find("addiu   $t1, $zero, 12", gp_probe_publish)
+    reject12_publish = helper.find(
+            "sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)", reject12_value)
+    gp_probe_return = helper.find("b       9f", reject12_publish)
     first_retained = helper.find("%hi(zeroCtrlPafA989DependencyDirectValid)",
             attempted_gate)
     result_restore = helper.rfind("lw      $v0, 32($sp)")
     if not 0 <= controller_call < result_save < request_read < request_zero < \
             probe_read < probe_gate < request_seen < busy_gate < attempted_gate < \
-            first_retained < result_restore or \
+            request_gp_store < gp_probe_publish < reject12_value < \
+            reject12_publish < gp_probe_return < first_retained < result_restore or \
             helper.count("zeroCtrlVsh314A4OriginalController") != 2 or \
             helper.count("jalr    $t9") != 3:
         fail("bridge controller/request ordering or Sony call count regressed")
+    if helper.count(
+                'sw      $gp, %lo(zeroCtrlVsh314A4RequestGp)($t0)') != 1 or \
+            helper.count('$gp') != 3:
+        fail("GP probe modifies or ambiguously captures request-context GP")
     for token in ('addiu   $sp, $sp, -64', 'sw      $ra, 28($sp)',
             'sw      $s0, 0($sp)', 'sw      $s1, 4($sp)',
             'sw      $s2, 8($sp)', 'sw      $s3, 12($sp)',
@@ -2741,8 +2755,8 @@ def check_sources(root):
             'snapshot_base, i;',
             'paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4',
             'snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4',
-            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x11C)',
-            'for (i = 0; i < 71; i++)',
+            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x124)',
+            'for (i = 0; i < 73; i++)',
             '_sw(0, snapshot_base + i * 4)',
             '(const void *)(snapshot_base + i * 4), 4'):
         if token not in target_install:
@@ -2781,10 +2795,10 @@ def check_sources(root):
             'snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4',
             snapshot_overflow)
     snapshot_range = target_install.find(
-            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x11C)',
+            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x124)',
             snapshot_derive)
     snapshot_clear = target_install.find(
-            'for (i = 0; i < 71; i++)', snapshot_range)
+            'for (i = 0; i < 73; i++)', snapshot_range)
     snapshot_clear_word = target_install.find(
             '_sw(0, snapshot_base + i * 4)', snapshot_clear)
     snapshot_clear_sync = target_install.find(
@@ -2807,7 +2821,7 @@ def check_sources(root):
             'zeroCtrlPafA989TargetTraceEnd:', target_helper_start)
     target_helper = assembly[target_helper_start:target_helper_end]
     if hashlib.sha256(target_helper.encode()).hexdigest() != \
-            '57d9b6cbdddbc42a8e65a0a9fe51725cf52a369a5aa8c0cc4ba97a8013bbafd4':
+            '59e7c272ac7b9ae27860c3ff2a22813b823a7e8a5092ed785f5d3cadfdc10d96':
         fail("synchronous A989 target helper hash changed")
     for reg, offset in zip(('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7'),
             range(0, 32, 4)):
@@ -2849,12 +2863,13 @@ def check_sources(root):
             'zeroCtrlPafA989Pair0CData2C', 'zeroCtrlPafA989Pair0CData30', 'zeroCtrlPafA989Pair0CData34',
             'zeroCtrlPafA989Pair0CData38', 'zeroCtrlPafA989Pair0CData3C',
             'zeroCtrlPafA989DependencyW18', 'zeroCtrlPafA989DependencyW1C',
-            'zeroCtrlPafA989DependencyW20', 'zeroCtrlPafA989DependencyW24')
+            'zeroCtrlPafA989DependencyW20', 'zeroCtrlPafA989DependencyW24',
+            'zeroCtrlPafA989NaturalGp', 'zeroCtrlVsh314A4RequestGp')
     bss_positions = [a989_snapshot_bss.find(name + ': .space 4')
             for name in required_bss]
     if bss_start < 0 or bss_end < 0 or any(pos < 0 for pos in bss_positions) or \
             bss_positions != sorted(bss_positions) or \
-            a989_snapshot_bss.count(': .space 4') != 72 or \
+            a989_snapshot_bss.count(': .space 4') != 74 or \
             '.align' in a989_snapshot_bss:
         fail("A989 synchronous snapshot BSS is not exactly contiguous")
     shadow_bss_end = assembly.find(
@@ -3078,6 +3093,13 @@ def check_sources(root):
             target_helper[dependency_range:snapshot_done])
     if tuple(loaded_offsets) != direct_offsets + extra_offsets:
         fail("A989 synchronous dependency capture reads unexpected fields")
+    natural_gp_store = target_helper.find(
+            'sw      $gp, %lo(zeroCtrlPafA989NaturalGp)($t0)', extra_stores[-1])
+    if not extra_stores[-1] < natural_gp_store < valid_store or \
+            target_helper.count(
+                'sw      $gp, %lo(zeroCtrlPafA989NaturalGp)($t0)') != 1 or \
+            target_helper.count('$gp') != 1:
+        fail("A989 helper does not transparently capture natural PAF GP")
     if any(token in target_helper for token in ('jal ', 'jalr', 'sw      $ra',
             'sw      $a2', 'sw      $a3', 'move    $a')):
         fail("A989 synchronous helper calls code or changes Sony-visible state")
@@ -3166,6 +3188,30 @@ def check_sources(root):
             writer)
     if not bridge_line:
         fail("functional bridge telemetry is incomplete or oversized")
+    gp_probe_marker = writer.find('[psp1000-functional-314a4-gp-probe]')
+    gp_probe_start = writer.rfind('if (state[9] == 12 &&', 0, gp_probe_marker)
+    gp_probe_end = writer.find('zeroCtrlDiagnosticsText(line);', gp_probe_marker)
+    gp_probe_writer = writer[gp_probe_start:gp_probe_end]
+    for token in ('!functional_gp_probe_written',
+            'unsigned int snapshot[73] = { 0 };',
+            'paf_a989_target_trace_scalar[4] + 4',
+            'snapshot[71] = zeroCtrlReadHelperCounter(',
+            'snapshot_base + 0x11C',
+            'snapshot[72] = zeroCtrlReadHelperCounter(',
+            'snapshot_base + 0x120',
+            '[psp1000-functional-314a4-gp-probe] ',
+            'natural_gp=0x%08X request_gp=0x%08X equal=%u',
+            'snapshot[71] == snapshot[72]'):
+        if token not in gp_probe_writer:
+            fail("functional GP-probe telemetry lacks " + token)
+    if gp_probe_start < 0 or gp_probe_end < gp_probe_marker or \
+            writer.count('int functional_gp_probe_written = 0;') != 1 or \
+            gp_probe_writer.count('snapshot_base + 0x11C') != 1 or \
+            gp_probe_writer.count('snapshot_base + 0x120') != 1 or \
+            'snapshot_base + 0x124' in gp_probe_writer or \
+            '_lw(' in gp_probe_writer or '_lb(' in gp_probe_writer or \
+            '_lbu(' in gp_probe_writer:
+        fail("functional GP probe rereads or dereferences non-private state")
     trace_line = re.search(
             r'"\[psp1000-vsh5704-registration-trace\][\s\S]{0,280}?'
             r'"original_target_off=0x3F568\\n"', writer)

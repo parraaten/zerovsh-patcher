@@ -181,6 +181,17 @@ zeroCtrlVsh314A4FunctionalBridge:
     bnez    $t1, 9f
     nop
 
+    lui     $t0, %hi(zeroCtrlVsh314A4RequestGp)
+    sw      $gp, %lo(zeroCtrlVsh314A4RequestGp)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4ShadowProbeDone)
+    addiu   $t1, $zero, 1
+    sw      $t1, %lo(zeroCtrlVsh314A4ShadowProbeDone)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4Reject)
+    addiu   $t1, $zero, 12
+    sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
+    b       9f
+    nop
+
     lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
     sw      $zero, %lo(zeroCtrlVsh314A4RejectObject)($t0)
 
@@ -867,6 +878,8 @@ zeroCtrlPafA989TargetTrace:
     lw      $t3, 0x24($t7)
     lui     $t0, %hi(zeroCtrlPafA989DependencyW24)
     sw      $t3, %lo(zeroCtrlPafA989DependencyW24)($t0)
+    lui     $t0, %hi(zeroCtrlPafA989NaturalGp)
+    sw      $gp, %lo(zeroCtrlPafA989NaturalGp)($t0)
     addiu   $t3, $zero, 1
     lui     $t0, %hi(zeroCtrlPafA989DependencyDirectValid)
     sw      $t3, %lo(zeroCtrlPafA989DependencyDirectValid)($t0)
@@ -1094,6 +1107,10 @@ zeroCtrlPafA989DependencyW1C: .space 4
 zeroCtrlPafA989DependencyW20: .space 4
 .globl zeroCtrlPafA989DependencyW24
 zeroCtrlPafA989DependencyW24: .space 4
+.globl zeroCtrlPafA989NaturalGp
+zeroCtrlPafA989NaturalGp: .space 4
+.globl zeroCtrlVsh314A4RequestGp
+zeroCtrlVsh314A4RequestGp: .space 4
 .align 2
 .globl zeroCtrlPafA989ShadowOuter
 zeroCtrlPafA989ShadowOuter: .space 0x1C

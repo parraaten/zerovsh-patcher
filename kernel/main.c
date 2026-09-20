@@ -6011,7 +6011,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
     if (slide_diag.paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4)
         return;
     snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4;
-    if (!zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x11C))
+    if (!zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x124))
         return;
     helper_jump = 0x08000000 | ((target >> 2) & 0x03FFFFFF);
     replacement = 0x0C000000 |
@@ -6042,7 +6042,7 @@ static void zeroCtrlInstallPafA989TargetTrace(void) {
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)slide_diag.paf_a989_target_trace_scalar[i], 4);
     }
-    for (i = 0; i < 71; i++) {
+    for (i = 0; i < 73; i++) {
         _sw(0, snapshot_base + i * 4);
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)(snapshot_base + i * 4), 4);
@@ -10335,6 +10335,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int constructed0_dependency_written = 0;
     int a989_dependency44_snapshot_written = 0;
     int a989_dependency_direct_sync_written = 0;
+    int functional_gp_probe_written = 0;
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
@@ -10596,6 +10597,24 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                             state[1], state[2],
                             state[3], state[4], state[5], state[6], state[7],
                             state[8], state[9], state[10], state[11], state[12]);
+                    zeroCtrlDiagnosticsText(line);
+                }
+                if (state[9] == 12 && !functional_gp_probe_written &&
+                        slide_diag.paf_a989_target_trace_scalar[4] <=
+                            0xFFFFFFFFU - 4) {
+                    unsigned int snapshot[73] = { 0 };
+                    unsigned int snapshot_base =
+                            slide_diag.paf_a989_target_trace_scalar[4] + 4;
+                    functional_gp_probe_written = 1;
+                    snapshot[71] = zeroCtrlReadHelperCounter(
+                            snapshot_base + 0x11C);
+                    snapshot[72] = zeroCtrlReadHelperCounter(
+                            snapshot_base + 0x120);
+                    snprintf(line, sizeof(line),
+                            "[psp1000-functional-314a4-gp-probe] "
+                            "natural_gp=0x%08X request_gp=0x%08X equal=%u\n",
+                            snapshot[71], snapshot[72],
+                            snapshot[71] == snapshot[72]);
                     zeroCtrlDiagnosticsText(line);
                 }
                 if (slide_diag.bridge_validation == 1 &&
