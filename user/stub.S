@@ -559,6 +559,18 @@ zeroCtrlVsh314A4FunctionalBridge:
     lw      $s4, 0x04($s2)
     lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
     sw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)
+    lw      $t3, 0x04($s1)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostOuter04)
+    sw      $t3, %lo(zeroCtrlVsh314A4PostOuter04)($t0)
+    lw      $t3, 0x14($s1)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostOuter14)
+    sw      $t3, %lo(zeroCtrlVsh314A4PostOuter14)($t0)
+    lw      $t3, 0x08($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostInner08)
+    sw      $t3, %lo(zeroCtrlVsh314A4PostInner08)($t0)
+    lw      $t3, 0x0C($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostInner0C)
+    sw      $t3, %lo(zeroCtrlVsh314A4PostInner0C)($t0)
     lui     $t0, %hi(zeroCtrlVsh314A4Busy)
     sw      $zero, %lo(zeroCtrlVsh314A4Busy)($t0)
     lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
@@ -580,18 +592,22 @@ zeroCtrlVsh314A4FunctionalBridge:
     lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
     lw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)
     BRIDGE_VALIDATE $s4, 4, 5f
-    lw      $t3, 0x04($s1)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostOuter04)
+    lw      $t3, %lo(zeroCtrlVsh314A4PostOuter04)($t0)
     bne     $t3, $s2, 5f
     nop
-    lw      $t3, 0x14($s1)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostOuter14)
+    lw      $t3, %lo(zeroCtrlVsh314A4PostOuter14)($t0)
     lui     $t0, %hi(zeroCtrlVsh314A4Constructed1)
     lw      $t0, %lo(zeroCtrlVsh314A4Constructed1)($t0)
     bne     $t3, $t0, 5f
     nop
-    lw      $t3, 0x08($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostInner08)
+    lw      $t3, %lo(zeroCtrlVsh314A4PostInner08)($t0)
     bne     $t3, $s3, 5f
     nop
-    lw      $t3, 0x0C($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostInner0C)
+    lw      $t3, %lo(zeroCtrlVsh314A4PostInner0C)($t0)
     bne     $t3, $s5, 5f
     nop
 
@@ -1077,6 +1093,14 @@ zeroCtrlVsh314A4RejectObject: .space 4
 zeroCtrlVsh314A4Milestone: .space 4
 .globl zeroCtrlVsh314A4MilestoneAck
 zeroCtrlVsh314A4MilestoneAck: .space 4
+.globl zeroCtrlVsh314A4PostOuter04
+zeroCtrlVsh314A4PostOuter04: .space 4
+.globl zeroCtrlVsh314A4PostOuter14
+zeroCtrlVsh314A4PostOuter14: .space 4
+.globl zeroCtrlVsh314A4PostInner08
+zeroCtrlVsh314A4PostInner08: .space 4
+.globl zeroCtrlVsh314A4PostInner0C
+zeroCtrlVsh314A4PostInner0C: .space 4
 .globl zeroCtrlVsh5704RegistrationTraceHits
 zeroCtrlVsh5704RegistrationTraceHits: .space 4
 .globl zeroCtrlPafA989TargetTraceEntryHits

@@ -674,6 +674,7 @@ typedef struct {
     unsigned int bridge_scalar[16];
     unsigned int bridge_milestone_addr;
     unsigned int bridge_milestone_ack_addr;
+    unsigned int bridge_post_snapshot_addr[4];
     int diagnostics_verbose;
     unsigned int bridge_root_slot;
     unsigned int bridge_constructed0;
@@ -5761,10 +5762,15 @@ static void zeroCtrlInstallVshCtrl314A4Bridge(void) {
                 (const void *)slide_diag.bridge_scalar[i], 4);
     _sw(0, slide_diag.bridge_milestone_addr);
     _sw(0, slide_diag.bridge_milestone_ack_addr);
+    for (i = 0; i < 4; i++)
+        _sw(0, slide_diag.bridge_post_snapshot_addr[i]);
     sceKernelDcacheWritebackInvalidateRange(
             (const void *)slide_diag.bridge_milestone_addr, 4);
     sceKernelDcacheWritebackInvalidateRange(
             (const void *)slide_diag.bridge_milestone_ack_addr, 4);
+    for (i = 0; i < 4; i++)
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)slide_diag.bridge_post_snapshot_addr[i], 4);
     slide_diag.bridge_root_slot = root;
     slide_diag.bridge_constructed0 = c0;
     slide_diag.bridge_constructed1 = c1;
@@ -5799,9 +5805,8 @@ void zeroCtrlRegisterPsp1000FunctionalBridge(
         if (copied.scalar_addr[i] == 0 || (copied.scalar_addr[i] & 3) != 0 ||
                 !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[i], 4))
             return;
-    if (copied.scalar_addr[15] > 0xFFFFFFFFU - 8 ||
-            !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[15] + 4, 4) ||
-            !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[15] + 8, 4))
+    if (copied.scalar_addr[15] > 0xFFFFFFFFU - 24 ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[15] + 4, 24))
         return;
     slide_diag.bridge_helper = copied.helper_addr;
     slide_diag.bridge_helper_end = copied.helper_end_addr;
@@ -5809,6 +5814,9 @@ void zeroCtrlRegisterPsp1000FunctionalBridge(
             sizeof(slide_diag.bridge_scalar));
     slide_diag.bridge_milestone_addr = copied.scalar_addr[15] + 4;
     slide_diag.bridge_milestone_ack_addr = copied.scalar_addr[15] + 8;
+    for (i = 0; i < 4; i++)
+        slide_diag.bridge_post_snapshot_addr[i] =
+                copied.scalar_addr[15] + 12 + i * 4;
     slide_diag.bridge_registered = 1;
     zeroCtrlInstallVshCtrl314A4Bridge();
 }
@@ -10365,6 +10373,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     while (elapsed < SLIDE_OBSERVATION_WINDOW_US) {
         if (slide_diag.functional_enabled && !slide_diag.diagnostics_verbose) {
             unsigned int retained = 0;
+            unsigned int runtime = 0;
             unsigned int request[3];
             unsigned int snapshot_base = 0;
             SceModule2 *helper = sceKernelFindModuleByName(
@@ -10378,6 +10387,14 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         zeroCtrlReadHelperCounter(snapshot_base + 0x74) == 1 &&
                         zeroCtrlReadHelperCounter(snapshot_base + 0xC0) == 1;
             }
+            if (slide_diag.functional_runtime_registration_valid &&
+                    slide_diag.functional_runtime_valid_addr != 0 &&
+                    (slide_diag.functional_runtime_valid_addr & 3) == 0 &&
+                    zeroCtrlLoadedModuleMetadataValid(helper) &&
+                    zeroCtrlVshModuleRangeValid(helper,
+                        slide_diag.functional_runtime_valid_addr, 4))
+                runtime = zeroCtrlReadHelperCounter(
+                        slide_diag.functional_runtime_valid_addr) != 0;
             if (!compact_ready_written && retained &&
                     slide_diag.bridge_install && slide_diag.vsh5704_trace_install &&
                     slide_diag.paf_a989_target_trace_install) {
@@ -10392,7 +10409,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         slide_diag.vsh5704_trace_validation,
                         slide_diag.vsh5704_trace_install,
                         slide_diag.vsh5704_trace_cache_sync,
-                        slide_diag.functional_request_armed, retained);
+                        runtime, retained);
                 zeroCtrlDiagnosticsText(line);
                 compact_ready_written = 1;
             }
