@@ -3400,6 +3400,8 @@ def check_sources(root):
             'zeroCtrlReadHelperCounter(',
             'slide_diag.functional_runtime_valid_addr) != 0',
             'runtime, retained',
+            'slide_diag.functional_home_first_load_published != 0',
+            'compact_request_started = 1', 'elapsed = 0',
             'sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);',
             'elapsed += SLIDE_OBSERVATION_POLL_US;'):
         if token not in compact_path:
@@ -3411,6 +3413,53 @@ def check_sources(root):
         fail("compact path reaches forensic code maps or lacks early routing")
     if 'SLIDE_POLL_INTERVAL_US' in kernel:
         fail("compact diagnostics use undefined SLIDE_POLL_INTERVAL_US")
+    if '#define SLIDE_OBSERVATION_WINDOW_US 12000000' not in kernel or \
+            writer.count('int compact_request_started = 0;') != 1 or \
+            'while (elapsed < SLIDE_OBSERVATION_WINDOW_US ||' not in writer:
+        fail("compact request-relative observation lifetime regressed")
+    request_start = compact_path.find(
+            'slide_diag.functional_home_first_load_published != 0')
+    request_started = compact_path.find('compact_request_started = 1',
+            request_start)
+    elapsed_reset = compact_path.find('elapsed = 0', request_started)
+    milestone_service = compact_path.find('zeroCtrlServiceFunctionalMilestone()',
+            elapsed_reset)
+    terminal_read = compact_path.find(
+            'unsigned int milestone = zeroCtrlReadHelperCounter(',
+            milestone_service)
+    terminal_test = compact_path.find('milestone == milestone_ack &&',
+            terminal_read)
+    terminal_values = compact_path.find(
+            '(milestone == 6 || milestone == 7)', terminal_test)
+    compact_delay = compact_path.find(
+            'sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);', terminal_values)
+    elapsed_guard = compact_path.find('if (compact_request_started) {',
+            compact_delay)
+    elapsed_advance = compact_path.find(
+            'elapsed += SLIDE_OBSERVATION_POLL_US;', elapsed_guard)
+    timeout_record = compact_path.find(
+            '[psp1000-timeout] milestone=%u ack=%u request=%u', elapsed_advance)
+    if not 0 <= request_start < request_started < elapsed_reset < \
+            milestone_service < terminal_read < terminal_test < terminal_values < \
+            compact_delay < elapsed_guard < elapsed_advance < timeout_record:
+        fail("compact request timer, terminal ACK, or timeout ordering regressed")
+    before_request_start = compact_path[:request_start]
+    if 'elapsed +=' in before_request_start or \
+            compact_path.count('elapsed += SLIDE_OBSERVATION_POLL_US;') != 1:
+        fail("compact elapsed advances before authoritative HOME publication")
+    timeout_slice = compact_path[elapsed_advance:compact_continue]
+    if any(token in timeout_slice for token in
+            ('_sw(', 'zeroCtrlDiagnosticsTextCommitted')):
+        fail("compact timeout mutates or acknowledges milestone state")
+    compact_exit = writer.find(
+            'if (slide_diag.functional_enabled && !slide_diag.diagnostics_verbose) {',
+            compact_continue)
+    checkpoint_fast = writer.find(
+            '[checkpoint-fast] minimal_observation_window_complete', compact_exit)
+    if not 0 <= compact_exit < checkpoint_fast or \
+            'sceKernelExitDeleteThread(0);' not in writer[
+                compact_exit:checkpoint_fast]:
+        fail("compact functional exit can emit legacy checkpoint-fast record")
     ready_format = compact_path[compact_path.find('[psp1000-ready]'):
             compact_path.find('compact_ready_written = 1')]
     if 'slide_diag.functional_request_armed' in ready_format:

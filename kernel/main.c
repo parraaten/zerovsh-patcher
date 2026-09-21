@@ -10362,6 +10362,7 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int a989_dependency_direct_sync_written = 0;
     int functional_constructed0_probe_written = 0;
     int compact_ready_written = 0;
+    int compact_request_started = 0;
     unsigned int compact_request[3] = { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
@@ -10370,7 +10371,9 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     slide_diag.writer_alive = 1;
     if (slide_diag.diagnostics_verbose)
         zeroCtrlDiagnosticsText("[checkpoint] slide_diag_writer_alive\n");
-    while (elapsed < SLIDE_OBSERVATION_WINDOW_US) {
+    while (elapsed < SLIDE_OBSERVATION_WINDOW_US ||
+            (slide_diag.functional_enabled && !slide_diag.diagnostics_verbose &&
+             !compact_request_started)) {
         if (slide_diag.functional_enabled && !slide_diag.diagnostics_verbose) {
             unsigned int retained = 0;
             unsigned int runtime = 0;
@@ -10429,9 +10432,37 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                         request[0], request[1], request[2]);
                 zeroCtrlDiagnosticsText(line);
             }
+            if (!compact_request_started &&
+                    slide_diag.functional_home_first_load_published != 0) {
+                compact_request_started = 1;
+                elapsed = 0;
+            }
             zeroCtrlServiceFunctionalMilestone();
+            if (slide_diag.bridge_milestone_addr != 0 &&
+                    slide_diag.bridge_milestone_ack_addr != 0) {
+                unsigned int milestone = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_milestone_addr);
+                unsigned int milestone_ack = zeroCtrlReadHelperCounter(
+                        slide_diag.bridge_milestone_ack_addr);
+                if (milestone == milestone_ack &&
+                        (milestone == 6 || milestone == 7))
+                    break;
+            }
             sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);
-            elapsed += SLIDE_OBSERVATION_POLL_US;
+            if (compact_request_started) {
+                elapsed += SLIDE_OBSERVATION_POLL_US;
+                if (elapsed >= SLIDE_OBSERVATION_WINDOW_US) {
+                    unsigned int milestone = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_milestone_addr);
+                    unsigned int milestone_ack = zeroCtrlReadHelperCounter(
+                            slide_diag.bridge_milestone_ack_addr);
+                    snprintf(line, sizeof(line),
+                            "[psp1000-timeout] milestone=%u ack=%u request=%u\n",
+                            milestone, milestone_ack, request[2]);
+                    zeroCtrlDiagnosticsText(line);
+                    break;
+                }
+            }
             continue;
         }
         if (slide_diag.functional_enabled)
@@ -13650,6 +13681,11 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
             sceKernelDelayThread(delay);
             elapsed += delay;
         }
+    }
+    if (slide_diag.functional_enabled && !slide_diag.diagnostics_verbose) {
+        slide_diag.deferred_thread_started = 0;
+        sceKernelExitDeleteThread(0);
+        return 0;
     }
     if (slide_diag.minimal_memory_test) {
         zeroCtrlDiagnosticsText(
