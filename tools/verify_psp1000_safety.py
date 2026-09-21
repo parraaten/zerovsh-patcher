@@ -246,6 +246,8 @@ def check_sources(root):
     registration_header = (root / "kernel/sony_start_trace.h").read_text()
     bsman_header = (root / "kernel/bsman_closed_shim.h").read_text()
     assembly = (root / "user/stub.S").read_text()
+    logger = (root / "kernel/logger.c").read_text()
+    logger_header = (root / "kernel/logger.h").read_text()
     build = (root / "build_linux.sh").read_text()
     sample_config = (root / "bin/zerovsh.ini").read_text()
     if "PSP_EXPORT_FUNC_NID(zeroCtrlRegisterBSManClosedShim, 0x1337357C)" \
@@ -2343,63 +2345,362 @@ def check_sources(root):
     helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
     helper = assembly[helper_start:helper_end]
     if hashlib.sha256(helper.encode()).hexdigest() != \
-            '2bde3c548d4bb66261023f965325196f448578e35cda2dee76c0872ff995446c':
-        fail("functional +314A4 bridge assembly changed during diagnostic work")
+            'e66200911c3e16b3efbc635fe88e28cc30ebd4815d463969bf8c5c0899e01864':
+        fail("functional +314A4 bridge assembly changed")
     controller_call = helper.find("jalr    $t9")
     result_save = helper.find("sw      $v0, 32($sp)", controller_call)
     request_read = helper.find("%lo(zeroCtrlTrigger58D4Request)", result_save)
-    root_read = helper.find("%lo(zeroCtrlVsh314A4RootSlot)", request_read)
+    request_zero = helper.find("beqz    $t1, 9f", request_read)
+    milestone_read = helper.find("%lo(zeroCtrlVsh314A4Milestone)", request_zero)
+    milestone_ack_read = helper.find("%lo(zeroCtrlVsh314A4MilestoneAck)",
+            milestone_read)
+    request_stage = helper.find(".L314A4RequestObserved:", milestone_ack_read)
+    busy_gate = helper.find("%lo(zeroCtrlVsh314A4Busy)", request_stage)
+    attempted_gate = helper.find("%lo(zeroCtrlVsh314A4Attempted)", busy_gate)
+    request_seen = helper.find("BRIDGE_INC zeroCtrlVsh314A4RequestSeen",
+            attempted_gate)
+    request_milestone = helper.find(
+            "sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)", request_seen)
+    request_return = helper.find("b       9f", request_milestone)
+    validation_gate = helper.find(".L314A4ValidationGate:", request_return)
+    validation_ack = helper.find("bne     $t5, $t4, 9f", validation_gate)
+    first_retained = helper.find("%hi(zeroCtrlPafA989DependencyDirectValid)",
+            validation_ack)
     result_restore = helper.rfind("lw      $v0, 32($sp)")
-    if not 0 <= controller_call < result_save < request_read < root_read < \
-            result_restore or helper.count("zeroCtrlVsh314A4OriginalController") != 2:
-        fail("bridge does not call controller once before request/root access")
-    for token in ('zeroCtrlVsh314A4Busy', 'zeroCtrlVsh314A4Attempted',
-            'zeroCtrlVsh314A4Hits', 'zeroCtrlVsh314A4RequestSeen',
-            'zeroCtrlVsh314A4Stage0Calls', 'zeroCtrlVsh314A4Stage1Calls',
-            'BRIDGE_VALIDATE $s1, 8, 1f', 'BRIDGE_VALIDATE $s2, 0x18, 1f',
-            'BRIDGE_VALIDATE $s3, 0x10, 1f',
-            'lw      $t3, 0($s2)', 'lw      $s3, 4($s2)',
-            'lw      $t3, 0x14($s2)', 'lw      $t3, 0x0C($s3)',
-            'move    $a0, $s3', 'move    $a1, $s2',
-            'move    $a1, $s3', 'move    $a2, $zero',
-            'move    $a3, $zero'):
+    if not 0 <= controller_call < result_save < request_read < request_zero < \
+            milestone_read < milestone_ack_read < request_stage < busy_gate < \
+            attempted_gate < request_seen < request_milestone < request_return < \
+            validation_gate < validation_ack < first_retained < result_restore or \
+            helper.count("zeroCtrlVsh314A4OriginalController") != 2 or \
+            helper.count("jalr    $t9") != 3:
+        fail("bridge controller/request ordering or Sony call count regressed")
+    if helper.count('zeroCtrlVsh314A4MilestoneAck') != 2 or \
+            helper.count('bne     $t5, $t4, 9f') != 7 or \
+            'zeroCtrlVsh314A4ShadowProbeDone' in helper:
+        fail("bridge milestone ACK dispatch or retired probe ownership regressed")
+    for value, label in ((1, '.L314A4ValidationGate'),
+            (2, '.L314A4ShadowGate'), (3, '.L314A4ArmGate'),
+            (4, '.L314A4CallGate'), (5, '.L314A4PostGate'),
+            (8, '.L314A4InvokeGate'), (9, '.L314A4CaptureGate')):
+        dispatch = ('addiu   $t0, $zero, %d\n'
+                '    beq     $t4, $t0, %s' % (value, label))
+        if helper.count(dispatch) != 1:
+            fail("bridge dispatcher lacks milestone %d route" % value)
+    for value in range(1, 8):
+        if helper.count('addiu   $t1, $zero, %d' % value) < 1:
+            fail("bridge does not publish milestone %d" % value)
+    if any(token in helper for token in
+            ('zeroCtrlDiagnostics', 'sceIoOpen', 'sceIoWrite',
+             'sceKernelDelayThread')):
+        fail("functional bridge performs I/O, logging, or waiting")
+    for token in ('lw      $t1, 0x14($t0)',
+            'addiu   $a0, $zero, 0x1D8', 'addiu   $t1, $zero, 13'):
+        if token in helper:
+            fail("completed allocator-only probe remains in functional bridge")
+    if 'zeroCtrlPafA989NaturalGp' in assembly or \
+            'zeroCtrlVsh314A4RequestGp' in assembly or \
+            'addiu   $t1, $zero, 12' in helper:
+        fail("completed GP probe remains in the constructed0 experiment")
+    for token in ('addiu   $sp, $sp, -64', 'sw      $ra, 28($sp)',
+            'sw      $s0, 0($sp)', 'sw      $s1, 4($sp)',
+            'sw      $s2, 8($sp)', 'sw      $s3, 12($sp)',
+            'sw      $s4, 16($sp)', 'sw      $s5, 20($sp)',
+            'sw      $gp, 24($sp)', 'lw      $v0, 32($sp)',
+            'lw      $gp, 24($sp)', 'lw      $ra, 28($sp)',
+            'jr      $ra', 'addiu   $sp, $sp, 64'):
         if token not in helper:
-            fail("functional assembly bridge lacks " + token)
-    reject_object_clear = helper.find(
-            'sw      $zero, %lo(zeroCtrlVsh314A4RejectObject)($t0)')
-    root_slot_read = helper.find('%lo(zeroCtrlVsh314A4RootSlot)',
-            reject_object_clear)
-    outer_actual = helper.find('lw      $t3, 0($s2)', root_slot_read)
-    outer_expected = helper.find(
-            'lw      $t0, %lo(zeroCtrlVsh314A4Constructed0)($t0)', outer_actual)
-    outer_compare = helper.find('bne     $t3, $t0, 2f', outer_expected)
-    reject2_label = helper.find('2:', outer_compare)
-    reject_object_capture = helper.find(
-            'sw      $s2, %lo(zeroCtrlVsh314A4RejectObject)($t0)', reject2_label)
-    reject2_value = helper.find('addiu   $t1, $zero, 2', reject_object_capture)
-    busy_set = helper.find('sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)')
-    attempt_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Attempts')
-    stage0_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls')
-    if not 0 <= reject_object_clear < root_slot_read < outer_actual < \
-            outer_expected < outer_compare < reject2_label < \
-            reject_object_capture < reject2_value:
-        fail("reject 2 does not capture its exact mismatching outer object")
-    reject2_block = helper[reject2_label:helper.find('3:', reject2_label)]
-    if not outer_compare < busy_set < attempt_inc < stage0_inc or any(
-            token in reject2_block for token in (
-                'zeroCtrlVsh314A4Busy', 'zeroCtrlVsh314A4Attempted',
-                'zeroCtrlVsh314A4Attempts', 'zeroCtrlVsh314A4Stage0Calls')):
-        fail("reject-object evidence changes pre-validation attempt ordering")
-    callback_load = helper.rfind('lw      $t3, 0x0C($s3)', 0,
-            helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage1Calls'))
-    expected_load = helper.find(
-            'lw      $t0, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)',
-            callback_load)
-    callback_compare = helper.find('bne     $t3, $t0, 5f', expected_load)
-    constructed1_call = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage1Calls',
-            callback_compare)
-    if not 0 <= callback_load < expected_load < callback_compare < constructed1_call:
-        fail("runtime constructed1 call lacks expected-callback equality gate")
+            fail("functional bridge transparency lacks " + token)
+    pre_request = helper[:request_zero]
+    if any(token in pre_request for token in
+            ('zeroCtrlPafA989Dependency', 'zeroCtrlPafA989W28',
+             'zeroCtrlPafA989Pair', 'zeroCtrlPafA989Shadow',
+             'zeroCtrlVsh314A4Milestone')):
+        fail("request-zero bridge path accesses retained or shadow state")
+    for forbidden_old in ('zeroCtrlVsh314A4RootSlot',
+            'zeroCtrlPafA989TargetNode', 'zeroCtrlPafA989TargetOuter',
+            'zeroCtrlPafA989TargetInner', 'zeroCtrlPafA989TargetDependencySync',
+            'zeroCtrlPafA989Pair00Ptr', 'zeroCtrlPafA989Pair0CPtr'):
+        if forbidden_old in helper:
+            fail("functional bridge still uses ephemeral state: " + forbidden_old)
+    validity_symbols = ('zeroCtrlPafA989DependencyDirectValid',
+            'zeroCtrlPafA989W28BytesValid', 'zeroCtrlPafA989Pair00Valid',
+            'zeroCtrlPafA989Pair0CValid')
+    validity_positions = [helper.find('%hi(' + symbol + ')', first_retained)
+            for symbol in validity_symbols]
+    scalar_specs = (('W2C', 'addiu   $t2, $zero, 0x27'),
+            ('W34', 'bnez    $t1, 2f'),
+            ('W3C', 'bnez    $t1, 2f'), ('W40', 'bnez    $t1, 2f'),
+            ('W54', 'bnez    $t1, 2f'), ('W68', 'bnez    $t1, 2f'),
+            ('W6C', 'bnez    $t1, 2f'),
+            ('W20', 'bnez    $t1, 2f'),
+            ('W38', 'addiu   $t2, $zero, 0x32'),
+            ('W64', 'addiu   $t2, $zero, 0x0C'))
+    scalar_positions = []
+    for suffix, check in scalar_specs:
+        load = helper.find('%hi(zeroCtrlPafA989Dependency' + suffix + ')',
+                validity_positions[-1])
+        check_pos = helper.find(check, load)
+        if load < 0 or check_pos < load:
+            fail("functional bridge lacks selected-route scalar check " + suffix)
+        scalar_positions.append(load)
+    shape_tokens = ('%hi(zeroCtrlPafA989Pair00Len)',
+            'addiu   $t2, $zero, 0x0E', '%hi(zeroCtrlPafA989Pair0CLen)',
+            'addiu   $t2, $zero, 0x08',
+            '%hi(zeroCtrlPafA989Pair00Data00)', 'lbu     $t1, 0x0E($t0)',
+            '%hi(zeroCtrlPafA989Pair0CData00)', 'lbu     $t1, 0x08($t0)',
+            '%hi(zeroCtrlPafA989W28Data00)', 'lbu     $t1, 0x27($t0)')
+    shape_positions = [helper.find(token, scalar_positions[-1])
+            for token in shape_tokens]
+    callback_load = helper.find('%hi(zeroCtrlVsh314A4ExpectedCallback)',
+            shape_positions[-1])
+    provenance_tokens = ('lui     $t2, 0x0001', 'ori     $t2, $t2, 0xA274',
+            '%hi(zeroCtrlPafA989DependencyW18)', 'ori     $t2, $t2, 0xA324',
+            '%hi(zeroCtrlPafA989DependencyW1C)', 'ori     $t2, $t2, 0xA3A4',
+            '%hi(zeroCtrlPafA989DependencyW24)')
+    provenance_positions = [helper.find(token, callback_load)
+            for token in provenance_tokens]
+    validation_complete = helper.find('.L314A4ValidationComplete:',
+            provenance_positions[-1])
+    validation_milestone = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)',
+            validation_complete)
+    validation_return = helper.find('b       9f', validation_milestone)
+    shadow_gate = helper.find('.L314A4ShadowGate:', validation_return)
+    shadow_ack = helper.find('bne     $t5, $t4, 9f', shadow_gate)
+    shadow_start = helper.find('.L314A4ShadowBuild:', shadow_ack)
+    busy_set = helper.find('sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)',
+            shadow_start)
+    attempted_set = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)', busy_set)
+    stage0_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls',
+            attempted_set)
+    constructed0_load = helper.find('%hi(zeroCtrlVsh314A4Constructed0)',
+            stage0_inc)
+    constructed0_call = helper.find('jalr    $t9', constructed0_load)
+    if any(pos < 0 for pos in validity_positions + scalar_positions +
+                shape_positions + provenance_positions) or \
+            validity_positions != sorted(validity_positions) or \
+            scalar_positions != sorted(scalar_positions) or \
+            shape_positions != sorted(shape_positions) or \
+            not validity_positions[-1] < scalar_positions[0] < \
+                scalar_positions[-1] < shape_positions[0] < shape_positions[-1] < \
+                callback_load < provenance_positions[0] < \
+                provenance_positions[-1] < validation_complete < \
+                validation_milestone < validation_return < shadow_gate < shadow_ack < \
+                shadow_start < busy_set < \
+                attempted_set < stage0_inc < constructed0_load < constructed0_call:
+        fail("retained-state validation does not precede shadow Sony execution")
+    if any(token in helper for token in ('0x1FB10', '0x1FBC0', '0x1FC40')) or \
+            helper.count('addu    $t2, $s5, $t2') != 3:
+        fail("persistent VSH pointers are not callback-relative")
+    shadow_clear_start = shadow_start
+    shadow_build_end = helper.find('.L314A4ShadowComplete:', shadow_start)
+    shadow_build = helper[shadow_clear_start:shadow_build_end]
+    dependency_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$s3\)', shadow_build))
+    if dependency_zero_offsets != tuple('%02X' % offset
+            for offset in range(0, 0x70, 4)):
+        fail("shadow dependency is not fully zeroed before selected fields")
+    outer_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$s1\)', shadow_build))
+    inner_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$s2\)', shadow_build))
+    node_a_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$t2\)', shadow_build))
+    node_b_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$t3\)', shadow_build))
+    root_zero_offsets = tuple(re.findall(
+            r'sw      \$zero, 0x([0-9A-F]{2})\(\$t4\)', shadow_build))
+    if outer_zero_offsets != tuple('%02X' % offset
+                for offset in range(0, 0x1C, 4)) or \
+            inner_zero_offsets != tuple('%02X' % offset
+                for offset in range(0, 0x10, 4)) or \
+            node_a_zero_offsets != ('00',) or \
+            node_b_zero_offsets != ('00',) or \
+            root_zero_offsets != tuple('%02X' % offset
+                for offset in range(0, 0x30, 4)):
+        fail("shadow outer/inner/+0x44 nodes are not reset per attempt")
+    required_shadow_tokens = (
+            'sw      $t0, 0x00($s3)', 'sw      $t1, 0x04($s3)',
+            'sw      $t0, 0x0C($s3)', 'sw      $t1, 0x10($s3)',
+            'sw      $t1, 0x18($s3)', 'sw      $t1, 0x1C($s3)',
+            'sw      $t1, 0x20($s3)', 'sw      $t1, 0x24($s3)',
+            'sw      $t0, 0x28($s3)', 'sw      $t1, 0x2C($s3)',
+            'sw      $t1, 0x34($s3)', 'sw      $t1, 0x38($s3)',
+            'sw      $t1, 0x3C($s3)', 'sw      $t1, 0x40($s3)',
+            'sw      $t2, 0x44($s3)', 'sw      $t1, 0x54($s3)',
+            'sw      $t1, 0x64($s3)', 'sw      $t1, 0x68($s3)',
+            'sw      $t1, 0x6C($s3)',
+            '%hi(zeroCtrlPafA989Shadow44NodeA)',
+            '%hi(zeroCtrlPafA989Shadow44NodeB)', 'sw      $t3, 0x00($t2)',
+            '%hi(zeroCtrlPafA989Shadow44Root)', 'sw      $t4, 0x00($t3)',
+            'addiu   $t1, $zero, 0x0A', 'sb      $t1, 0x2D($t4)',
+            'sw      $s3, 0x08($s2)',
+            'sw      $s5, 0x0C($s2)', 'sw      $t1, 0x00($s1)',
+            'sw      $s2, 0x04($s1)', 'sw      $t1, 0x08($s1)',
+            'sw      $t1, 0x0C($s1)', 'sw      $t1, 0x14($s1)')
+    for token in required_shadow_tokens:
+        if token not in shadow_build:
+            fail("private shadow construction lacks " + token)
+    if 'zeroCtrlPafA989Shadow44Wrapper' in helper or \
+            'sw      $t2, 0x00($t3)' in shadow_build or \
+            'sb      $t1, 0x2D($t2)' in shadow_build or \
+            'sb      $t1, 0x2D($t3)' in shadow_build or \
+            shadow_build.count('sb      ') != 1:
+        fail("functional bridge retains a cyclic or preinitialized node topology")
+    shadow_milestone = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)', shadow_build_end)
+    shadow_return = helper.find('b       9f', shadow_milestone)
+    arm_gate = helper.find('.L314A4ArmGate:', shadow_return)
+    arm_ack = helper.find('bne     $t5, $t4, 9f', arm_gate)
+    reject10_value = helper.find('addiu   $t1, $zero, 10', arm_ack)
+    reject10_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)', reject10_value)
+    arm_milestone = helper.find('addiu   $t1, $zero, 4', reject10_publish)
+    arm_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)', arm_milestone)
+    arm_return = helper.find('b       9f', arm_publish)
+    call_gate = helper.find('.L314A4CallGate:', arm_return)
+    call_ack = helper.find('bne     $t5, $t4, 9f', call_gate)
+    attempts_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Attempts', call_ack)
+    pre_call_value = helper.find('addiu   $t1, $zero, 8', attempts_inc)
+    pre_call_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)', pre_call_value)
+    pre_call_return = helper.find('b       9f', pre_call_publish)
+    invoke_gate = helper.find('.L314A4InvokeGate:', pre_call_return)
+    invoke_ack = helper.find('bne     $t5, $t4, 9f', invoke_gate)
+    node_a_link = helper.find('sw      $t3, 0x00($t2)', shadow_start)
+    node_b_link = helper.find('sw      $t4, 0x00($t3)', node_a_link)
+    root_flag = helper.find('sb      $t1, 0x2D($t4)', node_b_link)
+    dependency_node = helper.find('sw      $t2, 0x44($s3)', root_flag)
+    shadow_complete = helper.find('sw      $t1, 0x14($s1)', dependency_node)
+    if not shadow_start < node_a_link < node_b_link < root_flag < \
+            dependency_node < shadow_complete < shadow_build_end < \
+            shadow_milestone < shadow_return < arm_gate < arm_ack < reject10_value < \
+            reject10_publish < arm_milestone < arm_publish < arm_return < call_gate < \
+            call_ack < busy_set < attempted_set < attempts_inc < pre_call_value < \
+            pre_call_publish < pre_call_return < invoke_gate < invoke_ack < stage0_inc < \
+            constructed0_call:
+        fail("constructed0 milestone/publication ordering regressed")
+    if helper.count('sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)') != 1 or \
+            helper.count(
+                'sw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)') != 1 or \
+            helper.count('BRIDGE_INC zeroCtrlVsh314A4Attempts') != 1 or \
+            helper.count('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls') != 1:
+        fail("constructed0 one-shot state publication is duplicated")
+    pre_call_gate = helper[call_gate:invoke_gate]
+    if 'BRIDGE_INC zeroCtrlVsh314A4Stage0Calls' in pre_call_gate or \
+            'jalr' in pre_call_gate or \
+            pre_call_gate.count('BRIDGE_INC zeroCtrlVsh314A4Attempts') != 1:
+        fail("milestone-4 preparation gate executes constructed0 work")
+    constructed0_a0 = helper.find('move    $a0, $s2', constructed0_load)
+    constructed0_a1 = helper.find('move    $a1, $s1', constructed0_load)
+    if 'sw      $zero, 0x48($s3)' not in shadow_build or \
+            not constructed0_a0 < constructed0_call < constructed0_a1 or \
+            helper.count('move    $a0, $s2\n    jalr    $t9\n'
+                    '    move    $a1, $s1') != 1:
+        fail("constructed0 does not receive the complete private shadow")
+    raw_value = helper.find('addiu   $t1, $zero, 9', constructed0_call)
+    raw_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)', raw_value)
+    raw_return = helper.find('b       9f', raw_publish)
+    capture_gate = helper.find('.L314A4CaptureGate:', raw_return)
+    capture_ack = helper.find('bne     $t5, $t4, 9f', capture_gate)
+    invoke_body = helper[invoke_gate:capture_gate]
+    constructed0_delay_end = helper.find('\n', constructed0_a1) + 1
+    post_call_prefix = helper[constructed0_delay_end:raw_publish]
+    if not constructed0_call < raw_value < raw_publish < raw_return < \
+            capture_gate < capture_ack or \
+            invoke_body.count('jalr    $t9') != 1 or \
+            invoke_body.count('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls') != 1 or \
+            constructed0_delay_end <= constructed0_a1 or \
+            any(token in post_call_prefix for token in
+                ('0x04($s1)', '0x14($s1)', '0x04($s2)', '0x08($s2)',
+                 '0x0C($s2)', 'RejectObject', 'PostOuter', 'PostInner',
+                 'BRIDGE_VALIDATE', 'jal ', 'jalr')):
+        fail("milestone-8 invocation does not publish raw return first")
+    return_result = helper.find('lw      $s4, 0x04($s2)', constructed0_call)
+    return_store = helper.find(
+            'sw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)', return_result)
+    post_capture_tokens = (
+            ('lw      $t3, 0x04($s1)',
+             'sw      $t3, %lo(zeroCtrlVsh314A4PostOuter04)($t0)'),
+            ('lw      $t3, 0x14($s1)',
+             'sw      $t3, %lo(zeroCtrlVsh314A4PostOuter14)($t0)'),
+            ('lw      $t3, 0x08($s2)',
+             'sw      $t3, %lo(zeroCtrlVsh314A4PostInner08)($t0)'),
+            ('lw      $t3, 0x0C($s2)',
+             'sw      $t3, %lo(zeroCtrlVsh314A4PostInner0C)($t0)'))
+    capture_positions = []
+    capture_cursor = return_store
+    for load, store in post_capture_tokens:
+        load_pos = helper.find(load, capture_cursor)
+        store_pos = helper.find(store, load_pos)
+        if load_pos < capture_cursor or store_pos < load_pos or \
+                helper.count(store) != 1:
+            fail("ACK-9 post-return snapshot capture ordering regressed")
+        capture_positions.extend((load_pos, store_pos))
+        capture_cursor = store_pos
+    return_busy_clear = helper.find(
+            'sw      $zero, %lo(zeroCtrlVsh314A4Busy)($t0)', capture_cursor)
+    returned_milestone = helper.find('addiu   $t1, $zero, 5', return_busy_clear)
+    returned_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)', returned_milestone)
+    returned_return = helper.find('b       9f', returned_publish)
+    post_gate = helper.find('.L314A4PostGate:', returned_return)
+    post_ack = helper.find('bne     $t5, $t4, 9f', post_gate)
+    saved_result_load = helper.find(
+            'lw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)', post_ack)
+    post_start = saved_result_load
+    post_tokens = ('BRIDGE_VALIDATE $s4, 4, 5f',
+            'lw      $t3, %lo(zeroCtrlVsh314A4PostOuter04)($t0)',
+            'bne     $t3, $s2, 5f',
+            'lw      $t3, %lo(zeroCtrlVsh314A4PostOuter14)($t0)',
+            'lw      $t3, %lo(zeroCtrlVsh314A4PostInner08)($t0)',
+            'bne     $t3, $s3, 5f',
+            'lw      $t3, %lo(zeroCtrlVsh314A4PostInner0C)($t0)',
+            'bne     $t3, $s5, 5f')
+    post_positions = [helper.find(token, post_start) for token in post_tokens]
+    for symbol in ('PostOuter04', 'PostOuter14', 'PostInner08', 'PostInner0C'):
+        if helper.count(
+                f'lw      $t3, %lo(zeroCtrlVsh314A4{symbol})($t0)') != 1:
+            fail("postgate snapshot load count regressed for " + symbol)
+    stage1_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Stage1Calls',
+            post_positions[-1])
+    constructed1_call = helper.find('jalr    $t9', stage1_inc)
+    reject11_value = helper.find('addiu   $t1, $zero, 11', post_positions[-1])
+    reject11_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)', reject11_value)
+    constructed1_bypass = helper.find('b       6f', reject11_publish)
+    capture_body = helper[capture_gate:post_gate]
+    if 'jalr' in capture_body or 'BRIDGE_INC zeroCtrlVsh314A4Stage0Calls' in \
+            capture_body or not capture_ack < return_result or \
+            capture_body.count('addiu   $t1, $zero, 5') != 1 or \
+            any(pos < 0 for pos in post_positions) or \
+            post_positions != sorted(post_positions) or \
+            not constructed0_call < raw_publish < raw_return < capture_gate < \
+                capture_ack < return_result < return_store < \
+                capture_positions[0] < capture_positions[-1] < \
+                return_busy_clear < returned_milestone < returned_publish < \
+                returned_return < post_gate < post_ack < saved_result_load < \
+                post_positions[0] < post_positions[-1] < \
+                reject11_value < reject11_publish < constructed1_bypass < \
+                stage1_inc < constructed1_call or \
+            helper.find('move    $a1, $s2', stage1_inc) > constructed1_call:
+        fail("constructed0 success does not bypass constructed1")
+    post_ack9_snapshot = helper[return_result:return_busy_clear]
+    postgate_body = helper[post_gate:reject11_value]
+    if 'b       9f' in post_ack9_snapshot or 'jalr' in post_ack9_snapshot or \
+            any(token in postgate_body for token in
+                ('lw      $t3, 0x04($s1)', 'lw      $t3, 0x14($s1)',
+                 'lw      $t3, 0x08($s2)', 'lw      $t3, 0x0C($s2)')):
+        fail("post-validation does not exclusively use the ACK-9 captured snapshot state")
+    for code, label in ((6, '1:'), (7, '2:'), (8, '3:'), (9, '4:'),
+            (5, '5:')):
+        label_pos = helper.find(label, constructed1_call)
+        value_pos = helper.find('addiu   $t1, $zero, ' + str(code), label_pos)
+        if label_pos < 0 or value_pos < label_pos:
+            fail("functional bridge reject code mapping regressed")
     for forbidden in ('sw      $zero, %lo(zeroCtrlTrigger58D4Request)',
             'zeroCtrlTrigger13F6CHits', 'zeroCtrlTrigger14020Hits',
             '0x57B0', '0x58D4'):
@@ -2415,6 +2716,62 @@ def check_sources(root):
     if "sizeof(ZeroCtrlPafA989TargetTraceRegistration) == 32" not in \
             bsman_header:
         fail("A989 target trace is not a separate 32-byte registration")
+    milestone_bss = (
+            'zeroCtrlVsh314A4RejectObject: .space 4\n'
+            '.globl zeroCtrlVsh314A4Milestone\n'
+            'zeroCtrlVsh314A4Milestone: .space 4\n'
+            '.globl zeroCtrlVsh314A4MilestoneAck\n'
+            'zeroCtrlVsh314A4MilestoneAck: .space 4\n'
+            '.globl zeroCtrlVsh314A4PostOuter04\n'
+            'zeroCtrlVsh314A4PostOuter04: .space 4\n'
+            '.globl zeroCtrlVsh314A4PostOuter14\n'
+            'zeroCtrlVsh314A4PostOuter14: .space 4\n'
+            '.globl zeroCtrlVsh314A4PostInner08\n'
+            'zeroCtrlVsh314A4PostInner08: .space 4\n'
+            '.globl zeroCtrlVsh314A4PostInner0C\n'
+            'zeroCtrlVsh314A4PostInner0C: .space 4\n')
+    if milestone_bss not in assembly:
+        fail("functional milestone/ACK words are not adjacent to RejectObject")
+    bridge_registration_start = kernel.find(
+            'void zeroCtrlRegisterPsp1000FunctionalBridge(')
+    bridge_registration_end = kernel.find(
+            '\nstatic void zeroCtrlInstallVsh5704RegistrationTrace',
+            bridge_registration_start)
+    bridge_registration = kernel[
+            bridge_registration_start:bridge_registration_end]
+    for token in ('copied.scalar_addr[15] > 0xFFFFFFFFU - 24',
+            'copied.scalar_addr[15] + 4, 24',
+            'bridge_milestone_addr = copied.scalar_addr[15] + 4',
+            'bridge_milestone_ack_addr = copied.scalar_addr[15] + 8',
+            'copied.scalar_addr[15] + 12 + i * 4'):
+        if token not in bridge_registration:
+            fail("bridge private milestone derivation lacks " + token)
+    bridge_install_start = kernel.find(
+            'static void zeroCtrlInstallVshCtrl314A4Bridge(void) {')
+    bridge_install_end = kernel.find(
+            '\nvoid zeroCtrlRegisterPsp1000FunctionalBridge(', bridge_install_start)
+    bridge_install = kernel[bridge_install_start:bridge_install_end]
+    milestone_clear = bridge_install.find('_sw(0, slide_diag.bridge_milestone_addr)')
+    ack_clear = bridge_install.find('_sw(0, slide_diag.bridge_milestone_ack_addr)')
+    owner_patch = bridge_install.find('_sw(replacement, owner)')
+    if not 0 <= milestone_clear < ack_clear < owner_patch or \
+            bridge_install.count('bridge_milestone_addr, 4') != 1 or \
+            bridge_install.count('bridge_milestone_ack_addr, 4') != 1 or \
+            ('for (i = 0; i < 4; i++)\n        _sw(0, '
+             'slide_diag.bridge_post_snapshot_addr[i])') not in bridge_install or \
+            'bridge_post_snapshot_addr[i], 4' not in bridge_install:
+        fail("bridge milestones are not cleared and synchronized before install")
+    a989_registration_end = bsman_header.find(
+            '} ZeroCtrlPafA989TargetTraceRegistration;')
+    a989_registration_start = bsman_header.rfind(
+            'typedef struct {', 0, a989_registration_end)
+    a989_registration = bsman_header[
+            a989_registration_start:a989_registration_end]
+    if a989_registration_start < 0 or a989_registration_end < 0 or \
+            a989_registration.count('u32 ') != 8 or \
+            any(token in a989_registration for token in
+                ('DependencyDirect', 'DependencyW', 'snapshot')):
+        fail("A989 target trace registration fields changed")
     for source, token in ((kernel_exports,
                 'zeroCtrlRegisterVsh5704Trace, 0x13373582'),
             (user_imports, '0x13373582, zeroCtrlRegisterVsh5704Trace'),
@@ -2571,6 +2928,16 @@ def check_sources(root):
             'slide_diag.bridge_scalar[6]', 'for (i = 2; i <= 6; i++)'):
         if token not in target_install:
             fail("A989 consumer trace lacks fail-closed user bounds: " + token)
+    for token in ('unsigned int owner, target, helper_jump, replacement, '
+            'snapshot_base, i;',
+            'paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4',
+            'snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4',
+            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x11C)',
+            'for (i = 0; i < 71; i++)',
+            '_sw(0, snapshot_base + i * 4)',
+            '(const void *)(snapshot_base + i * 4), 4'):
+        if token not in target_install:
+            fail("A989 synchronous snapshot installer lacks " + token)
     target_helper_patch = target_install.find(
             '_sw(helper_jump, slide_diag.paf_a989_target_trace_jump_slot)')
     target_helper_dcache = target_install.find(
@@ -2599,6 +2966,25 @@ def check_sources(root):
     if not 0 <= bounds_query < bounds_lower < bounds_upper < bounds_sync < \
             target_helper_patch:
         fail("A989 user bounds are not synchronized before helper/owner commit")
+    snapshot_overflow = target_install.find(
+            'paf_a989_target_trace_scalar[4] > 0xFFFFFFFFU - 4')
+    snapshot_derive = target_install.find(
+            'snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4',
+            snapshot_overflow)
+    snapshot_range = target_install.find(
+            'zeroCtrlVshModuleRangeValid(helper, snapshot_base, 0x11C)',
+            snapshot_derive)
+    snapshot_clear = target_install.find(
+            'for (i = 0; i < 71; i++)', snapshot_range)
+    snapshot_clear_word = target_install.find(
+            '_sw(0, snapshot_base + i * 4)', snapshot_clear)
+    snapshot_clear_sync = target_install.find(
+            '(const void *)(snapshot_base + i * 4), 4', snapshot_clear_word)
+    if not 0 <= snapshot_overflow < snapshot_derive < snapshot_range < \
+            snapshot_clear < snapshot_clear_word < snapshot_clear_sync < \
+            target_helper_patch or \
+            target_install.count('_sw(0, snapshot_base + i * 4)') != 1:
+        fail("A989 derived snapshot BSS is not validated/cleared before commit")
     for token in ('ZeroCtrlPafA989TargetTraceRegistration copied',
             'copied.entry_hits_addr', 'copied.exact_hits_addr',
             'copied.target_node_addr', 'copied.target_outer_addr',
@@ -2612,13 +2998,76 @@ def check_sources(root):
             'zeroCtrlPafA989TargetTraceEnd:', target_helper_start)
     target_helper = assembly[target_helper_start:target_helper_end]
     if hashlib.sha256(target_helper.encode()).hexdigest() != \
-            'ad108a9734f05df40e5d50817114d30bd77576617e8822f090f63bb748c8f9f7':
-        fail("synchronous A989 target helper changed during writer-only work")
+            '57d9b6cbdddbc42a8e65a0a9fe51725cf52a369a5aa8c0cc4ba97a8013bbafd4':
+        fail("synchronous A989 target helper hash changed")
     for reg, offset in zip(('t0', 't1', 't2', 't3', 't4', 't5', 't6', 't7'),
             range(0, 32, 4)):
         if 'sw      $' + reg + ', ' + str(offset) + '($sp)' not in target_helper or \
                 'lw      $' + reg + ', ' + str(offset) + '($sp)' not in target_helper:
             fail("A989 synchronous helper does not preserve $" + reg)
+    bss_start = assembly.find('zeroCtrlPafA989TargetInner: .space 4')
+    bss_end = assembly.find(
+            '.align 2\n.globl zeroCtrlPafA989ShadowOuter', bss_start)
+    a989_snapshot_bss = assembly[bss_start:bss_end]
+    required_bss = ('zeroCtrlPafA989TargetInner',
+            'zeroCtrlPafA989DependencyDirectValid',
+            'zeroCtrlPafA989TargetDependencySync',
+            'zeroCtrlPafA989DependencyW2C', 'zeroCtrlPafA989DependencyW34',
+            'zeroCtrlPafA989DependencyW38', 'zeroCtrlPafA989DependencyW3C',
+            'zeroCtrlPafA989DependencyW40', 'zeroCtrlPafA989DependencyW54',
+            'zeroCtrlPafA989DependencyW64', 'zeroCtrlPafA989DependencyW68',
+            'zeroCtrlPafA989DependencyW6C', 'zeroCtrlPafA989DependencyW28',
+            'zeroCtrlPafA989W28BytesValid',
+            'zeroCtrlPafA989W28Data00', 'zeroCtrlPafA989W28Data04',
+            'zeroCtrlPafA989W28Data08', 'zeroCtrlPafA989W28Data0C',
+            'zeroCtrlPafA989W28Data10', 'zeroCtrlPafA989W28Data14',
+            'zeroCtrlPafA989W28Data18', 'zeroCtrlPafA989W28Data1C',
+            'zeroCtrlPafA989W28Data20', 'zeroCtrlPafA989W28Data24',
+            'zeroCtrlPafA989W28Data28', 'zeroCtrlPafA989W28Data2C',
+            'zeroCtrlPafA989W28Data30', 'zeroCtrlPafA989W28Data34',
+            'zeroCtrlPafA989W28Data38', 'zeroCtrlPafA989W28Data3C',
+            'zeroCtrlPafA989Pair00Valid', 'zeroCtrlPafA989Pair00Ptr', 'zeroCtrlPafA989Pair00Len',
+            'zeroCtrlPafA989Pair00Data00', 'zeroCtrlPafA989Pair00Data04', 'zeroCtrlPafA989Pair00Data08',
+            'zeroCtrlPafA989Pair00Data0C', 'zeroCtrlPafA989Pair00Data10', 'zeroCtrlPafA989Pair00Data14',
+            'zeroCtrlPafA989Pair00Data18', 'zeroCtrlPafA989Pair00Data1C', 'zeroCtrlPafA989Pair00Data20',
+            'zeroCtrlPafA989Pair00Data24', 'zeroCtrlPafA989Pair00Data28', 'zeroCtrlPafA989Pair00Data2C',
+            'zeroCtrlPafA989Pair00Data30', 'zeroCtrlPafA989Pair00Data34', 'zeroCtrlPafA989Pair00Data38',
+            'zeroCtrlPafA989Pair00Data3C', 'zeroCtrlPafA989Pair0CValid', 'zeroCtrlPafA989Pair0CPtr',
+            'zeroCtrlPafA989Pair0CLen', 'zeroCtrlPafA989Pair0CData00', 'zeroCtrlPafA989Pair0CData04',
+            'zeroCtrlPafA989Pair0CData08', 'zeroCtrlPafA989Pair0CData0C', 'zeroCtrlPafA989Pair0CData10',
+            'zeroCtrlPafA989Pair0CData14', 'zeroCtrlPafA989Pair0CData18', 'zeroCtrlPafA989Pair0CData1C',
+            'zeroCtrlPafA989Pair0CData20', 'zeroCtrlPafA989Pair0CData24', 'zeroCtrlPafA989Pair0CData28',
+            'zeroCtrlPafA989Pair0CData2C', 'zeroCtrlPafA989Pair0CData30', 'zeroCtrlPafA989Pair0CData34',
+            'zeroCtrlPafA989Pair0CData38', 'zeroCtrlPafA989Pair0CData3C',
+            'zeroCtrlPafA989DependencyW18', 'zeroCtrlPafA989DependencyW1C',
+            'zeroCtrlPafA989DependencyW20', 'zeroCtrlPafA989DependencyW24')
+    bss_positions = [a989_snapshot_bss.find(name + ': .space 4')
+            for name in required_bss]
+    if bss_start < 0 or bss_end < 0 or any(pos < 0 for pos in bss_positions) or \
+            bss_positions != sorted(bss_positions) or \
+            a989_snapshot_bss.count(': .space 4') != 72 or \
+            '.align' in a989_snapshot_bss:
+        fail("A989 synchronous snapshot BSS is not exactly contiguous")
+    shadow_bss_end = assembly.find(
+            '.globl zeroCtrlGlobalPredicate6F84Hits', bss_end)
+    shadow_bss = assembly[bss_end:shadow_bss_end]
+    expected_shadow_bss = (
+            '.globl zeroCtrlPafA989ShadowOuter\n'
+            'zeroCtrlPafA989ShadowOuter: .space 0x1C\n'
+            '.globl zeroCtrlPafA989ShadowInner\n'
+            'zeroCtrlPafA989ShadowInner: .space 0x10\n'
+            '.globl zeroCtrlPafA989ShadowDependency\n'
+            'zeroCtrlPafA989ShadowDependency: .space 0x70\n'
+            '.globl zeroCtrlPafA989Shadow44NodeA\n'
+            'zeroCtrlPafA989Shadow44NodeA: .space 4\n'
+            '.globl zeroCtrlPafA989Shadow44NodeB\n'
+            'zeroCtrlPafA989Shadow44NodeB: .space 4\n'
+            '.globl zeroCtrlPafA989Shadow44Root\n'
+            'zeroCtrlPafA989Shadow44Root: .space 0x30\n'
+            '.globl zeroCtrlVsh314A4ShadowProbeDone\n'
+            'zeroCtrlVsh314A4ShadowProbeDone: .space 4\n')
+    if shadow_bss_end < 0 or shadow_bss.count('.align 2') != 1 or             shadow_bss.replace('.align 2\n', '') != expected_shadow_bss:
+        fail("private functional shadow BSS layout changed")
     for token in ('zeroCtrlVsh5704RegistrationTraceHits',
             'bnez    $t1, 1f', 'addiu   $t2, $a0, 8',
             'bne     $t2, $a1, 1f', 'lw      $t4, 0x00($a1)',
@@ -2645,6 +3094,183 @@ def check_sources(root):
     if not 0 <= a0_range < a1_range < outer_first_read < inner_load < \
             inner_equal < inner_range < inner_callback:
         fail("A989 helper dereferences node/outer/inner before range validation")
+    tuple_inner_store = target_helper.find(
+            'sw      $t6, %lo(zeroCtrlPafA989TargetInner)', inner_callback)
+    dependency_load = target_helper.find('lw      $t7, 0x08($t6)',
+            tuple_inner_store)
+    dependency_range = target_helper.find(
+            'BRIDGE_VALIDATE $t7, 0x70, 2f', dependency_load)
+    dependency_store = target_helper.find(
+            'sw      $t7, %lo(zeroCtrlPafA989TargetDependencySync)',
+            dependency_range)
+    direct_offsets = ('2C', '34', '38', '3C', '40', '54', '64', '68', '6C',
+            '28')
+    direct_loads = [target_helper.find('lw      $t3, 0x' + offset + '($t7)',
+            dependency_store) for offset in direct_offsets]
+    direct_symbols = ('zeroCtrlPafA989DependencyW2C',
+            'zeroCtrlPafA989DependencyW34', 'zeroCtrlPafA989DependencyW38',
+            'zeroCtrlPafA989DependencyW3C', 'zeroCtrlPafA989DependencyW40',
+            'zeroCtrlPafA989DependencyW54', 'zeroCtrlPafA989DependencyW64',
+            'zeroCtrlPafA989DependencyW68', 'zeroCtrlPafA989DependencyW6C',
+            'zeroCtrlPafA989DependencyW28')
+    direct_stores = [target_helper.find(
+            'sw      $t3, %lo(' + symbol + ')', direct_loads[index])
+            for index, symbol in enumerate(direct_symbols)]
+    valid_store = target_helper.find(
+            'sw      $t3, %lo(zeroCtrlPafA989DependencyDirectValid)',
+            direct_stores[-1])
+    snapshot_done = target_helper.find('\n2:\n', valid_store)
+    if not 0 <= tuple_inner_store < dependency_load < dependency_range < \
+            dependency_store or any(pos < 0 for pos in direct_loads) or \
+            any(pos < 0 for pos in direct_stores) or \
+            any(not direct_loads[index] < direct_stores[index] <
+                (direct_loads[index + 1] if index + 1 < len(direct_loads) else
+                    valid_store) for index in range(len(direct_loads))) or \
+            direct_loads != sorted(direct_loads) or not direct_stores[-1] < \
+            valid_store < snapshot_done:
+        fail("A989 synchronous dependency capture/publication order regressed")
+    loaded_offsets = re.findall(r'lw      \$t3, 0x([0-9A-F]+)\(\$t7\)',
+            target_helper[dependency_range:snapshot_done])
+    if tuple(loaded_offsets[:len(direct_offsets)]) != direct_offsets or \
+            target_helper.count('BRIDGE_VALIDATE $t7, 0x70, 2f') != 1 or \
+            target_helper.count(
+                'sw      $t3, %lo(zeroCtrlPafA989DependencyDirectValid)') != 1:
+        fail("A989 synchronous dependency capture reads unexpected fields")
+    string_offsets = ('00', '04', '08', '0C', '10', '14', '18', '1C',
+            '20', '24', '28', '2C', '30', '34', '38', '3C')
+    string_base = target_helper.find('addu    $t5, $t3, $zero',
+            direct_stores[-1])
+    string_valid_clear = target_helper.find(
+            'sw      $zero, %lo(zeroCtrlPafA989W28BytesValid)', string_base)
+    string_null = target_helper.find('beqz    $t5, 3f', string_valid_clear)
+    string_align = target_helper.find('andi    $t2, $t5, 3', string_null)
+    string_align_fail = target_helper.find('bnez    $t2, 3f', string_align)
+    string_range = target_helper.find(
+            'BRIDGE_VALIDATE $t5, 0x40, 3f', string_align_fail)
+    string_loads = [target_helper.find('lw      $t3, 0x' + offset + '($t5)',
+            string_range) for offset in string_offsets]
+    string_stores = [target_helper.find(
+            'sw      $t3, %lo(zeroCtrlPafA989W28Data' + offset + ')',
+            string_loads[index]) for index, offset in enumerate(string_offsets)]
+    string_valid_set = target_helper.find(
+            'sw      $t3, %lo(zeroCtrlPafA989W28BytesValid)',
+            string_stores[-1])
+    string_done = target_helper.find('\n3:\n', string_valid_set)
+    if not 0 <= string_base < string_valid_clear < string_null < string_align < \
+            string_align_fail < string_range or \
+            any(pos < 0 for pos in string_loads) or \
+            any(pos < 0 for pos in string_stores) or \
+            any(not string_loads[index] < string_stores[index] <
+                (string_loads[index + 1] if index + 1 < len(string_loads) else
+                    string_valid_set) for index in range(len(string_loads))) or \
+            not string_stores[-1] < string_valid_set < string_done < valid_store:
+        fail("A989 w28 string snapshot validation/publication order regressed")
+    string_source_offsets = re.findall(
+            r'lw      \$t3, 0x([0-9A-F]+)\(\$t5\)',
+            target_helper[string_range:string_done])
+    if tuple(string_source_offsets) != string_offsets or \
+            target_helper.count('BRIDGE_VALIDATE $t5, 0x40, 3f') != 1 or \
+            target_helper.count(
+                'sw      $t3, %lo(zeroCtrlPafA989W28BytesValid)') != 1 or \
+            '0x40($t5)' in target_helper:
+        fail("A989 w28 string snapshot reads outside the fixed 0x40 bytes")
+    pair_specs = (('00', '00', '04', '4', '5'),
+            ('0C', '0C', '10', '6', '7'))
+    pair_ends = []
+    pair_search = string_done
+    for pair, pointer_offset, length_offset, failure_label, success_label in \
+            pair_specs:
+        pair_valid_clear = target_helper.find(
+                'sw      $zero, %lo(zeroCtrlPafA989Pair' + pair + 'Valid)',
+                pair_search)
+        pair_pointer_load = target_helper.find(
+                'lw      $t5, 0x' + pointer_offset + '($t7)', pair_valid_clear)
+        pair_pointer_store = target_helper.find(
+                'sw      $t5, %lo(zeroCtrlPafA989Pair' + pair + 'Ptr)',
+                pair_pointer_load)
+        pair_length_load = target_helper.find(
+                'lw      $t4, 0x' + length_offset + '($t7)', pair_pointer_store)
+        pair_length_store = target_helper.find(
+                'sw      $t4, %lo(zeroCtrlPafA989Pair' + pair + 'Len)',
+                pair_length_load)
+        pair_zero = target_helper.find(
+                'beqz    $t4, ' + success_label + 'f', pair_length_store)
+        pair_bound = target_helper.find('sltiu   $t2, $t4, 0x40', pair_zero)
+        pair_bound_fail = target_helper.find(
+                'beqz    $t2, ' + failure_label + 'f', pair_bound)
+        pair_null = target_helper.find(
+                'beqz    $t5, ' + failure_label + 'f', pair_bound_fail)
+        pair_align = target_helper.find('andi    $t2, $t5, 3', pair_null)
+        pair_align_fail = target_helper.find(
+                'bnez    $t2, ' + failure_label + 'f', pair_align)
+        pair_range = target_helper.find(
+                'BRIDGE_VALIDATE $t5, 0x40, ' + failure_label + 'f',
+                pair_align_fail)
+        pair_loads = [target_helper.find(
+                'lw      $t3, 0x' + offset + '($t5)', pair_range)
+                for offset in string_offsets]
+        pair_stores = [target_helper.find(
+                'sw      $t3, %lo(zeroCtrlPafA989Pair' + pair + 'Data' +
+                    offset + ')', pair_loads[index])
+                for index, offset in enumerate(string_offsets)]
+        pair_success = target_helper.find('\n' + success_label + ':\n',
+                pair_stores[-1])
+        pair_valid_set = target_helper.find(
+                'sw      $t3, %lo(zeroCtrlPafA989Pair' + pair + 'Valid)',
+                pair_success)
+        pair_failure = target_helper.find('\n' + failure_label + ':\n',
+                pair_valid_set)
+        if not 0 <= pair_valid_clear < pair_pointer_load < pair_pointer_store < \
+                pair_length_load < pair_length_store < pair_zero < pair_bound < \
+                pair_bound_fail < pair_null < pair_align < pair_align_fail < \
+                pair_range or any(pos < 0 for pos in pair_loads) or \
+                any(pos < 0 for pos in pair_stores) or \
+                any(not pair_loads[index] < pair_stores[index] <
+                    (pair_loads[index + 1] if index + 1 < len(pair_loads) else
+                        pair_success) for index in range(len(pair_loads))) or \
+                not pair_stores[-1] < pair_success < pair_valid_set < pair_failure:
+            fail("A989 pair" + pair + " validation/publication order regressed")
+        pair_source_offsets = re.findall(
+                r'lw      \$t3, 0x([0-9A-F]+)\(\$t5\)',
+                target_helper[pair_range:pair_success])
+        if tuple(pair_source_offsets) != string_offsets or \
+                target_helper.count('BRIDGE_VALIDATE $t5, 0x40, ' +
+                    failure_label + 'f') != 1 or \
+                target_helper.count('sw      $t3, %lo(zeroCtrlPafA989Pair' +
+                    pair + 'Valid)') != 1 or \
+                '0x40($t5)' in target_helper[pair_range:pair_success]:
+            fail("A989 pair" + pair + " capture exceeds its fixed source window")
+        pair_ends.append(pair_failure)
+        pair_search = pair_failure
+    if not string_done < pair_ends[0] < pair_ends[1] < valid_store:
+        fail("A989 optional pair failures do not preserve later captures")
+    extra_offsets = ('18', '1C', '20', '24')
+    extra_symbols = ('zeroCtrlPafA989DependencyW18',
+            'zeroCtrlPafA989DependencyW1C', 'zeroCtrlPafA989DependencyW20',
+            'zeroCtrlPafA989DependencyW24')
+    extra_loads = [target_helper.find(
+            'lw      $t3, 0x' + offset + '($t7)', pair_ends[1])
+            for offset in extra_offsets]
+    extra_stores = [target_helper.find(
+            'sw      $t3, %lo(' + symbol + ')', extra_loads[index])
+            for index, symbol in enumerate(extra_symbols)]
+    if any(pos < 0 for pos in extra_loads + extra_stores) or \
+            extra_loads != sorted(extra_loads) or \
+            any(not extra_loads[index] < extra_stores[index] <
+                (extra_loads[index + 1] if index + 1 < len(extra_loads) else
+                    valid_store) for index in range(len(extra_loads))) or \
+            not pair_ends[1] < extra_loads[0] < extra_stores[-1] < valid_store:
+        fail("A989 direct-extra capture/publication order regressed")
+    for offset, symbol in zip(extra_offsets, extra_symbols):
+        if target_helper.count('lw      $t3, 0x' + offset + '($t7)') != 1 or \
+                target_helper.count('sw      $t3, %lo(' + symbol + ')') != 1:
+            fail("A989 direct-extra field is not captured exactly once")
+    loaded_offsets = re.findall(r'lw      \$t3, 0x([0-9A-F]+)\(\$t7\)',
+            target_helper[dependency_range:snapshot_done])
+    if tuple(loaded_offsets) != direct_offsets + extra_offsets:
+        fail("A989 synchronous dependency capture reads unexpected fields")
+    if '$gp' in target_helper:
+        fail("completed natural-GP capture remains in the A989 helper")
     if any(token in target_helper for token in ('jal ', 'jalr', 'sw      $ra',
             'sw      $a2', 'sw      $a3', 'move    $a')):
         fail("A989 synchronous helper calls code or changes Sony-visible state")
@@ -2656,7 +3282,8 @@ def check_sources(root):
     exact_publish = target_helper.rfind(
             'sw      $t1, %lo(zeroCtrlPafA989TargetTraceExactHits)')
     if not 0 <= trace_hit_load < trace_hit_gate < node_guard < node_store < \
-            exact_publish or target_helper.count('bne     $t4, $t5, 1f') != 2:
+            dependency_load < snapshot_done < exact_publish or \
+            target_helper.count('bne     $t4, $t5, 1f') != 2:
         fail("A989 target tuple is not first-match-only and publication ordered")
     if 'zeroCtrlInstallPafA989TargetTrace' in home_request:
         fail("HOME installs the synchronous A989 target trace")
@@ -2732,6 +3359,172 @@ def check_sources(root):
             writer)
     if not bridge_line:
         fail("functional bridge telemetry is incomplete or oversized")
+    if 'functional_gp_probe_written' in writer or \
+            '[psp1000-functional-314a4-gp-probe]' in writer or \
+            'snapshot_base + 0x11C' in writer or \
+            'snapshot_base + 0x120' in writer:
+        fail("completed GP-probe telemetry remains in the writer")
+    constructed0_probe_marker = writer.find(
+            '[psp1000-functional-314a4-constructed0-probe]')
+    constructed0_probe_start = writer.rfind(
+            'if ((state[9] == 5 || state[9] == 11) &&', 0,
+            constructed0_probe_marker)
+    constructed0_probe_end = writer.find('zeroCtrlDiagnosticsText(line);',
+            constructed0_probe_marker)
+    constructed0_probe_writer = writer[
+            constructed0_probe_start:constructed0_probe_end]
+    for token in ('!functional_constructed0_probe_written',
+            'unsigned int result = state[12]',
+            'result != 0', '(result & 3) == 0',
+            'zeroCtrlPsp1000BridgeUserRangeValid(',
+            'result, 4, lower, upper',
+            '[psp1000-functional-314a4-constructed0-probe] ',
+            'reject=%u result=0x%08X nonzero=%u aligned=%u ',
+            'user_range=%u attempts=%u stage0_calls=%u ',
+            'stage1_calls=%u',
+            'state[9]', 'state[5], state[6], state[7]'):
+        if token not in constructed0_probe_writer:
+            fail("constructed0-probe telemetry lacks " + token)
+    if constructed0_probe_start < 0 or \
+            constructed0_probe_end < constructed0_probe_marker or \
+            writer.count('int functional_constructed0_probe_written = 0;') != 1 or \
+            'functional_alloc_probe_written' in writer or \
+            '[psp1000-functional-314a4-alloc-probe]' in writer or \
+            'state[9] == 13' in writer or \
+            any(token in constructed0_probe_writer for token in
+                ('_lw(', '_lb(', '_lbu(', 'sceKernelFindModuleByAddress')):
+        fail("constructed0-probe telemetry dereferences or over-classifies result")
+    service_start = kernel.find('static void zeroCtrlServiceFunctionalMilestone(void) {')
+    service_end = kernel.find('\nstatic int zeroCtrlCreateSlideDiagnosticsThread',
+            service_start)
+    milestone_service = kernel[service_start:service_end]
+    committed = milestone_service.find('zeroCtrlDiagnosticsTextCommitted(line)')
+    ack_store = milestone_service.find(
+            '_sw(milestone, slide_diag.bridge_milestone_ack_addr)', committed)
+    ack_sync = milestone_service.find('sceKernelDcacheWritebackInvalidateRange(',
+            ack_store)
+    if not 0 <= committed < ack_store < ack_sync or \
+            'if (zeroCtrlDiagnosticsTextCommitted(line)) {' not in \
+                milestone_service or \
+            milestone_service.count(
+                '_sw(milestone, slide_diag.bridge_milestone_ack_addr)') != 1:
+        fail("milestone persistence does not precede ACK store/cache sync")
+    for token in ('[psp1000-step] seq=%u phase=%s',
+            'request_observed', 'validation_complete', 'shadow_complete',
+            'constructed0_enter_armed',
+            '[psp1000-step] seq=5 phase=post_return_capture',
+            '[psp1000-call] phase=constructed0_pre_call attempts=%u ',
+            '[psp1000-call] phase=constructed0_returned_raw attempts=%u ',
+            '[psp1000-final] phase=%s', 'post_return_snapshot_validation',
+            'pre_constructed0_reject'):
+        if token not in milestone_service:
+            fail("compact milestone service lacks " + token)
+    if 'milestone > 9' not in milestone_service or \
+            milestone_service.count('phase=constructed0_pre_call') != 1 or \
+            milestone_service.count('phase=constructed0_returned_raw') != 1:
+        fail("milestones 8/9 are not uniquely serviced as nonterminal calls")
+    if ('phase=constructed0_' + 'return "') in milestone_service or \
+            ('"post_' + 'validation"') in milestone_service:
+        fail("milestone service uses stale constructed0 evidence terminology")
+    logger_write_start = logger.find('static int zeroCtrlDiagnosticsWrite(')
+    logger_write_end = logger.find('\nvoid zeroCtrlDiagnosticsText(',
+            logger_write_start)
+    logger_write = logger[logger_write_start:logger_write_end]
+    for token in ('if (!diagnostics_enabled)', 'length = strlen(text)',
+            'written = sceIoWrite(fd, text, length)',
+            'closed = sceIoClose(fd)',
+            'return written == length && closed >= 0'):
+        if token not in logger_write:
+            fail("committed diagnostic writer lacks " + token)
+    if 'int zeroCtrlDiagnosticsTextCommitted(const char *text)' not in logger or \
+            'int zeroCtrlDiagnosticsTextCommitted(const char *text);' not in \
+                logger_header:
+        fail("committed diagnostic API is missing")
+    compact_gate = writer.find(
+            'if (slide_diag.functional_enabled && !slide_diag.diagnostics_verbose)')
+    compact_continue = writer.find('continue;', compact_gate)
+    first_forensic = writer.find('zeroCtrlWriteSlideCheckpoints(&written)')
+    compact_path = writer[compact_gate:compact_continue]
+    for token in ('[psp1000-ready]', '[psp1000-request]',
+            'zeroCtrlServiceFunctionalMilestone()',
+            'memcmp(request, compact_request, sizeof(request))',
+            'slide_diag.functional_runtime_registration_valid',
+            'slide_diag.functional_runtime_valid_addr != 0',
+            '(slide_diag.functional_runtime_valid_addr & 3) == 0',
+            'zeroCtrlReadHelperCounter(',
+            'slide_diag.functional_runtime_valid_addr) != 0',
+            'runtime, retained',
+            'slide_diag.functional_home_first_load_published != 0',
+            'compact_request_started = 1', 'elapsed = 0',
+            'sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);',
+            'elapsed += SLIDE_OBSERVATION_POLL_US;'):
+        if token not in compact_path:
+            fail("compact diagnostics path lacks " + token)
+    if not 0 <= compact_gate < compact_continue < first_forensic or \
+            any(token in compact_path for token in
+                ('-code]', 'zeroCtrlWriteConstructed0Dependency',
+                 'zeroCtrlWriteFunctionalClockPathAnalysis')):
+        fail("compact path reaches forensic code maps or lacks early routing")
+    if 'SLIDE_POLL_INTERVAL_US' in kernel:
+        fail("compact diagnostics use undefined SLIDE_POLL_INTERVAL_US")
+    if '#define SLIDE_OBSERVATION_WINDOW_US 12000000' not in kernel or \
+            writer.count('int compact_request_started = 0;') != 1 or \
+            'while (elapsed < SLIDE_OBSERVATION_WINDOW_US ||' not in writer:
+        fail("compact request-relative observation lifetime regressed")
+    request_start = compact_path.find(
+            'slide_diag.functional_home_first_load_published != 0')
+    request_started = compact_path.find('compact_request_started = 1',
+            request_start)
+    elapsed_reset = compact_path.find('elapsed = 0', request_started)
+    milestone_service = compact_path.find('zeroCtrlServiceFunctionalMilestone()',
+            elapsed_reset)
+    terminal_read = compact_path.find(
+            'unsigned int milestone = zeroCtrlReadHelperCounter(',
+            milestone_service)
+    terminal_test = compact_path.find('milestone == milestone_ack &&',
+            terminal_read)
+    terminal_values = compact_path.find(
+            '(milestone == 6 || milestone == 7)', terminal_test)
+    compact_delay = compact_path.find(
+            'sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);', terminal_values)
+    elapsed_guard = compact_path.find('if (compact_request_started) {',
+            compact_delay)
+    elapsed_advance = compact_path.find(
+            'elapsed += SLIDE_OBSERVATION_POLL_US;', elapsed_guard)
+    timeout_record = compact_path.find(
+            '[psp1000-timeout] milestone=%u ack=%u request=%u', elapsed_advance)
+    if not 0 <= request_start < request_started < elapsed_reset < \
+            milestone_service < terminal_read < terminal_test < terminal_values < \
+            compact_delay < elapsed_guard < elapsed_advance < timeout_record:
+        fail("compact request timer, terminal ACK, or timeout ordering regressed")
+    before_request_start = compact_path[:request_start]
+    if 'elapsed +=' in before_request_start or \
+            compact_path.count('elapsed += SLIDE_OBSERVATION_POLL_US;') != 1:
+        fail("compact elapsed advances before authoritative HOME publication")
+    timeout_slice = compact_path[elapsed_advance:compact_continue]
+    if any(token in timeout_slice for token in
+            ('_sw(', 'zeroCtrlDiagnosticsTextCommitted')):
+        fail("compact timeout mutates or acknowledges milestone state")
+    compact_exit = writer.find(
+            'if (slide_diag.functional_enabled && !slide_diag.diagnostics_verbose) {',
+            compact_continue)
+    checkpoint_fast = writer.find(
+            '[checkpoint-fast] minimal_observation_window_complete', compact_exit)
+    if not 0 <= compact_exit < checkpoint_fast or \
+            'sceKernelExitDeleteThread(0);' not in writer[
+                compact_exit:checkpoint_fast]:
+        fail("compact functional exit can emit legacy checkpoint-fast record")
+    ready_format = compact_path[compact_path.find('[psp1000-ready]'):
+            compact_path.find('compact_ready_written = 1')]
+    if 'slide_diag.functional_request_armed' in ready_format:
+        fail("compact ready runtime field uses request-armed state")
+    if 'if (slide_diag.functional_enabled)\n            zeroCtrlServiceFunctionalMilestone();' \
+            not in writer[compact_continue:first_forensic]:
+        fail("verbose writer does not service durable milestone ACKs")
+    if 'PSP1000Diagnostics = Enabled' not in sample_config or \
+            'PSP1000DiagnosticsVerbose = Disabled' not in sample_config or \
+            '"PSP1000DiagnosticsVerbose", "Disabled"' not in kernel:
+        fail("compact-by-default diagnostics configuration regressed")
     trace_line = re.search(
             r'"\[psp1000-vsh5704-registration-trace\][\s\S]{0,280}?'
             r'"original_target_off=0x3F568\\n"', writer)
@@ -2859,6 +3652,259 @@ def check_sources(root):
     if len(re.findall(r'(?<!unsigned int )a989_target_dependency\s*=',
             writer)) != 1:
         fail("captured A989 dependency can be assigned more than once")
+    snapshot_marker = capture_writer.find(
+            '[psp1000-a989-dependency44-snapshot]')
+    snapshot_start = capture_writer.rfind(
+            'if (exact_dependency_capture &&', 0, snapshot_marker)
+    snapshot_writer = capture_writer[snapshot_start:]
+    for token in ('int a989_dependency44_snapshot_written = 0;',
+            'int exact_dependency_capture = 0;',
+            'exact_dependency_capture = 1;',
+            'if (exact_dependency_capture &&',
+            '!a989_dependency44_snapshot_written',
+            'a989_dependency44_snapshot_written = 1;',
+            'a989_target_dependency, 0x4C,',
+            '_lw(a989_target_dependency + 0x44)',
+            '_lw(a989_target_dependency + 0x48)',
+            'dependency48, 4, lower, upper)',
+            'dependency44, 4, lower, upper)',
+            'first = _lw(dependency44 + 0x00)',
+            'first, 4, lower, upper)',
+            'root = _lw(first + 0x00)',
+            'root, 0x2E, lower, upper)',
+            '_lb(root + 0x2D) & 0xFF',
+            '[psp1000-a989-dependency44-snapshot] ',
+            'validation=0\\n', 'validation=1 dependency=0x%08X',
+            'w44=0x%08X w48=0x%08X',
+            'w48_user_ptr=%u first_valid=%u',
+            'first=0x%08X root_valid=%u',
+            'root=0x%08X flag2d_valid=%u', 'flag2d=0x%02X'):
+        if (token == 'int a989_dependency44_snapshot_written = 0;' and
+                token not in writer) or (token !=
+                'int a989_dependency44_snapshot_written = 0;' and
+                token not in capture_writer):
+            fail("authoritative dependency+0x44 snapshot lacks " + token)
+    snapshot_authority = capture_writer.find(
+            'exact_dependency_capture = 1;', dependency_read)
+    snapshot_gate = capture_writer.find(
+            'if (exact_dependency_capture &&', snapshot_authority)
+    snapshot_once = capture_writer.find(
+            'a989_dependency44_snapshot_written = 1;', snapshot_gate)
+    snapshot_dependency_range = capture_writer.find(
+            'a989_target_dependency, 0x4C,', snapshot_once)
+    snapshot_w44 = capture_writer.find(
+            '_lw(a989_target_dependency + 0x44)', snapshot_dependency_range)
+    snapshot_w48 = capture_writer.find(
+            '_lw(a989_target_dependency + 0x48)', snapshot_w44)
+    snapshot_w48_class = capture_writer.find(
+            'dependency48, 4, lower, upper)', snapshot_w48)
+    snapshot_first_range = capture_writer.find(
+            'dependency44, 4, lower, upper)', snapshot_w48_class)
+    snapshot_first_read = capture_writer.find(
+            'first = _lw(dependency44 + 0x00)', snapshot_first_range)
+    snapshot_root_range = capture_writer.find(
+            'first, 4, lower, upper)', snapshot_first_read)
+    snapshot_root_read = capture_writer.find(
+            'root = _lw(first + 0x00)', snapshot_root_range)
+    snapshot_flag_range = capture_writer.find(
+            'root, 0x2E, lower, upper)', snapshot_root_read)
+    snapshot_flag_read = capture_writer.find(
+            '_lb(root + 0x2D) & 0xFF', snapshot_flag_range)
+    if not 0 <= dependency_read < snapshot_authority < snapshot_gate < snapshot_once < \
+            snapshot_dependency_range < snapshot_w44 < snapshot_w48 < \
+            snapshot_w48_class < snapshot_first_range < snapshot_first_read < \
+            snapshot_root_range < snapshot_root_read < snapshot_flag_range < \
+            snapshot_flag_read:
+        fail("dependency+0x44 snapshot validation/dereference order regressed")
+    if capture_writer.count('_lw(a989_target_dependency + 0x44)') != 1 or \
+            capture_writer.count('_lw(a989_target_dependency + 0x48)') != 1 or \
+            capture_writer.count('a989_dependency44_snapshot_written = 1;') != 1 or \
+            '_lw(dependency48' in snapshot_writer or \
+            snapshot_writer.count('_lb(root + ') != 1 or \
+            '_lb(root + 0x2D)' not in snapshot_writer or \
+            any(token in snapshot_writer for token in
+                ('_sw(', '_sb(', 'sceKernelDcache', 'sceKernelIcache',
+                 'slide_diag.a989_dependency44', 'sceKernelAlloc')):
+        fail("dependency+0x44 snapshot is repeated, unsafe, or changes runtime state")
+    if 'slide_diag.a989_dependency44' in kernel or \
+            writer.count('int a989_dependency44_snapshot_written = 0;') != 1:
+        fail("dependency+0x44 snapshot state is not writer-local")
+    direct_sync_marker = capture_writer.find(
+            '[psp1000-a989-dependency-direct-sync]')
+    direct_sync_start = capture_writer.rfind(
+            'if (capture[5] != 0 &&', 0, direct_sync_marker)
+    direct_sync_end = capture_writer.find(
+            'if (capture[5] != 0 && a989_target_node == 0)', direct_sync_marker)
+    direct_sync_writer = capture_writer[direct_sync_start:direct_sync_end]
+    for token in ('int a989_dependency_direct_sync_written = 0;',
+            'if (capture[5] != 0 &&',
+            '!a989_dependency_direct_sync_written',
+            'a989_dependency_direct_sync_written = 1;',
+            'paf_a989_target_trace_scalar[4] <= 0xFFFFFFFFU - 4',
+            'paf_a989_target_trace_scalar[4] + 4',
+            'unsigned int snapshot[71] = { 0 };',
+            'snapshot_base + 0x00', 'snapshot[0] != 1',
+            '[psp1000-a989-dependency-direct-sync] ',
+            'validation=0\\n', 'validation=1 dependency=0x%08X',
+            'w2c=0x%08X w34=0x%08X', 'w38=0x%08X w3c=0x%08X',
+            'w40=0x%08X w54=0x%08X', 'w64=0x%08X w68=0x%08X',
+            'w6c=0x%08X w28=0x%08X',
+            'snapshot_base + 0x2C',
+            '[psp1000-a989-dependency-w28] ',
+            'validation=1 value=0x%08X', 'aligned=%u user_range=%u',
+            'module_owned=1 module=%.27s', 'segment=%u segment_off=0x%X',
+            'module_owned=0',
+            '[psp1000-a989-dependency-w28-string] ',
+            'validation=%u size=0x40',
+            '[psp1000-a989-dependency-w28-string-code] ',
+            'off=0x00 w0=%08X w1=%08X w2=%08X',
+            'off=0x20 w0=%08X w1=%08X w2=%08X',
+            '[psp1000-a989-dependency-pair00] ',
+            '[psp1000-a989-dependency-pair00-code] ',
+            '[psp1000-a989-dependency-pair0c] ',
+            '[psp1000-a989-dependency-pair0c-code] ',
+            'validation=%u ptr=0x%08X len=0x%08X',
+            '[psp1000-a989-dependency-direct-extra] ',
+            'validation=1 w18=0x%08X w1c=0x%08X ',
+            'w20=0x%08X w24=0x%08X'):
+        if (token.startswith('int ') and token not in writer) or \
+                (not token.startswith('int ') and
+                    token not in direct_sync_writer):
+            fail("synchronous direct-dependency telemetry lacks " + token)
+    for offset in range(0, 0x74, 4):
+        token = 'snapshot_base + 0x%02X' % offset
+        if len(re.findall(re.escape(token) + r'(?![0-9A-F])',
+                    direct_sync_writer)) != 1:
+            fail("direct-sync telemetry does not read exactly " + token)
+    sync_valid_read = direct_sync_writer.find('snapshot_base + 0x00')
+    sync_valid_gate = direct_sync_writer.find('snapshot[0] != 1', sync_valid_read)
+    sync_data_first = direct_sync_writer.find('snapshot_base + 0x04', sync_valid_gate)
+    sync_data_last = direct_sync_writer.find('snapshot_base + 0x2C', sync_data_first)
+    string_valid_read = direct_sync_writer.find(
+            'snapshot_base + 0x30', sync_data_last)
+    string_data_gate = direct_sync_writer.find(
+            'if (snapshot[12] == 1)', string_valid_read)
+    string_last_read = direct_sync_writer.find(
+            'snapshot_base + 0x70', string_data_gate)
+    string_record = direct_sync_writer.find(
+            '[psp1000-a989-dependency-w28-string] ', string_last_read)
+    string_row0 = direct_sync_writer.find('off=0x00 w0=%08X', string_record)
+    string_row1 = direct_sync_writer.find('off=0x20 w0=%08X', string_row0)
+    string_row0_end = direct_sync_writer.find(
+            'zeroCtrlDiagnosticsText(line);', string_row0)
+    string_row1_end = direct_sync_writer.find(
+            'zeroCtrlDiagnosticsText(line);', string_row1)
+    if direct_sync_start < 0 or not 0 <= sync_valid_read < sync_valid_gate < \
+            sync_data_first < sync_data_last < string_valid_read < \
+            string_data_gate < string_last_read < string_record < string_row0 < \
+            string_row1 or \
+            'a989_target_inner + 0x0C' in direct_sync_writer or \
+            'a989_target_dependency' in direct_sync_writer or \
+            '_lw(' in direct_sync_writer or \
+            'a989_dependency_direct_snapshot_written' in writer or \
+            '[psp1000-a989-dependency-direct-snapshot]' in writer or \
+            '_lw(a989_target_dependency + 0x28)' in writer or \
+            '_lw(snapshot[11]' in direct_sync_writer or \
+            not re.search(r'zeroCtrlPsp1000BridgeUserRangeValid\s*\(\s*'
+                r'snapshot\[11\],\s*4,', direct_sync_writer) or \
+            'sceKernelFindModuleByAddress(snapshot[11])' not in \
+                direct_sync_writer or \
+            'zeroCtrlModuleContainingSegment(owner,' not in direct_sync_writer:
+        fail("direct-sync telemetry rereads mutable Sony dependency state")
+    if direct_sync_writer.count(
+                '[psp1000-a989-dependency-w28-string-code] ') != 2 or \
+            direct_sync_writer.count('snapshot[13]') != 2 or \
+            direct_sync_writer.count('snapshot[28]') != 2 or \
+            tuple(re.findall(r'snapshot\[(\d+)\]',
+                direct_sync_writer[string_row0:string_row0_end])) != \
+                    tuple(str(index) for index in range(13, 21)) or \
+            tuple(re.findall(r'snapshot\[(\d+)\]',
+                direct_sync_writer[string_row1:string_row1_end])) != \
+                    tuple(str(index) for index in range(21, 29)) or \
+            '%s' in direct_sync_writer or 'strlen' in direct_sync_writer or \
+            '_lb(' in direct_sync_writer or '_lbu(' in direct_sync_writer or \
+            'snapshot_base + 0x11C' in direct_sync_writer:
+        fail("w28 string telemetry scans, formats, or exceeds private snapshot")
+    pair00_meta = [direct_sync_writer.find('snapshot_base + 0x%02X' % offset)
+            for offset in (0x74, 0x78, 0x7C)]
+    pair00_gate = direct_sync_writer.find(
+            'if (snapshot[29] == 1 && snapshot[31] != 0)', pair00_meta[-1])
+    pair00_reads = [direct_sync_writer.find(
+            'snapshot_base + 0x%02X' % offset, pair00_gate)
+            for offset in range(0x80, 0xC0, 4)]
+    pair0c_meta = [direct_sync_writer.find('snapshot_base + 0x%02X' % offset,
+            pair00_reads[-1]) for offset in (0xC0, 0xC4, 0xC8)]
+    pair0c_gate = direct_sync_writer.find(
+            'if (snapshot[48] == 1 && snapshot[50] != 0)', pair0c_meta[-1])
+    pair0c_reads = [direct_sync_writer.find(
+            'snapshot_base + 0x%02X' % offset, pair0c_gate)
+            for offset in range(0xCC, 0x10C, 4)]
+    pair00_record = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair00] ', pair0c_reads[-1])
+    pair00_row0 = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair00-code] ', pair00_record)
+    pair00_row1 = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair00-code] ', pair00_row0 + 1)
+    pair0c_record = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair0c] ', pair00_row1)
+    pair0c_row0 = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair0c-code] ', pair0c_record)
+    pair0c_row1 = direct_sync_writer.find(
+            '[psp1000-a989-dependency-pair0c-code] ', pair0c_row0 + 1)
+    pair_rows = ((pair00_row0, pair00_row1, 32),
+            (pair0c_row0, pair0c_row1, 51))
+    if any(len(re.findall(re.escape('snapshot_base + 0x%02X' % offset) +
+                r'(?![0-9A-F])', direct_sync_writer)) != 1
+                for offset in range(0x74, 0x10C, 4)) or \
+            any(pos < 0 for pos in pair00_meta + pair00_reads + pair0c_meta +
+                pair0c_reads) or pair00_reads != sorted(pair00_reads) or \
+            pair0c_reads != sorted(pair0c_reads) or \
+            not pair00_meta[-1] < pair00_gate < pair00_reads[0] < \
+                pair00_reads[-1] < pair0c_meta[0] or \
+            not pair0c_meta[-1] < pair0c_gate < pair0c_reads[0] < \
+                pair0c_reads[-1] < \
+                pair00_record < pair00_row0 < pair00_row1 < pair0c_record < \
+                pair0c_row0 < pair0c_row1 or \
+            direct_sync_writer.count(
+                '[psp1000-a989-dependency-pair00-code] ') != 2 or \
+            direct_sync_writer.count(
+                '[psp1000-a989-dependency-pair0c-code] ') != 2:
+        fail("pair telemetry is not bounded to its private snapshot windows")
+    for row0, row1, first_index in pair_rows:
+        row0_end = direct_sync_writer.find('zeroCtrlDiagnosticsText(line);', row0)
+        row1_end = direct_sync_writer.find('zeroCtrlDiagnosticsText(line);', row1)
+        if tuple(re.findall(r'snapshot\[(\d+)\]',
+                    direct_sync_writer[row0:row0_end])) != \
+                tuple(str(index) for index in range(first_index,
+                    first_index + 8)) or \
+                tuple(re.findall(r'snapshot\[(\d+)\]',
+                    direct_sync_writer[row1:row1_end])) != \
+                tuple(str(index) for index in range(first_index + 8,
+                    first_index + 16)):
+            fail("pair telemetry does not expose exactly sixteen private words")
+    if any(token in direct_sync_writer for token in
+            ('_lw(snapshot[30]', '_lw(snapshot[49]',
+             'zeroCtrlReadHelperCounter(snapshot[30]',
+             'zeroCtrlReadHelperCounter(snapshot[49]')):
+        fail("pair telemetry dereferences a captured runtime pointer")
+    extra_offsets = (0x10C, 0x110, 0x114, 0x118)
+    extra_reads = [direct_sync_writer.find(
+            'snapshot_base + 0x%X' % offset) for offset in extra_offsets]
+    extra_record = direct_sync_writer.find(
+            '[psp1000-a989-dependency-direct-extra] ', pair0c_row1)
+    extra_record_end = direct_sync_writer.find(
+            'zeroCtrlDiagnosticsText(line);', extra_record)
+    if any(pos < 0 for pos in extra_reads) or \
+            extra_reads != sorted(extra_reads) or \
+            not pair0c_reads[-1] < extra_reads[0] < extra_reads[-1] < \
+                pair00_record < pair0c_row1 < extra_record < extra_record_end or \
+            any(direct_sync_writer.count('snapshot_base + 0x%X' % offset) != 1
+                for offset in extra_offsets) or \
+            tuple(re.findall(r'snapshot\[(\d+)\]',
+                direct_sync_writer[extra_record:extra_record_end])) != \
+                    ('67', '68', '69', '70') or \
+            'snapshot_base + 0x11C' in direct_sync_writer:
+        fail("direct-extra telemetry is not bounded to four private words")
     dependency_marker = writer.find('[psp1000-a989-dependency-life]')
     dependency_start = writer.rfind(
             'if (a989_target_dependency != 0)', 0, dependency_marker)
@@ -3043,6 +4089,607 @@ def check_sources(root):
     if 'boundary = offset + 8;' not in boundary_search or \
             'if (boundary == 0)' not in boundary_search:
         fail("dependency analysis no longer fails closed without a full return")
+    w28_forward_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyW28ForwardCalleeMap(')
+    w28_forward_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0DependencyW28CalleeMap(',
+            w28_forward_start)
+    w28_forward = kernel[w28_forward_start:w28_forward_end]
+    if w28_forward_start < 0 or w28_forward_end < 0:
+        fail("constructed0 dependency w28 forward-callee map is missing")
+    for token in ('w28_parent_target + 0x28,', '0xD0)',
+            'w28_parent_target + 0x028) != 0x00809021',
+            'for (offset = 0x02C; offset <= 0x0DC; offset += 4)',
+            'word = _lw(w28_parent_target + offset)',
+            'destination = zeroCtrlMipsGprWriteDestination(word)',
+            'destination < 0 || destination == 18',
+            'w28_parent_target + 0x0E0) != 0x02402021',
+            'w28_parent_target + 0x0E4) != 0x8FA30024',
+            'w28_parent_target + 0x0E8) != 0x8FA20020',
+            'w28_parent_target + 0x0EC) != 0xAE030018',
+            'w28_parent_target + 0x0F4) != 0xAE02001C',
+            'call = _lw(w28_parent_target + 0x0F0)', '(call >> 26) != 3',
+            'target = zeroCtrlMipsJumpTarget(w28_parent_target + 0x0F0, call)',
+            'zeroCtrlModuleContainingSegment(paf, target, &segment, &remaining)',
+            'segment != 0', 'target < paf->text_addr',
+            'target - paf->text_addr != 0x13E3DC', 'remaining < 0x100',
+            'zeroCtrlBridgeExecutableRange(paf, target, 0x100)',
+            '[psp1000-constructed0-dependency-w28-forward-callee] ',
+            'validation=0\\n', 'validation=1 parent_off=0x687E8',
+            'source_off=0xF0', 'target=0x%08X target_off=0x%X size=0x100',
+            'a0_source=dependency_w28_via_s2',
+            '[psp1000-constructed0-dependency-w28-forward-callee-code]'):
+        if token not in w28_forward:
+            fail("dependency w28 forward-callee proof lacks " + token)
+    forward_parent_range = w28_forward.find(
+            'zeroCtrlBridgeExecutableRange(paf, w28_parent_target + 0x28,')
+    forward_parent_size = w28_forward.find('0xD0)', forward_parent_range)
+    forward_parent_first = w28_forward.find(
+            '_lw(w28_parent_target + 0x028)', forward_parent_size)
+    forward_scan = w28_forward.find(
+            'for (offset = 0x02C; offset <= 0x0DC; offset += 4)',
+            forward_parent_first)
+    forward_scan_read = w28_forward.find(
+            'word = _lw(w28_parent_target + offset)', forward_scan)
+    forward_restore = w28_forward.find(
+            '_lw(w28_parent_target + 0x0E0)', forward_scan_read)
+    forward_call = w28_forward.find(
+            'call = _lw(w28_parent_target + 0x0F0)', forward_restore)
+    forward_decode = w28_forward.find(
+            'target = zeroCtrlMipsJumpTarget(w28_parent_target + 0x0F0, call)',
+            forward_call)
+    forward_owner = w28_forward.find(
+            'zeroCtrlModuleContainingSegment(paf, target, &segment, &remaining)',
+            forward_decode)
+    forward_relative = w28_forward.find(
+            'target - paf->text_addr != 0x13E3DC', forward_owner)
+    forward_range = w28_forward.find(
+            'zeroCtrlBridgeExecutableRange(paf, target, 0x100)',
+            forward_relative)
+    forward_header = w28_forward.find(
+            '[psp1000-constructed0-dependency-w28-forward-callee] ',
+            forward_range)
+    forward_loop = w28_forward.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)', forward_header)
+    forward_first_read = w28_forward.find(
+            '_lw(target + offset + 0x00)', forward_loop)
+    forward_last_read = w28_forward.find(
+            '_lw(target + offset + 0x1C)', forward_loop)
+    if not 0 <= forward_parent_range < forward_parent_size < \
+            forward_parent_first < forward_scan < forward_scan_read < \
+            forward_restore < forward_call < forward_decode < forward_owner < \
+            forward_relative < forward_range < forward_header < forward_loop < \
+            forward_first_read < forward_last_read:
+        fail("dependency w28 forward-callee validation/read order regressed")
+    if w28_forward.count('_lw(target + offset + ') != 8 or \
+            w28_forward.count(
+                'for (offset = 0; offset <= 0xE0; offset += 0x20)') != 1 or \
+            w28_forward.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            w28_forward.count(
+                'zeroCtrlWriteConstructed0DependencyW28ForwardCalleeMap(') != 1 or \
+            kernel.count(
+                'zeroCtrlWriteConstructed0DependencyW28ForwardCalleeMap(') != 2 or \
+            'target + offset + 0x20' in w28_forward or \
+            'target + 0x100' in w28_forward or \
+            any(token in w28_forward for token in
+                ('a989_target_dependency', 'snapshot[', '_sw(', '_sb(',
+                 'sceKernelDcache', 'sceKernelIcache', 'sceKernelStart',
+                 'for (candidate')):
+        fail("dependency w28 forward-callee map executes, writes, or exceeds bounds")
+    w28_map_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyW28CalleeMap(')
+    w28_map_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(',
+            w28_map_start)
+    w28_map = kernel[w28_map_start:w28_map_end]
+    if w28_map_start < 0 or w28_map_end < 0:
+        fail("constructed0 dependency w28 callee map is missing")
+    for token in ('dependency_consumer_target + 0x67C, 0x1C',
+            'dependency_consumer_target + 0x67C) != 0x8E640028',
+            'dependency_consumer_target + 0x680) != 0x8E2701C0',
+            'dependency_consumer_target + 0x684) != 0x26280058',
+            'dependency_consumer_target + 0x688) != 0x24050001',
+            'dependency_consumer_target + 0x68C) != 0x00003021',
+            'dependency_consumer_target + 0x694) != 0x27A90040',
+            'call = _lw(dependency_consumer_target + 0x690)',
+            '(call >> 26) != 3',
+            'target = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x690,',
+            'zeroCtrlModuleContainingSegment(paf, target, &segment, &remaining)',
+            'segment != 0', 'target < paf->text_addr',
+            'target - paf->text_addr != 0x687E8', 'remaining < 0x100',
+            'zeroCtrlBridgeExecutableRange(paf, target, 0x100)',
+            '[psp1000-constructed0-dependency-w28-callee] validation=0',
+            '[psp1000-constructed0-dependency-w28-callee] validation=1',
+            'source_off=0x690 target=0x%08X target_off=0x%X size=0x100',
+            'a0_source=dependency_w28 a1=1 a2=0',
+            'a3_source=s1_plus_1c0 t0_source=s1_plus_58',
+            't1_source=sp_plus_40',
+            '[psp1000-constructed0-dependency-w28-callee-code]'):
+        if token not in w28_map:
+            fail("dependency w28 callee proof lacks " + token)
+    w28_source_range = w28_map.find('zeroCtrlBridgeExecutableRange(paf,')
+    w28_source_args = w28_map.find(
+            'dependency_consumer_target + 0x67C, 0x1C', w28_source_range)
+    w28_source_first = w28_map.find(
+            '_lw(dependency_consumer_target + 0x67C)', w28_source_args)
+    w28_source_last = w28_map.find(
+            '_lw(dependency_consumer_target + 0x694)', w28_source_first)
+    w28_call = w28_map.find(
+            'call = _lw(dependency_consumer_target + 0x690)', w28_source_last)
+    w28_decode = w28_map.find(
+            'target = zeroCtrlMipsJumpTarget(dependency_consumer_target + 0x690,',
+            w28_call)
+    w28_owner = w28_map.find(
+            'zeroCtrlModuleContainingSegment(paf, target, &segment, &remaining)',
+            w28_decode)
+    w28_relative = w28_map.find(
+            'target - paf->text_addr != 0x687E8', w28_owner)
+    w28_range = w28_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, target, 0x100)', w28_relative)
+    w28_header = w28_map.find(
+            '[psp1000-constructed0-dependency-w28-callee] validation=1',
+            w28_range)
+    w28_loop = w28_map.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)', w28_header)
+    w28_first_read = w28_map.find('_lw(target + offset + 0x00)', w28_loop)
+    w28_last_read = w28_map.find('_lw(target + offset + 0x1C)', w28_loop)
+    w28_forward_call = w28_map.find(
+            'zeroCtrlWriteConstructed0DependencyW28ForwardCalleeMap(paf, target);',
+            w28_last_read)
+    w28_success_return = w28_map.find('return;', w28_forward_call)
+    if not 0 <= w28_source_range < w28_source_args < w28_source_first < \
+            w28_source_last < w28_call < w28_decode < w28_owner < \
+            w28_relative < w28_range < w28_header < w28_loop < \
+            w28_first_read < w28_last_read < w28_forward_call < \
+            w28_success_return:
+        fail("dependency w28 callee validation/read order regressed")
+    if w28_map.count('_lw(target + offset + ') != 8 or \
+            w28_map.count(
+                'for (offset = 0; offset <= 0xE0; offset += 0x20)') != 1 or \
+            w28_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            'target + offset + 0x20' in w28_map or \
+            'target + 0x100' in w28_map or '0x68A04' in w28_map or \
+            kernel.count(
+                'zeroCtrlWriteConstructed0DependencyW28CalleeMap(') != 2 or \
+            any(token in w28_map for token in
+                ('a989_target_dependency', '_sw(', '_sb(', 'sceKernelDcache',
+                 'sceKernelIcache', 'sceKernelStart', 'for (candidate')):
+        fail("dependency w28 callee map executes, writes, or exceeds bounds")
+    w40_map_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(')
+    w40_map_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(',
+            w40_map_start)
+    w40_map = kernel[w40_map_start:w40_map_end]
+    if w40_map_start < 0 or w40_map_end < 0:
+        fail("constructed0 dependency w40-zero target map is missing")
+    for token in ('dependency_consumer_target + 0x27C, 0x30',
+            'dependency_consumer_target + 0x27C) != 0x8E72003C',
+            'dependency_consumer_target + 0x298) != 0x1640011A',
+            'dependency_consumer_target + 0x29C) != 0xAE2001D0',
+            'dependency_consumer_target + 0x2A0) != 0x8E620040',
+            'dependency_consumer_target + 0x2A4) != 0x10400113',
+            'delay = _lw(dependency_consumer_target + 0x2A8)',
+            '(delay >> 26) != 0x0F', '((delay >> 16) & 0x1F) != 4',
+            'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(',
+            'dependency_consumer_target + 0x2A4,',
+            '_lw(dependency_consumer_target + 0x2A4)',
+            'dependency_w40_zero_target < dependency_consumer_target',
+            'dependency_w40_zero_target - dependency_consumer_target != 0x6F4',
+            'zeroCtrlModuleContainingSegment(paf, dependency_w40_zero_target,',
+            'segment != 0', 'remaining < 0x100',
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,',
+            '[psp1000-constructed0-dependency-w40-zero-target] validation=0',
+            '[psp1000-constructed0-dependency-w40-zero-target] validation=1',
+            'source_off=0x2A4 target=0x%08X target_off=0x%X',
+            'consumer_off=0x6F4 delay=0x%08X size=0x100',
+            '[psp1000-constructed0-dependency-w40-zero-code]'):
+        if token not in w40_map:
+            fail("dependency w40-zero target proof lacks " + token)
+    w40_source_range = w40_map.find(
+            'zeroCtrlBridgeExecutableRange(paf,')
+    w40_source_args = w40_map.find(
+            'dependency_consumer_target + 0x27C, 0x30', w40_source_range)
+    w40_source_first = w40_map.find(
+            '_lw(dependency_consumer_target + 0x27C)', w40_source_args)
+    w40_source_last = w40_map.find(
+            'delay = _lw(dependency_consumer_target + 0x2A8)', w40_source_first)
+    w40_decode = w40_map.find(
+            'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(',
+            w40_source_last)
+    w40_decode_pc = w40_map.find(
+            'dependency_consumer_target + 0x2A4,', w40_decode)
+    w40_decode_word = w40_map.find(
+            '_lw(dependency_consumer_target + 0x2A4)', w40_decode_pc)
+    w40_relative = w40_map.find(
+            'dependency_w40_zero_target - dependency_consumer_target != 0x6F4',
+            w40_decode_word)
+    w40_owner = w40_map.find(
+            'zeroCtrlModuleContainingSegment(paf, dependency_w40_zero_target,',
+            w40_relative)
+    w40_range = w40_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,',
+            w40_owner)
+    w40_range_size = w40_map.find('0x100)', w40_range)
+    w40_header = w40_map.find(
+            '[psp1000-constructed0-dependency-w40-zero-target] validation=1',
+            w40_range_size)
+    w40_loop = w40_map.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)', w40_header)
+    w40_first_read = w40_map.find(
+            '_lw(dependency_w40_zero_target + offset + 0x00)', w40_loop)
+    w40_last_read = w40_map.find(
+            '_lw(dependency_w40_zero_target + offset + 0x1C)', w40_loop)
+    if not 0 <= w40_source_range < w40_source_args < w40_source_first < \
+            w40_source_last < w40_decode < w40_decode_pc < w40_decode_word < \
+            w40_relative < w40_owner < w40_range < w40_range_size < \
+            w40_header < w40_loop < w40_first_read < w40_last_read:
+        fail("dependency w40-zero target validation/read order regressed")
+    w40_rows = w40_map[w40_loop:]
+    if w40_rows.count('_lw(dependency_w40_zero_target + offset + ') != 8 or \
+            w40_map.count(
+                'for (offset = 0; offset <= 0xE0; offset += 0x20)') != 1 or \
+            w40_map.count('zeroCtrlMipsBranchTarget(') != 1 or \
+            w40_map.count(
+                'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(') != 1 or \
+            'dependency_w40_zero_target + offset + 0x20' in w40_rows or \
+            'dependency_w40_zero_target + 0x100' in w40_map or \
+            re.search(r'delay\s*&\s*0xFFFF', w40_map) or \
+            any(token in w40_map for token in
+                ('0x35A24', 'a989_target_dependency',
+                 'zeroCtrlMipsJumpTarget', '_sw(', '_sb(', 'sceKernelDcache',
+                 'sceKernelIcache', 'for (candidate', 'consumer_target + 0x300',
+                 'consumer_target + 0x6F0')):
+        fail("dependency w40-zero map follows code, scans, or exceeds bounds")
+    w2c_map_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(')
+    w2c_map_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0Dependency44CalleeMap(',
+            w2c_map_start)
+    w2c_map = kernel[w2c_map_start:w2c_map_end]
+    if w2c_map_start < 0 or w2c_map_end < 0:
+        fail("constructed0 dependency w2c-nonzero target map is missing")
+    for token in ('dependency_consumer_target + 0x2A4, 8',
+            'dependency_consumer_target + 0x2A4) != 0x10400113',
+            'delay = _lw(dependency_consumer_target + 0x2A8)',
+            '(delay >> 26) != 0x0F', '((delay >> 16) & 0x1F) != 4',
+            'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(',
+            'dependency_w40_zero_target - dependency_consumer_target != 0x6F4',
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,',
+            '0x10)',
+            'fallback_load = _lw(dependency_w40_zero_target + 0x00)',
+            '(fallback_load >> 26) != 0x23',
+            '((fallback_load >> 21) & 0x1F) != 4',
+            '((fallback_load >> 16) & 0x1F) != 2',
+            'dependency_w40_zero_target + 0x04) != 0x8C43002C',
+            'jump = _lw(dependency_w40_zero_target + 0x08)',
+            '(jump >> 26) != 2',
+            'dependency_w40_zero_target + 0x0C) != 0xAE23019C',
+            'dependency_w40_rejoin_target = zeroCtrlMipsJumpTarget(',
+            'dependency_w40_zero_target + 0x08,',
+            '_lw(dependency_w40_zero_target + 0x08)',
+            'dependency_w40_rejoin_target - dependency_consumer_target != 0x2B0',
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_rejoin_target,',
+            '0x20)',
+            'rejoin_load = _lw(dependency_w40_rejoin_target + 0x00)',
+            '(rejoin_load >> 26) != 0x23',
+            '((rejoin_load >> 21) & 0x1F) != 4',
+            '((rejoin_load >> 16) & 0x1F) != 2',
+            '(rejoin_load & 0xFFFF) != (fallback_load & 0xFFFF)',
+            'dependency_w40_rejoin_target + 0x04) != 0x8E2401D4',
+            'dependency_w40_rejoin_target + 0x08) != 0x8C450098',
+            'dependency_w40_rejoin_target + 0x0C) != 0x14800109',
+            'dependency_w40_rejoin_target + 0x10) != 0xAE2501C0',
+            'dependency_w40_rejoin_target + 0x14) != 0x8E62002C',
+            'dependency_w40_rejoin_target + 0x18) != 0x144000E7',
+            'dependency_w40_rejoin_target + 0x1C) != 0x00000000',
+            'dependency_w2c_nonzero_target = zeroCtrlMipsBranchTarget(',
+            'dependency_consumer_target + 0x2C8,',
+            '_lw(dependency_consumer_target + 0x2C8)',
+            'dependency_w2c_nonzero_target - dependency_consumer_target != 0x668',
+            'zeroCtrlModuleContainingSegment(paf, dependency_w2c_nonzero_target,',
+            'segment != 0', 'remaining < 0x8C',
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w2c_nonzero_target,',
+            '0x8C)',
+            '[psp1000-constructed0-dependency-w2c-nonzero-target] validation=0',
+            '[psp1000-constructed0-dependency-w2c-nonzero-target] validation=1',
+            'source_off=0x2C8 target=0x%08X target_off=0x%X',
+            'consumer_off=0x668 rejoin_off=0x2B0 end_before=0x6F4',
+            'size=0x8C',
+            '[psp1000-constructed0-dependency-w2c-nonzero-code]'):
+        if token not in w2c_map:
+            fail("dependency w2c-nonzero target proof lacks " + token)
+    route_source_range = w2c_map.find(
+            'zeroCtrlBridgeExecutableRange(paf,')
+    route_source_args = w2c_map.find(
+            'dependency_consumer_target + 0x2A4, 8', route_source_range)
+    route_branch_read = w2c_map.find(
+            '_lw(dependency_consumer_target + 0x2A4)', route_source_args)
+    route_delay_read = w2c_map.find(
+            'delay = _lw(dependency_consumer_target + 0x2A8)',
+            route_branch_read)
+    route_delay_shape = w2c_map.find(
+            '((delay >> 16) & 0x1F) != 4', route_delay_read)
+    trampoline_decode = w2c_map.find(
+            'dependency_w40_zero_target = zeroCtrlMipsBranchTarget(',
+            route_delay_shape)
+    trampoline_range = w2c_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_zero_target,')
+    trampoline_range_size = w2c_map.find('0x10)', trampoline_range)
+    trampoline_first_read = w2c_map.find(
+            '_lw(dependency_w40_zero_target + 0x00)', trampoline_range_size)
+    trampoline_jump_read = w2c_map.find(
+            'jump = _lw(dependency_w40_zero_target + 0x08)',
+            trampoline_first_read)
+    rejoin_decode = w2c_map.find(
+            'dependency_w40_rejoin_target = zeroCtrlMipsJumpTarget(',
+            trampoline_jump_read)
+    rejoin_relative = w2c_map.find(
+            'dependency_w40_rejoin_target - dependency_consumer_target != 0x2B0',
+            rejoin_decode)
+    rejoin_range = w2c_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w40_rejoin_target,',
+            rejoin_relative)
+    rejoin_range_size = w2c_map.find('0x20)', rejoin_range)
+    rejoin_first_read = w2c_map.find(
+            '_lw(dependency_w40_rejoin_target + 0x00)', rejoin_range_size)
+    rejoin_immediate_match = w2c_map.find(
+            '(rejoin_load & 0xFFFF) != (fallback_load & 0xFFFF)',
+            rejoin_first_read)
+    rejoin_last_read = w2c_map.find(
+            '_lw(dependency_w40_rejoin_target + 0x1C)',
+            rejoin_immediate_match)
+    w2c_decode = w2c_map.find(
+            'dependency_w2c_nonzero_target = zeroCtrlMipsBranchTarget(',
+            rejoin_last_read)
+    w2c_relative = w2c_map.find(
+            'dependency_w2c_nonzero_target - dependency_consumer_target != 0x668',
+            w2c_decode)
+    w2c_owner = w2c_map.find(
+            'zeroCtrlModuleContainingSegment(paf, dependency_w2c_nonzero_target,',
+            w2c_relative)
+    w2c_range = w2c_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_w2c_nonzero_target,',
+            w2c_owner)
+    w2c_range_size = w2c_map.find('0x8C)', w2c_range)
+    w2c_header = w2c_map.find(
+            '[psp1000-constructed0-dependency-w2c-nonzero-target] validation=1',
+            w2c_range_size)
+    w2c_loop = w2c_map.find(
+            'for (offset = 0; offset <= 0x60; offset += 0x20)', w2c_header)
+    w2c_complete_first = w2c_map.find(
+            '_lw(dependency_w2c_nonzero_target + offset + 0x00)', w2c_loop)
+    w2c_complete_last = w2c_map.find(
+            '_lw(dependency_w2c_nonzero_target + offset + 0x1C)', w2c_loop)
+    w2c_partial = w2c_map.find('off=0x080 w0=%08X w1=%08X w2=%08X',
+            w2c_complete_last)
+    w2c_final_read = w2c_map.find(
+            '_lw(dependency_w2c_nonzero_target + 0x88)', w2c_partial)
+    w28_map_call = w2c_map.find(
+            'zeroCtrlWriteConstructed0DependencyW28CalleeMap(paf,',
+            w2c_final_read)
+    w2c_success_return = w2c_map.find('return;', w28_map_call)
+    if not 0 <= route_source_range < route_source_args < route_branch_read < \
+            route_delay_read < route_delay_shape < trampoline_decode < \
+            trampoline_range < trampoline_range_size < \
+            trampoline_first_read < trampoline_jump_read < rejoin_decode < \
+            rejoin_relative < rejoin_range < rejoin_range_size < \
+            rejoin_first_read < rejoin_immediate_match < rejoin_last_read < \
+            w2c_decode < w2c_relative < \
+            w2c_owner < w2c_range < w2c_range_size < w2c_header < w2c_loop < \
+            w2c_complete_first < w2c_complete_last < w2c_partial < \
+            w2c_final_read < w28_map_call < w2c_success_return:
+        fail("dependency w2c-nonzero validation/read order regressed")
+    w2c_complete_rows = w2c_map[w2c_loop:w2c_partial]
+    w2c_partial_row = w2c_map[w2c_partial:]
+    if w2c_complete_rows.count(
+                '_lw(dependency_w2c_nonzero_target + offset + ') != 8 or \
+            w2c_map.count(
+                'for (offset = 0; offset <= 0x60; offset += 0x20)') != 1 or \
+            w2c_partial_row.count('_lw(dependency_w2c_nonzero_target + 0x') != 3 or \
+            w2c_map.count('zeroCtrlMipsBranchTarget(') != 2 or \
+            w2c_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            w2c_map.count(
+                'zeroCtrlWriteConstructed0DependencyW28CalleeMap(') != 1 or \
+            '0x8C825A34' in w2c_map or '0x8C825B34' in w2c_map or \
+            re.search(r'delay\s*&\s*0xFFFF', w2c_map) or \
+            'dependency_w2c_nonzero_target + 0x8C' in w2c_map or \
+            'dependency_w2c_nonzero_target + 0x6F4' in w2c_map or \
+            any(token in w2c_map for token in
+                ('0x35A24', 'a989_target_dependency', '_sw(', '_sb(',
+                 'sceKernelDcache', 'sceKernelIcache', 'for (candidate',
+                 'dependency_consumer_target + 0x2D0',
+                 'dependency_consumer_target + 0x667')):
+        fail("dependency w2c-nonzero map follows code, duplicates, or exceeds bounds")
+    dependency44_map_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0Dependency44CalleeMap(')
+    dependency44_map_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0DependencyConsumerContinuation(',
+            dependency44_map_start)
+    dependency44_map = kernel[dependency44_map_start:dependency44_map_end]
+    if dependency44_map_start < 0 or dependency44_map_end < 0:
+        fail("constructed0 dependency+0x44 callee map is missing")
+    for token in ('int destination;',
+            'dependency_consumer_target + 0x1A8) != 0x262401A0',
+            'dependency_consumer_target + 0x1AC) != 0x26650044',
+            'for (offset = 0x1B0; offset <= 0x24C; offset += 4)',
+            'destination = zeroCtrlMipsGprWriteDestination(word)',
+            'destination < 0 || destination == 5',
+            'word = _lw(dependency_consumer_target + 0x250)',
+            '(word >> 26) != 3',
+            '_lw(dependency_consumer_target + 0x254) != 0xAE20019C',
+            'dependency44_callee_target = zeroCtrlMipsJumpTarget(',
+            'dependency_consumer_target + 0x250,',
+            '_lw(dependency_consumer_target + 0x250)',
+            'zeroCtrlModuleContainingSegment(paf, dependency44_callee_target,',
+            'segment != 0', 'remaining < 0x100',
+            'zeroCtrlBridgeExecutableRange(paf, dependency44_callee_target,',
+            '[psp1000-constructed0-dependency-44-callee] validation=0',
+            '[psp1000-constructed0-dependency-44-callee] validation=1',
+            'call_off=0x250 target=0x%08X target_off=0x%X size=0x100',
+            '[psp1000-constructed0-dependency-44-callee-code]'):
+        if token not in dependency44_map:
+            fail("dependency+0x44 callee proof lacks " + token)
+    dependency44_prefix_range = dependency44_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,')
+    dependency44_prefix_size = dependency44_map.find(
+            '0x258)', dependency44_prefix_range)
+    dependency44_setup_a0 = dependency44_map.find(
+            'dependency_consumer_target + 0x1A8) != 0x262401A0',
+            dependency44_prefix_size)
+    dependency44_setup_a1 = dependency44_map.find(
+            'dependency_consumer_target + 0x1AC) != 0x26650044',
+            dependency44_setup_a0)
+    dependency44_live_loop = dependency44_map.find(
+            'for (offset = 0x1B0; offset <= 0x24C; offset += 4)',
+            dependency44_setup_a1)
+    dependency44_live_read = dependency44_map.find(
+            'word = _lw(dependency_consumer_target + offset)',
+            dependency44_live_loop)
+    dependency44_live_decode = dependency44_map.find(
+            'destination = zeroCtrlMipsGprWriteDestination(word)',
+            dependency44_live_read)
+    dependency44_live_fail = dependency44_map.find(
+            'destination < 0 || destination == 5', dependency44_live_decode)
+    dependency44_call_read = dependency44_map.find(
+            'word = _lw(dependency_consumer_target + 0x250)',
+            dependency44_live_fail)
+    dependency44_jal = dependency44_map.find(
+            '(word >> 26) != 3', dependency44_call_read)
+    dependency44_delay = dependency44_map.find(
+            '_lw(dependency_consumer_target + 0x254) != 0xAE20019C',
+            dependency44_jal)
+    dependency44_decode = dependency44_map.find(
+            'dependency44_callee_target = zeroCtrlMipsJumpTarget(',
+            dependency44_delay)
+    dependency44_decode_pc = dependency44_map.find(
+            'dependency_consumer_target + 0x250,', dependency44_decode)
+    dependency44_decode_word = dependency44_map.find(
+            '_lw(dependency_consumer_target + 0x250)', dependency44_decode_pc)
+    dependency44_owner = dependency44_map.find(
+            'zeroCtrlModuleContainingSegment(paf, dependency44_callee_target,',
+            dependency44_decode_word)
+    dependency44_segment = dependency44_map.find(
+            'segment != 0', dependency44_owner)
+    dependency44_remaining = dependency44_map.find(
+            'remaining < 0x100', dependency44_segment)
+    dependency44_range = dependency44_map.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency44_callee_target,',
+            dependency44_remaining)
+    dependency44_range_size = dependency44_map.find(
+            '0x100)', dependency44_range)
+    dependency44_header = dependency44_map.find(
+            '[psp1000-constructed0-dependency-44-callee] validation=1',
+            dependency44_range_size)
+    dependency44_loop = dependency44_map.find(
+            'for (offset = 0; offset <= 0xE0; offset += 0x20)',
+            dependency44_header)
+    dependency44_first_read = dependency44_map.find(
+            '_lw(dependency44_callee_target + offset + 0x00)',
+            dependency44_loop)
+    dependency44_last_read = dependency44_map.find(
+            '_lw(dependency44_callee_target + offset + 0x1C)',
+            dependency44_loop)
+    if not 0 <= dependency44_prefix_range < dependency44_prefix_size < \
+            dependency44_setup_a0 < dependency44_setup_a1 < \
+            dependency44_live_loop < dependency44_live_read < \
+            dependency44_live_decode < dependency44_live_fail < \
+            dependency44_call_read < dependency44_jal < dependency44_delay < \
+            dependency44_decode < dependency44_decode_pc < \
+            dependency44_decode_word < dependency44_owner < \
+            dependency44_segment < dependency44_remaining < \
+            dependency44_range < dependency44_range_size < \
+            dependency44_header < dependency44_loop < \
+            dependency44_first_read < dependency44_last_read:
+        fail("dependency+0x44 callee derivation/range order regressed")
+    dependency44_rows = dependency44_map[dependency44_loop:]
+    if dependency44_rows.count(
+                '_lw(dependency44_callee_target + offset + ') != 8 or \
+            dependency44_map.count(
+                'for (offset = 0; offset <= 0xE0; offset += 0x20)') != 1 or \
+            dependency44_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            dependency44_map.count(
+                'dependency44_callee_target = zeroCtrlMipsJumpTarget(') != 1 or \
+            'dependency44_callee_target + offset + 0x20' in dependency44_rows or \
+            'dependency44_callee_target + 0x100' in dependency44_map or \
+            any(token in dependency44_map for token in
+                ('0x35A24', 'zeroCtrlMipsBranchTarget',
+                 'a989_target_dependency', 'a989_target_node',
+                 'a989_target_outer', 'a989_target_inner', '_sw(', '_sb(',
+                 'sceKernelDcache', 'sceKernelIcache', 'dependency+0x44')):
+        fail("dependency+0x44 callee map follows code, uses runtime state, or writes")
+    consumer_cont_start = kernel.find(
+            'static void zeroCtrlWriteConstructed0DependencyConsumerContinuation(')
+    consumer_cont_end = kernel.find(
+            '\nstatic void zeroCtrlWriteConstructed0DependencyMap(',
+            consumer_cont_start)
+    consumer_cont = kernel[consumer_cont_start:consumer_cont_end]
+    if consumer_cont_start < 0 or consumer_cont_end < 0:
+        fail("constructed0 dependency consumer continuation is missing")
+    for token in ('dependency_consumer_target + 0x1A8) != 0x262401A0',
+            'dependency_consumer_target + 0x1AC) != 0x26650044',
+            'for (offset = 0x1B0; offset <= 0x1FC; offset += 4)',
+            'zeroCtrlMipsGprWriteDestination(',
+            '_lw(dependency_consumer_target + offset)) == 5',
+            'dependency_consumer_target + 0x200, 0x100',
+            '[psp1000-constructed0-dependency-consumer-cont] ',
+            'validation=0\\n',
+            '[psp1000-constructed0-dependency-consumer-cont] validation=1',
+            'start_off=0x200 size=0x100',
+            '[psp1000-constructed0-dependency-consumer-cont-code]'):
+        if token not in consumer_cont:
+            fail("dependency consumer continuation proof lacks " + token)
+    cont_prefix_range = consumer_cont.find(
+            'zeroCtrlBridgeExecutableRange(paf, dependency_consumer_target,')
+    cont_prefix_size = consumer_cont.find('0x200)', cont_prefix_range)
+    cont_setup_a0 = consumer_cont.find(
+            'dependency_consumer_target + 0x1A8) != 0x262401A0',
+            cont_prefix_size)
+    cont_setup_a1 = consumer_cont.find(
+            'dependency_consumer_target + 0x1AC) != 0x26650044',
+            cont_setup_a0)
+    cont_liveness_loop = consumer_cont.find(
+            'for (offset = 0x1B0; offset <= 0x1FC; offset += 4)',
+            cont_setup_a1)
+    cont_liveness_decode = consumer_cont.find(
+            'zeroCtrlMipsGprWriteDestination(', cont_liveness_loop)
+    cont_liveness_read = consumer_cont.find(
+            '_lw(dependency_consumer_target + offset)', cont_liveness_decode)
+    cont_liveness_a1 = consumer_cont.find('== 5', cont_liveness_read)
+    cont_range = consumer_cont.find(
+            'zeroCtrlBridgeExecutableRange(paf,', cont_liveness_a1)
+    cont_range_args = consumer_cont.find(
+            'dependency_consumer_target + 0x200, 0x100', cont_range)
+    cont_header = consumer_cont.find(
+            '[psp1000-constructed0-dependency-consumer-cont] validation=1',
+            cont_range_args)
+    cont_loop = consumer_cont.find(
+            'for (offset = 0x200; offset <= 0x2E0; offset += 0x20)',
+            cont_header)
+    cont_first_read = consumer_cont.find(
+            '_lw(dependency_consumer_target + offset + 0x00)', cont_loop)
+    cont_last_read = consumer_cont.find(
+            '_lw(dependency_consumer_target + offset + 0x1C)', cont_loop)
+    if not 0 <= cont_prefix_range < cont_prefix_size < cont_setup_a0 < \
+            cont_setup_a1 < cont_liveness_loop < cont_liveness_decode < \
+            cont_liveness_read < cont_liveness_a1 < cont_range < \
+            cont_range_args < cont_header < cont_loop < cont_first_read < \
+            cont_last_read:
+        fail("dependency consumer continuation validation/read order regressed")
+    cont_rows = consumer_cont[cont_loop:]
+    if cont_rows.count('_lw(dependency_consumer_target + offset + ') != 8 or \
+            consumer_cont.count(
+                'for (offset = 0x200; offset <= 0x2E0; offset += 0x20)') != 1 or \
+            'dependency_consumer_target + offset + 0x20' in cont_rows or \
+            'dependency_consumer_target + 0x300' in consumer_cont or \
+            any(token in consumer_cont for token in
+                ('0x35A24', 'zeroCtrlMipsJumpTarget',
+                 'zeroCtrlMipsBranchTarget',
+                 'zeroCtrlWriteConstructed0DependencyConsumerContinuation('
+                 'paf,', 'a989_target_dependency', 'a989_target_node',
+                 'a989_target_outer', 'a989_target_inner', '_sw(', '_sb(',
+                 'sceKernelDcache', 'sceKernelIcache')):
+        fail("dependency consumer continuation exceeds bounds, follows code, uses runtime state, or writes")
     map_start = kernel.find(
             'static void zeroCtrlWriteConstructed0DependencyMap(')
     map_end = kernel.find(
@@ -3081,10 +4728,36 @@ def check_sources(root):
     map_call = dependency_analysis.find(
             'zeroCtrlWriteConstructed0DependencyMap(paf, target);',
             no_return_record)
+    consumer_cont_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyConsumerContinuation(paf, target);',
+            map_call)
+    w40_map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(paf, target);',
+            consumer_cont_call)
+    w2c_map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(paf, target);',
+            w40_map_call)
+    dependency44_map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0Dependency44CalleeMap(paf, target);',
+            w2c_map_call)
+    helper_map_call = dependency_analysis.find(
+            'zeroCtrlWriteConstructed0DependencyHelperMap(paf, target);',
+            dependency44_map_call)
     no_return_exit = dependency_analysis.find('return 0;', map_call)
-    if not 0 <= no_return_gate < no_return_record < map_call < no_return_exit or \
+    if not 0 <= no_return_gate < no_return_record < map_call < \
+            consumer_cont_call < w40_map_call < dependency44_map_call < \
+            helper_map_call < no_return_exit or not w40_map_call < \
+            w2c_map_call < dependency44_map_call or \
             dependency_analysis.count(
-                'zeroCtrlWriteConstructed0DependencyMap(') != 1:
+                'zeroCtrlWriteConstructed0DependencyMap(') != 1 or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0DependencyConsumerContinuation(') != 1 or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0DependencyW40ZeroTargetMap(') != 1 or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0DependencyW2CNonzeroTargetMap(') != 1 or \
+            dependency_analysis.count(
+                'zeroCtrlWriteConstructed0Dependency44CalleeMap(') != 1:
         fail("dependency map is not gated solely by the existing NO_RETURN path")
     if 'int constructed0_dependency_written = 0;' not in writer or \
             'slide_diag.constructed0_dependency' in kernel:
@@ -3210,10 +4883,12 @@ def check_sources(root):
     if initial_implementation_map.count(
                 '_lw(implementation_target + offset + ') != 8 or \
             dependency_impl_map.count('zeroCtrlMipsJumpTarget(') != 1 or \
+            dependency_impl_map.count(
+                'sceKernelFindModuleByAddress(implementation_target)') != 1 or \
             'copy_target + 0x008' in dependency_impl_map or \
             any(token in dependency_impl_map for token in
                 ('0x08820140', '0x35A24', '0x148CDC', '0x15B9C4',
-                 'scePaf_Module', 'zeroCtrlMipsBranchTarget',
+                 'scePaf_Module',
                  'a989_target_dependency', 'a989_target_node',
                  'a989_target_outer', 'a989_target_inner', '_sw(',
                  'sceKernelDcache', 'sceKernelIcache')):
@@ -3252,17 +4927,79 @@ def check_sources(root):
             continuation_range_args < continuation_header < continuation_loop < \
             continuation_first_read < continuation_last_read:
         fail("copy continuation reads before prefix/full-range validation")
-    if continuation_map.count(
+    continuation2_start = continuation_map.find(
+            'unsigned int boundary_branch =')
+    continuation1_map = continuation_map[:continuation2_start]
+    continuation2_map = continuation_map[continuation2_start:]
+    if continuation2_start < 0:
+        fail("copy implementation second continuation is missing")
+    if continuation1_map.count(
                 '_lw(implementation_target + offset + ') != 8 or \
-            'offset <= 0x280' in continuation_map or \
-            'implementation_target + 0x280' in continuation_map or \
-            any(token in continuation_map for token in
+            'offset <= 0x280' in continuation1_map or \
+            'implementation_target + 0x280' in continuation1_map or \
+            any(token in continuation1_map for token in
                 ('0x08820340', 'sceKernelLibrary', '0x540',
                  'zeroCtrlMipsJumpTarget', 'zeroCtrlMipsBranchTarget',
                  'a989_target_dependency', 'a989_target_node',
                  'a989_target_outer', 'a989_target_inner', '_sw(',
                  'sceKernelDcache', 'sceKernelIcache')):
         fail("copy continuation exceeds bounds, follows code, uses runtime state, or writes")
+    for token in ('_lw(implementation_target + 0x278) != 0x2CC70008',
+            'boundary_branch != 0x10E00008',
+            '(boundary_branch >> 26) != 4',
+            'zeroCtrlMipsBranchTarget(implementation_target + 0x27C,',
+            'boundary_branch) != implementation_target + 0x2A0',
+            'implementation_target + 0x280, 0x100',
+            '[psp1000-constructed0-dependency-copy-cont2] ',
+            'validation=0\\n',
+            '[psp1000-constructed0-dependency-copy-cont2] validation=1',
+            'start_off=0x280 size=0x100',
+            '[psp1000-constructed0-dependency-copy-cont2-code]'):
+        if token not in continuation2_map:
+            fail("copy implementation second continuation proof lacks " + token)
+    cont2_boundary_278 = continuation2_map.find(
+            '_lw(implementation_target + 0x278) != 0x2CC70008')
+    cont2_boundary_27c = continuation2_map.find(
+            'boundary_branch != 0x10E00008', cont2_boundary_278)
+    cont2_opcode = continuation2_map.find(
+            '(boundary_branch >> 26) != 4', cont2_boundary_27c)
+    cont2_target = continuation2_map.find(
+            'zeroCtrlMipsBranchTarget(implementation_target + 0x27C,',
+            cont2_opcode)
+    cont2_target_exact = continuation2_map.find(
+            'boundary_branch) != implementation_target + 0x2A0', cont2_target)
+    cont2_range = continuation2_map.find(
+            'zeroCtrlBridgeExecutableRange(owner,', cont2_target_exact)
+    cont2_range_args = continuation2_map.find(
+            'implementation_target + 0x280, 0x100', cont2_range)
+    cont2_header = continuation2_map.find(
+            '[psp1000-constructed0-dependency-copy-cont2] validation=1',
+            cont2_range_args)
+    cont2_loop = continuation2_map.find(
+            'for (offset = 0x280; offset <= 0x360; offset += 0x20)',
+            cont2_header)
+    cont2_first_read = continuation2_map.find(
+            '_lw(implementation_target + offset + 0x00)', cont2_loop)
+    cont2_last_read = continuation2_map.find(
+            '_lw(implementation_target + offset + 0x1C)', cont2_loop)
+    if not 0 <= cont2_boundary_278 < cont2_boundary_27c < cont2_opcode < \
+            cont2_target < cont2_target_exact < cont2_range < \
+            cont2_range_args < cont2_header < cont2_loop < cont2_first_read < \
+            cont2_last_read:
+        fail("copy second continuation reads before boundary/full-range validation")
+    if continuation2_map.count(
+                '_lw(implementation_target + offset + ') != 8 or \
+            continuation2_map.count('zeroCtrlMipsBranchTarget(') != 1 or \
+            continuation2_map.count('for (offset = 0x280; offset <= 0x360; '
+                'offset += 0x20)') != 1 or \
+            'implementation_target + offset + 0x20' in continuation2_map or \
+            'implementation_target + 0x380' in continuation2_map or \
+            any(token in continuation2_map for token in
+                ('0x08820340', 'sceKernelLibrary', '0x540',
+                 'zeroCtrlMipsJumpTarget', 'a989_target_dependency',
+                 'a989_target_node', 'a989_target_outer', 'a989_target_inner',
+                 '_sw(', 'sceKernelDcache', 'sceKernelIcache')):
+        fail("copy second continuation exceeds bounds, follows code, uses runtime state, or writes")
     copy_map_start = impl_map_end + 1
     copy_map_end = kernel.find(
             '\nstatic int zeroCtrlWriteConstructed0DependencyConsumer(void)',
@@ -3493,7 +5230,8 @@ def check_sources(root):
     if len(parsed_keys) != len(set(parsed_keys)):
         fail("sample INI contains duplicate active configuration keys")
     required_ini = ("PSP1000SlidePlugin", "PSP1000SlideTriggerMode",
-            "PSP1000Diagnostics", "PSP1000SonyStartTrace",
+            "PSP1000Diagnostics", "PSP1000DiagnosticsVerbose",
+            "PSP1000SonyStartTrace",
             "PSP1000SelectiveSlideTrigger58D4")
     for key in required_ini:
         if parsed_keys.count(key) != 1:
@@ -3501,6 +5239,8 @@ def check_sources(root):
     experimental = sample_config[sample_config.find("[Experimental]"):]
     for line in experimental.splitlines():
         line = line.strip()
+        if line == "PSP1000Diagnostics = Enabled":
+            continue
         if line.startswith("PSP1000") and not line.endswith("= Disabled"):
             fail("sample INI enables experimental PSP-1000 behavior: " + line)
     legacy_pos = sample_config.find("PSP1000SelectiveSlideTrigger58D4")
@@ -4597,7 +6337,7 @@ def check_sources(root):
     worker = user[worker_start:worker_end]
     if "#define PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED 0" not in user or \
             "if (PSP1000_RUNTIME_REQUEST_EXECUTION_ENABLED &&" not in worker:
-        fail("direct +57B0 runtime execution is not compile-time disabled")
+        fail("legacy direct +57B0 runtime execution is not compile-time disabled")
     for token in ("psp1000RuntimeRequestValid && psp1000RuntimeRequest",
             "psp1000RuntimeRequest = 0", "psp1000RuntimeRequestCalled++",
             "psp1000RuntimeRequestTarget", "request_function()",

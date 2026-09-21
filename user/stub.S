@@ -167,7 +167,36 @@ zeroCtrlVsh314A4FunctionalBridge:
     lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)
     beqz    $t1, 9f
     nop
-    BRIDGE_INC zeroCtrlVsh314A4RequestSeen
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    lw      $t4, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4MilestoneAck)
+    lw      $t5, %lo(zeroCtrlVsh314A4MilestoneAck)($t0)
+    beqz    $t4, .L314A4RequestObserved
+    nop
+    addiu   $t0, $zero, 1
+    beq     $t4, $t0, .L314A4ValidationGate
+    nop
+    addiu   $t0, $zero, 2
+    beq     $t4, $t0, .L314A4ShadowGate
+    nop
+    addiu   $t0, $zero, 3
+    beq     $t4, $t0, .L314A4ArmGate
+    nop
+    addiu   $t0, $zero, 4
+    beq     $t4, $t0, .L314A4CallGate
+    nop
+    addiu   $t0, $zero, 5
+    beq     $t4, $t0, .L314A4PostGate
+    nop
+    addiu   $t0, $zero, 8
+    beq     $t4, $t0, .L314A4InvokeGate
+    nop
+    addiu   $t0, $zero, 9
+    beq     $t4, $t0, .L314A4CaptureGate
+    nop
+    b       9f
+    nop
+.L314A4RequestObserved:
     lui     $t0, %hi(zeroCtrlVsh314A4Busy)
     lw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)
     bnez    $t1, 9f
@@ -176,72 +205,452 @@ zeroCtrlVsh314A4FunctionalBridge:
     lw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)
     bnez    $t1, 9f
     nop
-
-    /* Reject-object evidence belongs only to this gated request attempt. */
+    BRIDGE_INC zeroCtrlVsh314A4RequestSeen
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 1
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4ValidationGate:
+    bne     $t5, $t4, 9f
+    nop
     lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
     sw      $zero, %lo(zeroCtrlVsh314A4RejectObject)($t0)
 
-    /* No PAF pointer is read before the request, busy, and attempted gates. */
-    lui     $t0, %hi(zeroCtrlVsh314A4RootSlot)
-    lw      $s5, %lo(zeroCtrlVsh314A4RootSlot)($t0)
-    BRIDGE_VALIDATE $s5, 4, 1f
-    lw      $s1, 0($s5)
-    BRIDGE_VALIDATE $s1, 8, 1f
-    lw      $s2, 4($s1)
-    BRIDGE_VALIDATE $s2, 0x18, 1f
-    lw      $t3, 0($s2)
-    lui     $t0, %hi(zeroCtrlVsh314A4Constructed0)
-    lw      $t0, %lo(zeroCtrlVsh314A4Constructed0)($t0)
-    bne     $t3, $t0, 2f
+    /* All retained-state reads remain behind the request/busy/attempted gates. */
+    lui     $t0, %hi(zeroCtrlPafA989DependencyDirectValid)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyDirectValid)($t0)
+    addiu   $t2, $zero, 1
+    bne     $t1, $t2, 1f
     nop
-    lw      $s3, 4($s2)
-    BRIDGE_VALIDATE $s3, 0x10, 1f
-    lw      $t3, 0x14($s2)
-    lui     $t0, %hi(zeroCtrlVsh314A4Constructed1)
-    lw      $t0, %lo(zeroCtrlVsh314A4Constructed1)($t0)
-    bne     $t3, $t0, 3f
+    lui     $t0, %hi(zeroCtrlPafA989W28BytesValid)
+    lw      $t1, %lo(zeroCtrlPafA989W28BytesValid)($t0)
+    bne     $t1, $t2, 1f
     nop
-    lw      $t3, 0x0C($s3)
-    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
-    lw      $t0, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
-    bne     $t3, $t0, 4f
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Valid)
+    lw      $t1, %lo(zeroCtrlPafA989Pair00Valid)($t0)
+    bne     $t1, $t2, 1f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CValid)
+    lw      $t1, %lo(zeroCtrlPafA989Pair0CValid)($t0)
+    bne     $t1, $t2, 1f
     nop
 
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW2C)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW2C)($t0)
+    addiu   $t2, $zero, 0x27
+    bne     $t1, $t2, 2f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW34)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW34)($t0)
+    bnez    $t1, 2f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW3C)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW3C)($t0)
+    bnez    $t1, 2f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW40)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW40)($t0)
+    bnez    $t1, 2f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW54)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW54)($t0)
+    bnez    $t1, 2f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW68)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW68)($t0)
+    bnez    $t1, 2f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW6C)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW6C)($t0)
+    bnez    $t1, 2f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW20)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW20)($t0)
+    bnez    $t1, 2f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW38)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW38)($t0)
+    addiu   $t2, $zero, 0x32
+    bne     $t1, $t2, 2f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW64)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW64)($t0)
+    addiu   $t2, $zero, 0x0C
+    bne     $t1, $t2, 2f
+    nop
+
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Len)
+    lw      $t1, %lo(zeroCtrlPafA989Pair00Len)($t0)
+    addiu   $t2, $zero, 0x0E
+    bne     $t1, $t2, 3f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CLen)
+    lw      $t1, %lo(zeroCtrlPafA989Pair0CLen)($t0)
+    addiu   $t2, $zero, 0x08
+    bne     $t1, $t2, 3f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data00)
+    addiu   $t0, $t0, %lo(zeroCtrlPafA989Pair00Data00)
+    lbu     $t1, 0x0E($t0)
+    bnez    $t1, 3f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData00)
+    addiu   $t0, $t0, %lo(zeroCtrlPafA989Pair0CData00)
+    lbu     $t1, 0x08($t0)
+    bnez    $t1, 3f
+    nop
+    lui     $t0, %hi(zeroCtrlPafA989W28Data00)
+    addiu   $t0, $t0, %lo(zeroCtrlPafA989W28Data00)
+    lbu     $t1, 0x27($t0)
+    bnez    $t1, 3f
+    nop
+
+    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
+    lw      $s5, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
+    lui     $t2, 0x0001
+    ori     $t2, $t2, 0xA274
+    addu    $t2, $s5, $t2
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW18)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW18)($t0)
+    bne     $t1, $t2, 4f
+    nop
+    lui     $t2, 0x0001
+    ori     $t2, $t2, 0xA324
+    addu    $t2, $s5, $t2
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW1C)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW1C)($t0)
+    bne     $t1, $t2, 4f
+    nop
+    lui     $t2, 0x0001
+    ori     $t2, $t2, 0xA3A4
+    addu    $t2, $s5, $t2
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW24)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW24)($t0)
+    bne     $t1, $t2, 4f
+    nop
+
+.L314A4ValidationComplete:
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 2
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4ShadowGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
+    lw      $s5, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
+.L314A4ShadowBuild:
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    sw      $zero, 0x00($s1)
+    sw      $zero, 0x04($s1)
+    sw      $zero, 0x08($s1)
+    sw      $zero, 0x0C($s1)
+    sw      $zero, 0x10($s1)
+    sw      $zero, 0x14($s1)
+    sw      $zero, 0x18($s1)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
+    sw      $zero, 0x00($s2)
+    sw      $zero, 0x04($s2)
+    sw      $zero, 0x08($s2)
+    sw      $zero, 0x0C($s2)
+    lui     $s3, %hi(zeroCtrlPafA989ShadowDependency)
+    addiu   $s3, $s3, %lo(zeroCtrlPafA989ShadowDependency)
+    sw      $zero, 0x00($s3)
+    sw      $zero, 0x04($s3)
+    sw      $zero, 0x08($s3)
+    sw      $zero, 0x0C($s3)
+    sw      $zero, 0x10($s3)
+    sw      $zero, 0x14($s3)
+    sw      $zero, 0x18($s3)
+    sw      $zero, 0x1C($s3)
+    sw      $zero, 0x20($s3)
+    sw      $zero, 0x24($s3)
+    sw      $zero, 0x28($s3)
+    sw      $zero, 0x2C($s3)
+    sw      $zero, 0x30($s3)
+    sw      $zero, 0x34($s3)
+    sw      $zero, 0x38($s3)
+    sw      $zero, 0x3C($s3)
+    sw      $zero, 0x40($s3)
+    sw      $zero, 0x44($s3)
+    sw      $zero, 0x48($s3)
+    sw      $zero, 0x4C($s3)
+    sw      $zero, 0x50($s3)
+    sw      $zero, 0x54($s3)
+    sw      $zero, 0x58($s3)
+    sw      $zero, 0x5C($s3)
+    sw      $zero, 0x60($s3)
+    sw      $zero, 0x64($s3)
+    sw      $zero, 0x68($s3)
+    sw      $zero, 0x6C($s3)
+    lui     $t2, %hi(zeroCtrlPafA989Shadow44NodeA)
+    addiu   $t2, $t2, %lo(zeroCtrlPafA989Shadow44NodeA)
+    sw      $zero, 0x00($t2)
+    lui     $t3, %hi(zeroCtrlPafA989Shadow44NodeB)
+    addiu   $t3, $t3, %lo(zeroCtrlPafA989Shadow44NodeB)
+    sw      $zero, 0x00($t3)
+    lui     $t4, %hi(zeroCtrlPafA989Shadow44Root)
+    addiu   $t4, $t4, %lo(zeroCtrlPafA989Shadow44Root)
+    sw      $zero, 0x00($t4)
+    sw      $zero, 0x04($t4)
+    sw      $zero, 0x08($t4)
+    sw      $zero, 0x0C($t4)
+    sw      $zero, 0x10($t4)
+    sw      $zero, 0x14($t4)
+    sw      $zero, 0x18($t4)
+    sw      $zero, 0x1C($t4)
+    sw      $zero, 0x20($t4)
+    sw      $zero, 0x24($t4)
+    sw      $zero, 0x28($t4)
+    sw      $zero, 0x2C($t4)
+    sw      $t3, 0x00($t2)
+    sw      $t4, 0x00($t3)
+    addiu   $t1, $zero, 0x0A
+    sb      $t1, 0x2D($t4)
+
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data00)
+    addiu   $t0, $t0, %lo(zeroCtrlPafA989Pair00Data00)
+    sw      $t0, 0x00($s3)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Len)
+    lw      $t1, %lo(zeroCtrlPafA989Pair00Len)($t0)
+    sw      $t1, 0x04($s3)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData00)
+    addiu   $t0, $t0, %lo(zeroCtrlPafA989Pair0CData00)
+    sw      $t0, 0x0C($s3)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CLen)
+    lw      $t1, %lo(zeroCtrlPafA989Pair0CLen)($t0)
+    sw      $t1, 0x10($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW18)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW18)($t0)
+    sw      $t1, 0x18($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW1C)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW1C)($t0)
+    sw      $t1, 0x1C($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW20)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW20)($t0)
+    sw      $t1, 0x20($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW24)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW24)($t0)
+    sw      $t1, 0x24($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW2C)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW2C)($t0)
+    sw      $t1, 0x2C($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW34)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW34)($t0)
+    sw      $t1, 0x34($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW38)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW38)($t0)
+    sw      $t1, 0x38($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW3C)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW3C)($t0)
+    sw      $t1, 0x3C($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW40)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW40)($t0)
+    sw      $t1, 0x40($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW54)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW54)($t0)
+    sw      $t1, 0x54($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW64)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW64)($t0)
+    sw      $t1, 0x64($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW68)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW68)($t0)
+    sw      $t1, 0x68($s3)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW6C)
+    lw      $t1, %lo(zeroCtrlPafA989DependencyW6C)($t0)
+    sw      $t1, 0x6C($s3)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data00)
+    addiu   $t0, $t0, %lo(zeroCtrlPafA989W28Data00)
+    sw      $t0, 0x28($s3)
+    sw      $t2, 0x44($s3)
+
+    sw      $s3, 0x08($s2)
+    sw      $s5, 0x0C($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4Constructed0)
+    lw      $t1, %lo(zeroCtrlVsh314A4Constructed0)($t0)
+    sw      $t1, 0x00($s1)
+    sw      $s2, 0x04($s1)
+    addiu   $t1, $zero, -1
+    sw      $t1, 0x08($s1)
+    sw      $t1, 0x0C($s1)
+    lui     $t0, %hi(zeroCtrlVsh314A4Constructed1)
+    lw      $t1, %lo(zeroCtrlVsh314A4Constructed1)($t0)
+    sw      $t1, 0x14($s1)
+
+.L314A4ShadowComplete:
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 3
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4ArmGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
+    lui     $s3, %hi(zeroCtrlPafA989ShadowDependency)
+    addiu   $s3, $s3, %lo(zeroCtrlPafA989ShadowDependency)
+    lui     $t2, %hi(zeroCtrlPafA989Shadow44NodeA)
+    addiu   $t2, $t2, %lo(zeroCtrlPafA989Shadow44NodeA)
+    lw      $t1, 0x04($s1)
+    bne     $t1, $s2, 4f
+    nop
+    lw      $t1, 0x08($s2)
+    bne     $t1, $s3, 4f
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4Constructed1)
+    lw      $t0, %lo(zeroCtrlVsh314A4Constructed1)($t0)
+    lw      $t1, 0x14($s1)
+    bne     $t1, $t0, 4f
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
+    lw      $t0, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
+    lw      $t1, 0x0C($s2)
+    bne     $t1, $t0, 4f
+    nop
+    lw      $t1, 0x44($s3)
+    bne     $t1, $t2, 4f
+    nop
+    lw      $t1, 0x48($s3)
+    bnez    $t1, 4f
+    nop
+    lw      $t3, 0x00($t2)
+    lui     $t4, %hi(zeroCtrlPafA989Shadow44NodeB)
+    addiu   $t4, $t4, %lo(zeroCtrlPafA989Shadow44NodeB)
+    bne     $t3, $t4, 4f
+    nop
+    lw      $t3, 0x00($t4)
+    lui     $t4, %hi(zeroCtrlPafA989Shadow44Root)
+    addiu   $t4, $t4, %lo(zeroCtrlPafA989Shadow44Root)
+    bne     $t3, $t4, 4f
+    nop
+    lbu     $t1, 0x2D($t4)
+    addiu   $t3, $zero, 0x0A
+    bne     $t1, $t3, 4f
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4Reject)
+    addiu   $t1, $zero, 10
+    sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 4
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4CallGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
     lui     $t0, %hi(zeroCtrlVsh314A4Busy)
     addiu   $t1, $zero, 1
     sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)
     lui     $t0, %hi(zeroCtrlVsh314A4Attempted)
     sw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)
     BRIDGE_INC zeroCtrlVsh314A4Attempts
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 8
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4InvokeGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
     BRIDGE_INC zeroCtrlVsh314A4Stage0Calls
     lui     $t9, %hi(zeroCtrlVsh314A4Constructed0)
     lw      $t9, %lo(zeroCtrlVsh314A4Constructed0)($t9)
-    move    $a0, $s3
+    move    $a0, $s2
     jalr    $t9
-    move    $a1, $s2
-
-    BRIDGE_VALIDATE $s3, 0x10, 5f
-    lw      $s4, 4($s3)
-    BRIDGE_VALIDATE $s4, 4, 5f
-    lw      $t3, 4($s2)
-    bne     $t3, $s3, 5f
+    move    $a1, $s1
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 9
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
     nop
-    lw      $t3, 0x14($s2)
+.L314A4CaptureGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
+    lw      $s4, 0x04($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
+    sw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)
+    lw      $t3, 0x04($s1)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostOuter04)
+    sw      $t3, %lo(zeroCtrlVsh314A4PostOuter04)($t0)
+    lw      $t3, 0x14($s1)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostOuter14)
+    sw      $t3, %lo(zeroCtrlVsh314A4PostOuter14)($t0)
+    lw      $t3, 0x08($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostInner08)
+    sw      $t3, %lo(zeroCtrlVsh314A4PostInner08)($t0)
+    lw      $t3, 0x0C($s2)
+    lui     $t0, %hi(zeroCtrlVsh314A4PostInner0C)
+    sw      $t3, %lo(zeroCtrlVsh314A4PostInner0C)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4Busy)
+    sw      $zero, %lo(zeroCtrlVsh314A4Busy)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 5
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4PostGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
+    lui     $s3, %hi(zeroCtrlPafA989ShadowDependency)
+    addiu   $s3, $s3, %lo(zeroCtrlPafA989ShadowDependency)
+    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
+    lw      $s5, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
+    lw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)
+    BRIDGE_VALIDATE $s4, 4, 5f
+    lui     $t0, %hi(zeroCtrlVsh314A4PostOuter04)
+    lw      $t3, %lo(zeroCtrlVsh314A4PostOuter04)($t0)
+    bne     $t3, $s2, 5f
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4PostOuter14)
+    lw      $t3, %lo(zeroCtrlVsh314A4PostOuter14)($t0)
     lui     $t0, %hi(zeroCtrlVsh314A4Constructed1)
     lw      $t0, %lo(zeroCtrlVsh314A4Constructed1)($t0)
     bne     $t3, $t0, 5f
     nop
-    lw      $t3, 0x0C($s3)
-    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
-    lw      $t0, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
-    bne     $t3, $t0, 5f
+    lui     $t0, %hi(zeroCtrlVsh314A4PostInner08)
+    lw      $t3, %lo(zeroCtrlVsh314A4PostInner08)($t0)
+    bne     $t3, $s3, 5f
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4PostInner0C)
+    lw      $t3, %lo(zeroCtrlVsh314A4PostInner0C)($t0)
+    bne     $t3, $s5, 5f
+    nop
+
+    lui     $t0, %hi(zeroCtrlVsh314A4Reject)
+    addiu   $t1, $zero, 11
+    sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
+    b       6f
     nop
 
     BRIDGE_INC zeroCtrlVsh314A4Stage1Calls
     lui     $t9, %hi(zeroCtrlVsh314A4Constructed1)
     lw      $t9, %lo(zeroCtrlVsh314A4Constructed1)($t9)
     move    $a0, $zero
-    move    $a1, $s3
+    move    $a1, $s2
     move    $a2, $zero
     jalr    $t9
     move    $a3, $zero
@@ -249,24 +658,35 @@ zeroCtrlVsh314A4FunctionalBridge:
     sw      $zero, %lo(zeroCtrlVsh314A4Reject)($t0)
     b       8f
     nop
-1:  addiu   $t1, $zero, 1
+1:  addiu   $t1, $zero, 6
     b       7f
     nop
-2:  lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
-    sw      $s2, %lo(zeroCtrlVsh314A4RejectObject)($t0)
-    addiu   $t1, $zero, 2
+2:  addiu   $t1, $zero, 7
     b       7f
     nop
-3:  addiu   $t1, $zero, 3
+3:  addiu   $t1, $zero, 8
     b       7f
     nop
-4:  addiu   $t1, $zero, 4
+4:  addiu   $t1, $zero, 9
     b       7f
     nop
 5:  addiu   $t1, $zero, 5
+    lui     $t0, %hi(zeroCtrlVsh314A4Reject)
+    sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
+6:
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 6
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
 7:
     lui     $t0, %hi(zeroCtrlVsh314A4Reject)
     sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 7
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
 8:
     lui     $t0, %hi(zeroCtrlVsh314A4Busy)
     sw      $zero, %lo(zeroCtrlVsh314A4Busy)($t0)
@@ -374,6 +794,261 @@ zeroCtrlPafA989TargetTrace:
     sw      $a1, %lo(zeroCtrlPafA989TargetOuter)($t0)
     lui     $t0, %hi(zeroCtrlPafA989TargetInner)
     sw      $t6, %lo(zeroCtrlPafA989TargetInner)($t0)
+    lw      $t7, 0x08($t6)
+    BRIDGE_VALIDATE $t7, 0x70, 2f
+    lui     $t0, %hi(zeroCtrlPafA989TargetDependencySync)
+    sw      $t7, %lo(zeroCtrlPafA989TargetDependencySync)($t0)
+    lw      $t3, 0x2C($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW2C)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW2C)($t0)
+    lw      $t3, 0x34($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW34)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW34)($t0)
+    lw      $t3, 0x38($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW38)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW38)($t0)
+    lw      $t3, 0x3C($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW3C)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW3C)($t0)
+    lw      $t3, 0x40($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW40)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW40)($t0)
+    lw      $t3, 0x54($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW54)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW54)($t0)
+    lw      $t3, 0x64($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW64)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW64)($t0)
+    lw      $t3, 0x68($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW68)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW68)($t0)
+    lw      $t3, 0x6C($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW6C)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW6C)($t0)
+    lw      $t3, 0x28($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW28)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW28)($t0)
+    addu    $t5, $t3, $zero
+    lui     $t0, %hi(zeroCtrlPafA989W28BytesValid)
+    sw      $zero, %lo(zeroCtrlPafA989W28BytesValid)($t0)
+    beqz    $t5, 3f
+    nop
+    andi    $t2, $t5, 3
+    bnez    $t2, 3f
+    nop
+    BRIDGE_VALIDATE $t5, 0x40, 3f
+    lw      $t3, 0x00($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data00)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data00)($t0)
+    lw      $t3, 0x04($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data04)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data04)($t0)
+    lw      $t3, 0x08($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data08)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data08)($t0)
+    lw      $t3, 0x0C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data0C)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data0C)($t0)
+    lw      $t3, 0x10($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data10)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data10)($t0)
+    lw      $t3, 0x14($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data14)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data14)($t0)
+    lw      $t3, 0x18($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data18)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data18)($t0)
+    lw      $t3, 0x1C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data1C)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data1C)($t0)
+    lw      $t3, 0x20($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data20)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data20)($t0)
+    lw      $t3, 0x24($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data24)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data24)($t0)
+    lw      $t3, 0x28($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data28)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data28)($t0)
+    lw      $t3, 0x2C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data2C)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data2C)($t0)
+    lw      $t3, 0x30($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data30)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data30)($t0)
+    lw      $t3, 0x34($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data34)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data34)($t0)
+    lw      $t3, 0x38($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data38)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data38)($t0)
+    lw      $t3, 0x3C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989W28Data3C)
+    sw      $t3, %lo(zeroCtrlPafA989W28Data3C)($t0)
+    addiu   $t3, $zero, 1
+    lui     $t0, %hi(zeroCtrlPafA989W28BytesValid)
+    sw      $t3, %lo(zeroCtrlPafA989W28BytesValid)($t0)
+3:
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Valid)
+    sw      $zero, %lo(zeroCtrlPafA989Pair00Valid)($t0)
+    lw      $t5, 0x00($t7)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Ptr)
+    sw      $t5, %lo(zeroCtrlPafA989Pair00Ptr)($t0)
+    lw      $t4, 0x04($t7)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Len)
+    sw      $t4, %lo(zeroCtrlPafA989Pair00Len)($t0)
+    beqz    $t4, 5f
+    nop
+    sltiu   $t2, $t4, 0x40
+    beqz    $t2, 4f
+    nop
+    beqz    $t5, 4f
+    nop
+    andi    $t2, $t5, 3
+    bnez    $t2, 4f
+    nop
+    BRIDGE_VALIDATE $t5, 0x40, 4f
+    lw      $t3, 0x00($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data00)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data00)($t0)
+    lw      $t3, 0x04($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data04)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data04)($t0)
+    lw      $t3, 0x08($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data08)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data08)($t0)
+    lw      $t3, 0x0C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data0C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data0C)($t0)
+    lw      $t3, 0x10($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data10)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data10)($t0)
+    lw      $t3, 0x14($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data14)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data14)($t0)
+    lw      $t3, 0x18($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data18)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data18)($t0)
+    lw      $t3, 0x1C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data1C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data1C)($t0)
+    lw      $t3, 0x20($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data20)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data20)($t0)
+    lw      $t3, 0x24($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data24)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data24)($t0)
+    lw      $t3, 0x28($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data28)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data28)($t0)
+    lw      $t3, 0x2C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data2C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data2C)($t0)
+    lw      $t3, 0x30($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data30)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data30)($t0)
+    lw      $t3, 0x34($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data34)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data34)($t0)
+    lw      $t3, 0x38($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data38)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data38)($t0)
+    lw      $t3, 0x3C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Data3C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Data3C)($t0)
+5:
+    addiu   $t3, $zero, 1
+    lui     $t0, %hi(zeroCtrlPafA989Pair00Valid)
+    sw      $t3, %lo(zeroCtrlPafA989Pair00Valid)($t0)
+4:
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CValid)
+    sw      $zero, %lo(zeroCtrlPafA989Pair0CValid)($t0)
+    lw      $t5, 0x0C($t7)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CPtr)
+    sw      $t5, %lo(zeroCtrlPafA989Pair0CPtr)($t0)
+    lw      $t4, 0x10($t7)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CLen)
+    sw      $t4, %lo(zeroCtrlPafA989Pair0CLen)($t0)
+    beqz    $t4, 7f
+    nop
+    sltiu   $t2, $t4, 0x40
+    beqz    $t2, 6f
+    nop
+    beqz    $t5, 6f
+    nop
+    andi    $t2, $t5, 3
+    bnez    $t2, 6f
+    nop
+    BRIDGE_VALIDATE $t5, 0x40, 6f
+    lw      $t3, 0x00($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData00)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData00)($t0)
+    lw      $t3, 0x04($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData04)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData04)($t0)
+    lw      $t3, 0x08($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData08)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData08)($t0)
+    lw      $t3, 0x0C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData0C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData0C)($t0)
+    lw      $t3, 0x10($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData10)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData10)($t0)
+    lw      $t3, 0x14($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData14)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData14)($t0)
+    lw      $t3, 0x18($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData18)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData18)($t0)
+    lw      $t3, 0x1C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData1C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData1C)($t0)
+    lw      $t3, 0x20($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData20)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData20)($t0)
+    lw      $t3, 0x24($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData24)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData24)($t0)
+    lw      $t3, 0x28($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData28)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData28)($t0)
+    lw      $t3, 0x2C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData2C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData2C)($t0)
+    lw      $t3, 0x30($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData30)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData30)($t0)
+    lw      $t3, 0x34($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData34)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData34)($t0)
+    lw      $t3, 0x38($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData38)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData38)($t0)
+    lw      $t3, 0x3C($t5)
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CData3C)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CData3C)($t0)
+7:
+    addiu   $t3, $zero, 1
+    lui     $t0, %hi(zeroCtrlPafA989Pair0CValid)
+    sw      $t3, %lo(zeroCtrlPafA989Pair0CValid)($t0)
+6:
+    lw      $t3, 0x18($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW18)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW18)($t0)
+    lw      $t3, 0x1C($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW1C)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW1C)($t0)
+    lw      $t3, 0x20($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW20)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW20)($t0)
+    lw      $t3, 0x24($t7)
+    lui     $t0, %hi(zeroCtrlPafA989DependencyW24)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyW24)($t0)
+    addiu   $t3, $zero, 1
+    lui     $t0, %hi(zeroCtrlPafA989DependencyDirectValid)
+    sw      $t3, %lo(zeroCtrlPafA989DependencyDirectValid)($t0)
+2:
     lui     $t0, %hi(zeroCtrlPafA989TargetTraceExactHits)
     lw      $t1, %lo(zeroCtrlPafA989TargetTraceExactHits)($t0)
     addiu   $t1, $t1, 1
@@ -443,6 +1118,18 @@ zeroCtrlVsh314A4Stage1Calls: .space 4
 zeroCtrlVsh314A4Reject: .space 4
 .globl zeroCtrlVsh314A4RejectObject
 zeroCtrlVsh314A4RejectObject: .space 4
+.globl zeroCtrlVsh314A4Milestone
+zeroCtrlVsh314A4Milestone: .space 4
+.globl zeroCtrlVsh314A4MilestoneAck
+zeroCtrlVsh314A4MilestoneAck: .space 4
+.globl zeroCtrlVsh314A4PostOuter04
+zeroCtrlVsh314A4PostOuter04: .space 4
+.globl zeroCtrlVsh314A4PostOuter14
+zeroCtrlVsh314A4PostOuter14: .space 4
+.globl zeroCtrlVsh314A4PostInner08
+zeroCtrlVsh314A4PostInner08: .space 4
+.globl zeroCtrlVsh314A4PostInner0C
+zeroCtrlVsh314A4PostInner0C: .space 4
 .globl zeroCtrlVsh5704RegistrationTraceHits
 zeroCtrlVsh5704RegistrationTraceHits: .space 4
 .globl zeroCtrlPafA989TargetTraceEntryHits
@@ -455,6 +1142,163 @@ zeroCtrlPafA989TargetNode: .space 4
 zeroCtrlPafA989TargetOuter: .space 4
 .globl zeroCtrlPafA989TargetInner
 zeroCtrlPafA989TargetInner: .space 4
+.globl zeroCtrlPafA989DependencyDirectValid
+zeroCtrlPafA989DependencyDirectValid: .space 4
+.globl zeroCtrlPafA989TargetDependencySync
+zeroCtrlPafA989TargetDependencySync: .space 4
+.globl zeroCtrlPafA989DependencyW2C
+zeroCtrlPafA989DependencyW2C: .space 4
+.globl zeroCtrlPafA989DependencyW34
+zeroCtrlPafA989DependencyW34: .space 4
+.globl zeroCtrlPafA989DependencyW38
+zeroCtrlPafA989DependencyW38: .space 4
+.globl zeroCtrlPafA989DependencyW3C
+zeroCtrlPafA989DependencyW3C: .space 4
+.globl zeroCtrlPafA989DependencyW40
+zeroCtrlPafA989DependencyW40: .space 4
+.globl zeroCtrlPafA989DependencyW54
+zeroCtrlPafA989DependencyW54: .space 4
+.globl zeroCtrlPafA989DependencyW64
+zeroCtrlPafA989DependencyW64: .space 4
+.globl zeroCtrlPafA989DependencyW68
+zeroCtrlPafA989DependencyW68: .space 4
+.globl zeroCtrlPafA989DependencyW6C
+zeroCtrlPafA989DependencyW6C: .space 4
+.globl zeroCtrlPafA989DependencyW28
+zeroCtrlPafA989DependencyW28: .space 4
+.globl zeroCtrlPafA989W28BytesValid
+zeroCtrlPafA989W28BytesValid: .space 4
+.globl zeroCtrlPafA989W28Data00
+zeroCtrlPafA989W28Data00: .space 4
+.globl zeroCtrlPafA989W28Data04
+zeroCtrlPafA989W28Data04: .space 4
+.globl zeroCtrlPafA989W28Data08
+zeroCtrlPafA989W28Data08: .space 4
+.globl zeroCtrlPafA989W28Data0C
+zeroCtrlPafA989W28Data0C: .space 4
+.globl zeroCtrlPafA989W28Data10
+zeroCtrlPafA989W28Data10: .space 4
+.globl zeroCtrlPafA989W28Data14
+zeroCtrlPafA989W28Data14: .space 4
+.globl zeroCtrlPafA989W28Data18
+zeroCtrlPafA989W28Data18: .space 4
+.globl zeroCtrlPafA989W28Data1C
+zeroCtrlPafA989W28Data1C: .space 4
+.globl zeroCtrlPafA989W28Data20
+zeroCtrlPafA989W28Data20: .space 4
+.globl zeroCtrlPafA989W28Data24
+zeroCtrlPafA989W28Data24: .space 4
+.globl zeroCtrlPafA989W28Data28
+zeroCtrlPafA989W28Data28: .space 4
+.globl zeroCtrlPafA989W28Data2C
+zeroCtrlPafA989W28Data2C: .space 4
+.globl zeroCtrlPafA989W28Data30
+zeroCtrlPafA989W28Data30: .space 4
+.globl zeroCtrlPafA989W28Data34
+zeroCtrlPafA989W28Data34: .space 4
+.globl zeroCtrlPafA989W28Data38
+zeroCtrlPafA989W28Data38: .space 4
+.globl zeroCtrlPafA989W28Data3C
+zeroCtrlPafA989W28Data3C: .space 4
+.globl zeroCtrlPafA989Pair00Valid
+zeroCtrlPafA989Pair00Valid: .space 4
+.globl zeroCtrlPafA989Pair00Ptr
+zeroCtrlPafA989Pair00Ptr: .space 4
+.globl zeroCtrlPafA989Pair00Len
+zeroCtrlPafA989Pair00Len: .space 4
+.globl zeroCtrlPafA989Pair00Data00
+zeroCtrlPafA989Pair00Data00: .space 4
+.globl zeroCtrlPafA989Pair00Data04
+zeroCtrlPafA989Pair00Data04: .space 4
+.globl zeroCtrlPafA989Pair00Data08
+zeroCtrlPafA989Pair00Data08: .space 4
+.globl zeroCtrlPafA989Pair00Data0C
+zeroCtrlPafA989Pair00Data0C: .space 4
+.globl zeroCtrlPafA989Pair00Data10
+zeroCtrlPafA989Pair00Data10: .space 4
+.globl zeroCtrlPafA989Pair00Data14
+zeroCtrlPafA989Pair00Data14: .space 4
+.globl zeroCtrlPafA989Pair00Data18
+zeroCtrlPafA989Pair00Data18: .space 4
+.globl zeroCtrlPafA989Pair00Data1C
+zeroCtrlPafA989Pair00Data1C: .space 4
+.globl zeroCtrlPafA989Pair00Data20
+zeroCtrlPafA989Pair00Data20: .space 4
+.globl zeroCtrlPafA989Pair00Data24
+zeroCtrlPafA989Pair00Data24: .space 4
+.globl zeroCtrlPafA989Pair00Data28
+zeroCtrlPafA989Pair00Data28: .space 4
+.globl zeroCtrlPafA989Pair00Data2C
+zeroCtrlPafA989Pair00Data2C: .space 4
+.globl zeroCtrlPafA989Pair00Data30
+zeroCtrlPafA989Pair00Data30: .space 4
+.globl zeroCtrlPafA989Pair00Data34
+zeroCtrlPafA989Pair00Data34: .space 4
+.globl zeroCtrlPafA989Pair00Data38
+zeroCtrlPafA989Pair00Data38: .space 4
+.globl zeroCtrlPafA989Pair00Data3C
+zeroCtrlPafA989Pair00Data3C: .space 4
+.globl zeroCtrlPafA989Pair0CValid
+zeroCtrlPafA989Pair0CValid: .space 4
+.globl zeroCtrlPafA989Pair0CPtr
+zeroCtrlPafA989Pair0CPtr: .space 4
+.globl zeroCtrlPafA989Pair0CLen
+zeroCtrlPafA989Pair0CLen: .space 4
+.globl zeroCtrlPafA989Pair0CData00
+zeroCtrlPafA989Pair0CData00: .space 4
+.globl zeroCtrlPafA989Pair0CData04
+zeroCtrlPafA989Pair0CData04: .space 4
+.globl zeroCtrlPafA989Pair0CData08
+zeroCtrlPafA989Pair0CData08: .space 4
+.globl zeroCtrlPafA989Pair0CData0C
+zeroCtrlPafA989Pair0CData0C: .space 4
+.globl zeroCtrlPafA989Pair0CData10
+zeroCtrlPafA989Pair0CData10: .space 4
+.globl zeroCtrlPafA989Pair0CData14
+zeroCtrlPafA989Pair0CData14: .space 4
+.globl zeroCtrlPafA989Pair0CData18
+zeroCtrlPafA989Pair0CData18: .space 4
+.globl zeroCtrlPafA989Pair0CData1C
+zeroCtrlPafA989Pair0CData1C: .space 4
+.globl zeroCtrlPafA989Pair0CData20
+zeroCtrlPafA989Pair0CData20: .space 4
+.globl zeroCtrlPafA989Pair0CData24
+zeroCtrlPafA989Pair0CData24: .space 4
+.globl zeroCtrlPafA989Pair0CData28
+zeroCtrlPafA989Pair0CData28: .space 4
+.globl zeroCtrlPafA989Pair0CData2C
+zeroCtrlPafA989Pair0CData2C: .space 4
+.globl zeroCtrlPafA989Pair0CData30
+zeroCtrlPafA989Pair0CData30: .space 4
+.globl zeroCtrlPafA989Pair0CData34
+zeroCtrlPafA989Pair0CData34: .space 4
+.globl zeroCtrlPafA989Pair0CData38
+zeroCtrlPafA989Pair0CData38: .space 4
+.globl zeroCtrlPafA989Pair0CData3C
+zeroCtrlPafA989Pair0CData3C: .space 4
+.globl zeroCtrlPafA989DependencyW18
+zeroCtrlPafA989DependencyW18: .space 4
+.globl zeroCtrlPafA989DependencyW1C
+zeroCtrlPafA989DependencyW1C: .space 4
+.globl zeroCtrlPafA989DependencyW20
+zeroCtrlPafA989DependencyW20: .space 4
+.globl zeroCtrlPafA989DependencyW24
+zeroCtrlPafA989DependencyW24: .space 4
+.align 2
+.globl zeroCtrlPafA989ShadowOuter
+zeroCtrlPafA989ShadowOuter: .space 0x1C
+.globl zeroCtrlPafA989ShadowInner
+zeroCtrlPafA989ShadowInner: .space 0x10
+.globl zeroCtrlPafA989ShadowDependency
+zeroCtrlPafA989ShadowDependency: .space 0x70
+.globl zeroCtrlPafA989Shadow44NodeA
+zeroCtrlPafA989Shadow44NodeA: .space 4
+.globl zeroCtrlPafA989Shadow44NodeB
+zeroCtrlPafA989Shadow44NodeB: .space 4
+.globl zeroCtrlPafA989Shadow44Root
+zeroCtrlPafA989Shadow44Root: .space 0x30
+.globl zeroCtrlVsh314A4ShadowProbeDone
+zeroCtrlVsh314A4ShadowProbeDone: .space 4
 .globl zeroCtrlGlobalPredicate6F84Hits
 zeroCtrlGlobalPredicate6F84Hits: .space 4
 

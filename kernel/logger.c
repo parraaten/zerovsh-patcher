@@ -29,21 +29,27 @@
  * itself passes through the Memory Stick driver hook.
  */
 static int diagnostics_enabled;
+static int diagnostics_verbose;
 
-static void zeroCtrlDiagnosticsWrite(const char *text)
+static int zeroCtrlDiagnosticsWrite(const char *text)
 {
     SceUID fd;
+    int length;
+    int written;
+    int closed;
 
     if (!diagnostics_enabled) {
-        return;
+        return 0;
     }
 
+    length = strlen(text);
     fd = sceIoOpen(ZEROCTRL_DIAGNOSTIC_PATH,
             PSP_O_WRONLY | PSP_O_CREAT | PSP_O_APPEND, 0644);
-    if (fd >= 0) {
-        sceIoWrite(fd, text, strlen(text));
-        sceIoClose(fd);
-    }
+    if (fd < 0)
+        return 0;
+    written = sceIoWrite(fd, text, length);
+    closed = sceIoClose(fd);
+    return written == length && closed >= 0;
 }
 
 void zeroCtrlDiagnosticsText(const char *text)
@@ -51,7 +57,12 @@ void zeroCtrlDiagnosticsText(const char *text)
     zeroCtrlDiagnosticsWrite(text);
 }
 
-void zeroCtrlDiagnosticsInit(int enabled, int model, unsigned int devkit,
+int zeroCtrlDiagnosticsTextCommitted(const char *text)
+{
+    return zeroCtrlDiagnosticsWrite(text);
+}
+
+void zeroCtrlDiagnosticsInit(int enabled, int verbose, int model, unsigned int devkit,
         const char *clock_and_calendar, const char *redir_path,
         unsigned int startup_total, unsigned int startup_largest)
 {
@@ -59,6 +70,7 @@ void zeroCtrlDiagnosticsInit(int enabled, int model, unsigned int devkit,
     SceUID fd;
 
     diagnostics_enabled = 0;
+    diagnostics_verbose = 0;
     if (!enabled || model != 0) {
         return;
     }
@@ -71,6 +83,19 @@ void zeroCtrlDiagnosticsInit(int enabled, int model, unsigned int devkit,
     }
 
     diagnostics_enabled = 1;
+    diagnostics_verbose = verbose != 0;
+    if (!diagnostics_verbose) {
+        snprintf(line, sizeof(line),
+                "[psp1000-run] test=constructed0-only mode=compact "
+                "model=0 devkit=0x%08X\n", devkit);
+        sceIoWrite(fd, line, strlen(line));
+        sceIoClose(fd);
+        return;
+    }
+    snprintf(line, sizeof(line),
+            "[psp1000-run] test=constructed0-only mode=verbose "
+            "model=0 devkit=0x%08X\n", devkit);
+    sceIoWrite(fd, line, strlen(line));
     snprintf(line, sizeof(line),
             "[ZeroVSH PSP-1000 diagnostics v1]\n"
             "model=%d model_name=PSP-1000 devkit=0x%08X\n",
@@ -91,6 +116,8 @@ void zeroCtrlDiagnosticsEvent(const char *event, int result)
 {
     char line[128];
 
+    if (!diagnostics_verbose)
+        return;
     snprintf(line, sizeof(line), "[event] %s result=0x%08X\n",
             event, (unsigned int)result);
     zeroCtrlDiagnosticsWrite(line);
@@ -100,6 +127,8 @@ void zeroCtrlDiagnosticsLoaderControl(int wait_iterations)
 {
     char line[128];
 
+    if (!diagnostics_verbose)
+        return;
     snprintf(line, sizeof(line),
             "[experiment] loader_control=no_preload_diagnostics\n"
             "[event] user_module_wait_iterations result=%d\n",
@@ -109,6 +138,8 @@ void zeroCtrlDiagnosticsLoaderControl(int wait_iterations)
 
 void zeroCtrlDiagnosticsStartControl(void)
 {
+    if (!diagnostics_verbose)
+        return;
     zeroCtrlDiagnosticsWrite("[experiment] start_control=deferred_logging\n");
 }
 
@@ -116,7 +147,7 @@ void zeroCtrlDiagnosticsMemory(const char *event)
 {
     char line[160];
 
-    if (!diagnostics_enabled) {
+    if (!diagnostics_enabled || !diagnostics_verbose) {
         return;
     }
 
@@ -173,7 +204,7 @@ void zeroCtrlDiagnosticsWritePartitions(const char *event,
     int i;
     const ZeroCtrlPartitionEntry *entry;
 
-    if (!diagnostics_enabled || !snapshot) {
+    if (!diagnostics_enabled || !diagnostics_verbose || !snapshot) {
         return;
     }
 
@@ -202,7 +233,7 @@ void zeroCtrlDiagnosticsModule(const SceModule2 *module)
     unsigned int i;
     unsigned int segments;
 
-    if (!diagnostics_enabled) {
+    if (!diagnostics_enabled || !diagnostics_verbose) {
         return;
     }
 
