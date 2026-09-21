@@ -88,6 +88,7 @@ static char ledDisable[128];
 static char psp1000SlidePlugin[16];
 static char psp1000SlideTriggerMode[40];
 static char psp1000Diagnostics[16];
+static char psp1000DiagnosticsVerbose[16];
 static char psp1000SonyStartTrace[16];
 static char psp1000BSManClosedShim[16];
 static char psp1000ActivationTrace[16];
@@ -671,6 +672,9 @@ typedef struct {
     unsigned int bridge_helper;
     unsigned int bridge_helper_end;
     unsigned int bridge_scalar[16];
+    unsigned int bridge_milestone_addr;
+    unsigned int bridge_milestone_ack_addr;
+    int diagnostics_verbose;
     unsigned int bridge_root_slot;
     unsigned int bridge_constructed0;
     unsigned int bridge_constructed1;
@@ -5755,6 +5759,12 @@ static void zeroCtrlInstallVshCtrl314A4Bridge(void) {
     for (i = 0; i <= 15; i++)
         sceKernelDcacheWritebackInvalidateRange(
                 (const void *)slide_diag.bridge_scalar[i], 4);
+    _sw(0, slide_diag.bridge_milestone_addr);
+    _sw(0, slide_diag.bridge_milestone_ack_addr);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.bridge_milestone_addr, 4);
+    sceKernelDcacheWritebackInvalidateRange(
+            (const void *)slide_diag.bridge_milestone_ack_addr, 4);
     slide_diag.bridge_root_slot = root;
     slide_diag.bridge_constructed0 = c0;
     slide_diag.bridge_constructed1 = c1;
@@ -5789,10 +5799,16 @@ void zeroCtrlRegisterPsp1000FunctionalBridge(
         if (copied.scalar_addr[i] == 0 || (copied.scalar_addr[i] & 3) != 0 ||
                 !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[i], 4))
             return;
+    if (copied.scalar_addr[15] > 0xFFFFFFFFU - 8 ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[15] + 4, 4) ||
+            !zeroCtrlVshModuleRangeValid(helper, copied.scalar_addr[15] + 8, 4))
+        return;
     slide_diag.bridge_helper = copied.helper_addr;
     slide_diag.bridge_helper_end = copied.helper_end_addr;
     memcpy(slide_diag.bridge_scalar, copied.scalar_addr,
             sizeof(slide_diag.bridge_scalar));
+    slide_diag.bridge_milestone_addr = copied.scalar_addr[15] + 4;
+    slide_diag.bridge_milestone_ack_addr = copied.scalar_addr[15] + 8;
     slide_diag.bridge_registered = 1;
     zeroCtrlInstallVshCtrl314A4Bridge();
 }
@@ -10172,6 +10188,7 @@ static void zeroCtrlWriteFunctionalVsh3f568Analysis(void) {
 
 }
 static unsigned int zeroCtrlReadTriggerHits(unsigned int index);
+static void zeroCtrlServiceFunctionalMilestone(void);
 
 static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED) {
     unsigned int elapsed = 0;
@@ -10336,13 +10353,72 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     int a989_dependency44_snapshot_written = 0;
     int a989_dependency_direct_sync_written = 0;
     int functional_constructed0_probe_written = 0;
+    int compact_ready_written = 0;
+    unsigned int compact_request[3] = { 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF };
     unsigned int minimal_last_state = 0xFFFFFFFF;
     char line[384];
     unsigned int i;
 
     slide_diag.writer_alive = 1;
-    zeroCtrlDiagnosticsText("[checkpoint] slide_diag_writer_alive\n");
+    if (slide_diag.diagnostics_verbose)
+        zeroCtrlDiagnosticsText("[checkpoint] slide_diag_writer_alive\n");
     while (elapsed < SLIDE_OBSERVATION_WINDOW_US) {
+        if (slide_diag.functional_enabled && !slide_diag.diagnostics_verbose) {
+            unsigned int retained = 0;
+            unsigned int request[3];
+            unsigned int snapshot_base = 0;
+            SceModule2 *helper = sceKernelFindModuleByName(
+                    "ZeroVSH_Patcher_User");
+            if (slide_diag.paf_a989_target_trace_registered &&
+                    slide_diag.paf_a989_target_trace_scalar[4] <=
+                        0xFFFFFFFFU - 4) {
+                snapshot_base = slide_diag.paf_a989_target_trace_scalar[4] + 4;
+                retained = zeroCtrlReadHelperCounter(snapshot_base) == 1 &&
+                        zeroCtrlReadHelperCounter(snapshot_base + 0x30) == 1 &&
+                        zeroCtrlReadHelperCounter(snapshot_base + 0x74) == 1 &&
+                        zeroCtrlReadHelperCounter(snapshot_base + 0xC0) == 1;
+            }
+            if (!compact_ready_written && retained &&
+                    slide_diag.bridge_install && slide_diag.vsh5704_trace_install &&
+                    slide_diag.paf_a989_target_trace_install) {
+                snprintf(line, sizeof(line),
+                        "[psp1000-ready] bridge=%u/%u/%u a989=%u/%u/%u "
+                        "vsh5704=%u/%u/%u runtime=%u retained=%u\n",
+                        slide_diag.bridge_validation, slide_diag.bridge_install,
+                        slide_diag.bridge_cache_sync,
+                        slide_diag.paf_a989_target_trace_validation,
+                        slide_diag.paf_a989_target_trace_install,
+                        slide_diag.paf_a989_target_trace_cache_sync,
+                        slide_diag.vsh5704_trace_validation,
+                        slide_diag.vsh5704_trace_install,
+                        slide_diag.vsh5704_trace_cache_sync,
+                        slide_diag.functional_request_armed, retained);
+                zeroCtrlDiagnosticsText(line);
+                compact_ready_written = 1;
+            }
+            request[0] = slide_diag.functional_home_press_hits;
+            request[1] = slide_diag.functional_home_first_load_published;
+            request[2] = 0;
+            if (zeroCtrlLoadedModuleMetadataValid(helper) &&
+                    slide_diag.triggers[0].request_addr != 0 &&
+                    zeroCtrlVshModuleRangeValid(helper,
+                        slide_diag.triggers[0].request_addr, 4))
+                request[2] = _lw(slide_diag.triggers[0].request_addr);
+            if (request[1] != 0 &&
+                    memcmp(request, compact_request, sizeof(request)) != 0) {
+                memcpy(compact_request, request, sizeof(request));
+                snprintf(line, sizeof(line),
+                        "[psp1000-request] press=%u published=%u request=%u\n",
+                        request[0], request[1], request[2]);
+                zeroCtrlDiagnosticsText(line);
+            }
+            zeroCtrlServiceFunctionalMilestone();
+            sceKernelDelayThread(SLIDE_POLL_INTERVAL_US);
+            elapsed += SLIDE_POLL_INTERVAL_US;
+            continue;
+        }
+        if (slide_diag.functional_enabled)
+            zeroCtrlServiceFunctionalMilestone();
         zeroCtrlWriteSlideCheckpoints(&written);
         if (slide_diag.minimal_memory_test) {
             ZeroCtrlSonyStartTrace *trace = &slide_diag.sony_start_trace;
@@ -13675,6 +13751,59 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
     return 0;
 }
 
+static void zeroCtrlServiceFunctionalMilestone(void) {
+    unsigned int milestone;
+    unsigned int acknowledged;
+    unsigned int reject;
+    unsigned int result;
+    unsigned int attempts;
+    unsigned int stage0;
+    unsigned int stage1;
+    const char *phase = 0;
+    char line[256];
+
+    if (!slide_diag.bridge_install || !slide_diag.bridge_milestone_addr ||
+            !slide_diag.bridge_milestone_ack_addr)
+        return;
+    milestone = zeroCtrlReadHelperCounter(slide_diag.bridge_milestone_addr);
+    acknowledged = zeroCtrlReadHelperCounter(
+            slide_diag.bridge_milestone_ack_addr);
+    if (milestone == 0 || milestone == acknowledged || milestone > 7)
+        return;
+    reject = zeroCtrlReadHelperCounter(slide_diag.bridge_scalar[14]);
+    result = zeroCtrlReadHelperCounter(slide_diag.bridge_scalar[15]);
+    attempts = zeroCtrlReadHelperCounter(slide_diag.bridge_scalar[11]);
+    stage0 = zeroCtrlReadHelperCounter(slide_diag.bridge_scalar[12]);
+    stage1 = zeroCtrlReadHelperCounter(slide_diag.bridge_scalar[13]);
+    if (milestone == 1) phase = "request_observed";
+    else if (milestone == 2) phase = "validation_complete";
+    else if (milestone == 3) phase = "shadow_complete";
+    else if (milestone == 4) phase = "constructed0_enter_armed";
+    if (milestone >= 1 && milestone <= 4) {
+        snprintf(line, sizeof(line),
+                "[psp1000-step] seq=%u phase=%s reject=%u attempts=%u "
+                "stage0_calls=%u stage1_calls=%u\n", milestone, phase, reject,
+                attempts, stage0, stage1);
+    } else if (milestone == 5) {
+        snprintf(line, sizeof(line),
+                "[psp1000-step] seq=5 phase=constructed0_return "
+                "result=0x%08X attempts=%u stage0_calls=%u stage1_calls=%u\n",
+                result, attempts, stage0, stage1);
+    } else {
+        snprintf(line, sizeof(line),
+                "[psp1000-final] phase=%s reject=%u result=0x%08X "
+                "attempts=%u stage0_calls=%u stage1_calls=%u\n",
+                milestone == 6 ? "post_validation" :
+                    "pre_constructed0_reject",
+                reject, result, attempts, stage0, stage1);
+    }
+    if (zeroCtrlDiagnosticsTextCommitted(line)) {
+        _sw(milestone, slide_diag.bridge_milestone_ack_addr);
+        sceKernelDcacheWritebackInvalidateRange(
+                (const void *)slide_diag.bridge_milestone_ack_addr, 4);
+    }
+}
+
 static int zeroCtrlCreateSlideDiagnosticsThread(void) {
     SceUID thid;
     int result;
@@ -16614,8 +16743,11 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			psp1000SlidePlugin, sizeof(psp1000SlidePlugin), config);
 	ini_gets("Experimental", "PSP1000SlideTriggerMode", "Disabled",
 			psp1000SlideTriggerMode, sizeof(psp1000SlideTriggerMode), config);
-	ini_gets("Experimental", "PSP1000Diagnostics", "Disabled",
-			psp1000Diagnostics, sizeof(psp1000Diagnostics), config);
+		ini_gets("Experimental", "PSP1000Diagnostics", "Disabled",
+				psp1000Diagnostics, sizeof(psp1000Diagnostics), config);
+		ini_gets("Experimental", "PSP1000DiagnosticsVerbose", "Disabled",
+				psp1000DiagnosticsVerbose,
+				sizeof(psp1000DiagnosticsVerbose), config);
 	ini_gets("Experimental", "PSP1000SonyStartTrace", "Disabled",
 			psp1000SonyStartTrace, sizeof(psp1000SonyStartTrace), config);
 	ini_gets("Experimental", "PSP1000BSManClosedShim", "Disabled",
@@ -16795,10 +16927,14 @@ int module_start(SceSize args UNUSED, void *argp UNUSED) {
 			strcmp(psp1000ActivationWideTrace, "Enabled") == 0;
 	}
 
-	zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,
-			model, devkit, useSlide, redir_path,
+		slide_diag.diagnostics_verbose =
+				strcmp(psp1000DiagnosticsVerbose, "Enabled") == 0;
+		zeroCtrlDiagnosticsInit(strcmp(psp1000Diagnostics, "Enabled") == 0,
+				slide_diag.diagnostics_verbose,
+				model, devkit, useSlide, redir_path,
 			startup_total, startup_largest);
-	if (slide_diag.armed && strcmp(psp1000Diagnostics, "Enabled") == 0) {
+		if (slide_diag.armed && slide_diag.diagnostics_verbose &&
+				strcmp(psp1000Diagnostics, "Enabled") == 0) {
 		zeroCtrlDiagnosticsText(slide_diag.functional_enabled ?
 				"[phase] psp1000_slide_functional\n"
 				"[experiment] psp1000_slide_optin=enabled\n"

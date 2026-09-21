@@ -167,11 +167,30 @@ zeroCtrlVsh314A4FunctionalBridge:
     lw      $t1, %lo(zeroCtrlTrigger58D4Request)($t0)
     beqz    $t1, 9f
     nop
-    lui     $t0, %hi(zeroCtrlVsh314A4ShadowProbeDone)
-    lw      $t1, %lo(zeroCtrlVsh314A4ShadowProbeDone)($t0)
-    bnez    $t1, 9f
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    lw      $t4, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4MilestoneAck)
+    lw      $t5, %lo(zeroCtrlVsh314A4MilestoneAck)($t0)
+    beqz    $t4, .L314A4RequestObserved
     nop
-    BRIDGE_INC zeroCtrlVsh314A4RequestSeen
+    addiu   $t0, $zero, 1
+    beq     $t4, $t0, .L314A4ValidationGate
+    nop
+    addiu   $t0, $zero, 2
+    beq     $t4, $t0, .L314A4ShadowGate
+    nop
+    addiu   $t0, $zero, 3
+    beq     $t4, $t0, .L314A4ArmGate
+    nop
+    addiu   $t0, $zero, 4
+    beq     $t4, $t0, .L314A4CallGate
+    nop
+    addiu   $t0, $zero, 5
+    beq     $t4, $t0, .L314A4PostGate
+    nop
+    b       9f
+    nop
+.L314A4RequestObserved:
     lui     $t0, %hi(zeroCtrlVsh314A4Busy)
     lw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)
     bnez    $t1, 9f
@@ -180,7 +199,15 @@ zeroCtrlVsh314A4FunctionalBridge:
     lw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)
     bnez    $t1, 9f
     nop
-
+    BRIDGE_INC zeroCtrlVsh314A4RequestSeen
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 1
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4ValidationGate:
+    bne     $t5, $t4, 9f
+    nop
     lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
     sw      $zero, %lo(zeroCtrlVsh314A4RejectObject)($t0)
 
@@ -297,6 +324,18 @@ zeroCtrlVsh314A4FunctionalBridge:
     bne     $t1, $t2, 4f
     nop
 
+.L314A4ValidationComplete:
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 2
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4ShadowGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
+    lw      $s5, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
+.L314A4ShadowBuild:
     lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
     addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
     sw      $zero, 0x00($s1)
@@ -436,13 +475,74 @@ zeroCtrlVsh314A4FunctionalBridge:
     lw      $t1, %lo(zeroCtrlVsh314A4Constructed1)($t0)
     sw      $t1, 0x14($s1)
 
-    lui     $t0, %hi(zeroCtrlVsh314A4ShadowProbeDone)
-    addiu   $t1, $zero, 1
-    sw      $t1, %lo(zeroCtrlVsh314A4ShadowProbeDone)($t0)
+.L314A4ShadowComplete:
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 3
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4ArmGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
+    lui     $s3, %hi(zeroCtrlPafA989ShadowDependency)
+    addiu   $s3, $s3, %lo(zeroCtrlPafA989ShadowDependency)
+    lui     $t2, %hi(zeroCtrlPafA989Shadow44NodeA)
+    addiu   $t2, $t2, %lo(zeroCtrlPafA989Shadow44NodeA)
+    lw      $t1, 0x04($s1)
+    bne     $t1, $s2, 4f
+    nop
+    lw      $t1, 0x08($s2)
+    bne     $t1, $s3, 4f
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4Constructed1)
+    lw      $t0, %lo(zeroCtrlVsh314A4Constructed1)($t0)
+    lw      $t1, 0x14($s1)
+    bne     $t1, $t0, 4f
+    nop
+    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
+    lw      $t0, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
+    lw      $t1, 0x0C($s2)
+    bne     $t1, $t0, 4f
+    nop
+    lw      $t1, 0x44($s3)
+    bne     $t1, $t2, 4f
+    nop
+    lw      $t1, 0x48($s3)
+    bnez    $t1, 4f
+    nop
+    lw      $t3, 0x00($t2)
+    lui     $t4, %hi(zeroCtrlPafA989Shadow44NodeB)
+    addiu   $t4, $t4, %lo(zeroCtrlPafA989Shadow44NodeB)
+    bne     $t3, $t4, 4f
+    nop
+    lw      $t3, 0x00($t4)
+    lui     $t4, %hi(zeroCtrlPafA989Shadow44Root)
+    addiu   $t4, $t4, %lo(zeroCtrlPafA989Shadow44Root)
+    bne     $t3, $t4, 4f
+    nop
+    lbu     $t1, 0x2D($t4)
+    addiu   $t3, $zero, 0x0A
+    bne     $t1, $t3, 4f
+    nop
     lui     $t0, %hi(zeroCtrlVsh314A4Reject)
     addiu   $t1, $zero, 10
     sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
-
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 4
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4CallGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
     lui     $t0, %hi(zeroCtrlVsh314A4Busy)
     addiu   $t1, $zero, 1
     sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)
@@ -459,6 +559,26 @@ zeroCtrlVsh314A4FunctionalBridge:
     lw      $s4, 0x04($s2)
     lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
     sw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4Busy)
+    sw      $zero, %lo(zeroCtrlVsh314A4Busy)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 5
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4PostGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
+    lui     $s3, %hi(zeroCtrlPafA989ShadowDependency)
+    addiu   $s3, $s3, %lo(zeroCtrlPafA989ShadowDependency)
+    lui     $t0, %hi(zeroCtrlVsh314A4ExpectedCallback)
+    lw      $s5, %lo(zeroCtrlVsh314A4ExpectedCallback)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
+    lw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)
     BRIDGE_VALIDATE $s4, 4, 5f
     lw      $t3, 0x04($s1)
     bne     $t3, $s2, 5f
@@ -478,7 +598,7 @@ zeroCtrlVsh314A4FunctionalBridge:
     lui     $t0, %hi(zeroCtrlVsh314A4Reject)
     addiu   $t1, $zero, 11
     sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
-    b       8f
+    b       6f
     nop
 
     BRIDGE_INC zeroCtrlVsh314A4Stage1Calls
@@ -506,9 +626,22 @@ zeroCtrlVsh314A4FunctionalBridge:
     b       7f
     nop
 5:  addiu   $t1, $zero, 5
+    lui     $t0, %hi(zeroCtrlVsh314A4Reject)
+    sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
+6:
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 6
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
 7:
     lui     $t0, %hi(zeroCtrlVsh314A4Reject)
     sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 7
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
 8:
     lui     $t0, %hi(zeroCtrlVsh314A4Busy)
     sw      $zero, %lo(zeroCtrlVsh314A4Busy)($t0)
@@ -940,6 +1073,10 @@ zeroCtrlVsh314A4Stage1Calls: .space 4
 zeroCtrlVsh314A4Reject: .space 4
 .globl zeroCtrlVsh314A4RejectObject
 zeroCtrlVsh314A4RejectObject: .space 4
+.globl zeroCtrlVsh314A4Milestone
+zeroCtrlVsh314A4Milestone: .space 4
+.globl zeroCtrlVsh314A4MilestoneAck
+zeroCtrlVsh314A4MilestoneAck: .space 4
 .globl zeroCtrlVsh5704RegistrationTraceHits
 zeroCtrlVsh5704RegistrationTraceHits: .space 4
 .globl zeroCtrlPafA989TargetTraceEntryHits

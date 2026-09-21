@@ -246,6 +246,8 @@ def check_sources(root):
     registration_header = (root / "kernel/sony_start_trace.h").read_text()
     bsman_header = (root / "kernel/bsman_closed_shim.h").read_text()
     assembly = (root / "user/stub.S").read_text()
+    logger = (root / "kernel/logger.c").read_text()
+    logger_header = (root / "kernel/logger.h").read_text()
     build = (root / "build_linux.sh").read_text()
     sample_config = (root / "bin/zerovsh.ini").read_text()
     if "PSP_EXPORT_FUNC_NID(zeroCtrlRegisterBSManClosedShim, 0x1337357C)" \
@@ -2343,26 +2345,46 @@ def check_sources(root):
     helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
     helper = assembly[helper_start:helper_end]
     if hashlib.sha256(helper.encode()).hexdigest() != \
-            '4821024335adc7cb081a6634e6cbc4c52e37b58bea832ef681f4b222484b8f96':
+            '5bb99ba9bdbc4bfc9ae96d2a4399b60d378dcbe641eba9079c54085d2c8be240':
         fail("functional +314A4 bridge assembly changed")
     controller_call = helper.find("jalr    $t9")
     result_save = helper.find("sw      $v0, 32($sp)", controller_call)
     request_read = helper.find("%lo(zeroCtrlTrigger58D4Request)", result_save)
     request_zero = helper.find("beqz    $t1, 9f", request_read)
-    probe_read = helper.find("%lo(zeroCtrlVsh314A4ShadowProbeDone)", request_zero)
-    probe_gate = helper.find("bnez    $t1, 9f", probe_read)
-    request_seen = helper.find("BRIDGE_INC zeroCtrlVsh314A4RequestSeen", probe_gate)
-    busy_gate = helper.find("%lo(zeroCtrlVsh314A4Busy)", request_seen)
+    milestone_read = helper.find("%lo(zeroCtrlVsh314A4Milestone)", request_zero)
+    milestone_ack_read = helper.find("%lo(zeroCtrlVsh314A4MilestoneAck)",
+            milestone_read)
+    request_stage = helper.find(".L314A4RequestObserved:", milestone_ack_read)
+    busy_gate = helper.find("%lo(zeroCtrlVsh314A4Busy)", request_stage)
     attempted_gate = helper.find("%lo(zeroCtrlVsh314A4Attempted)", busy_gate)
-    first_retained = helper.find("%hi(zeroCtrlPafA989DependencyDirectValid)",
+    request_seen = helper.find("BRIDGE_INC zeroCtrlVsh314A4RequestSeen",
             attempted_gate)
+    request_milestone = helper.find(
+            "sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)", request_seen)
+    request_return = helper.find("b       9f", request_milestone)
+    validation_gate = helper.find(".L314A4ValidationGate:", request_return)
+    validation_ack = helper.find("bne     $t5, $t4, 9f", validation_gate)
+    first_retained = helper.find("%hi(zeroCtrlPafA989DependencyDirectValid)",
+            validation_ack)
     result_restore = helper.rfind("lw      $v0, 32($sp)")
     if not 0 <= controller_call < result_save < request_read < request_zero < \
-            probe_read < probe_gate < request_seen < busy_gate < attempted_gate < \
-            first_retained < result_restore or \
+            milestone_read < milestone_ack_read < request_stage < busy_gate < \
+            attempted_gate < request_seen < request_milestone < request_return < \
+            validation_gate < validation_ack < first_retained < result_restore or \
             helper.count("zeroCtrlVsh314A4OriginalController") != 2 or \
             helper.count("jalr    $t9") != 3:
         fail("bridge controller/request ordering or Sony call count regressed")
+    if helper.count('zeroCtrlVsh314A4MilestoneAck') != 2 or \
+            helper.count('bne     $t5, $t4, 9f') != 5 or \
+            'zeroCtrlVsh314A4ShadowProbeDone' in helper:
+        fail("bridge milestone ACK dispatch or retired probe ownership regressed")
+    for value in range(1, 8):
+        if helper.count('addiu   $t1, $zero, %d' % value) < 1:
+            fail("bridge does not publish milestone %d" % value)
+    if any(token in helper for token in
+            ('zeroCtrlDiagnostics', 'sceIoOpen', 'sceIoWrite',
+             'sceKernelDelayThread')):
+        fail("functional bridge performs I/O, logging, or waiting")
     for token in ('lw      $t1, 0x14($t0)',
             'addiu   $a0, $zero, 0x1D8', 'addiu   $t1, $zero, 13'):
         if token in helper:
@@ -2383,7 +2405,8 @@ def check_sources(root):
     pre_request = helper[:request_zero]
     if any(token in pre_request for token in
             ('zeroCtrlPafA989Dependency', 'zeroCtrlPafA989W28',
-             'zeroCtrlPafA989Pair', 'zeroCtrlPafA989Shadow')):
+             'zeroCtrlPafA989Pair', 'zeroCtrlPafA989Shadow',
+             'zeroCtrlVsh314A4Milestone')):
         fail("request-zero bridge path accesses retained or shadow state")
     for forbidden_old in ('zeroCtrlVsh314A4RootSlot',
             'zeroCtrlPafA989TargetNode', 'zeroCtrlPafA989TargetOuter',
@@ -2428,8 +2451,15 @@ def check_sources(root):
             '%hi(zeroCtrlPafA989DependencyW24)')
     provenance_positions = [helper.find(token, callback_load)
             for token in provenance_tokens]
-    shadow_start = helper.find('%hi(zeroCtrlPafA989ShadowOuter)',
+    validation_complete = helper.find('.L314A4ValidationComplete:',
             provenance_positions[-1])
+    validation_milestone = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)',
+            validation_complete)
+    validation_return = helper.find('b       9f', validation_milestone)
+    shadow_gate = helper.find('.L314A4ShadowGate:', validation_return)
+    shadow_ack = helper.find('bne     $t5, $t4, 9f', shadow_gate)
+    shadow_start = helper.find('.L314A4ShadowBuild:', shadow_ack)
     busy_set = helper.find('sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)',
             shadow_start)
     attempted_set = helper.find(
@@ -2447,14 +2477,16 @@ def check_sources(root):
             not validity_positions[-1] < scalar_positions[0] < \
                 scalar_positions[-1] < shape_positions[0] < shape_positions[-1] < \
                 callback_load < provenance_positions[0] < \
-                provenance_positions[-1] < shadow_start < busy_set < \
+                provenance_positions[-1] < validation_complete < \
+                validation_milestone < validation_return < shadow_gate < shadow_ack < \
+                shadow_start < busy_set < \
                 attempted_set < stage0_inc < constructed0_load < constructed0_call:
         fail("retained-state validation does not precede shadow Sony execution")
     if any(token in helper for token in ('0x1FB10', '0x1FBC0', '0x1FC40')) or \
             helper.count('addu    $t2, $s5, $t2') != 3:
         fail("persistent VSH pointers are not callback-relative")
     shadow_clear_start = shadow_start
-    shadow_build_end = busy_set
+    shadow_build_end = helper.find('.L314A4ShadowComplete:', shadow_start)
     shadow_build = helper[shadow_clear_start:shadow_build_end]
     dependency_zero_offsets = tuple(re.findall(
             r'sw      \$zero, 0x([0-9A-F]{2})\(\$s3\)', shadow_build))
@@ -2508,19 +2540,30 @@ def check_sources(root):
             'sb      $t1, 0x2D($t3)' in shadow_build or \
             shadow_build.count('sb      ') != 1:
         fail("functional bridge retains a cyclic or preinitialized node topology")
-    probe_publish = helper.find(
-            'sw      $t1, %lo(zeroCtrlVsh314A4ShadowProbeDone)($t0)', shadow_start)
-    reject10_value = helper.find('addiu   $t1, $zero, 10', probe_publish)
+    shadow_milestone = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)', shadow_build_end)
+    shadow_return = helper.find('b       9f', shadow_milestone)
+    arm_gate = helper.find('.L314A4ArmGate:', shadow_return)
+    arm_ack = helper.find('bne     $t5, $t4, 9f', arm_gate)
+    reject10_value = helper.find('addiu   $t1, $zero, 10', arm_ack)
     reject10_publish = helper.find(
             'sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)', reject10_value)
+    arm_milestone = helper.find('addiu   $t1, $zero, 4', reject10_publish)
+    arm_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)', arm_milestone)
+    arm_return = helper.find('b       9f', arm_publish)
+    call_gate = helper.find('.L314A4CallGate:', arm_return)
+    call_ack = helper.find('bne     $t5, $t4, 9f', call_gate)
     node_a_link = helper.find('sw      $t3, 0x00($t2)', shadow_start)
     node_b_link = helper.find('sw      $t4, 0x00($t3)', node_a_link)
     root_flag = helper.find('sb      $t1, 0x2D($t4)', node_b_link)
     dependency_node = helper.find('sw      $t2, 0x44($s3)', root_flag)
     shadow_complete = helper.find('sw      $t1, 0x14($s1)', dependency_node)
     if not shadow_start < node_a_link < node_b_link < root_flag < \
-            dependency_node < shadow_complete < probe_publish < reject10_value < \
-            reject10_publish < busy_set < attempted_set < stage0_inc < \
+            dependency_node < shadow_complete < shadow_build_end < \
+            shadow_milestone < shadow_return < arm_gate < arm_ack < reject10_value < \
+            reject10_publish < arm_milestone < arm_publish < arm_return < call_gate < \
+            call_ack < busy_set < attempted_set < stage0_inc < \
             constructed0_call:
         fail("constructed0 milestone/publication ordering regressed")
     if helper.count('sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)') != 1 or \
@@ -2536,10 +2579,21 @@ def check_sources(root):
             helper.count('move    $a0, $s2\n    jalr    $t9\n'
                     '    move    $a1, $s1') != 1:
         fail("constructed0 does not receive the complete private shadow")
-    post_start = constructed0_call
-    post_tokens = ('lw      $s4, 0x04($s2)',
-            'sw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)',
-            'BRIDGE_VALIDATE $s4, 4, 5f',
+    return_result = helper.find('lw      $s4, 0x04($s2)', constructed0_call)
+    return_store = helper.find(
+            'sw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)', return_result)
+    return_busy_clear = helper.find(
+            'sw      $zero, %lo(zeroCtrlVsh314A4Busy)($t0)', return_store)
+    returned_milestone = helper.find('addiu   $t1, $zero, 5', return_busy_clear)
+    returned_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)', returned_milestone)
+    returned_return = helper.find('b       9f', returned_publish)
+    post_gate = helper.find('.L314A4PostGate:', returned_return)
+    post_ack = helper.find('bne     $t5, $t4, 9f', post_gate)
+    saved_result_load = helper.find(
+            'lw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)', post_ack)
+    post_start = saved_result_load
+    post_tokens = ('BRIDGE_VALIDATE $s4, 4, 5f',
             'lw      $t3, 0x04($s1)', 'bne     $t3, $s2, 5f',
             'lw      $t3, 0x14($s1)', 'lw      $t3, 0x08($s2)',
             'bne     $t3, $s3, 5f', 'lw      $t3, 0x0C($s2)',
@@ -2551,10 +2605,13 @@ def check_sources(root):
     reject11_value = helper.find('addiu   $t1, $zero, 11', post_positions[-1])
     reject11_publish = helper.find(
             'sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)', reject11_value)
-    constructed1_bypass = helper.find('b       8f', reject11_publish)
+    constructed1_bypass = helper.find('b       6f', reject11_publish)
     if any(pos < 0 for pos in post_positions) or \
             post_positions != sorted(post_positions) or \
-            not constructed0_call < post_positions[0] < post_positions[-1] < \
+            not constructed0_call < return_result < return_store < \
+                return_busy_clear < returned_milestone < returned_publish < \
+                returned_return < post_gate < post_ack < saved_result_load < \
+                post_positions[0] < post_positions[-1] < \
                 reject11_value < reject11_publish < constructed1_bypass < \
                 stage1_inc < constructed1_call or \
             helper.find('move    $a1, $s2', stage1_inc) > constructed1_call:
@@ -2580,6 +2637,40 @@ def check_sources(root):
     if "sizeof(ZeroCtrlPafA989TargetTraceRegistration) == 32" not in \
             bsman_header:
         fail("A989 target trace is not a separate 32-byte registration")
+    milestone_bss = (
+            'zeroCtrlVsh314A4RejectObject: .space 4\n'
+            '.globl zeroCtrlVsh314A4Milestone\n'
+            'zeroCtrlVsh314A4Milestone: .space 4\n'
+            '.globl zeroCtrlVsh314A4MilestoneAck\n'
+            'zeroCtrlVsh314A4MilestoneAck: .space 4\n')
+    if milestone_bss not in assembly:
+        fail("functional milestone/ACK words are not adjacent to RejectObject")
+    bridge_registration_start = kernel.find(
+            'void zeroCtrlRegisterPsp1000FunctionalBridge(')
+    bridge_registration_end = kernel.find(
+            '\nstatic void zeroCtrlInstallVsh5704RegistrationTrace',
+            bridge_registration_start)
+    bridge_registration = kernel[
+            bridge_registration_start:bridge_registration_end]
+    for token in ('copied.scalar_addr[15] > 0xFFFFFFFFU - 8',
+            'copied.scalar_addr[15] + 4, 4',
+            'copied.scalar_addr[15] + 8, 4',
+            'bridge_milestone_addr = copied.scalar_addr[15] + 4',
+            'bridge_milestone_ack_addr = copied.scalar_addr[15] + 8'):
+        if token not in bridge_registration:
+            fail("bridge private milestone derivation lacks " + token)
+    bridge_install_start = kernel.find(
+            'static void zeroCtrlInstallVshCtrl314A4Bridge(void) {')
+    bridge_install_end = kernel.find(
+            '\nvoid zeroCtrlRegisterPsp1000FunctionalBridge(', bridge_install_start)
+    bridge_install = kernel[bridge_install_start:bridge_install_end]
+    milestone_clear = bridge_install.find('_sw(0, slide_diag.bridge_milestone_addr)')
+    ack_clear = bridge_install.find('_sw(0, slide_diag.bridge_milestone_ack_addr)')
+    owner_patch = bridge_install.find('_sw(replacement, owner)')
+    if not 0 <= milestone_clear < ack_clear < owner_patch or \
+            bridge_install.count('bridge_milestone_addr, 4') != 1 or \
+            bridge_install.count('bridge_milestone_ack_addr, 4') != 1:
+        fail("bridge milestones are not cleared and synchronized before install")
     a989_registration_end = bsman_header.find(
             '} ZeroCtrlPafA989TargetTraceRegistration;')
     a989_registration_start = bsman_header.rfind(
@@ -3213,6 +3304,65 @@ def check_sources(root):
             any(token in constructed0_probe_writer for token in
                 ('_lw(', '_lb(', '_lbu(', 'sceKernelFindModuleByAddress')):
         fail("constructed0-probe telemetry dereferences or over-classifies result")
+    service_start = kernel.find('static void zeroCtrlServiceFunctionalMilestone(void) {')
+    service_end = kernel.find('\nstatic int zeroCtrlCreateSlideDiagnosticsThread',
+            service_start)
+    milestone_service = kernel[service_start:service_end]
+    committed = milestone_service.find('zeroCtrlDiagnosticsTextCommitted(line)')
+    ack_store = milestone_service.find(
+            '_sw(milestone, slide_diag.bridge_milestone_ack_addr)', committed)
+    ack_sync = milestone_service.find('sceKernelDcacheWritebackInvalidateRange(',
+            ack_store)
+    if not 0 <= committed < ack_store < ack_sync or \
+            'if (zeroCtrlDiagnosticsTextCommitted(line)) {' not in \
+                milestone_service or \
+            milestone_service.count(
+                '_sw(milestone, slide_diag.bridge_milestone_ack_addr)') != 1:
+        fail("milestone persistence does not precede ACK store/cache sync")
+    for token in ('[psp1000-step] seq=%u phase=%s',
+            'request_observed', 'validation_complete', 'shadow_complete',
+            'constructed0_enter_armed',
+            '[psp1000-step] seq=5 phase=constructed0_return',
+            '[psp1000-final] phase=%s', 'post_validation',
+            'pre_constructed0_reject'):
+        if token not in milestone_service:
+            fail("compact milestone service lacks " + token)
+    logger_write_start = logger.find('static int zeroCtrlDiagnosticsWrite(')
+    logger_write_end = logger.find('\nvoid zeroCtrlDiagnosticsText(',
+            logger_write_start)
+    logger_write = logger[logger_write_start:logger_write_end]
+    for token in ('if (!diagnostics_enabled)', 'length = strlen(text)',
+            'written = sceIoWrite(fd, text, length)',
+            'closed = sceIoClose(fd)',
+            'return written == length && closed >= 0'):
+        if token not in logger_write:
+            fail("committed diagnostic writer lacks " + token)
+    if 'int zeroCtrlDiagnosticsTextCommitted(const char *text)' not in logger or \
+            'int zeroCtrlDiagnosticsTextCommitted(const char *text);' not in \
+                logger_header:
+        fail("committed diagnostic API is missing")
+    compact_gate = writer.find(
+            'if (slide_diag.functional_enabled && !slide_diag.diagnostics_verbose)')
+    compact_continue = writer.find('continue;', compact_gate)
+    first_forensic = writer.find('zeroCtrlWriteSlideCheckpoints(&written)')
+    compact_path = writer[compact_gate:compact_continue]
+    for token in ('[psp1000-ready]', '[psp1000-request]',
+            'zeroCtrlServiceFunctionalMilestone()',
+            'memcmp(request, compact_request, sizeof(request))'):
+        if token not in compact_path:
+            fail("compact diagnostics path lacks " + token)
+    if not 0 <= compact_gate < compact_continue < first_forensic or \
+            any(token in compact_path for token in
+                ('-code]', 'zeroCtrlWriteConstructed0Dependency',
+                 'zeroCtrlWriteFunctionalClockPathAnalysis')):
+        fail("compact path reaches forensic code maps or lacks early routing")
+    if 'if (slide_diag.functional_enabled)\n            zeroCtrlServiceFunctionalMilestone();' \
+            not in writer[compact_continue:first_forensic]:
+        fail("verbose writer does not service durable milestone ACKs")
+    if 'PSP1000Diagnostics = Enabled' not in sample_config or \
+            'PSP1000DiagnosticsVerbose = Disabled' not in sample_config or \
+            '"PSP1000DiagnosticsVerbose", "Disabled"' not in kernel:
+        fail("compact-by-default diagnostics configuration regressed")
     trace_line = re.search(
             r'"\[psp1000-vsh5704-registration-trace\][\s\S]{0,280}?'
             r'"original_target_off=0x3F568\\n"', writer)
@@ -4918,7 +5068,8 @@ def check_sources(root):
     if len(parsed_keys) != len(set(parsed_keys)):
         fail("sample INI contains duplicate active configuration keys")
     required_ini = ("PSP1000SlidePlugin", "PSP1000SlideTriggerMode",
-            "PSP1000Diagnostics", "PSP1000SonyStartTrace",
+            "PSP1000Diagnostics", "PSP1000DiagnosticsVerbose",
+            "PSP1000SonyStartTrace",
             "PSP1000SelectiveSlideTrigger58D4")
     for key in required_ini:
         if parsed_keys.count(key) != 1:
@@ -4926,6 +5077,8 @@ def check_sources(root):
     experimental = sample_config[sample_config.find("[Experimental]"):]
     for line in experimental.splitlines():
         line = line.strip()
+        if line == "PSP1000Diagnostics = Enabled":
+            continue
         if line.startswith("PSP1000") and not line.endswith("= Disabled"):
             fail("sample INI enables experimental PSP-1000 behavior: " + line)
     legacy_pos = sample_config.find("PSP1000SelectiveSlideTrigger58D4")
