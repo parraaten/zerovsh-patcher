@@ -3399,7 +3399,9 @@ def check_sources(root):
             '(slide_diag.functional_runtime_valid_addr & 3) == 0',
             'zeroCtrlReadHelperCounter(',
             'slide_diag.functional_runtime_valid_addr) != 0',
-            'runtime, retained'):
+            'runtime, retained',
+            'sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);',
+            'elapsed += SLIDE_OBSERVATION_POLL_US;'):
         if token not in compact_path:
             fail("compact diagnostics path lacks " + token)
     if not 0 <= compact_gate < compact_continue < first_forensic or \
@@ -3407,6 +3409,8 @@ def check_sources(root):
                 ('-code]', 'zeroCtrlWriteConstructed0Dependency',
                  'zeroCtrlWriteFunctionalClockPathAnalysis')):
         fail("compact path reaches forensic code maps or lacks early routing")
+    if 'SLIDE_POLL_INTERVAL_US' in kernel:
+        fail("compact diagnostics use undefined SLIDE_POLL_INTERVAL_US")
     ready_format = compact_path[compact_path.find('[psp1000-ready]'):
             compact_path.find('compact_ready_written = 1')]
     if 'slide_diag.functional_request_armed' in ready_format:

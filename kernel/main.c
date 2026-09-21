@@ -10430,8 +10430,8 @@ static int zeroCtrlWriteSlideDiagnostics(SceSize args UNUSED, void *argp UNUSED)
                 zeroCtrlDiagnosticsText(line);
             }
             zeroCtrlServiceFunctionalMilestone();
-            sceKernelDelayThread(SLIDE_POLL_INTERVAL_US);
-            elapsed += SLIDE_POLL_INTERVAL_US;
+            sceKernelDelayThread(SLIDE_OBSERVATION_POLL_US);
+            elapsed += SLIDE_OBSERVATION_POLL_US;
             continue;
         }
         if (slide_diag.functional_enabled)
