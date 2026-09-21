@@ -2343,7 +2343,7 @@ def check_sources(root):
     helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
     helper = assembly[helper_start:helper_end]
     if hashlib.sha256(helper.encode()).hexdigest() != \
-            'b070fc12e3d3cc8483d3f7e24e3255eda905c6e18e07a1b9e45b754e94d784ab':
+            '4821024335adc7cb081a6634e6cbc4c52e37b58bea832ef681f4b222484b8f96':
         fail("functional +314A4 bridge assembly changed")
     controller_call = helper.find("jalr    $t9")
     result_save = helper.find("sw      $v0, 32($sp)", controller_call)
@@ -2354,60 +2354,19 @@ def check_sources(root):
     request_seen = helper.find("BRIDGE_INC zeroCtrlVsh314A4RequestSeen", probe_gate)
     busy_gate = helper.find("%lo(zeroCtrlVsh314A4Busy)", request_seen)
     attempted_gate = helper.find("%lo(zeroCtrlVsh314A4Attempted)", busy_gate)
-    allocator_base = helper.find("%hi(zeroCtrlVsh314A4Constructed0)",
-            attempted_gate)
-    allocator_call_word = helper.find("lw      $t1, 0x14($t0)", allocator_base)
-    allocator_mask = helper.find("lui     $t2, 0x03FF", allocator_call_word)
-    allocator_shift = helper.find("sll     $t1, $t1, 2", allocator_mask)
-    allocator_region_pc = helper.find("addiu   $t2, $t0, 0x18", allocator_shift)
-    allocator_region_mask = helper.find("lui     $t3, 0xF000", allocator_region_pc)
-    allocator_target = helper.find("or      $t9, $t1, $t2", allocator_region_mask)
-    allocator_arg = helper.find("addiu   $a0, $zero, 0x1D8", allocator_target)
-    allocator_call = helper.find("jalr    $t9", allocator_arg)
-    allocator_result = helper.find(
-            "sw      $v0, %lo(zeroCtrlVsh314A4RejectObject)($t0)", allocator_call)
-    allocator_probe_done = helper.find(
-            "sw      $t1, %lo(zeroCtrlVsh314A4ShadowProbeDone)($t0)",
-            allocator_result)
-    reject13_value = helper.find("addiu   $t1, $zero, 13", allocator_probe_done)
-    reject13_publish = helper.find(
-            "sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)", reject13_value)
-    allocator_exit = helper.find("b       9f", reject13_publish)
     first_retained = helper.find("%hi(zeroCtrlPafA989DependencyDirectValid)",
             attempted_gate)
     result_restore = helper.rfind("lw      $v0, 32($sp)")
     if not 0 <= controller_call < result_save < request_read < request_zero < \
             probe_read < probe_gate < request_seen < busy_gate < attempted_gate < \
-            allocator_base < allocator_call_word < allocator_mask < \
-            allocator_shift < allocator_region_pc < allocator_region_mask < \
-            allocator_target < allocator_arg < allocator_call < allocator_result < \
-            allocator_probe_done < reject13_value < reject13_publish < \
-            allocator_exit < first_retained < result_restore or \
+            first_retained < result_restore or \
             helper.count("zeroCtrlVsh314A4OriginalController") != 2 or \
-            helper.count("jalr    $t9") != 4:
+            helper.count("jalr    $t9") != 3:
         fail("bridge controller/request ordering or Sony call count regressed")
-    allocator_probe = helper[allocator_base:first_retained]
-    for token in ('lw      $t0, %lo(zeroCtrlVsh314A4Constructed0)($t0)',
-            'lw      $t1, 0x14($t0)', 'ori     $t2, $t2, 0xFFFF',
-            'and     $t1, $t1, $t2', 'sll     $t1, $t1, 2',
-            'addiu   $t2, $t0, 0x18', 'and     $t2, $t2, $t3',
-            'or      $t9, $t1, $t2', 'addiu   $a0, $zero, 0x1D8',
-            'jalr    $t9', 'sw      $v0, %lo(zeroCtrlVsh314A4RejectObject)($t0)',
-            'addiu   $t1, $zero, 13', 'b       9f'):
-        if token not in allocator_probe:
-            fail("allocator-only probe lacks " + token)
-    if allocator_probe.count('jalr    $t9') != 1 or \
-            allocator_probe.count(
-                'sw      $v0, %lo(zeroCtrlVsh314A4RejectObject)($t0)') != 1 or \
-            any(token in allocator_probe for token in
-                ('BRIDGE_INC zeroCtrlVsh314A4Attempts',
-                 'BRIDGE_INC zeroCtrlVsh314A4Stage0Calls',
-                 'BRIDGE_INC zeroCtrlVsh314A4Stage1Calls',
-                 'sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)',
-                 'sw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)',
-                 'zeroCtrlPafA989DependencyDirectValid',
-                 'zeroCtrlPafA989Shadow')):
-        fail("allocator-only path executes retained, shadow, or constructor state")
+    for token in ('lw      $t1, 0x14($t0)',
+            'addiu   $a0, $zero, 0x1D8', 'addiu   $t1, $zero, 13'):
+        if token in helper:
+            fail("completed allocator-only probe remains in functional bridge")
     if 'zeroCtrlPafA989NaturalGp' in assembly or \
             'zeroCtrlVsh314A4RequestGp' in assembly or \
             'addiu   $t1, $zero, 12' in helper:
@@ -3224,26 +3183,36 @@ def check_sources(root):
             'snapshot_base + 0x11C' in writer or \
             'snapshot_base + 0x120' in writer:
         fail("completed GP-probe telemetry remains in the writer")
-    alloc_probe_marker = writer.find('[psp1000-functional-314a4-alloc-probe]')
-    alloc_probe_start = writer.rfind('if (state[9] == 13 &&', 0,
-            alloc_probe_marker)
-    alloc_probe_end = writer.find('zeroCtrlDiagnosticsText(line);',
-            alloc_probe_marker)
-    alloc_probe_writer = writer[alloc_probe_start:alloc_probe_end]
-    for token in ('!functional_alloc_probe_written',
+    constructed0_probe_marker = writer.find(
+            '[psp1000-functional-314a4-constructed0-probe]')
+    constructed0_probe_start = writer.rfind(
+            'if ((state[9] == 5 || state[9] == 11) &&', 0,
+            constructed0_probe_marker)
+    constructed0_probe_end = writer.find('zeroCtrlDiagnosticsText(line);',
+            constructed0_probe_marker)
+    constructed0_probe_writer = writer[
+            constructed0_probe_start:constructed0_probe_end]
+    for token in ('!functional_constructed0_probe_written',
             'unsigned int result = state[12]',
             'result != 0', '(result & 3) == 0',
             'zeroCtrlPsp1000BridgeUserRangeValid(',
             'result, 4, lower, upper',
-            '[psp1000-functional-314a4-alloc-probe] ',
-            'result=0x%08X nonzero=%u aligned=%u user_range=%u'):
-        if token not in alloc_probe_writer:
-            fail("allocator-probe telemetry lacks " + token)
-    if alloc_probe_start < 0 or alloc_probe_end < alloc_probe_marker or \
-            writer.count('int functional_alloc_probe_written = 0;') != 1 or \
-            any(token in alloc_probe_writer for token in
+            '[psp1000-functional-314a4-constructed0-probe] ',
+            'reject=%u result=0x%08X nonzero=%u aligned=%u ',
+            'user_range=%u attempts=%u stage0_calls=%u ',
+            'stage1_calls=%u',
+            'state[9]', 'state[5], state[6], state[7]'):
+        if token not in constructed0_probe_writer:
+            fail("constructed0-probe telemetry lacks " + token)
+    if constructed0_probe_start < 0 or \
+            constructed0_probe_end < constructed0_probe_marker or \
+            writer.count('int functional_constructed0_probe_written = 0;') != 1 or \
+            'functional_alloc_probe_written' in writer or \
+            '[psp1000-functional-314a4-alloc-probe]' in writer or \
+            'state[9] == 13' in writer or \
+            any(token in constructed0_probe_writer for token in
                 ('_lw(', '_lb(', '_lbu(', 'sceKernelFindModuleByAddress')):
-        fail("allocator-probe telemetry dereferences or over-classifies its result")
+        fail("constructed0-probe telemetry dereferences or over-classifies result")
     trace_line = re.search(
             r'"\[psp1000-vsh5704-registration-trace\][\s\S]{0,280}?'
             r'"original_target_off=0x3F568\\n"', writer)

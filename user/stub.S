@@ -181,31 +181,6 @@ zeroCtrlVsh314A4FunctionalBridge:
     bnez    $t1, 9f
     nop
 
-    lui     $t0, %hi(zeroCtrlVsh314A4Constructed0)
-    lw      $t0, %lo(zeroCtrlVsh314A4Constructed0)($t0)
-    lw      $t1, 0x14($t0)
-    lui     $t2, 0x03FF
-    ori     $t2, $t2, 0xFFFF
-    and     $t1, $t1, $t2
-    sll     $t1, $t1, 2
-    addiu   $t2, $t0, 0x18
-    lui     $t3, 0xF000
-    and     $t2, $t2, $t3
-    or      $t9, $t1, $t2
-    addiu   $a0, $zero, 0x1D8
-    jalr    $t9
-    nop
-    lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
-    sw      $v0, %lo(zeroCtrlVsh314A4RejectObject)($t0)
-    lui     $t0, %hi(zeroCtrlVsh314A4ShadowProbeDone)
-    addiu   $t1, $zero, 1
-    sw      $t1, %lo(zeroCtrlVsh314A4ShadowProbeDone)($t0)
-    lui     $t0, %hi(zeroCtrlVsh314A4Reject)
-    addiu   $t1, $zero, 13
-    sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)
-    b       9f
-    nop
-
     lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
     sw      $zero, %lo(zeroCtrlVsh314A4RejectObject)($t0)
 
