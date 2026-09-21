@@ -2607,15 +2607,17 @@ def check_sources(root):
     capture_gate = helper.find('.L314A4CaptureGate:', raw_return)
     capture_ack = helper.find('bne     $t5, $t4, 9f', capture_gate)
     invoke_body = helper[invoke_gate:capture_gate]
-    post_call_prefix = helper[constructed0_call:raw_publish]
+    constructed0_delay_end = helper.find('\n', constructed0_a1) + 1
+    post_call_prefix = helper[constructed0_delay_end:raw_publish]
     if not constructed0_call < raw_value < raw_publish < raw_return < \
             capture_gate < capture_ack or \
             invoke_body.count('jalr    $t9') != 1 or \
             invoke_body.count('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls') != 1 or \
+            constructed0_delay_end <= constructed0_a1 or \
             any(token in post_call_prefix for token in
                 ('0x04($s1)', '0x14($s1)', '0x04($s2)', '0x08($s2)',
                  '0x0C($s2)', 'RejectObject', 'PostOuter', 'PostInner',
-                 'BRIDGE_VALIDATE')):
+                 'BRIDGE_VALIDATE', 'jal ', 'jalr')):
         fail("milestone-8 invocation does not publish raw return first")
     return_result = helper.find('lw      $s4, 0x04($s2)', constructed0_call)
     return_store = helper.find(
@@ -2636,7 +2638,7 @@ def check_sources(root):
         store_pos = helper.find(store, load_pos)
         if load_pos < capture_cursor or store_pos < load_pos or \
                 helper.count(store) != 1:
-            fail("immediate constructed0 snapshot capture ordering regressed")
+            fail("ACK-9 post-return snapshot capture ordering regressed")
         capture_positions.extend((load_pos, store_pos))
         capture_cursor = store_pos
     return_busy_clear = helper.find(
@@ -2676,7 +2678,8 @@ def check_sources(root):
             capture_body.count('addiu   $t1, $zero, 5') != 1 or \
             any(pos < 0 for pos in post_positions) or \
             post_positions != sorted(post_positions) or \
-            not constructed0_call < return_result < return_store < \
+            not constructed0_call < raw_publish < raw_return < capture_gate < \
+                capture_ack < return_result < return_store < \
                 capture_positions[0] < capture_positions[-1] < \
                 return_busy_clear < returned_milestone < returned_publish < \
                 returned_return < post_gate < post_ack < saved_result_load < \
@@ -2685,13 +2688,13 @@ def check_sources(root):
                 stage1_inc < constructed1_call or \
             helper.find('move    $a1, $s2', stage1_inc) > constructed1_call:
         fail("constructed0 success does not bypass constructed1")
-    immediate_snapshot = helper[return_result:return_busy_clear]
+    post_ack9_snapshot = helper[return_result:return_busy_clear]
     postgate_body = helper[post_gate:reject11_value]
-    if 'b       9f' in immediate_snapshot or 'jalr' in immediate_snapshot or \
+    if 'b       9f' in post_ack9_snapshot or 'jalr' in post_ack9_snapshot or \
             any(token in postgate_body for token in
                 ('lw      $t3, 0x04($s1)', 'lw      $t3, 0x14($s1)',
                  'lw      $t3, 0x08($s2)', 'lw      $t3, 0x0C($s2)')):
-        fail("post-validation does not exclusively use immediate snapshot state")
+        fail("post-validation does not exclusively use the ACK-9 captured snapshot state")
     for code, label in ((6, '1:'), (7, '2:'), (8, '3:'), (9, '4:'),
             (5, '5:')):
         label_pos = helper.find(label, constructed1_call)
@@ -3409,10 +3412,10 @@ def check_sources(root):
     for token in ('[psp1000-step] seq=%u phase=%s',
             'request_observed', 'validation_complete', 'shadow_complete',
             'constructed0_enter_armed',
-            '[psp1000-step] seq=5 phase=constructed0_return',
+            '[psp1000-step] seq=5 phase=post_return_capture',
             '[psp1000-call] phase=constructed0_pre_call attempts=%u ',
             '[psp1000-call] phase=constructed0_returned_raw attempts=%u ',
-            '[psp1000-final] phase=%s', 'post_validation',
+            '[psp1000-final] phase=%s', 'post_return_snapshot_validation',
             'pre_constructed0_reject'):
         if token not in milestone_service:
             fail("compact milestone service lacks " + token)
@@ -3420,6 +3423,9 @@ def check_sources(root):
             milestone_service.count('phase=constructed0_pre_call') != 1 or \
             milestone_service.count('phase=constructed0_returned_raw') != 1:
         fail("milestones 8/9 are not uniquely serviced as nonterminal calls")
+    if ('phase=constructed0_' + 'return "') in milestone_service or \
+            ('"post_' + 'validation"') in milestone_service:
+        fail("milestone service uses stale constructed0 evidence terminology")
     logger_write_start = logger.find('static int zeroCtrlDiagnosticsWrite(')
     logger_write_end = logger.find('\nvoid zeroCtrlDiagnosticsText(',
             logger_write_start)

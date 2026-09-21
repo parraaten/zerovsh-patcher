@@ -13839,7 +13839,7 @@ static void zeroCtrlServiceFunctionalMilestone(void) {
                 attempts, stage0, stage1);
     } else if (milestone == 5) {
         snprintf(line, sizeof(line),
-                "[psp1000-step] seq=5 phase=constructed0_return "
+                "[psp1000-step] seq=5 phase=post_return_capture "
                 "result=0x%08X attempts=%u stage0_calls=%u stage1_calls=%u\n",
                 result, attempts, stage0, stage1);
     } else if (milestone == 8) {
@@ -13856,7 +13856,7 @@ static void zeroCtrlServiceFunctionalMilestone(void) {
         snprintf(line, sizeof(line),
                 "[psp1000-final] phase=%s reject=%u result=0x%08X "
                 "attempts=%u stage0_calls=%u stage1_calls=%u\n",
-                milestone == 6 ? "post_validation" :
+                milestone == 6 ? "post_return_snapshot_validation" :
                     "pre_constructed0_reject",
                 reject, result, attempts, stage0, stage1);
     }
