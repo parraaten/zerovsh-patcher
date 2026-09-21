@@ -2345,7 +2345,7 @@ def check_sources(root):
     helper_end = assembly.find("zeroCtrlVsh314A4FunctionalBridgeEnd:", helper_start)
     helper = assembly[helper_start:helper_end]
     if hashlib.sha256(helper.encode()).hexdigest() != \
-            '5ebfd32c79869490087322aede621485d6d63dba204ea5fcfc988a1dc5be7192':
+            'e66200911c3e16b3efbc635fe88e28cc30ebd4815d463969bf8c5c0899e01864':
         fail("functional +314A4 bridge assembly changed")
     controller_call = helper.find("jalr    $t9")
     result_save = helper.find("sw      $v0, 32($sp)", controller_call)
@@ -2375,9 +2375,17 @@ def check_sources(root):
             helper.count("jalr    $t9") != 3:
         fail("bridge controller/request ordering or Sony call count regressed")
     if helper.count('zeroCtrlVsh314A4MilestoneAck') != 2 or \
-            helper.count('bne     $t5, $t4, 9f') != 5 or \
+            helper.count('bne     $t5, $t4, 9f') != 7 or \
             'zeroCtrlVsh314A4ShadowProbeDone' in helper:
         fail("bridge milestone ACK dispatch or retired probe ownership regressed")
+    for value, label in ((1, '.L314A4ValidationGate'),
+            (2, '.L314A4ShadowGate'), (3, '.L314A4ArmGate'),
+            (4, '.L314A4CallGate'), (5, '.L314A4PostGate'),
+            (8, '.L314A4InvokeGate'), (9, '.L314A4CaptureGate')):
+        dispatch = ('addiu   $t0, $zero, %d\n'
+                '    beq     $t4, $t0, %s' % (value, label))
+        if helper.count(dispatch) != 1:
+            fail("bridge dispatcher lacks milestone %d route" % value)
     for value in range(1, 8):
         if helper.count('addiu   $t1, $zero, %d' % value) < 1:
             fail("bridge does not publish milestone %d" % value)
@@ -2554,6 +2562,13 @@ def check_sources(root):
     arm_return = helper.find('b       9f', arm_publish)
     call_gate = helper.find('.L314A4CallGate:', arm_return)
     call_ack = helper.find('bne     $t5, $t4, 9f', call_gate)
+    attempts_inc = helper.find('BRIDGE_INC zeroCtrlVsh314A4Attempts', call_ack)
+    pre_call_value = helper.find('addiu   $t1, $zero, 8', attempts_inc)
+    pre_call_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)', pre_call_value)
+    pre_call_return = helper.find('b       9f', pre_call_publish)
+    invoke_gate = helper.find('.L314A4InvokeGate:', pre_call_return)
+    invoke_ack = helper.find('bne     $t5, $t4, 9f', invoke_gate)
     node_a_link = helper.find('sw      $t3, 0x00($t2)', shadow_start)
     node_b_link = helper.find('sw      $t4, 0x00($t3)', node_a_link)
     root_flag = helper.find('sb      $t1, 0x2D($t4)', node_b_link)
@@ -2563,7 +2578,8 @@ def check_sources(root):
             dependency_node < shadow_complete < shadow_build_end < \
             shadow_milestone < shadow_return < arm_gate < arm_ack < reject10_value < \
             reject10_publish < arm_milestone < arm_publish < arm_return < call_gate < \
-            call_ack < busy_set < attempted_set < stage0_inc < \
+            call_ack < busy_set < attempted_set < attempts_inc < pre_call_value < \
+            pre_call_publish < pre_call_return < invoke_gate < invoke_ack < stage0_inc < \
             constructed0_call:
         fail("constructed0 milestone/publication ordering regressed")
     if helper.count('sw      $t1, %lo(zeroCtrlVsh314A4Busy)($t0)') != 1 or \
@@ -2572,6 +2588,11 @@ def check_sources(root):
             helper.count('BRIDGE_INC zeroCtrlVsh314A4Attempts') != 1 or \
             helper.count('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls') != 1:
         fail("constructed0 one-shot state publication is duplicated")
+    pre_call_gate = helper[call_gate:invoke_gate]
+    if 'BRIDGE_INC zeroCtrlVsh314A4Stage0Calls' in pre_call_gate or \
+            'jalr' in pre_call_gate or \
+            pre_call_gate.count('BRIDGE_INC zeroCtrlVsh314A4Attempts') != 1:
+        fail("milestone-4 preparation gate executes constructed0 work")
     constructed0_a0 = helper.find('move    $a0, $s2', constructed0_load)
     constructed0_a1 = helper.find('move    $a1, $s1', constructed0_load)
     if 'sw      $zero, 0x48($s3)' not in shadow_build or \
@@ -2579,6 +2600,23 @@ def check_sources(root):
             helper.count('move    $a0, $s2\n    jalr    $t9\n'
                     '    move    $a1, $s1') != 1:
         fail("constructed0 does not receive the complete private shadow")
+    raw_value = helper.find('addiu   $t1, $zero, 9', constructed0_call)
+    raw_publish = helper.find(
+            'sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)', raw_value)
+    raw_return = helper.find('b       9f', raw_publish)
+    capture_gate = helper.find('.L314A4CaptureGate:', raw_return)
+    capture_ack = helper.find('bne     $t5, $t4, 9f', capture_gate)
+    invoke_body = helper[invoke_gate:capture_gate]
+    post_call_prefix = helper[constructed0_call:raw_publish]
+    if not constructed0_call < raw_value < raw_publish < raw_return < \
+            capture_gate < capture_ack or \
+            invoke_body.count('jalr    $t9') != 1 or \
+            invoke_body.count('BRIDGE_INC zeroCtrlVsh314A4Stage0Calls') != 1 or \
+            any(token in post_call_prefix for token in
+                ('0x04($s1)', '0x14($s1)', '0x04($s2)', '0x08($s2)',
+                 '0x0C($s2)', 'RejectObject', 'PostOuter', 'PostInner',
+                 'BRIDGE_VALIDATE')):
+        fail("milestone-8 invocation does not publish raw return first")
     return_result = helper.find('lw      $s4, 0x04($s2)', constructed0_call)
     return_store = helper.find(
             'sw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)', return_result)
@@ -2632,7 +2670,11 @@ def check_sources(root):
     reject11_publish = helper.find(
             'sw      $t1, %lo(zeroCtrlVsh314A4Reject)($t0)', reject11_value)
     constructed1_bypass = helper.find('b       6f', reject11_publish)
-    if any(pos < 0 for pos in post_positions) or \
+    capture_body = helper[capture_gate:post_gate]
+    if 'jalr' in capture_body or 'BRIDGE_INC zeroCtrlVsh314A4Stage0Calls' in \
+            capture_body or not capture_ack < return_result or \
+            capture_body.count('addiu   $t1, $zero, 5') != 1 or \
+            any(pos < 0 for pos in post_positions) or \
             post_positions != sorted(post_positions) or \
             not constructed0_call < return_result < return_store < \
                 capture_positions[0] < capture_positions[-1] < \
@@ -3368,10 +3410,16 @@ def check_sources(root):
             'request_observed', 'validation_complete', 'shadow_complete',
             'constructed0_enter_armed',
             '[psp1000-step] seq=5 phase=constructed0_return',
+            '[psp1000-call] phase=constructed0_pre_call attempts=%u ',
+            '[psp1000-call] phase=constructed0_returned_raw attempts=%u ',
             '[psp1000-final] phase=%s', 'post_validation',
             'pre_constructed0_reject'):
         if token not in milestone_service:
             fail("compact milestone service lacks " + token)
+    if 'milestone > 9' not in milestone_service or \
+            milestone_service.count('phase=constructed0_pre_call') != 1 or \
+            milestone_service.count('phase=constructed0_returned_raw') != 1:
+        fail("milestones 8/9 are not uniquely serviced as nonterminal calls")
     logger_write_start = logger.find('static int zeroCtrlDiagnosticsWrite(')
     logger_write_end = logger.find('\nvoid zeroCtrlDiagnosticsText(',
             logger_write_start)

@@ -188,6 +188,12 @@ zeroCtrlVsh314A4FunctionalBridge:
     addiu   $t0, $zero, 5
     beq     $t4, $t0, .L314A4PostGate
     nop
+    addiu   $t0, $zero, 8
+    beq     $t4, $t0, .L314A4InvokeGate
+    nop
+    addiu   $t0, $zero, 9
+    beq     $t4, $t0, .L314A4CaptureGate
+    nop
     b       9f
     nop
 .L314A4RequestObserved:
@@ -549,13 +555,36 @@ zeroCtrlVsh314A4FunctionalBridge:
     lui     $t0, %hi(zeroCtrlVsh314A4Attempted)
     sw      $t1, %lo(zeroCtrlVsh314A4Attempted)($t0)
     BRIDGE_INC zeroCtrlVsh314A4Attempts
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 8
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4InvokeGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
     BRIDGE_INC zeroCtrlVsh314A4Stage0Calls
     lui     $t9, %hi(zeroCtrlVsh314A4Constructed0)
     lw      $t9, %lo(zeroCtrlVsh314A4Constructed0)($t9)
     move    $a0, $s2
     jalr    $t9
     move    $a1, $s1
-
+    lui     $t0, %hi(zeroCtrlVsh314A4Milestone)
+    addiu   $t1, $zero, 9
+    sw      $t1, %lo(zeroCtrlVsh314A4Milestone)($t0)
+    b       9f
+    nop
+.L314A4CaptureGate:
+    bne     $t5, $t4, 9f
+    nop
+    lui     $s1, %hi(zeroCtrlPafA989ShadowOuter)
+    addiu   $s1, $s1, %lo(zeroCtrlPafA989ShadowOuter)
+    lui     $s2, %hi(zeroCtrlPafA989ShadowInner)
+    addiu   $s2, $s2, %lo(zeroCtrlPafA989ShadowInner)
     lw      $s4, 0x04($s2)
     lui     $t0, %hi(zeroCtrlVsh314A4RejectObject)
     sw      $s4, %lo(zeroCtrlVsh314A4RejectObject)($t0)

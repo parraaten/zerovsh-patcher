@@ -13821,7 +13821,7 @@ static void zeroCtrlServiceFunctionalMilestone(void) {
     milestone = zeroCtrlReadHelperCounter(slide_diag.bridge_milestone_addr);
     acknowledged = zeroCtrlReadHelperCounter(
             slide_diag.bridge_milestone_ack_addr);
-    if (milestone == 0 || milestone == acknowledged || milestone > 7)
+    if (milestone == 0 || milestone == acknowledged || milestone > 9)
         return;
     reject = zeroCtrlReadHelperCounter(slide_diag.bridge_scalar[14]);
     result = zeroCtrlReadHelperCounter(slide_diag.bridge_scalar[15]);
@@ -13842,6 +13842,16 @@ static void zeroCtrlServiceFunctionalMilestone(void) {
                 "[psp1000-step] seq=5 phase=constructed0_return "
                 "result=0x%08X attempts=%u stage0_calls=%u stage1_calls=%u\n",
                 result, attempts, stage0, stage1);
+    } else if (milestone == 8) {
+        snprintf(line, sizeof(line),
+                "[psp1000-call] phase=constructed0_pre_call attempts=%u "
+                "stage0_calls=%u stage1_calls=%u\n",
+                attempts, stage0, stage1);
+    } else if (milestone == 9) {
+        snprintf(line, sizeof(line),
+                "[psp1000-call] phase=constructed0_returned_raw attempts=%u "
+                "stage0_calls=%u stage1_calls=%u\n",
+                attempts, stage0, stage1);
     } else {
         snprintf(line, sizeof(line),
                 "[psp1000-final] phase=%s reject=%u result=0x%08X "
